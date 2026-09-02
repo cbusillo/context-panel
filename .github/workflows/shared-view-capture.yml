@@ -1,0 +1,253 @@
+---
+name: Shared-View Capture Evidence
+
+"on":
+  workflow_dispatch:
+    inputs:
+      previous_source_commit:
+        description: Exact full SHA for the previous source manifest.
+        required: true
+        type: string
+      current_source_commit:
+        description: Exact full SHA for the current source manifest.
+        required: true
+        type: string
+      previous_version:
+        description: Previous marketing version.
+        required: true
+        type: string
+      previous_build_number:
+        description: Previous build number.
+        required: true
+        type: string
+      current_version:
+        description: Current marketing version.
+        required: true
+        type: string
+      current_build_number:
+        description: Current build number.
+        required: true
+        type: string
+      previous_macos_artifact_run_id:
+        description: GitHub Actions run ID containing the previous macOS ExpectedBuildManifest.
+        required: true
+        type: string
+      current_macos_artifact_run_id:
+        description: GitHub Actions run ID containing the current macOS ExpectedBuildManifest.
+        required: true
+        type: string
+      previous_ios_artifact_run_id:
+        description: GitHub Actions run ID containing the previous iOS ExpectedBuildManifest.
+        required: true
+        type: string
+      current_ios_artifact_run_id:
+        description: GitHub Actions run ID containing the current iOS ExpectedBuildManifest.
+        required: true
+        type: string
+      previous_visionos_artifact_run_id:
+        description: GitHub Actions run ID containing the previous visionOS ExpectedBuildManifest.
+        required: true
+        type: string
+      current_visionos_artifact_run_id:
+        description: GitHub Actions run ID containing the current visionOS ExpectedBuildManifest.
+        required: true
+        type: string
+      previous_tvos_artifact_run_id:
+        description: GitHub Actions run ID containing the previous tvOS ExpectedBuildManifest.
+        required: true
+        type: string
+      current_tvos_artifact_run_id:
+        description: GitHub Actions run ID containing the current tvOS ExpectedBuildManifest.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Capture Shared Views
+    runs-on: macos-26
+    steps:
+      - name: Checkout Exact Current Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.current_source_commit }}
+          fetch-depth: 0
+
+      - name: Verify Source Boundary and Xcode
+        shell: bash
+        env:
+          PREVIOUS_SOURCE_COMMIT: ${{ inputs.previous_source_commit }}
+          CURRENT_SOURCE_COMMIT: ${{ inputs.current_source_commit }}
+        run: |
+          set -euo pipefail
+          [[ "${PREVIOUS_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CURRENT_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "${CURRENT_SOURCE_COMMIT}" ]]
+          git cat-file -e "${PREVIOUS_SOURCE_COMMIT}^{commit}"
+          git merge-base --is-ancestor "${PREVIOUS_SOURCE_COMMIT}" origin/main
+          git merge-base --is-ancestor "${CURRENT_SOURCE_COMMIT}" origin/main
+          test -z "$(git status --porcelain)"
+          scripts/validate-release-xcode.sh --required-major 26
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Download and Validate Sealed Expected Builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_SOURCE_COMMIT: ${{ inputs.previous_source_commit }}
+          CURRENT_SOURCE_COMMIT: ${{ inputs.current_source_commit }}
+          PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          PREVIOUS_BUILD_NUMBER: ${{ inputs.previous_build_number }}
+          CURRENT_VERSION: ${{ inputs.current_version }}
+          CURRENT_BUILD_NUMBER: ${{ inputs.current_build_number }}
+          PREVIOUS_MACOS_ARTIFACT_RUN_ID: ${{ inputs.previous_macos_artifact_run_id }}
+          CURRENT_MACOS_ARTIFACT_RUN_ID: ${{ inputs.current_macos_artifact_run_id }}
+          PREVIOUS_IOS_ARTIFACT_RUN_ID: ${{ inputs.previous_ios_artifact_run_id }}
+          CURRENT_IOS_ARTIFACT_RUN_ID: ${{ inputs.current_ios_artifact_run_id }}
+          PREVIOUS_VISIONOS_ARTIFACT_RUN_ID: ${{ inputs.previous_visionos_artifact_run_id }}
+          CURRENT_VISIONOS_ARTIFACT_RUN_ID: ${{ inputs.current_visionos_artifact_run_id }}
+          PREVIOUS_TVOS_ARTIFACT_RUN_ID: ${{ inputs.previous_tvos_artifact_run_id }}
+          CURRENT_TVOS_ARTIFACT_RUN_ID: ${{ inputs.current_tvos_artifact_run_id }}
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/context-panel-expected-builds"
+          mkdir -p "${root}"
+          download_and_validate() {
+            local lane="$1" layout="$2" source_commit="$3" version="$4" build_number="$5" run_id="$6" artifact_name="$7"
+            local destination="${root}/${lane}"
+            mkdir -p "${destination}"
+            gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" --name "${artifact_name}" --dir "${destination}"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .head_sha >"${destination}/run-source.txt"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" >"${destination}/artifacts.json"
+            scripts/context-panel-shared-view-capture-workflow.py validate-artifact \
+              --artifact-root "${destination}" --layout "${layout}" \
+              --source-commit "${source_commit}" --version "${version}" --build-number "${build_number}" \
+              --run-id "${run_id}" --run-source-commit "$(<"${destination}/run-source.txt")" \
+              --artifacts-metadata "${destination}/artifacts.json" --artifact-name "${artifact_name}" \
+              >"${GITHUB_WORKSPACE}/.build/${lane}-expected-build-path.txt"
+          }
+          mkdir -p .build
+          download_and_validate previous-macos macos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_MACOS_ARTIFACT_RUN_ID}" "app-store-connect-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}"
+          download_and_validate current-macos macos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_MACOS_ARTIFACT_RUN_ID}" "app-store-connect-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}"
+          download_and_validate previous-ios ios "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_IOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}"
+          download_and_validate current-ios ios "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_IOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}"
+          download_and_validate previous-visionos visionos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_VISIONOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}"
+          download_and_validate current-visionos visionos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_VISIONOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}"
+          download_and_validate previous-tvos tvos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_TVOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}"
+          download_and_validate current-tvos tvos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_TVOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}"
+
+      - name: Generate and Compare Source Manifests
+        shell: bash
+        env:
+          PREVIOUS_SOURCE_COMMIT: ${{ inputs.previous_source_commit }}
+          CURRENT_SOURCE_COMMIT: ${{ inputs.current_source_commit }}
+          PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          PREVIOUS_BUILD_NUMBER: ${{ inputs.previous_build_number }}
+          CURRENT_VERSION: ${{ inputs.current_version }}
+          CURRENT_BUILD_NUMBER: ${{ inputs.current_build_number }}
+        run: |
+          set -euo pipefail
+          xcode_build="$(xcodebuild -version | awk '/Build version/ {print $3; exit}')"
+          test -n "${xcode_build}"
+          git worktree add --detach .build/previous-source "${PREVIOUS_SOURCE_COMMIT}"
+          test -z "$(git -C .build/previous-source status --porcelain)"
+          scripts/context-panel-surface-manifest.py generate --root .build/previous-source \
+            --marketing-version "${PREVIOUS_VERSION}" --build-number "${PREVIOUS_BUILD_NUMBER}" \
+            --commit "${PREVIOUS_SOURCE_COMMIT}" --configuration Release --xcode-build "${xcode_build}" \
+            --tree-state clean --output .build/previous-source-manifest.json
+          scripts/context-panel-surface-manifest.py generate --root . \
+            --marketing-version "${CURRENT_VERSION}" --build-number "${CURRENT_BUILD_NUMBER}" \
+            --commit "${CURRENT_SOURCE_COMMIT}" --configuration Release --xcode-build "${xcode_build}" \
+            --tree-state clean --output .build/current-source-manifest.json
+          args=(scripts/context-panel-surface-manifest.py compare --previous .build/previous-source-manifest.json --current .build/current-source-manifest.json --train beta)
+          for lane in previous-macos previous-ios previous-visionos previous-tvos; do args+=(--previous-expected-build-manifest "$(<.build/${lane}-expected-build-path.txt)"); done
+          for lane in current-macos current-ios current-visionos current-tvos; do args+=(--current-expected-build-manifest "$(<.build/${lane}-expected-build-path.txt)"); done
+          "${args[@]}" --output .build/surface-comparison.json
+
+      - name: Create Complete Visual Plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/context-panel-shared-view-capture-workflow.py combine-visual-plan \
+            --comparison .build/surface-comparison.json --output .build/visual-review-requirements.json
+
+      - name: Build Fresh Release Simulator Bundles
+        shell: bash
+        env:
+          CURRENT_VERSION: ${{ inputs.current_version }}
+          CURRENT_BUILD_NUMBER: ${{ inputs.current_build_number }}
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          build_simulator() {
+            local scheme="$1" sdk="$2" destination="$3" derived_data="$4"
+            xcodebuild -project ContextPanel.xcodeproj -scheme "${scheme}" -configuration Release \
+              -sdk "${sdk}" -destination "${destination}" -derivedDataPath "${derived_data}" \
+              MARKETING_VERSION="${CURRENT_VERSION}" CURRENT_PROJECT_VERSION="${CURRENT_BUILD_NUMBER}" \
+              CODE_SIGNING_ALLOWED=NO build
+          }
+          build_simulator ContextPanelCompanion iphonesimulator 'generic/platform=iOS Simulator' .build/ios-derived-data
+          build_simulator ContextPanelCompanion xrsimulator 'generic/platform=visionOS Simulator' .build/visionos-derived-data
+          build_simulator ContextPanelWatch watchsimulator 'generic/platform=watchOS Simulator' .build/watchos-derived-data
+
+      - name: Create Private Capture Config
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl list --json >"${RUNNER_TEMP}/context-panel-simctl-catalog.json"
+          scripts/context-panel-shared-view-capture-workflow.py capture-config \
+            --catalog "${RUNNER_TEMP}/context-panel-simctl-catalog.json" \
+            --ios-app "${GITHUB_WORKSPACE}/.build/ios-derived-data/Build/Products/Release-iphonesimulator/Context Panel.app" \
+            --visionos-app "${GITHUB_WORKSPACE}/.build/visionos-derived-data/Build/Products/Release-xrsimulator/Context Panel.app" \
+            --watchos-app "${GITHUB_WORKSPACE}/.build/watchos-derived-data/Build/Products/Release-watchsimulator/Context Panel.app" \
+            --output "${RUNNER_TEMP}/context-panel-capture-config.json"
+
+      - name: Capture Shared-View Evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .build/public
+          scripts/context-panel-validation.py capture-shared-view-evidence \
+            --surface-comparison .build/surface-comparison.json \
+            --current-manifest .build/current-source-manifest.json \
+            --requirements .build/visual-review-requirements.json \
+            --capture-config "${RUNNER_TEMP}/context-panel-capture-config.json" \
+            --artifact-root "${RUNNER_TEMP}/context-panel-shared-view-artifacts" \
+            --output "${GITHUB_WORKSPACE}/.build/public/shared-view-capture-receipt.json"
+          scripts/context-panel-shared-view-capture-workflow.py qualify-receipt \
+            --receipt .build/public/shared-view-capture-receipt.json \
+            --requirements .build/visual-review-requirements.json
+
+      - name: Upload Public Evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-view-capture-public-${{ github.run_id }}
+          path: |
+            .build/public/shared-view-capture-receipt.json
+            .build/surface-comparison.json
+            .build/previous-source-manifest.json
+            .build/current-source-manifest.json
+            .build/visual-review-requirements.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Private PNG Evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-view-capture-png-${{ github.run_id }}
+          path: ${{ runner.temp }}/context-panel-shared-view-artifacts/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7

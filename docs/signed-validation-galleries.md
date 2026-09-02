@@ -159,6 +159,38 @@ publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an
 approval, runtime claim, placement claim, or pixel gate.
 
+## Hosted CI Capture Lane
+
+`Shared-View Capture Evidence` is a manually dispatched GitHub-hosted
+`macos-26` lane for deterministic beta shared-view collection. It accepts exact
+previous/current full source SHAs, their version/build identities, and explicit
+previous/current artifact run IDs for macOS, iOS, visionOS, and tvOS. It has only
+`contents: read`, uses no protected environment, signing, or operator secrets,
+and does not install or contact the canonical local app runtime.
+
+The lane checks both commits against protected `main`, checks out exactly the
+current SHA, requires clean source trees and Xcode 26, downloads every run into
+its own bounded directory, and accepts exactly one unexpired sealed
+`ExpectedBuildManifest` for each requested layout. It verifies run head SHA,
+manifest source/version/build identity, then regenerates both source manifests
+using the hosted runner's real Xcode build. The beta comparison receives all
+eight expected-build manifests and its `requiredSurfaces` field is never edited.
+
+Before capture, the workflow derives a generic placement base from every fresh
+placement surface and merges the canonical shared-view plan into it. This is
+deliberately fail-closed: an uncovered placement surface blocks the lane rather
+than being omitted. It builds unsigned fresh Release simulator bundles only for
+iOS/iPadOS, visionOS, and standalone watchOS, embeds the current manifest, then
+invokes `capture-shared-view-evidence` unchanged. The qualification boundary is
+strict: all supported requirements must be captured, and any uncaptured
+requirements must be macOS or tvOS records with exactly
+`unsupported-host-mechanism`.
+
+The public artifact contains the receipt, comparison, source manifests, and
+complete visual requirements. PNG evidence is uploaded separately with short
+retention. Neither artifact upgrades evidence into `actual-runtime` or
+`os-composited-placement`; those remain physical signed-runtime obligations.
+
 ## Fixture Isolation
 
 `ContextPanelValidationFixtures` is a Foundation-only target. It contains fixed
