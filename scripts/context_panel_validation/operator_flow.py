@@ -35,7 +35,6 @@ from .session import (
     parse_iso8601,
     validate_target,
 )
-from .visual_approvals import VisualApprovalError, shared_view_review_consolidation_id
 
 
 OPERATOR_FLOW_SCHEMA_VERSION = 1
@@ -91,7 +90,6 @@ SIMULATION_INSUFFICIENCY_CODES = {
     "visual-presentation-review-required",
 }
 ACTION_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
-SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 DEVICE_PATTERN = re.compile(
     r"^(?:Mac|Coordinator|iPhone(?: [1-9][0-9]*)?|iPad(?: [1-9][0-9]*)?|"
@@ -139,10 +137,6 @@ def _validate_action_id(value: object) -> str:
     if not isinstance(value, str) or not ACTION_ID_PATTERN.fullmatch(value):
         raise OperatorFlowError("operator action identifier is invalid")
     return value
-
-
-def _is_sha256(value: object) -> bool:
-    return isinstance(value, str) and SHA256_PATTERN.fullmatch(value) is not None
 
 
 def _validate_device(value: object) -> str:
@@ -1146,7 +1140,8 @@ def _apply_shared_view_capture_automation(
     shared_action_ids.update(
         action_id
         for action_id in candidates
-        if action_id.startswith("review.coordinator.shared-view.")
+        if action_id == "review.coordinator.shared-view"
+        or action_id.startswith("review.coordinator.shared-view.part-")
     )
     shared_candidates = tuple(
         candidates[action_id]
@@ -1366,6 +1361,7 @@ def build_operator_candidates(
         if isinstance(item, dict) and isinstance(item.get("id"), str)
     }
     consolidated_batches: dict[str, list[tuple[dict[str, Any], tuple[dict[str, Any], ...], tuple[str, ...]]]] = {}
+    legacy_shared_batch_count = 0
     for batch in visual_approvals.get("reviewBatches") or []:
         if not isinstance(batch, dict):
             raise OperatorFlowError("visual review batch is invalid")
@@ -1378,8 +1374,8 @@ def build_operator_candidates(
         surfaces = batch.get("surfaces")
         runtime_surfaces = batch.get("runtimeSurfaces")
         requires_runtime = batch.get("requiresRuntime")
-        consolidation_id = batch.get("consolidationID")
-        has_consolidation_id = "consolidationID" in batch
+        consolidated_action_id = batch.get("consolidatedActionID")
+        has_consolidated_action_id = "consolidatedActionID" in batch
         if (
             not isinstance(estimate_minutes, int)
             or isinstance(estimate_minutes, bool)
@@ -1397,7 +1393,13 @@ def build_operator_candidates(
             or any(not isinstance(surface, str) for surface in runtime_surfaces)
             or not isinstance(requires_runtime, bool)
             or evidence_class not in {"shared-view", "os-composited-placement"}
-            or (has_consolidation_id and not _is_sha256(consolidation_id))
+            or (
+                has_consolidated_action_id
+                and (
+                    not isinstance(consolidated_action_id, str)
+                    or ACTION_ID_PATTERN.fullmatch(consolidated_action_id) is None
+                )
+            )
         ):
             raise OperatorFlowError("visual review batch is invalid")
         requirements = [requirements_by_id.get(requirement_id) for requirement_id in requirement_ids]
@@ -1419,13 +1421,15 @@ def build_operator_candidates(
             or requires_runtime != (evidence_class == "os-composited-placement")
         ):
             raise OperatorFlowError("visual review batch is invalid")
-        if has_consolidation_id:
+        if has_consolidated_action_id:
             if evidence_class != "shared-view":
                 raise OperatorFlowError("visual review batch is invalid")
-            consolidated_batches.setdefault(consolidation_id, []).append(
+            consolidated_batches.setdefault(str(consolidated_action_id), []).append(
                 (batch, tuple(requirements), expected_surfaces)
             )
             continue
+        if evidence_class == "shared-view":
+            legacy_shared_batch_count += 1
         proven_runtime_surfaces = {
             item.get("surface")
             for item in (runtime_evidence or {}).get("surfaces") or []
@@ -1457,12 +1461,50 @@ def build_operator_candidates(
                 "The signed surface must be reviewed in its actual presentation context.",
             ),
         )
-    consolidated_requirement_ids: set[str] = set()
-    for consolidation_id in sorted(consolidated_batches):
-        grouped_batches = sorted(
-            consolidated_batches[consolidation_id],
-            key=lambda item: str(item[0]["actionID"]),
-        )
+    if consolidated_batches and legacy_shared_batch_count:
+        raise OperatorFlowError("visual review batch is invalid")
+    source_batches = sorted(
+        (
+            item
+            for grouped_batches in consolidated_batches.values()
+            for item in grouped_batches
+        ),
+        key=lambda item: str(item[0]["actionID"]),
+    )
+    expected_groups: list[list[tuple[dict[str, Any], tuple[dict[str, Any], ...], tuple[str, ...]]]] = []
+    for source_batch in source_batches:
+        if (
+            not expected_groups
+            or sum(item[0]["estimateMinutes"] for item in expected_groups[-1])
+            + source_batch[0]["estimateMinutes"]
+            > MAXIMUM_CONSOLIDATED_VISUAL_REVIEW_MINUTES
+        ):
+            expected_groups.append([])
+        expected_groups[-1].append(source_batch)
+    ready_shared_requirement_ids = {
+        item.get("id")
+        for item in visual_approvals.get("requirements") or []
+        if isinstance(item, dict)
+        and item.get("evidenceClass") == "shared-view"
+        and item.get("state") == "ready"
+        and isinstance(item.get("id"), str)
+    }
+    grouped_requirement_ids = {
+        requirement.get("id")
+        for _, requirements, _ in source_batches
+        for requirement in requirements
+    }
+    if consolidated_batches and grouped_requirement_ids != ready_shared_requirement_ids:
+        raise OperatorFlowError("visual review batch is invalid")
+    for index, grouped_batches in enumerate(expected_groups, start=1):
+        expected_action_id = "review.coordinator.shared-view"
+        if len(expected_groups) > 1:
+            expected_action_id = f"{expected_action_id}.part-{index}"
+        if any(
+            batch.get("consolidatedActionID") != expected_action_id
+            for batch, _, _ in grouped_batches
+        ):
+            raise OperatorFlowError("visual review batch is invalid")
         grouped_requirements = tuple(
             requirement
             for _, requirements, _ in grouped_batches
@@ -1471,27 +1513,11 @@ def build_operator_candidates(
         requirement_ids = tuple(
             requirement.get("id") for requirement in grouped_requirements
         )
-        manifest_values = tuple(
-            requirement.get("manifestID") for requirement in grouped_requirements
-        )
         if (
             len(requirement_ids) != len(set(requirement_ids))
             or any(not isinstance(requirement_id, str) for requirement_id in requirement_ids)
-            or consolidated_requirement_ids.intersection(requirement_ids)
-            or any(not _is_sha256(manifest_id) for manifest_id in manifest_values)
+            or any(requirement.get("state") != "ready" for requirement in grouped_requirements)
         ):
-            raise OperatorFlowError("visual review batch is invalid")
-        manifest_ids = set(manifest_values)
-        if len(manifest_ids) != 1:
-            raise OperatorFlowError("visual review batch is invalid")
-        try:
-            expected_consolidation_id = shared_view_review_consolidation_id(
-                next(iter(manifest_ids)),
-                requirement_ids,
-            )
-        except VisualApprovalError as error:
-            raise OperatorFlowError("visual review batch is invalid") from error
-        if consolidation_id != expected_consolidation_id:
             raise OperatorFlowError("visual review batch is invalid")
         estimate_minutes = sum(
             batch["estimateMinutes"] for batch, _, _ in grouped_batches
@@ -1513,7 +1539,7 @@ def build_operator_candidates(
                 key=_device_sort_key,
             )
         )
-        action_id = f"review.coordinator.shared-view.{consolidation_id}"
+        action_id = expected_action_id
         if action_id in candidates:
             raise OperatorFlowError("visual review batch is invalid")
         candidates[action_id] = OperatorActionCandidate(
@@ -1539,7 +1565,6 @@ def build_operator_candidates(
                 "The signed surfaces must be reviewed in their actual presentation contexts.",
             ),
         )
-        consolidated_requirement_ids.update(requirement_ids)
     _apply_shared_view_capture_automation(candidates, report)
     if report.state == "blocked" and not any(
         candidate.notification_kind == "blockedDecisionRequired"

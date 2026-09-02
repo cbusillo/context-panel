@@ -35,7 +35,6 @@ from context_panel_validation import (
     build_visual_approval_report,
     load_visual_review_plan,
     render_final_report,
-    shared_view_review_consolidation_id,
 )
 from context_panel_validation import cli as cli_module
 from context_panel_validation.runtime_evidence import RuntimeObservationSummary
@@ -634,13 +633,11 @@ class VisualApprovalTests(unittest.TestCase):
             31,
         )
         self.assertEqual(
-            {batch["consolidationID"] for batch in report["reviewBatches"]},
-            {
-                shared_view_review_consolidation_id(
-                    state.current_manifest_id,
-                    [item.id for item in requirements],
-                )
-            },
+            [batch["consolidatedActionID"] for batch in report["reviewBatches"]],
+            [
+                "review.coordinator.shared-view.part-1",
+                "review.coordinator.shared-view.part-2",
+            ],
         )
 
     def test_state_round_trips_and_contains_no_private_paths(self) -> None:
@@ -747,11 +744,8 @@ class VisualApprovalTests(unittest.TestCase):
         self.assertFalse(batch["requiresRuntime"])
         self.assertEqual(batch["runtimeSurfaces"], [])
         self.assertEqual(
-            batch["consolidationID"],
-            shared_view_review_consolidation_id(
-                state.current_manifest_id,
-                batch["requirementIDs"],
-            ),
+            batch["consolidatedActionID"],
+            "review.coordinator.shared-view",
         )
 
     def test_shared_view_batches_share_one_deterministic_consolidation_identifier(self) -> None:
@@ -774,13 +768,8 @@ class VisualApprovalTests(unittest.TestCase):
             ["review.apple-watch.shared-view", "review.iphone.shared-view"],
         )
         self.assertEqual(
-            {batch["consolidationID"] for batch in report["reviewBatches"]},
-            {
-                shared_view_review_consolidation_id(
-                    state.current_manifest_id,
-                    [item.id for item in requirements],
-                )
-            },
+            {batch["consolidatedActionID"] for batch in report["reviewBatches"]},
+            {"review.coordinator.shared-view"},
         )
 
     def test_ready_batches_partition_by_evidence_class_and_chunk_with_stable_ids(self) -> None:
@@ -852,11 +841,14 @@ class VisualApprovalTests(unittest.TestCase):
             [[], []],
         )
         self.assertEqual(
-            len({item["consolidationID"] for item in batches_by_class["shared-view"]}),
-            1,
+            [item["consolidatedActionID"] for item in batches_by_class["shared-view"]],
+            [
+                "review.coordinator.shared-view.part-1",
+                "review.coordinator.shared-view.part-2",
+            ],
         )
         self.assertTrue(
-            all("consolidationID" not in item for item in batches_by_class["os-composited-placement"])
+            all("consolidatedActionID" not in item for item in batches_by_class["os-composited-placement"])
         )
         self.assertTrue(
             all(

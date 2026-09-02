@@ -40,6 +40,7 @@ VISUAL_REVIEW_CLASSES = ("shared-view", "os-composited-placement")
 VISUAL_DECISIONS = ("approved", "rejected")
 MAXIMUM_REQUIREMENT_COUNT = 128
 MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH = 30
+MAXIMUM_CONSOLIDATED_REVIEW_MINUTES = 60
 MAXIMUM_DECISION_COUNT = 512
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 REQUIREMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
@@ -100,27 +101,6 @@ def _validated_requirement_id(value: object) -> str:
     ):
         raise VisualApprovalError("visual review requirement identifier is invalid")
     return value
-
-
-def shared_view_review_consolidation_id(
-    current_manifest_id: str,
-    requirement_ids: tuple[str, ...] | list[str],
-) -> str:
-    if not _is_sha256(current_manifest_id):
-        raise VisualApprovalError("shared-view review consolidation manifest is invalid")
-    normalized_requirement_ids = tuple(sorted(requirement_ids))
-    if (
-        not normalized_requirement_ids
-        or len(normalized_requirement_ids) != len(set(normalized_requirement_ids))
-    ):
-        raise VisualApprovalError("shared-view review consolidation requirements are invalid")
-    for requirement_id in normalized_requirement_ids:
-        _validated_requirement_id(requirement_id)
-    return _sha256(
-        "context-panel-shared-view-review-consolidation-v1",
-        current_manifest_id,
-        *normalized_requirement_ids,
-    )
 
 
 @dataclass(frozen=True)
@@ -982,19 +962,6 @@ def build_visual_approval_report(
         if item["state"] == "ready":
             key = (str(item["device"]), str(item["evidenceClass"]))
             ready_by_device_and_class.setdefault(key, []).append(item)
-    ready_shared_requirement_ids = [
-        str(item["id"])
-        for item in requirements
-        if item["state"] == "ready" and item["evidenceClass"] == "shared-view"
-    ]
-    shared_consolidation_id = (
-        shared_view_review_consolidation_id(
-            state.current_manifest_id,
-            ready_shared_requirement_ids,
-        )
-        if ready_shared_requirement_ids
-        else None
-    )
     review_batches = []
     for device, evidence_class in sorted(ready_by_device_and_class):
         items = ready_by_device_and_class[(device, evidence_class)]
@@ -1025,13 +992,32 @@ def build_visual_approval_report(
                         f"on {device}, then record each decision by requirement ID."
                     ),
                     "estimateMinutes": max(2, len(chunk) * 2),
-                    **(
-                        {"consolidationID": shared_consolidation_id}
-                        if evidence_class == "shared-view"
-                        else {}
-                    ),
                 }
             )
+    shared_batches = sorted(
+        (
+            batch
+            for batch in review_batches
+            if batch["evidenceClass"] == "shared-view"
+        ),
+        key=lambda batch: str(batch["actionID"]),
+    )
+    consolidated_groups: list[list[dict[str, Any]]] = []
+    for batch in shared_batches:
+        if (
+            not consolidated_groups
+            or sum(item["estimateMinutes"] for item in consolidated_groups[-1])
+            + batch["estimateMinutes"]
+            > MAXIMUM_CONSOLIDATED_REVIEW_MINUTES
+        ):
+            consolidated_groups.append([])
+        consolidated_groups[-1].append(batch)
+    for index, group in enumerate(consolidated_groups, start=1):
+        action_id = "review.coordinator.shared-view"
+        if len(consolidated_groups) > 1:
+            action_id = f"{action_id}.part-{index}"
+        for batch in group:
+            batch["consolidatedActionID"] = action_id
     states = {str(item["state"]) for item in requirements}
     if not requirements:
         overall_state = "not-required"

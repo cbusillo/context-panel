@@ -91,7 +91,6 @@ from .visual_approvals import (
     apply_visual_approvals_to_report,
     build_visual_approval_report,
     load_visual_review_plan,
-    shared_view_review_consolidation_id,
 )
 from .system import (
     SubprocessRunner,
@@ -191,6 +190,5 @@ __all__ = [
     "render_text",
     "render_final_report",
     "shared_view_capture_window_digest",
-    "shared_view_review_consolidation_id",
     "transition_session_state",
 ]

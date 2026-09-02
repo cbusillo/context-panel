@@ -1193,10 +1193,7 @@ class OperatorFlowTests(unittest.TestCase):
         session = self.session(surfaces)
         manifest_id = "9" * 64
         requirement_ids = ("ios.app.shared.light", "watch.app.shared.dark")
-        consolidation_id = context_panel_validation.shared_view_review_consolidation_id(
-            manifest_id,
-            requirement_ids,
-        )
+        consolidation_id = "review.coordinator.shared-view"
         report = replace(
             self.report(surfaces),
             visual_approvals={
@@ -1208,6 +1205,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "manifestID": manifest_id,
                         "surface": "ios.app",
                         "device": "iPhone",
+                        "state": "ready",
                     },
                     {
                         "id": requirement_ids[1],
@@ -1215,6 +1213,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "manifestID": manifest_id,
                         "surface": "watchos.app",
                         "device": "Apple Watch",
+                        "state": "ready",
                     },
                 ],
                 "reviewBatches": [
@@ -1228,7 +1227,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "requiresRuntime": False,
                         "instruction": "Review the iPhone shared view.",
                         "estimateMinutes": 2,
-                        "consolidationID": consolidation_id,
+                        "consolidatedActionID": consolidation_id,
                     },
                     {
                         "actionID": "review.apple-watch.shared-view",
@@ -1240,7 +1239,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "requiresRuntime": False,
                         "instruction": "Review the Watch shared view.",
                         "estimateMinutes": 2,
-                        "consolidationID": consolidation_id,
+                        "consolidatedActionID": consolidation_id,
                     },
                 ],
             },
@@ -1255,17 +1254,14 @@ class OperatorFlowTests(unittest.TestCase):
 
         action = flow["groups"][0]["actions"][0]
         self.assertEqual(flow["groups"][0]["device"], "Coordinator")
-        self.assertEqual(
-            action["id"],
-            f"review.coordinator.shared-view.{consolidation_id}",
-        )
+        self.assertEqual(action["id"], consolidation_id)
         self.assertEqual(action["surfaces"], ["ios.app", "watchos.app"])
         self.assertEqual(action["durationMinutes"], 4)
         self.assertIn("iPhone, Apple Watch", action["instruction"])
 
         historical_report = copy.deepcopy(report)
         for batch in historical_report.visual_approvals["reviewBatches"]:
-            del batch["consolidationID"]
+            del batch["consolidatedActionID"]
         _, historical_flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
             session,
             historical_report,
@@ -1393,10 +1389,7 @@ class OperatorFlowTests(unittest.TestCase):
         session = self.session(surfaces)
         manifest_id = "9" * 64
         requirement_id = "shared-view.requirement"
-        consolidation_id = context_panel_validation.shared_view_review_consolidation_id(
-            manifest_id,
-            [requirement_id],
-        )
+        consolidation_id = "review.coordinator.shared-view"
         report = replace(
             self.report(surfaces),
             visual_approvals={
@@ -1407,6 +1400,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "manifestID": manifest_id,
                         "surface": "ios.app",
                         "device": "iPhone",
+                        "state": "ready",
                     }
                 ],
                 "reviewBatches": [
@@ -1420,7 +1414,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "surfaces": ["ios.app"],
                         "runtimeSurfaces": [],
                         "requiresRuntime": False,
-                        "consolidationID": consolidation_id,
+                        "consolidatedActionID": consolidation_id,
                     }
                 ],
             },
@@ -1468,10 +1462,7 @@ class OperatorFlowTests(unittest.TestCase):
             for group in after["groups"]
             for action in group["actions"]
         }
-        self.assertIn(
-            f"review.coordinator.shared-view.{consolidation_id}",
-            after_ids,
-        )
+        self.assertIn(consolidation_id, after_ids)
         self.assertNotIn("coordinator.shared-view-capture-automation", after_ids)
 
     def test_candidate_sources_emit_complete_public_action_contracts(self):
@@ -1647,7 +1638,7 @@ class OperatorFlowTests(unittest.TestCase):
             {"runtimeSurfaces": ["macos.app"]},
             {"requiresRuntime": True},
             {"surfaces": ["watchos.app"]},
-            {"consolidationID": "not-a-sha256"},
+            {"consolidatedActionID": "not an action id"},
         )
         for update in malformed_batches:
             with self.subTest(update=update):
@@ -1660,15 +1651,12 @@ class OperatorFlowTests(unittest.TestCase):
                     flow_store.reconcile(session, malformed_visual, None, NOW)
                 self.assertFalse(self.store.operator_flow_path(session.id).exists())
 
-    def test_shared_view_consolidation_rejects_placement_and_budget_overflow(self):
+    def test_shared_view_consolidation_rejects_placement_and_invalid_chunking(self):
         surfaces = ("ios.app", "watchos.complication")
         session = self.session(surfaces)
         manifest_id = "8" * 64
         requirement_ids = ("ios.app.shared.light", "watch.complication.placement.corner")
-        consolidation_id = context_panel_validation.shared_view_review_consolidation_id(
-            manifest_id,
-            requirement_ids,
-        )
+        consolidation_id = "review.coordinator.shared-view"
         report = replace(
             self.report(surfaces),
             visual_approvals={
@@ -1680,6 +1668,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "manifestID": manifest_id,
                         "surface": "ios.app",
                         "device": "iPhone",
+                        "state": "ready",
                     },
                     {
                         "id": requirement_ids[1],
@@ -1687,6 +1676,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "manifestID": manifest_id,
                         "surface": "watchos.complication",
                         "device": "Apple Watch",
+                        "state": "ready",
                     },
                 ],
                 "reviewBatches": [
@@ -1700,7 +1690,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "requiresRuntime": False,
                         "instruction": "Review the iPhone shared view.",
                         "estimateMinutes": 31,
-                        "consolidationID": consolidation_id,
+                        "consolidatedActionID": consolidation_id,
                     },
                     {
                         "actionID": "review.apple-watch.placement",
@@ -1712,7 +1702,7 @@ class OperatorFlowTests(unittest.TestCase):
                         "requiresRuntime": True,
                         "instruction": "Review the placed Watch complication.",
                         "estimateMinutes": 31,
-                        "consolidationID": consolidation_id,
+                        "consolidatedActionID": consolidation_id,
                     },
                 ],
             },
@@ -1723,12 +1713,6 @@ class OperatorFlowTests(unittest.TestCase):
             flow_store.reconcile(session, report, None, NOW)
 
         overflow_requirement_ids = ("ios.app.shared.light", "ios.app.shared.dark")
-        overflow_consolidation_id = (
-            context_panel_validation.shared_view_review_consolidation_id(
-                manifest_id,
-                overflow_requirement_ids,
-            )
-        )
         placement_free = copy.deepcopy(report)
         placement_free.visual_approvals["requirements"] = [
             {
@@ -1737,6 +1721,7 @@ class OperatorFlowTests(unittest.TestCase):
                 "manifestID": manifest_id,
                 "surface": "ios.app",
                 "device": "iPhone",
+                "state": "ready",
             }
             for requirement_id in overflow_requirement_ids
         ]
@@ -1751,21 +1736,24 @@ class OperatorFlowTests(unittest.TestCase):
                 "requiresRuntime": False,
                 "instruction": "Review the iPhone shared view.",
                 "estimateMinutes": 31,
-                "consolidationID": overflow_consolidation_id,
+                "consolidatedActionID": f"review.coordinator.shared-view.part-{index}",
             }
             for index, requirement_id in enumerate(overflow_requirement_ids, start=1)
         ]
         inconsistent_grouping = copy.deepcopy(placement_free)
-        inconsistent_grouping.visual_approvals["reviewBatches"][1]["consolidationID"] = (
-            context_panel_validation.shared_view_review_consolidation_id(
-                manifest_id,
-                [overflow_requirement_ids[1]],
-            )
+        inconsistent_grouping.visual_approvals["reviewBatches"][1]["consolidatedActionID"] = (
+            "review.coordinator.shared-view.part-1"
         )
         with self.assertRaisesRegex(context_panel_validation.OperatorFlowError, "visual review batch"):
             flow_store.reconcile(session, inconsistent_grouping, None, NOW)
-        with self.assertRaisesRegex(context_panel_validation.OperatorFlowError, "visual review batch"):
-            flow_store.reconcile(session, placement_free, None, NOW)
+        _, chunked_flow = flow_store.reconcile(session, placement_free, None, NOW)
+        self.assertEqual(
+            [action["id"] for action in chunked_flow["groups"][0]["actions"]],
+            [
+                "review.coordinator.shared-view.part-1",
+                "review.coordinator.shared-view.part-2",
+            ],
+        )
 
     def test_operator_action_contract_reports_aggregate_budget_and_bounds_each_action(self):
         surfaces = ("macos.app",)
