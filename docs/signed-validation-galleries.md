@@ -180,10 +180,13 @@ unexpired sealed `ExpectedBuildManifest` for its layout.
 
 Successful producer runs are accepted. A completed `Ship` run may also have a
 `failure` conclusion when a later release phase failed after the sealed build
-artifact was uploaded; cancelled and timed-out runs are rejected. The target
-current commit must already contain the compatible shared-view capture command
-and planner schema because capture execution deliberately comes from that exact
-source tree rather than newer workflow tooling.
+artifact was uploaded; cancelled and timed-out runs are rejected. Capture
+orchestration runs from the reviewed workflow tooling commit so lifecycle fixes
+can qualify an older signed target. The app bundles, embedded fixture routes,
+source manifests, and sealed artifacts still come from the exact target source
+commits. The tooling executor receives the exact target policy and shared-view
+matrix paths; `policySha256` and exact plan projection independently reject any
+drift before capture.
 
 All four layouts must agree on each train's source-manifest identity. The lane
 regenerates each manifest with that source commit's own generator and sealed

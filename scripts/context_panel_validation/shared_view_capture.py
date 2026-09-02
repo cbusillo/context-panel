@@ -54,6 +54,7 @@ EMBEDDED_MANIFEST_DIGEST_DOMAIN = "context-panel-shared-view-capture-embedded-ma
 APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel"
 WATCH_APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.watch"
 SIMCTL_CATALOG_TIMEOUT = 30
+MAX_SIMULATOR_DEVICE_COUNT = 256
 SIMCTL_CREATE_TIMEOUT = 30
 SIMCTL_BOOT_TIMEOUT = 60
 SIMCTL_BOOTSTATUS_TIMEOUT = 120
@@ -1292,8 +1293,6 @@ def _matching_simulators(
     target_id: str | None = None,
 ) -> tuple[set[str] | None, str | None]:
     command = ["xcrun", "simctl", "list", "-j", "devices"]
-    if target_id is None:
-        command.append(simulator_name)
     result = _run(
         runner,
         command,
@@ -1308,8 +1307,12 @@ def _matching_simulators(
     if not isinstance(payload, dict) or not isinstance(payload.get("devices"), dict):
         return None, f"{error_base}-invalid"
     matches: set[str] = set()
+    device_count = 0
     for runtime_identifier, raw_devices in payload["devices"].items():
         if not isinstance(runtime_identifier, str) or not isinstance(raw_devices, list):
+            return None, f"{error_base}-invalid"
+        device_count += len(raw_devices)
+        if device_count > MAX_SIMULATOR_DEVICE_COUNT:
             return None, f"{error_base}-invalid"
         for raw_device in raw_devices:
             if not isinstance(raw_device, dict):
@@ -2008,11 +2011,9 @@ def execute_shared_view_capture(
     matrix_path: Path = DEFAULT_MATRIX_PATH,
     surface_policy_path: Path = DEFAULT_SURFACE_POLICY_PATH,
 ) -> tuple[int, dict[str, object]]:
-    canonical_policy_path = DEFAULT_SURFACE_POLICY_PATH.resolve()
-    if surface_policy_path.expanduser().resolve(strict=True) != canonical_policy_path:
-        raise SharedViewCaptureError("capture requires the canonical surface policy")
+    resolved_policy_path = surface_policy_path.expanduser().resolve(strict=True)
     policy_bytes = _read_bounded_file(
-        canonical_policy_path,
+        resolved_policy_path,
         "surface policy",
         MAX_JSON_FILE_BYTES,
     )
@@ -2065,7 +2066,7 @@ def execute_shared_view_capture(
             requirements_path,
             config_path,
             matrix_path,
-            canonical_policy_path,
+            resolved_policy_path,
         ),
     )
     active_runner = runner or SubprocessRunner()

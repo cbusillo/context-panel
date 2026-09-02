@@ -428,6 +428,9 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: warn", text)
         self.assertNotIn('-sdk "${sdk}"', text)
         self.assertIn("shared-view-capture-diagnostic-${{ github.run_id }}", text)
+        self.assertIn("python3 scripts/context-panel-validation.py capture-shared-view-evidence", text)
+        self.assertIn("--matrix .build/current-source/Config/ContextPanelSharedViewMatrix.json", text)
+        self.assertIn("--surface-policy .build/current-source/Config/ContextPanelSurfacePolicy.json", text)
 
 
 if __name__ == "__main__":

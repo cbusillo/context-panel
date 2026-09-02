@@ -271,9 +271,11 @@ jobs:
           set -euo pipefail
           mkdir -p .build/public
           set +e
-          python3 .build/current-source/scripts/context-panel-validation.py capture-shared-view-evidence \
+          python3 scripts/context-panel-validation.py capture-shared-view-evidence \
             --surface-comparison .build/surface-comparison.json \
             --current-manifest .build/current-source-manifest.json \
+            --matrix .build/current-source/Config/ContextPanelSharedViewMatrix.json \
+            --surface-policy .build/current-source/Config/ContextPanelSurfacePolicy.json \
             --requirements .build/visual-review-requirements.json \
             --capture-config "${RUNNER_TEMP}/context-panel-capture-config.json" \
             --artifact-root "${RUNNER_TEMP}/context-panel-shared-view-artifacts" \
