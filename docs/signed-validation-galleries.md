@@ -207,6 +207,12 @@ evidence is uploaded separately with short retention. Neither artifact upgrades
 evidence into `actual-runtime` or `os-composited-placement`; those remain
 physical signed-runtime obligations.
 
+When capture fails, the workflow may upload a separate short-retention
+`shared-view-capture-diagnostic-*` artifact containing only the public-safe
+unqualified receipt, comparison, and requirements. The diagnostic artifact is
+not evidence and never includes PNGs, simulator identifiers, bundle paths, or
+coordinator state.
+
 ## Fixture Isolation
 
 `ContextPanelValidationFixtures` is a Foundation-only target. It contains fixed
