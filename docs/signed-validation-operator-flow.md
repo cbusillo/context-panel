@@ -345,8 +345,9 @@ It retains every fresh placement requirement for the coordinator and fails
 closed if one cannot be represented. macOS and tvOS executor records remain
 `unsupported-host-mechanism`; they are never converted into shared-view,
 actual-runtime, or OS-composited-placement proof. The public hosted receipt and
-short-retention PNGs contain no coordinator state, runtime receipt, device ID,
-or private capture path.
+short-retention synthetic PNGs contain no coordinator state, runtime receipt,
+device ID, or private capture path. The artifacts upload only after the hosted
+receipt passes the shared-view-only qualification boundary.
 
 Operator state uses an additive schema-v1 sidecar under:
 

@@ -36,6 +36,7 @@ RUN_ID = re.compile(r"^[1-9][0-9]{0,18}$")
 EXPECTED_BUILD_ID = re.compile(r"^[0-9a-f]{64}$")
 MAX_ARTIFACT_FILES = 256
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
 SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos")
 UNSUPPORTED_CAPTURE_SURFACES = ("macos", "tvos")
 
@@ -61,6 +62,7 @@ def _read_json(path: Path, label: str, maximum_bytes: int = MAX_MANIFEST_BYTES) 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _require_full_sha(value: str, label: str) -> str:
@@ -83,16 +85,29 @@ def validate_artifact_manifest(
     requested_version: str,
     requested_build: str,
     run_id: str,
-    run_source_commit: str,
+    run_metadata: Path,
     artifacts_metadata: Path,
     artifact_name: str,
+    expected_workflows: tuple[str, ...],
 ) -> Path:
     """Validate the sole unexpired expected-build manifest downloaded for one run."""
     _require_full_sha(requested_source_commit, "requested source commit")
-    _require_full_sha(run_source_commit, "artifact run source commit")
     _require_run_id(run_id)
-    if requested_source_commit != run_source_commit:
-        raise WorkflowEvidenceError("artifact run source commit does not match the requested source")
+    run = _read_json(run_metadata, "artifact run metadata")
+    if (
+        run.get("id") != int(run_id)
+        or run.get("head_sha") != requested_source_commit
+        or run.get("status") != "completed"
+        or run.get("event") != "workflow_dispatch"
+        or run.get("path") not in expected_workflows
+        or run.get("conclusion")
+        not in (
+            {"success", "failure"}
+            if run.get("path") == ".github/workflows/ship.yml"
+            else {"success"}
+        )
+    ):
+        raise WorkflowEvidenceError("artifact run does not match the requested producer and source")
     if not artifact_root.is_dir() or artifact_root.is_symlink():
         raise WorkflowEvidenceError("artifact directory is invalid")
     artifact_files = list(artifact_root.rglob("*"))
@@ -100,12 +115,21 @@ def validate_artifact_manifest(
         raise WorkflowEvidenceError("artifact directory exceeds its safety bound")
     metadata = _read_json(artifacts_metadata, "artifact metadata")
     artifacts = metadata.get("artifacts")
+    if not isinstance(artifacts, list) or metadata.get("total_count") != len(artifacts):
+        raise WorkflowEvidenceError("artifact metadata is incomplete")
     matching_artifacts = [
         item
         for item in artifacts
         if isinstance(item, dict) and item.get("name") == artifact_name
-    ] if isinstance(artifacts, list) else []
-    if len(matching_artifacts) != 1 or matching_artifacts[0].get("expired") is not False:
+    ]
+    workflow_run = matching_artifacts[0].get("workflow_run") if len(matching_artifacts) == 1 else None
+    if (
+        len(matching_artifacts) != 1
+        or matching_artifacts[0].get("expired") is not False
+        or not isinstance(workflow_run, dict)
+        or workflow_run.get("id") != int(run_id)
+        or workflow_run.get("head_sha") != requested_source_commit
+    ):
         raise WorkflowEvidenceError("requested expected-build artifact is unavailable or expired")
     candidates: list[Path] = []
     for candidate in artifact_root.rglob(f"ExpectedBuildManifest-{layout}.json"):
@@ -135,6 +159,60 @@ def validate_artifact_manifest(
     ):
         raise WorkflowEvidenceError("expected-build manifest does not bind the requested identity")
     return candidates[0]
+
+
+def source_identity(
+    manifests: list[Path],
+    *,
+    requested_source_commit: str,
+    requested_version: str,
+    requested_build: str,
+) -> dict[str, Any]:
+    """Extract one source-manifest identity shared by every sealed layout."""
+    _require_full_sha(requested_source_commit, "requested source commit")
+    if not manifests:
+        raise WorkflowEvidenceError("source identity requires expected-build manifests")
+    identity: tuple[str, dict[str, Any]] | None = None
+    for path in manifests:
+        manifest = _read_json(path, "expected-build manifest")
+        source_manifest_id = manifest.get("sourceManifestId")
+        source = manifest.get("source")
+        if (
+            not isinstance(source_manifest_id, str)
+            or EXPECTED_BUILD_ID.fullmatch(source_manifest_id) is None
+            or not isinstance(source, dict)
+            or source.get("commit") != requested_source_commit
+            or source.get("marketingVersion") != requested_version
+            or source.get("buildNumber") != requested_build
+            or source.get("configuration") != "Release"
+            or source.get("treeState") != "clean"
+            or not isinstance(source.get("xcodeBuild"), str)
+            or not source["xcodeBuild"]
+        ):
+            raise WorkflowEvidenceError("expected-build source identity is invalid")
+        candidate = (source_manifest_id, source)
+        if identity is not None and candidate != identity:
+            raise WorkflowEvidenceError("expected-build layouts disagree on source identity")
+        identity = candidate
+    assert identity is not None
+    return {
+        "schemaVersion": 1,
+        "kind": SOURCE_IDENTITY_KIND,
+        "sourceManifestId": identity[0],
+        "source": identity[1],
+    }
+
+
+def validate_generated_source_manifest(manifest_path: Path, identity_path: Path) -> None:
+    manifest = _read_json(manifest_path, "generated source manifest")
+    identity = _read_json(identity_path, "source identity")
+    if (
+        identity.get("schemaVersion") != 1
+        or identity.get("kind") != SOURCE_IDENTITY_KIND
+        or manifest.get("manifestId") != identity.get("sourceManifestId")
+        or manifest.get("source") != identity.get("source")
+    ):
+        raise WorkflowEvidenceError("generated source manifest does not match sealed expected builds")
 
 
 def placement_base(comparison: dict[str, Any], policy_path: Path) -> dict[str, Any]:
@@ -173,12 +251,18 @@ def placement_base(comparison: dict[str, Any], policy_path: Path) -> dict[str, A
     }
 
 
-def combined_visual_plan(comparison_path: Path, policy_path: Path) -> dict[str, Any]:
+def combined_visual_plan(comparison_path: Path, source_root: Path) -> dict[str, Any]:
     comparison = _read_json(comparison_path, "surface comparison")
+    policy_path = source_root / "Config" / "ContextPanelSurfacePolicy.json"
     base = placement_base(comparison, policy_path)
-    matrix = load_shared_view_matrix(REPO_ROOT / "Config" / "ContextPanelSharedViewMatrix.json", load_surface_policy(policy_path))
+    policy = load_surface_policy(policy_path)
+    matrix = load_shared_view_matrix(
+        source_root / "Config" / "ContextPanelSharedViewMatrix.json", policy
+    )
     try:
-        return merge_shared_view_requirements(base, plan_shared_view_evidence(comparison, matrix, load_surface_policy(policy_path)))
+        return merge_shared_view_requirements(
+            base, plan_shared_view_evidence(comparison, matrix, policy)
+        )
     except SharedViewEvidenceError as error:
         raise WorkflowEvidenceError("combined visual plan is invalid") from error
 
@@ -197,25 +281,52 @@ def capture_config(
         if profile is None or not isinstance(bundle, str) or not Path(bundle).is_absolute():
             raise WorkflowEvidenceError("capture profile input is invalid")
         matching_runtimes = sorted(
-            str(item["identifier"])
-            for item in runtimes
-            if isinstance(item, dict)
-            and item.get("isAvailable") is True
-            and item.get("platform") in profile.runtime_platforms
-            and isinstance(item.get("identifier"), str)
+            (
+                item
+                for item in runtimes
+                if isinstance(item, dict)
+                and item.get("isAvailable") is True
+                and item.get("platform") in profile.runtime_platforms
+                and isinstance(item.get("identifier"), str)
+            ),
+            key=lambda item: tuple(
+                int(part)
+                for part in re.findall(
+                    r"\d+", str(item.get("version") or item.get("identifier"))
+                )
+            ),
+            reverse=True,
         )
-        matching_devices = sorted(
-            str(item["identifier"])
+        matching_devices = {
+            str(item["identifier"]): item
             for item in device_types
             if isinstance(item, dict)
             and item.get("productFamily") == profile.product_family
             and isinstance(item.get("identifier"), str)
-        )
-        if not matching_runtimes or not matching_devices:
+        }
+        selected_runtime: str | None = None
+        selected_device: str | None = None
+        for runtime in matching_runtimes:
+            supported_devices = runtime.get("supportedDeviceTypes")
+            if not isinstance(supported_devices, list):
+                continue
+            for supported_device in supported_devices:
+                identifier = (
+                    supported_device.get("identifier")
+                    if isinstance(supported_device, dict)
+                    else None
+                )
+                if isinstance(identifier, str) and identifier in matching_devices:
+                    selected_runtime = str(runtime["identifier"])
+                    selected_device = identifier
+                    break
+            if selected_device is not None:
+                break
+        if selected_runtime is None or selected_device is None:
             raise WorkflowEvidenceError(f"no available simulator profile for {name}")
         output[name] = {
-            "runtimeIdentifier": matching_runtimes[0],
-            "deviceTypeIdentifier": matching_devices[0],
+            "runtimeIdentifier": selected_runtime,
+            "deviceTypeIdentifier": selected_device,
             "appBundle": bundle,
         }
     return {"schemaVersion": CAPTURE_CONFIG_SCHEMA_VERSION, "kind": CAPTURE_CONFIG_KIND, "profiles": output}
@@ -237,8 +348,10 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
     captures = receipt.get("captures")
     if not expected or not isinstance(captures, list):
         raise WorkflowEvidenceError("capture receipt requirements are invalid")
-    actual = {item.get("requirementID"): item for item in captures if isinstance(item, dict)}
-    if set(actual) != set(expected):
+    if any(not isinstance(item, dict) for item in captures):
+        raise WorkflowEvidenceError("capture receipt contains an invalid record")
+    actual = {item.get("requirementID"): item for item in captures}
+    if len(actual) != len(captures) or set(actual) != set(expected):
         raise WorkflowEvidenceError("capture receipt does not cover the complete shared-view plan")
     for requirement_id, surface in expected.items():
         capture = actual[requirement_id]
@@ -263,11 +376,22 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--version", required=True)
     validate.add_argument("--build-number", required=True)
     validate.add_argument("--run-id", required=True)
-    validate.add_argument("--run-source-commit", required=True)
+    validate.add_argument("--run-metadata", type=Path, required=True)
     validate.add_argument("--artifacts-metadata", type=Path, required=True)
     validate.add_argument("--artifact-name", required=True)
+    validate.add_argument("--expected-workflow", action="append", required=True)
+    identity = commands.add_parser("source-identity")
+    identity.add_argument("--manifest", action="append", type=Path, required=True)
+    identity.add_argument("--source-commit", required=True)
+    identity.add_argument("--version", required=True)
+    identity.add_argument("--build-number", required=True)
+    identity.add_argument("--output", type=Path, required=True)
+    generated = commands.add_parser("validate-source-manifest")
+    generated.add_argument("--manifest", type=Path, required=True)
+    generated.add_argument("--identity", type=Path, required=True)
     combine = commands.add_parser("combine-visual-plan")
     combine.add_argument("--comparison", type=Path, required=True)
+    combine.add_argument("--source-root", type=Path, required=True)
     combine.add_argument("--output", type=Path, required=True)
     config = commands.add_parser("capture-config")
     config.add_argument("--catalog", type=Path, required=True)
@@ -281,9 +405,37 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-artifact":
-            print(validate_artifact_manifest(args.artifact_root, layout=args.layout, requested_source_commit=args.source_commit, requested_version=args.version, requested_build=args.build_number, run_id=args.run_id, run_source_commit=args.run_source_commit, artifacts_metadata=args.artifacts_metadata, artifact_name=args.artifact_name))
+            print(
+                validate_artifact_manifest(
+                    args.artifact_root,
+                    layout=args.layout,
+                    requested_source_commit=args.source_commit,
+                    requested_version=args.version,
+                    requested_build=args.build_number,
+                    run_id=args.run_id,
+                    run_metadata=args.run_metadata,
+                    artifacts_metadata=args.artifacts_metadata,
+                    artifact_name=args.artifact_name,
+                    expected_workflows=tuple(args.expected_workflow),
+                )
+            )
+        elif args.command == "source-identity":
+            _write_json(
+                args.output,
+                source_identity(
+                    args.manifest,
+                    requested_source_commit=args.source_commit,
+                    requested_version=args.version,
+                    requested_build=args.build_number,
+                ),
+            )
+        elif args.command == "validate-source-manifest":
+            validate_generated_source_manifest(args.manifest, args.identity)
         elif args.command == "combine-visual-plan":
-            _write_json(args.output, combined_visual_plan(args.comparison, REPO_ROOT / "Config" / "ContextPanelSurfacePolicy.json"))
+            _write_json(
+                args.output,
+                combined_visual_plan(args.comparison, args.source_root),
+            )
         elif args.command == "capture-config":
             _write_json(args.output, capture_config(_read_json(args.catalog, "simulator catalog"), {"ios": args.ios_app, "ipados": args.ios_app, "visionos": args.visionos_app, "watchos": args.watchos_app}))
         else:
