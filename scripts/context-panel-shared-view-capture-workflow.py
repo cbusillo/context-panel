@@ -39,6 +39,12 @@ MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
 SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos")
 UNSUPPORTED_CAPTURE_SURFACES = ("macos", "tvos")
+VALID_RELEASE_WORKFLOW_EVENTS = {"workflow_dispatch", "workflow_call"}
+SEALED_RELEASE_WORKFLOWS = {
+    ".github/workflows/app-store-connect-upload.yml",
+    ".github/workflows/app-store-connect-companion-upload.yml",
+    ".github/workflows/ship.yml",
+}
 
 
 class WorkflowEvidenceError(ValueError):
@@ -77,6 +83,12 @@ def _require_run_id(value: str) -> str:
     return value
 
 
+def _normalize_workflow_path(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return value.split("@", 1)[0]
+
+
 def validate_artifact_manifest(
     artifact_root: Path,
     *,
@@ -94,16 +106,20 @@ def validate_artifact_manifest(
     _require_full_sha(requested_source_commit, "requested source commit")
     _require_run_id(run_id)
     run = _read_json(run_metadata, "artifact run metadata")
+    run_path = _normalize_workflow_path(run.get("path"))
+    expected_workflow_paths = {
+        _normalize_workflow_path(path) for path in expected_workflows
+    }
     if (
         run.get("id") != int(run_id)
         or run.get("head_sha") != requested_source_commit
         or run.get("status") != "completed"
-        or run.get("event") != "workflow_dispatch"
-        or run.get("path") not in expected_workflows
+        or run.get("event") not in VALID_RELEASE_WORKFLOW_EVENTS
+        or run_path not in expected_workflow_paths
         or run.get("conclusion")
         not in (
             {"success", "failure"}
-            if run.get("path") == ".github/workflows/ship.yml"
+            if run_path in SEALED_RELEASE_WORKFLOWS
             else {"success"}
         )
     ):

@@ -48,13 +48,14 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         *,
         workflow_path: str = ".github/workflows/app-store-connect-companion-upload.yml",
         conclusion: str = "success",
+        event: str = "workflow_dispatch",
     ) -> dict[str, Any]:
         return {
             "id": 123,
             "head_sha": SHA,
             "status": "completed",
             "conclusion": conclusion,
-            "event": "workflow_dispatch",
+            "event": event,
             "path": workflow_path,
         }
 
@@ -203,6 +204,66 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 artifact_name="candidate",
                 expected_workflows=(".github/workflows/ship.yml",),
             )
+            self.assertEqual(selected, manifest)
+
+    def test_accepts_reusable_workflow_run_with_ref_qualified_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manifest = root / "ExpectedBuildManifest-ios.json"
+            manifest.write_text(json.dumps(self.expected_manifest()))
+            run_metadata = root / "run.json"
+            run_metadata.write_text(json.dumps(self.run_metadata(
+                workflow_path=(
+                    ".github/workflows/app-store-connect-companion-upload.yml"
+                    "@refs/heads/main"
+                ),
+                event="workflow_call",
+            )))
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps(self.artifact_metadata()))
+
+            selected = workflow.validate_artifact_manifest(
+                root,
+                layout="ios",
+                requested_source_commit=SHA,
+                requested_version="2.4.6",
+                requested_build="42",
+                run_id="123",
+                run_metadata=run_metadata,
+                artifacts_metadata=metadata,
+                artifact_name="candidate",
+                expected_workflows=(
+                    ".github/workflows/app-store-connect-companion-upload.yml",
+                ),
+            )
+
+            self.assertEqual(selected, manifest)
+
+    def test_allows_completed_upload_run_after_late_workflow_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manifest = root / "ExpectedBuildManifest-ios.json"
+            manifest.write_text(json.dumps(self.expected_manifest()))
+            run_metadata = root / "run.json"
+            run_metadata.write_text(json.dumps(self.run_metadata(conclusion="failure")))
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps(self.artifact_metadata()))
+
+            selected = workflow.validate_artifact_manifest(
+                root,
+                layout="ios",
+                requested_source_commit=SHA,
+                requested_version="2.4.6",
+                requested_build="42",
+                run_id="123",
+                run_metadata=run_metadata,
+                artifacts_metadata=metadata,
+                artifact_name="candidate",
+                expected_workflows=(
+                    ".github/workflows/app-store-connect-companion-upload.yml",
+                ),
+            )
+
             self.assertEqual(selected, manifest)
 
     def test_rejects_cancelled_ship_run(self) -> None:
