@@ -102,10 +102,17 @@ def png_bytes(
     width: int = 320,
     height: int = 180,
     color: tuple[int, int, int, int] = (0x22, 0x66, 0xAA, 0xFF),
+    bit_depth: int = 8,
 ) -> bytes:
-    row = b"\x00" + bytes(color) * width
+    if bit_depth == 8:
+        pixel = bytes(color)
+    elif bit_depth == 16:
+        pixel = b"".join((component * 257).to_bytes(2, "big") for component in color)
+    else:
+        raise ValueError("unsupported test PNG bit depth")
+    row = b"\x00" + pixel * width
     return png_document(
-        (b"IHDR", png_ihdr(width, height)),
+        (b"IHDR", png_ihdr(width, height, bit_depth=bit_depth)),
         (b"IDAT", zlib.compress(row * height)),
         (b"IEND", b""),
     )
@@ -202,6 +209,7 @@ class FakeRunner:
         persist_after_delete: bool = False,
         sticky_route_until_erase: bool = False,
         xcuitest_manifest_error: str | None = None,
+        png_bit_depth: int = 8,
     ) -> None:
         self.calls: list[tuple[list[str], int]] = []
         self.catalog = catalog or simulator_catalog()
@@ -228,6 +236,7 @@ class FakeRunner:
         self.persist_after_delete = persist_after_delete
         self.sticky_route_until_erase = sticky_route_until_erase
         self.xcuitest_manifest_error = xcuitest_manifest_error
+        self.png_bit_depth = png_bit_depth
         self.device_list_calls = 0
         self.verb_call_counts: dict[str, int] = {}
         self.active_route: dict[str, str | None] = {}
@@ -431,9 +440,9 @@ class FakeRunner:
                 baseline_color = ((0x12 + count) % 256, 0x22, 0x33, 0xFF)
             elif self.settles_after_first and count == 0:
                 baseline_color = (0x12, 0x22, 0x33, 0xFF)
-            return png_bytes(color=baseline_color)
+            return png_bytes(color=baseline_color, bit_depth=self.png_bit_depth)
         if self.baseline_equal:
-            return png_bytes(color=baseline_color)
+            return png_bytes(color=baseline_color, bit_depth=self.png_bit_depth)
         if self.cross_profile_duplicates:
             color = (
                 (0x44, 0x55, 0x66, 0xFF)
@@ -454,7 +463,7 @@ class FakeRunner:
             color = ((color[0] + count + 1) % 256, color[1], color[2], color[3])
         elif self.settles_after_first and count == 0:
             color = ((color[0] + 1) % 256, color[1], color[2], color[3])
-        return png_bytes(color=color)
+        return png_bytes(color=color, bit_depth=self.png_bit_depth)
 
 
 class SharedViewCaptureTests(unittest.TestCase):
@@ -906,6 +915,17 @@ class SharedViewCaptureTests(unittest.TestCase):
             item["status"] for item in receipt["captures"]
         ])
         self.assertEqual(3, sum(args[2] == "erase" for args, _ in runner.calls))
+
+    def test_visionos_xcui_capture_accepts_16_bit_png_attachments(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+
+        exit_code, receipt = self.execute(FakeRunner(png_bit_depth=16))
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured", "captured"], [
+            item["status"] for item in receipt["captures"]
+        ])
 
     def test_visionos_cell_reset_failures_are_unknown(self) -> None:
         scenarios = (
@@ -1800,38 +1820,86 @@ class SharedViewCaptureTests(unittest.TestCase):
         ))
         self.assertEqual(minimal_snapshot.pixel_digest, _png_snapshot(rgb).pixel_digest)
 
-        rows = (bytes(range(8)), bytes(range(8, 16)))
-        filter_digests = set()
-        for filter_type in range(5):
-            previous = bytes(8)
-            filtered_rows = []
-            for row in rows:
-                encoded = bytearray()
-                for index, value in enumerate(row):
-                    left = row[index - 4] if index >= 4 else 0
-                    above = previous[index]
-                    upper_left = previous[index - 4] if index >= 4 else 0
-                    if filter_type == 1:
-                        predictor = left
-                    elif filter_type == 2:
-                        predictor = above
-                    elif filter_type == 3:
-                        predictor = (left + above) // 2
-                    elif filter_type == 4:
-                        estimate = left + above - upper_left
-                        choices = (left, above, upper_left)
-                        predictor = min(choices, key=lambda choice: (abs(estimate - choice), choices.index(choice)))
-                    else:
-                        predictor = 0
-                    encoded.append((value - predictor) & 0xFF)
-                filtered_rows.append(bytes((filter_type,)) + encoded)
-                previous = row
-            path = self.root / f"filter-{filter_type}.png"
-            path.write_bytes(document((b"IHDR", header(width=2, height=2)), (b"IDAT", zlib.compress(b"".join(filtered_rows))), (b"IEND", b"")))
-            filter_digests.add(_png_snapshot(path).pixel_digest)
-        self.assertEqual(1, len(filter_digests))
+        format_digests = []
+        for bit_depth, rows, bytes_per_pixel in (
+            (8, (bytes(range(8)), bytes(range(8, 16))), 4),
+            (16, (bytes(range(16)), bytes(range(16, 32))), 8),
+        ):
+            filter_digests = set()
+            for filter_type in range(5):
+                previous = bytes(len(rows[0]))
+                filtered_rows = []
+                for row in rows:
+                    encoded = bytearray()
+                    for index, value in enumerate(row):
+                        left = row[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+                        above = previous[index]
+                        upper_left = (
+                            previous[index - bytes_per_pixel]
+                            if index >= bytes_per_pixel
+                            else 0
+                        )
+                        if filter_type == 1:
+                            predictor = left
+                        elif filter_type == 2:
+                            predictor = above
+                        elif filter_type == 3:
+                            predictor = (left + above) // 2
+                        elif filter_type == 4:
+                            estimate = left + above - upper_left
+                            choices = (left, above, upper_left)
+                            predictor = min(
+                                choices,
+                                key=lambda choice: (
+                                    abs(estimate - choice),
+                                    choices.index(choice),
+                                ),
+                            )
+                        else:
+                            predictor = 0
+                        encoded.append((value - predictor) & 0xFF)
+                    filtered_rows.append(bytes((filter_type,)) + encoded)
+                    previous = row
+                path = self.root / f"filter-{bit_depth}-{filter_type}.png"
+                path.write_bytes(document(
+                    (b"IHDR", header(width=2, height=2, bit_depth=bit_depth)),
+                    (b"IDAT", zlib.compress(b"".join(filtered_rows))),
+                    (b"IEND", b""),
+                ))
+                filter_digests.add(_png_snapshot(path).pixel_digest)
+            self.assertEqual(1, len(filter_digests))
+            format_digests.append(next(iter(filter_digests)))
+        self.assertNotEqual(format_digests[0], format_digests[1])
+
+        rgb16 = self.root / "rgb-16.png"
+        rgb16_pixel = b"\x12\x34\x56\x78\x9a\xbc"
+        rgb16.write_bytes(document(
+            (b"IHDR", header(width=1, height=1, bit_depth=16, color_type=2)),
+            (b"IDAT", zlib.compress(b"\0" + rgb16_pixel)),
+            (b"IEND", b""),
+        ))
+        rgba16 = self.root / "rgba-16.png"
+        rgba16.write_bytes(document(
+            (b"IHDR", header(width=1, height=1, bit_depth=16)),
+            (b"IDAT", zlib.compress(b"\0" + rgb16_pixel + b"\xff\xff")),
+            (b"IEND", b""),
+        ))
+        rgba16_changed = self.root / "rgba-16-changed.png"
+        rgba16_changed.write_bytes(document(
+            (b"IHDR", header(width=1, height=1, bit_depth=16)),
+            (b"IDAT", zlib.compress(b"\0" + rgb16_pixel[:-1] + b"\xbd\xff\xff")),
+            (b"IEND", b""),
+        ))
+        self.assertEqual(
+            _png_snapshot(rgb16).pixel_digest,
+            _png_snapshot(rgba16).pixel_digest,
+        )
+        self.assertNotEqual(
+            _png_snapshot(rgba16).pixel_digest,
+            _png_snapshot(rgba16_changed).pixel_digest,
+        )
         cases = {
-            "bit-depth": document((b"IHDR", header(bit_depth=16)), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "bit-depth": document((b"IHDR", header(bit_depth=4)), (b"IDAT", valid_idat), (b"IEND", b"")),
             "huge-dimension": document((b"IHDR", header(width=16_385)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
             "huge-pixels": document((b"IHDR", header(width=8_192, height=4_097)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
             "palette": document((b"IHDR", header(color_type=3)), (b"IDAT", valid_idat), (b"IEND", b"")),

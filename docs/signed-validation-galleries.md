@@ -194,7 +194,8 @@ directory entries are also fsynced into their parents. Existing private roots
 must be owned by the invoking user. PNG validation opens a bounded regular file
 without following symlinks, validates chunk structure and CRCs, bounds decoded
 dimensions and pixel count, and rejects oversized or trailing compressed data.
-Accepted captures are non-interlaced 8-bit RGB or RGBA PNGs with only recognized
+Accepted captures are non-interlaced 8-bit or 16-bit RGB or RGBA PNGs with
+only recognized
 critical chunks; palette, higher-bit-depth, unknown-critical, and vendor-specific
 critical encodings or transparency chunks are reported as `captured-image-invalid`.
 Cleanup removes only a run whose private ownership token still matches, and a
@@ -222,12 +223,14 @@ and current target SHAs. It selects `/Applications/Xcode_26.6.app` before
 validating the runner, requires the runner's full Xcode build to match the
 current sealed source identity, and downloads every requested run into its own
 bounded directory. Each artifact must come from an allowlisted completed release
-workflow, match the requested run/source identity, and contain exactly one
-unexpired sealed `ExpectedBuildManifest` for its layout.
+workflow dispatch or reusable-workflow call, match the requested run/source
+identity after removing any API-provided workflow-path ref suffix, and contain
+exactly one unexpired sealed `ExpectedBuildManifest` for its layout.
 
-Successful producer runs are accepted. A completed `Ship` run may also have a
-`failure` conclusion when a later release phase failed after the sealed build
-artifact was uploaded; cancelled and timed-out runs are rejected. Capture
+Successful producer runs are accepted. A completed allowlisted `Ship` or App
+Store Connect upload run may also have a `failure` conclusion when a later
+release phase failed after the sealed build artifact was uploaded; cancelled
+and timed-out runs are rejected. Capture
 orchestration runs from the reviewed workflow tooling commit so lifecycle fixes
 can qualify an older signed target. The app bundles, embedded fixture routes,
 source manifests, and sealed artifacts still come from the exact target source

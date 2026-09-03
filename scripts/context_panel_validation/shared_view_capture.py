@@ -123,6 +123,7 @@ VALIDATION_PRESENTATION_TITLES = {
 }
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
+MAX_PNG_DECOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_PNG_DIMENSION = 8_192
 MAX_PNG_PIXELS = 33_554_432
 MAX_PNG_CHUNKS = 4_096
@@ -1212,11 +1213,16 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 or width > MAX_PNG_DIMENSION
                 or height > MAX_PNG_DIMENSION
                 or width * height > MAX_PNG_PIXELS
-                or bit_depth != 8
+            ):
+                raise SharedViewCaptureError("captured image is invalid")
+            if (
+                bit_depth not in {8, 16}
                 or color_type not in {2, 6}
                 or chunk_data[10:13] != b"\x00\x00\x00"
             ):
-                raise SharedViewCaptureError("captured image is invalid")
+                raise SharedViewCaptureError(
+                    "captured image is invalid: unsupported-format"
+                )
         elif chunk_type == b"IHDR":
             raise SharedViewCaptureError("captured image is invalid")
         if chunk_type == b"PLTE":
@@ -1241,8 +1247,12 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     if not saw_idat or not saw_iend or offset != len(data):
         raise SharedViewCaptureError("captured image is invalid")
     channels = 3 if color_type == 2 else 4
-    row_size = 1 + (width * channels)
+    bytes_per_sample = bit_depth // 8
+    bytes_per_pixel = channels * bytes_per_sample
+    row_size = 1 + (width * bytes_per_pixel)
     expected_size = height * row_size
+    if expected_size > MAX_PNG_DECOMPRESSED_BYTES:
+        raise SharedViewCaptureError("captured image is invalid")
     try:
         decompressor = zlib.decompressobj()
         image_data = decompressor.decompress(compressed_image, expected_size + 1)
@@ -1255,18 +1265,27 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
         or decompressor.unused_data
     ):
         raise SharedViewCaptureError("captured image is invalid")
-    prior_row = bytearray(width * channels)
+    prior_row = bytearray(width * bytes_per_pixel)
     pixel_hasher = hashlib.sha256()
-    pixel_hasher.update(b"context-panel/png-rgba8/v1\0" + width.to_bytes(4, "big") + height.to_bytes(4, "big"))
+    digest_domain = (
+        b"context-panel/png-rgba8/v1\0"
+        if bit_depth == 8
+        else b"context-panel/png-rgba16be/v1\0"
+    )
+    pixel_hasher.update(
+        digest_domain + width.to_bytes(4, "big") + height.to_bytes(4, "big")
+    )
     for row_offset in range(0, len(image_data), row_size):
         filter_type = image_data[row_offset]
         if filter_type > 4:
             raise SharedViewCaptureError("captured image is invalid")
         row = bytearray(image_data[row_offset + 1 : row_offset + row_size])
         for index, value in enumerate(row):
-            left = row[index - channels] if index >= channels else 0
+            left = row[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
             above = prior_row[index]
-            upper_left = prior_row[index - channels] if index >= channels else 0
+            upper_left = (
+                prior_row[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            )
             if filter_type == 1:
                 row[index] = (value + left) & 0xFF
             elif filter_type == 2:
@@ -1279,12 +1298,21 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 predictor = (left, above, upper_left)[distances.index(min(distances))]
                 row[index] = (value + predictor) & 0xFF
         if channels == 3:
-            rgba_row = bytearray(width * 4)
+            rgba_row = bytearray(width * 4 * bytes_per_sample)
+            source_pixel_bytes = 3 * bytes_per_sample
+            destination_pixel_bytes = 4 * bytes_per_sample
+            opaque_alpha = b"\xff" * bytes_per_sample
             for pixel_index in range(width):
-                source_index = pixel_index * 3
-                destination_index = pixel_index * 4
-                rgba_row[destination_index : destination_index + 3] = row[source_index : source_index + 3]
-                rgba_row[destination_index + 3] = 0xFF
+                source_index = pixel_index * source_pixel_bytes
+                destination_index = pixel_index * destination_pixel_bytes
+                rgba_row[
+                    destination_index : destination_index + source_pixel_bytes
+                ] = row[source_index : source_index + source_pixel_bytes]
+                rgba_row[
+                    destination_index
+                    + source_pixel_bytes : destination_index
+                    + destination_pixel_bytes
+                ] = opaque_alpha
             pixel_hasher.update(rgba_row)
         else:
             pixel_hasher.update(row)
@@ -1855,6 +1883,8 @@ def _take_visionos_ui_test_capture(
             )
         except SharedViewCaptureError as error:
             if "captured image" in str(error):
+                if "unsupported-format" in str(error):
+                    return None, None, None, "captured-image-format-unsupported"
                 return None, None, None, "captured-image-invalid"
             return None, None, None, "xcuitest-attachments-invalid"
         baseline = _stable_attachment(baseline_samples)
@@ -2754,6 +2784,8 @@ def execute_shared_view_capture(
     published_artifact_paths: dict[str, Path] = {}
     owns_run_directory = False
     run_published = False
+    captures: list[dict[str, object]] = []
+    receipt: dict[str, object] = {}
     try:
         try:
             ownership_descriptor = os.open(
