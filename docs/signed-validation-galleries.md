@@ -117,7 +117,7 @@ manifest, embedded manifest, and captured-surface identity, then copies the app
 to a private run-scoped snapshot. It hashes paths, file types, modes, and bytes,
 installs only that snapshot, and verifies the installed simulator container
 against the same identity except for installation-induced file-mode changes
-before capture. Baseline and routed images may use up to four bounded samples to
+before capture. Baseline and routed images may use up to six bounded samples to
 settle, but evidence is accepted only after two consecutive samples have exactly
 the same pixel digest. Exhausted convergence remains `baseline-unstable` or
 `capture-unstable`; no tolerance or partial evidence is introduced.

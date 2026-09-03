@@ -60,7 +60,7 @@ SIMCTL_BOOT_TIMEOUT = 60
 SIMCTL_BOOTSTATUS_TIMEOUT = 120
 SIMCTL_INSTALL_TIMEOUT = 120
 SIMCTL_VISIONOS_INSTALL_TIMEOUT = 300
-SIMCTL_CONTAINER_TIMEOUT = 30
+SIMCTL_CONTAINER_TIMEOUT = 120
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
 SIMCTL_OPENURL_TIMEOUT = 30
@@ -68,10 +68,11 @@ SIMCTL_LAUNCH_TIMEOUT = 60
 SIMCTL_VISIONOS_LAUNCH_TIMEOUT = 300
 SIMCTL_VISIONOS_SHUTDOWN_TIMEOUT = 60
 SIMCTL_VISIONOS_ERASE_TIMEOUT = 300
+SIMCTL_VISIONOS_BOOTSTATUS_TIMEOUT = 300
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 3.0
-MAX_STABILITY_SAMPLE_COUNT = 4
+MAX_STABILITY_SAMPLE_COUNT = 6
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
 MAX_PNG_DIMENSION = 8_192
@@ -1679,7 +1680,7 @@ def _reset_visionos_cell(
         ),
         (
             ["xcrun", "simctl", "bootstatus", simulator_id, "-b"],
-            SIMCTL_BOOTSTATUS_TIMEOUT,
+            SIMCTL_VISIONOS_BOOTSTATUS_TIMEOUT,
             "simctl-visionos-cell-bootstatus",
         ),
         (
@@ -1792,9 +1793,14 @@ def _capture_profile(
         if profile.name == "visionos"
         else SIMCTL_INSTALL_TIMEOUT
     )
+    bootstatus_timeout = (
+        SIMCTL_VISIONOS_BOOTSTATUS_TIMEOUT
+        if profile.name == "visionos"
+        else SIMCTL_BOOTSTATUS_TIMEOUT
+    )
     prerequisites = (
         ("boot", SIMCTL_BOOT_TIMEOUT, "simctl-boot"),
-        ("bootstatus", SIMCTL_BOOTSTATUS_TIMEOUT, "simctl-bootstatus"),
+        ("bootstatus", bootstatus_timeout, "simctl-bootstatus"),
         ("install", install_timeout, "simctl-install"),
     )
     if lifecycle_error is None and simulator_id is not None:
