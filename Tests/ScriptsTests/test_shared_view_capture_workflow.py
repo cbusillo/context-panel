@@ -375,7 +375,16 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm", "productFamily": "Apple Watch"},
             ],
         }
-        config = workflow.capture_config(catalog, {"ios": "/tmp/i.app", "ipados": "/tmp/i.app", "visionos": "/tmp/v.app", "watchos": "/tmp/w.app"})
+        config = workflow.capture_config(
+            catalog,
+            {
+                "ios": "/tmp/i.app",
+                "ipados": "/tmp/i.app",
+                "visionos": "/tmp/v.app",
+                "watchos": "/tmp/w.app",
+            },
+            "/tmp/visionos.xctestrun",
+        )
         self.assertEqual(set(config["profiles"]), {"ios", "ipados", "visionos", "watchos"})
         self.assertEqual(
             config["profiles"]["ios"]["runtimeIdentifier"],
@@ -385,10 +394,23 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
             config["profiles"]["ios"]["deviceTypeIdentifier"],
             "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
         )
+        self.assertEqual(
+            config["profiles"]["visionos"]["uiTestRun"],
+            "/tmp/visionos.xctestrun",
+        )
 
     def test_capture_config_fails_without_a_required_device_family(self) -> None:
         with self.assertRaises(workflow.WorkflowEvidenceError):
-            workflow.capture_config({"runtimes": [], "devicetypes": []}, {"ios": "/tmp/i.app", "ipados": "/tmp/i.app", "visionos": "/tmp/v.app", "watchos": "/tmp/w.app"})
+            workflow.capture_config(
+                {"runtimes": [], "devicetypes": []},
+                {
+                    "ios": "/tmp/i.app",
+                    "ipados": "/tmp/i.app",
+                    "visionos": "/tmp/v.app",
+                    "watchos": "/tmp/w.app",
+                },
+                "/tmp/visionos.xctestrun",
+            )
 
     def test_receipt_qualification_accepts_only_supported_captures_and_explicit_unsupported_hosts(self) -> None:
         requirements = {
@@ -428,6 +450,10 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: warn", text)
         self.assertNotIn('-sdk "${sdk}"', text)
         self.assertIn("shared-view-capture-diagnostic-${{ github.run_id }}", text)
+        self.assertIn("ContextPanelSharedViewCaptureUITests.yml", text)
+        self.assertIn("ContextPanelCompanionSharedViewCaptureUITests", text)
+        self.assertIn("build-for-testing", text)
+        self.assertIn("--visionos-ui-test-run", text)
         self.assertIn("python3 scripts/context-panel-validation.py capture-shared-view-evidence", text)
         self.assertIn("--matrix .build/current-source/Config/ContextPanelSharedViewMatrix.json", text)
         self.assertIn("--surface-policy .build/current-source/Config/ContextPanelSurfacePolicy.json", text)

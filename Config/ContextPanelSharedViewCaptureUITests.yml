@@ -1,0 +1,28 @@
+---
+name: ContextPanel
+include:
+  - ${CONTEXT_PANEL_SHARED_VIEW_SOURCE_ROOT}/project.yml
+targets:
+  ContextPanelCompanionSharedViewCaptureUITests:
+    type: bundle.ui-testing
+    platform: visionOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: ${CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE}
+    dependencies:
+      - target: ContextPanelCompanion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: >-
+          com.shinycomputers.contextpanel.shared-view-capture-ui-tests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: ContextPanelCompanion
+schemes:
+  ContextPanelCompanionSharedViewCaptureUITests:
+    build:
+      targets:
+        ContextPanelCompanion: all
+        ContextPanelCompanionSharedViewCaptureUITests: [test]
+    test:
+      targets:
+        - ContextPanelCompanionSharedViewCaptureUITests

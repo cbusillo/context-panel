@@ -41,7 +41,9 @@
       "role": "support"
     }
   },
-  "manualLaneJustifications": {},
+  "manualLaneJustifications": {
+    "Tests/ContextPanelCompanionSharedViewCaptureUITests/ContextPanelCompanionSharedViewCaptureUITests.swift": "Requires an app-associated visionOS Simulator XCUITest build and the trusted shared-view evidence workflow."
+  },
   "filesByLane": {
     "fast-local-python": [
       "Tests/ScriptsTests/test_runtime_receipts.py",
@@ -110,7 +112,9 @@
       "Tests/ContextPanelCoreTests/WidgetSnapshotTests.swift"
     ],
     "release-only": [],
-    "visual-evidence": [],
+    "visual-evidence": [
+      "Tests/ContextPanelCompanionSharedViewCaptureUITests/ContextPanelCompanionSharedViewCaptureUITests.swift"
+    ],
     "actual-runtime": [],
     "support-only": [
       "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift",

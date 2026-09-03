@@ -16,6 +16,7 @@ import tempfile
 from typing import Any, cast
 import unittest
 from unittest import mock
+import uuid
 import zlib
 
 
@@ -26,6 +27,7 @@ import context_panel_validation.cli as cli_module
 import context_panel_validation.shared_view_capture as capture_module
 from context_panel_validation.models import CommandResult, EXIT_BLOCKED, EXIT_OK, EXIT_UNKNOWN
 from context_panel_validation.shared_view_capture import (
+    CAPTURE_CONFIG_SCHEMA_VERSION,
     CAPTURE_CONFIG_KIND,
     CAPTURE_RECEIPT_KIND,
     REQUIREMENTS_DIGEST_DOMAIN,
@@ -199,6 +201,7 @@ class FakeRunner:
         device_list_failure_after: int = 1,
         persist_after_delete: bool = False,
         sticky_route_until_erase: bool = False,
+        xcuitest_manifest_error: str | None = None,
     ) -> None:
         self.calls: list[tuple[list[str], int]] = []
         self.catalog = catalog or simulator_catalog()
@@ -224,12 +227,14 @@ class FakeRunner:
         self.device_list_failure_after = device_list_failure_after
         self.persist_after_delete = persist_after_delete
         self.sticky_route_until_erase = sticky_route_until_erase
+        self.xcuitest_manifest_error = xcuitest_manifest_error
         self.device_list_calls = 0
         self.verb_call_counts: dict[str, int] = {}
         self.active_route: dict[str, str | None] = {}
         self.route_screenshot_counts: dict[str, int] = {}
         self.baseline_screenshot_count = 0
         self.screenshot_destinations_absent: list[bool] = []
+        self.xcuitest_environments: list[dict[str, str]] = []
         self.created_simulator_id: str | None = None
         self.created_simulator_name: str | None = None
         self.created_device_type: str | None = None
@@ -240,7 +245,12 @@ class FakeRunner:
     def run(self, args, *, timeout, environment=None) -> CommandResult:
         del environment
         self.calls.append((args, timeout))
-        verb = args[2] if len(args) > 2 else ""
+        if args and args[0] == "xcodebuild":
+            verb = "xcodebuild"
+        elif args[:3] == ["xcrun", "xcresulttool", "export"]:
+            verb = "xcresulttool"
+        else:
+            verb = args[2] if len(args) > 2 else ""
         self.verb_call_counts[verb] = self.verb_call_counts.get(verb, 0) + 1
         verb_call = (verb, self.verb_call_counts[verb])
         if self.timeout_at_call == verb_call:
@@ -251,6 +261,81 @@ class FakeRunner:
             return CommandResult(124, "", self.private_stderr, timed_out=True)
         if self.fail_at == verb:
             return CommandResult(1, "", self.private_stderr)
+        if args and args[0] == "xcodebuild":
+            xctestrun_path = Path(args[args.index("-xctestrun") + 1])
+            with xctestrun_path.open("rb") as stream:
+                payload = plistlib.load(stream)
+            environment = payload[capture_module.VISIONOS_UI_TEST_TARGET][
+                "EnvironmentVariables"
+            ]
+            self.xcuitest_environments.append(dict(environment))
+            simulator_id = args[args.index("-destination") + 1].removeprefix("id=")
+            self.active_route[simulator_id] = environment[
+                capture_module.VISIONOS_UI_TEST_ENVIRONMENT["url"]
+            ]
+            Path(args[args.index("-resultBundlePath") + 1]).mkdir()
+            return CommandResult(0, "", "")
+        if args[:3] == ["xcrun", "xcresulttool", "export"]:
+            output_directory = Path(args[args.index("--output-path") + 1])
+            output_directory.mkdir()
+            route = self.active_route.get(self.created_simulator_id or SIMULATOR_ID)
+            attachments = []
+            for prefix in ("baseline", "routed"):
+                sample_count = (
+                    capture_module.MAX_STABILITY_SAMPLE_COUNT
+                    if self.unstable
+                    or self.baseline_unstable
+                    or self.settles_after_first
+                    or self.settles_after_samples
+                    else 2
+                )
+                for sample_index in range(1, sample_count + 1):
+                    image = self._image_for(None if prefix == "baseline" else route)
+                    if prefix == "baseline" and self.corrupt_png == "baseline":
+                        image = invalid_idat_png_bytes()
+                    elif prefix == "routed" and self.corrupt_png == "crc":
+                        corrupted = bytearray(image)
+                        corrupted[-1] ^= 0xFF
+                        image = bytes(corrupted)
+                    elif prefix == "routed" and self.corrupt_png == "truncated":
+                        image = image[:-5]
+                    elif prefix == "routed" and self.corrupt_png == "idat":
+                        image = invalid_idat_png_bytes()
+                    exported_name = f"{str(uuid.uuid4()).upper()}.png"
+                    (output_directory / exported_name).write_bytes(image)
+                    attachments.append(
+                        {
+                            "exportedFileName": exported_name,
+                            "suggestedHumanReadableName": (
+                                f"{prefix}-{sample_index}_0_{str(uuid.uuid4()).upper()}.png"
+                            ),
+                            "isAssociatedWithFailure": (
+                                self.xcuitest_manifest_error == "failed-attachment"
+                            ),
+                        }
+                    )
+            test_identifier = (
+                "wrong/test()"
+                if self.xcuitest_manifest_error == "wrong-test"
+                else (
+                    f"{capture_module.VISIONOS_UI_TEST_TARGET}/"
+                    f"{capture_module.VISIONOS_UI_TEST_METHOD}()"
+                )
+            )
+            if self.xcuitest_manifest_error == "missing-sample":
+                attachments.pop()
+            (output_directory / "manifest.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "testIdentifier": test_identifier,
+                            "testIdentifierURL": "test://context-panel/shared-view",
+                            "attachments": attachments,
+                        }
+                    ]
+                )
+            )
+            return CommandResult(0, "", "")
         if args[:5] == ["xcrun", "simctl", "list", "-j", "devices"]:
             self.device_list_calls += 1
             if (
@@ -399,6 +484,8 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.comparison_path = self.root / "comparison.json"
         self.requirements_path = self.root / "requirements.json"
         self.config_path = self.root / "capture-config.json"
+        self.vision_test_root = self.root / "vision-test-products"
+        self.vision_test_run = self.vision_test_root / "ContextPanelCompanionSharedViewCaptureUITests.xctestrun"
         self.artifact_root = self.root / "private-artifacts"
         self.receipt_path = self.root / "capture-receipt.json"
         self.sleeps: list[float] = []
@@ -537,16 +624,97 @@ class SharedViewCaptureTests(unittest.TestCase):
         return payload
 
     def write_config(self, profile_names: tuple[str, ...] = ("ios",)) -> None:
+        vision_app = self.app
+        if "visionos" in profile_names:
+            shutil.rmtree(self.vision_test_root, ignore_errors=True)
+            products = self.vision_test_root / "Release-xrsimulator"
+            products.mkdir(parents=True, exist_ok=True)
+            vision_app = products / "Context Panel.app"
+            shutil.copytree(self.app, vision_app)
+            runner_app = products / "ContextPanelCompanionSharedViewCaptureUITests-Runner.app"
+            test_bundle = (
+                runner_app
+                / "PlugIns"
+                / "ContextPanelCompanionSharedViewCaptureUITests.xctest"
+            )
+            test_bundle.mkdir(parents=True)
+            (runner_app / "Runner").write_bytes(b"ui test runner")
+            (test_bundle / "Tests").write_bytes(b"ui tests")
+            widget = products / "ContextPanelCompanionWidgetExtension.appex"
+            widget.mkdir()
+            (widget / "Widget").write_bytes(b"widget extension")
+            target_name = "ContextPanelCompanionSharedViewCaptureUITests"
+            with self.vision_test_run.open("wb") as stream:
+                plistlib.dump(
+                    {
+                        "__xctestrun_metadata__": {
+                            "FormatVersion": 1,
+                            "ContainerInfo": {
+                                "ContainerName": "ContextPanel",
+                                "SchemeName": target_name,
+                            },
+                        },
+                        target_name: {
+                            "BlueprintName": target_name,
+                            "ProductModuleName": target_name,
+                            "IsUITestBundle": True,
+                            "IsXCTRunnerHostedTestBundle": True,
+                            "EnvironmentVariables": {},
+                            "UITargetAppEnvironmentVariables": {},
+                            "UITargetAppPath": "__TESTROOT__/Release-xrsimulator/Context Panel.app",
+                            "TestHostPath": (
+                                "__TESTROOT__/Release-xrsimulator/"
+                                "ContextPanelCompanionSharedViewCaptureUITests-Runner.app"
+                            ),
+                            "TestBundlePath": (
+                                "__TESTHOST__/PlugIns/"
+                                "ContextPanelCompanionSharedViewCaptureUITests.xctest"
+                            ),
+                            "DependentProductPaths": [
+                                "__TESTROOT__/Release-xrsimulator/Context Panel.app",
+                                (
+                                    "__TESTROOT__/Release-xrsimulator/"
+                                    "ContextPanelCompanionSharedViewCaptureUITests-Runner.app"
+                                ),
+                                (
+                                    "__TESTROOT__/Release-xrsimulator/"
+                                    "ContextPanelCompanionSharedViewCaptureUITests-Runner.app/"
+                                    "PlugIns/ContextPanelCompanionSharedViewCaptureUITests.xctest"
+                                ),
+                                (
+                                    "__TESTROOT__/Release-xrsimulator/"
+                                    "ContextPanelCompanionWidgetExtension.appex"
+                                ),
+                            ],
+                        },
+                    },
+                    stream,
+                )
         profiles = {
             name: {
                 "runtimeIdentifier": RUNTIME_IDENTIFIERS[name],
                 "deviceTypeIdentifier": DEVICE_TYPE_IDENTIFIERS[name],
-                "appBundle": str(self.watch_app if name == "watchos" else self.app),
+                "appBundle": str(
+                    self.watch_app
+                    if name == "watchos"
+                    else vision_app if name == "visionos" else self.app
+                ),
+                **(
+                    {"uiTestRun": str(self.vision_test_run)}
+                    if name == "visionos"
+                    else {}
+                ),
             }
             for name in profile_names
         }
         self.config_path.write_text(
-            json.dumps({"schemaVersion": 1, "kind": CAPTURE_CONFIG_KIND, "profiles": profiles})
+            json.dumps(
+                {
+                    "schemaVersion": CAPTURE_CONFIG_SCHEMA_VERSION,
+                    "kind": CAPTURE_CONFIG_KIND,
+                    "profiles": profiles,
+                }
+            )
         )
 
     def execute(
@@ -651,11 +819,11 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([300, 300], [
             timeout for args, timeout in runner.calls if args[2] == "bootstatus"
         ])
-        self.assertEqual([120, 120], [
+        self.assertEqual([120, 120, 120, 120], [
             timeout for args, timeout in runner.calls if args[2] == "get_app_container"
         ])
 
-    def test_visionos_launches_fresh_foreground_baseline_before_each_route(self) -> None:
+    def test_visionos_uses_associated_ui_test_capture_for_each_route(self) -> None:
         self.write_plan(["visionos.app"])
         self.write_config(("visionos",))
         runner = FakeRunner()
@@ -664,22 +832,19 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         self.assertEqual(EXIT_OK, exit_code)
         commands = [args for args, _ in runner.calls]
-        baseline_launch = [
-            "xcrun",
-            "simctl",
-            "launch",
-            "--terminate-running-process",
-            SIMULATOR_ID,
-            PROFILE_BUNDLE_IDENTIFIERS["visionos"],
-        ]
-        self.assertEqual([baseline_launch, baseline_launch], [
-            args for args in commands if args[2] == "launch"
+        self.assertEqual(2, sum(args[0] == "xcodebuild" for args in commands))
+        self.assertEqual(2, sum(args[1:3] == ["xcresulttool", "export"] for args in commands))
+        self.assertEqual([600, 600], [
+            timeout for args, timeout in runner.calls if args[0] == "xcodebuild"
         ])
-        self.assertEqual([300, 300], [
-            timeout for args, timeout in runner.calls if args[2] == "launch"
+        self.assertEqual([60, 60], [
+            timeout
+            for args, timeout in runner.calls
+            if args[1:3] == ["xcresulttool", "export"]
         ])
-        self.assertEqual([3.0] * 10, self.sleeps)
+        self.assertEqual([], self.sleeps)
         self.assertFalse(any(args[2] == "terminate" for args in commands))
+        self.assertFalse(any(args[2] in {"ui", "launch", "io", "openurl"} for args in commands))
         self.assertEqual(1, sum(args[2] == "erase" for args in commands))
         erase_index = next(index for index, args in enumerate(commands) if args[2] == "erase")
         self.assertEqual(
@@ -691,7 +856,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 "install",
                 "get_app_container",
                 "list",
-                "ui",
+                "-xctestrun",
             ],
             [args[2] for args in commands[erase_index - 1 : erase_index + 7]],
         )
@@ -704,18 +869,30 @@ class SharedViewCaptureTests(unittest.TestCase):
         )
         self.assertEqual(
             [
-                "ui", "launch", "io", "io", "openurl", "io", "io",
-                "ui", "launch", "io", "io", "openurl", "io", "io",
+                (
+                    "contextpanelcompanion://validation-gallery?fixture=healthy&"
+                    "family=systemLarge&appearance=light&presentation=overview"
+                ),
+                (
+                    "contextpanelcompanion://validation-gallery?fixture=dense-accounts&"
+                    "family=systemLarge&appearance=dark&presentation=overview"
+                ),
             ],
             [
-                args[2]
-                for args in commands
-                if args[2] in {"ui", "launch", "io", "openurl", "terminate"}
+                environment[capture_module.VISIONOS_UI_TEST_ENVIRONMENT["url"]]
+                for environment in runner.xcuitest_environments
             ],
         )
         self.assertEqual(["captured", "captured"], [
             item["status"] for item in receipt["captures"]
         ])
+        self.assertEqual(["xcuitest-application-window"] * 2, [
+            item["hostMechanism"] for item in receipt["captures"]
+        ])
+        self.assertEqual(["xcuitest-gallery-route"] * 2, [
+            item["appearanceMechanism"] for item in receipt["captures"]
+        ])
+        self.assertIsNotNone(receipt["profiles"][0]["uiTestProductsSHA256"])
 
     def test_visionos_cell_reset_clears_sticky_route_state(self) -> None:
         self.write_plan(["visionos.app", "visionos.widget"])
@@ -753,7 +930,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             ("install-timeout", None, ("install", 2), "simctl-visionos-cell-install-timeout"),
             (
                 "container-failed",
-                ("get_app_container", 2),
+                ("get_app_container", 3),
                 None,
                 "simctl-app-container-failed",
             ),
@@ -794,39 +971,123 @@ class SharedViewCaptureTests(unittest.TestCase):
         ])
         self.assertTrue(any(args[2] == "erase" for args, _ in runner.calls))
 
-    def test_visionos_baseline_launch_failure_is_unknown(self) -> None:
+    def test_visionos_ui_test_failure_is_unknown(self) -> None:
         self.write_plan(["visionos.app"])
         self.write_config(("visionos",))
-        runner = FakeRunner(fail_at="launch")
+        runner = FakeRunner(fail_at="xcodebuild")
 
         exit_code, receipt = self.execute(runner)
 
         self.assertEqual(EXIT_UNKNOWN, exit_code)
         self.assert_capture_errors(
             receipt,
-            "simctl-baseline-launch-failed",
-            "simctl-baseline-launch-failed",
+            "xcuitest-capture-failed",
+            "xcuitest-capture-failed",
         )
-        self.assertEqual(["simctl-ui-appearance"] * 2, [
+        self.assertEqual(["xcuitest-gallery-route"] * 2, [
             item["appearanceMechanism"] for item in receipt["captures"]
         ])
 
-    def test_visionos_baseline_launch_timeout_is_unknown(self) -> None:
+    def test_visionos_ui_test_timeout_is_unknown(self) -> None:
         self.write_plan(["visionos.app"])
         self.write_config(("visionos",))
-        runner = FakeRunner(timeout_at="launch")
+        runner = FakeRunner(timeout_at="xcodebuild")
 
         exit_code, receipt = self.execute(runner)
 
         self.assertEqual(EXIT_UNKNOWN, exit_code)
         self.assert_capture_errors(
             receipt,
-            "simctl-baseline-launch-timeout",
-            "simctl-baseline-launch-timeout",
+            "xcuitest-capture-timeout",
+            "xcuitest-capture-timeout",
         )
-        self.assertEqual(["simctl-ui-appearance"] * 2, [
+        self.assertEqual(["xcuitest-gallery-route"] * 2, [
             item["appearanceMechanism"] for item in receipt["captures"]
         ])
+
+    def test_visionos_attachment_export_failures_are_unknown(self) -> None:
+        scenarios = (
+            (FakeRunner(fail_at="xcresulttool"), "xcresult-attachment-export-failed"),
+            (FakeRunner(timeout_at="xcresulttool"), "xcresult-attachment-export-timeout"),
+        )
+        for index, (runner, error_code) in enumerate(scenarios):
+            with self.subTest(error_code=error_code):
+                self.write_plan(["visionos.app"])
+                self.write_config(("visionos",))
+
+                exit_code, receipt = self.execute(
+                    runner,
+                    run_id=f"visionos-export-{index}",
+                    receipt_path=self.root / f"visionos-export-{index}.json",
+                )
+
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assert_capture_errors(receipt, error_code, error_code)
+
+    def test_visionos_attachment_manifest_fails_closed(self) -> None:
+        for index, manifest_error in enumerate(
+            ("wrong-test", "missing-sample", "failed-attachment")
+        ):
+            with self.subTest(manifest_error=manifest_error):
+                self.write_plan(["visionos.app"])
+                self.write_config(("visionos",))
+
+                exit_code, receipt = self.execute(
+                    FakeRunner(xcuitest_manifest_error=manifest_error),
+                    run_id=f"visionos-manifest-{index}",
+                    receipt_path=self.root / f"visionos-manifest-{index}.json",
+                )
+
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assert_capture_errors(
+                    receipt,
+                    "xcuitest-attachments-invalid",
+                    "xcuitest-attachments-invalid",
+                )
+
+    def test_visionos_attachment_stability_and_route_baseline_checks(self) -> None:
+        scenarios = (
+            (FakeRunner(baseline_unstable=True), "baseline-unstable"),
+            (FakeRunner(unstable=True), "capture-unstable"),
+            (FakeRunner(baseline_equal=True), "route-baseline-unchanged"),
+        )
+        for index, (runner, error_code) in enumerate(scenarios):
+            with self.subTest(error_code=error_code):
+                self.write_plan(["visionos.app"])
+                self.write_config(("visionos",))
+
+                exit_code, receipt = self.execute(
+                    runner,
+                    run_id=f"visionos-stability-{index}",
+                    receipt_path=self.root / f"visionos-stability-{index}.json",
+                )
+
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assert_capture_errors(receipt, error_code, error_code)
+
+    def test_visionos_attachment_stability_can_converge(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+
+        exit_code, receipt = self.execute(FakeRunner(settles_after_samples=4))
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured", "captured"], [
+            item["status"] for item in receipt["captures"]
+        ])
+
+    def test_visionos_invalid_captured_image_is_unknown(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+
+        exit_code, receipt = self.execute(FakeRunner(corrupt_png="idat"))
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(
+            receipt,
+            "captured-image-invalid",
+            "captured-image-invalid",
+        )
 
     def test_watch_profile_uses_direct_launch_without_appearance_mutation(self) -> None:
         payload = self.write_plan(["watchos.app", "watchos.complication"])
@@ -2001,6 +2262,31 @@ class SharedViewCaptureTests(unittest.TestCase):
                 capture_module, constant, 1
             ), self.assertRaises(SharedViewCaptureError):
                 load_capture_config(self.config_path)
+
+    def test_visionos_config_requires_associated_ui_test_products(self) -> None:
+        self.write_config(("visionos",))
+        profile = load_capture_config(self.config_path)["visionos"]
+        self.assertEqual(self.vision_test_run, profile.ui_test_run)
+        self.assertIsNotNone(profile.ui_test_products_sha256)
+
+        config = json.loads(self.config_path.read_text())
+        config["profiles"]["visionos"].pop("uiTestRun")
+        self.config_path.write_text(json.dumps(config))
+        with self.assertRaisesRegex(SharedViewCaptureError, "profile keys"):
+            load_capture_config(self.config_path)
+
+        self.write_config(("visionos",))
+        config = json.loads(self.config_path.read_text())
+        config["profiles"]["visionos"]["appBundle"] = str(self.app)
+        self.config_path.write_text(json.dumps(config))
+        with self.assertRaisesRegex(SharedViewCaptureError, "do not contain app bundle"):
+            load_capture_config(self.config_path)
+
+        self.write_config(("visionos",))
+        self.vision_test_run.write_text("not a plist")
+        with self.assertRaisesRegex(SharedViewCaptureError, "UI test run is invalid"):
+            load_capture_config(self.config_path)
+
     def test_snapshot(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()

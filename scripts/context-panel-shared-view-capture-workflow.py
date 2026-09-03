@@ -268,7 +268,10 @@ def combined_visual_plan(comparison_path: Path, source_root: Path) -> dict[str, 
 
 
 def capture_config(
-    catalog: dict[str, Any], bundles: dict[str, str], profiles: tuple[str, ...] = SUPPORTED_CAPTURE_SURFACES
+    catalog: dict[str, Any],
+    bundles: dict[str, str],
+    visionos_ui_test_run: str,
+    profiles: tuple[str, ...] = SUPPORTED_CAPTURE_SURFACES,
 ) -> dict[str, Any]:
     runtimes = catalog.get("runtimes")
     device_types = catalog.get("devicetypes")
@@ -329,6 +332,10 @@ def capture_config(
             "deviceTypeIdentifier": selected_device,
             "appBundle": bundle,
         }
+        if name == "visionos":
+            if not Path(visionos_ui_test_run).is_absolute():
+                raise WorkflowEvidenceError("capture visionOS UI test run is invalid")
+            output[name]["uiTestRun"] = visionos_ui_test_run
     return {"schemaVersion": CAPTURE_CONFIG_SCHEMA_VERSION, "kind": CAPTURE_CONFIG_KIND, "profiles": output}
 
 
@@ -397,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
     config.add_argument("--catalog", type=Path, required=True)
     config.add_argument("--ios-app", required=True)
     config.add_argument("--visionos-app", required=True)
+    config.add_argument("--visionos-ui-test-run", required=True)
     config.add_argument("--watchos-app", required=True)
     config.add_argument("--output", type=Path, required=True)
     qualify = commands.add_parser("qualify-receipt")
@@ -437,7 +445,19 @@ def main(argv: list[str] | None = None) -> int:
                 combined_visual_plan(args.comparison, args.source_root),
             )
         elif args.command == "capture-config":
-            _write_json(args.output, capture_config(_read_json(args.catalog, "simulator catalog"), {"ios": args.ios_app, "ipados": args.ios_app, "visionos": args.visionos_app, "watchos": args.watchos_app}))
+            _write_json(
+                args.output,
+                capture_config(
+                    _read_json(args.catalog, "simulator catalog"),
+                    {
+                        "ios": args.ios_app,
+                        "ipados": args.ios_app,
+                        "visionos": args.visionos_app,
+                        "watchos": args.watchos_app,
+                    },
+                    args.visionos_ui_test_run,
+                ),
+            )
         else:
             qualify_capture_receipt(_read_json(args.receipt, "capture receipt"), _read_json(args.requirements, "visual review requirements"))
     except WorkflowEvidenceError as error:
