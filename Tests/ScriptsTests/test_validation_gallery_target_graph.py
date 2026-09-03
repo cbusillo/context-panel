@@ -41,6 +41,13 @@ TV_TOP_SHELF_SOURCE = (
 SHARED_VIEW_EVIDENCE_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "shared_view_evidence.py"
 VALIDATION_CLI_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "cli.py"
 VALIDATION_ENTRY_POINT = REPO_ROOT / "scripts" / "context-panel-validation.py"
+SHARED_VIEW_UI_TEST_CONFIG = REPO_ROOT / "Config" / "ContextPanelSharedViewCaptureUITests.yml"
+SHARED_VIEW_UI_TEST_SOURCE = (
+    REPO_ROOT
+    / "Tests"
+    / "ContextPanelCompanionSharedViewCaptureUITests"
+    / "ContextPanelCompanionSharedViewCaptureUITests.swift"
+)
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
@@ -223,6 +230,25 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("case .validationGallery:", tv_app)
         self.assertIn("WatchValidationLaunchRequest(", watch_app)
         self.assertIn("WatchValidationLaunchView(request: launchRequest)", watch_app)
+
+    def test_visionos_capture_ui_test_is_nonshipping_and_coordinate_free(self):
+        project = (REPO_ROOT / "project.yml").read_text()
+        config = SHARED_VIEW_UI_TEST_CONFIG.read_text()
+        source = SHARED_VIEW_UI_TEST_SOURCE.read_text()
+
+        self.assertNotIn("ContextPanelCompanionSharedViewCaptureUITests", project)
+        self.assertIn("${CONTEXT_PANEL_SHARED_VIEW_SOURCE_ROOT}/project.yml", config)
+        self.assertIn("${CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE}", config)
+        self.assertIn("TEST_TARGET_NAME: ContextPanelCompanion", config)
+        self.assertIn("type: bundle.ui-testing", config)
+        self.assertIn("let app = XCUIApplication()", source)
+        self.assertIn("app.open(request.url)", source)
+        self.assertIn("galleryWindow.screenshot()", source)
+        self.assertIn("private static let maximumSampleCount = 6", source)
+        self.assertIn('named: "baseline"', source)
+        self.assertIn('named: "routed"', source)
+        self.assertNotIn(".tap()", source)
+        self.assertNotIn("coordinate(", source)
 
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()

@@ -43,7 +43,7 @@ from .system import SubprocessRunner
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CAPTURE_CONFIG_SCHEMA_VERSION = 1
+CAPTURE_CONFIG_SCHEMA_VERSION = 2
 CAPTURE_CONFIG_KIND = "context-panel-shared-view-capture-config"
 CAPTURE_RECEIPT_SCHEMA_VERSION = 1
 CAPTURE_RECEIPT_KIND = "context-panel-shared-view-capture-receipt"
@@ -71,8 +71,56 @@ SIMCTL_VISIONOS_ERASE_TIMEOUT = 300
 SIMCTL_VISIONOS_BOOTSTATUS_TIMEOUT = 300
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
+XCODEBUILD_VISIONOS_CAPTURE_TIMEOUT = 600
+XCRESULT_EXPORT_TIMEOUT = 60
 CAPTURE_SETTLE_SECONDS = 3.0
 MAX_STABILITY_SAMPLE_COUNT = 6
+VISIONOS_UI_TEST_TARGET = "ContextPanelCompanionSharedViewCaptureUITests"
+VISIONOS_UI_TEST_CLASS = "ContextPanelCompanionSharedViewCaptureUITests"
+VISIONOS_UI_TEST_METHOD = "testCaptureSharedView"
+VISIONOS_UI_TEST_IDENTIFIER = (
+    f"{VISIONOS_UI_TEST_TARGET}/{VISIONOS_UI_TEST_CLASS}/{VISIONOS_UI_TEST_METHOD}"
+)
+VISIONOS_UI_TEST_ENVIRONMENT = {
+    "url": "CONTEXT_PANEL_SHARED_VIEW_URL",
+    "fixture": "CONTEXT_PANEL_SHARED_VIEW_FIXTURE",
+    "fixture_title": "CONTEXT_PANEL_SHARED_VIEW_FIXTURE_TITLE",
+    "family": "CONTEXT_PANEL_SHARED_VIEW_FAMILY",
+    "family_title": "CONTEXT_PANEL_SHARED_VIEW_FAMILY_TITLE",
+    "appearance": "CONTEXT_PANEL_SHARED_VIEW_APPEARANCE",
+    "appearance_title": "CONTEXT_PANEL_SHARED_VIEW_APPEARANCE_TITLE",
+    "presentation": "CONTEXT_PANEL_SHARED_VIEW_PRESENTATION",
+    "presentation_title": "CONTEXT_PANEL_SHARED_VIEW_PRESENTATION_TITLE",
+}
+VALIDATION_FIXTURE_TITLES = {
+    "healthy": "Healthy portfolio",
+    "reset-visible": "Reset pressure",
+    "cache-visible": "Cache telemetry",
+    "stale": "Saved stale data",
+    "loading": "Refreshing",
+    "missing": "No configured limits",
+    "failed": "Refresh failed",
+    "dense-accounts": "Dense accounts",
+    "fit-fallback": "Fit fallback",
+}
+VALIDATION_FAMILY_TITLES = {
+    "systemSmall": "Small",
+    "systemMedium": "Medium",
+    "systemLarge": "Large",
+}
+VALIDATION_APPEARANCE_TITLES = {
+    "adaptive": "System",
+    "light": "Light",
+    "dark": "Dark",
+}
+VALIDATION_PRESENTATION_TITLES = {
+    "overview": "Overview",
+    "detail": "Detail",
+    "reconnect": "Reconnect",
+    "diagnostics": "Diagnostics",
+    "settings": "Settings",
+    "widget": "Widget",
+}
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
 MAX_PNG_DIMENSION = 8_192
@@ -128,6 +176,8 @@ class CaptureProfile:
     manifest_surfaces: frozenset[str]
     version: str
     build: str
+    ui_test_run: Path | None
+    ui_test_products_sha256: str | None
 
     def public_dict(
         self,
@@ -150,6 +200,7 @@ class CaptureProfile:
             "appContractFingerprint": self.contract_fingerprint,
             "appVersion": self.version,
             "appBuild": self.build,
+            "uiTestProductsSHA256": self.ui_test_products_sha256,
             "cleanupStatus": cleanup_status,
         }
 
@@ -319,6 +370,108 @@ def _absolute_existing_directory(path: Path, label: str) -> Path:
         raise SharedViewCaptureError(f"{label} is invalid")
     _reject_symlink_ancestors(path, label)
     return path.resolve()
+
+
+def _absolute_existing_file(path: Path, label: str, maximum_bytes: int) -> Path:
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise SharedViewCaptureError(f"{label} is invalid")
+    _reject_symlink_ancestors(path, label)
+    try:
+        file_stat = path.stat()
+    except OSError as error:
+        raise SharedViewCaptureError(f"{label} is invalid") from error
+    if not stat.S_ISREG(file_stat.st_mode) or not 0 < file_stat.st_size <= maximum_bytes:
+        raise SharedViewCaptureError(f"{label} is invalid")
+    return path.resolve()
+
+
+def _resolved_test_product_path(
+    value: object,
+    test_root: Path,
+    label: str,
+    *,
+    test_host: Path | None = None,
+) -> Path:
+    path_value = _require_string(value, label)
+    replacements = {"__TESTROOT__": str(test_root)}
+    if test_host is not None:
+        replacements["__TESTHOST__"] = str(test_host)
+    for marker, replacement in replacements.items():
+        path_value = path_value.replace(marker, replacement)
+    if "__" in path_value:
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid")
+    path = Path(path_value)
+    if not path.is_absolute() or path.is_symlink():
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid") from error
+    if resolved != test_root and test_root not in resolved.parents:
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid")
+    return resolved
+
+
+def _validate_visionos_ui_test_run(path: Path, app_bundle: Path) -> None:
+    try:
+        payload = plistlib.loads(
+            _read_bounded_file(path, "capture visionOS UI test run", MAX_PLIST_FILE_BYTES)
+        )
+    except plistlib.InvalidFileException as error:
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid") from error
+    if not isinstance(payload, dict) or set(payload) != {
+        "__xctestrun_metadata__",
+        VISIONOS_UI_TEST_TARGET,
+    }:
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid")
+    target = payload[VISIONOS_UI_TEST_TARGET]
+    if (
+        not isinstance(target, dict)
+        or target.get("BlueprintName") != VISIONOS_UI_TEST_TARGET
+        or target.get("ProductModuleName") != VISIONOS_UI_TEST_TARGET
+        or target.get("IsUITestBundle") is not True
+        or target.get("IsXCTRunnerHostedTestBundle") is not True
+        or not isinstance(target.get("EnvironmentVariables"), dict)
+        or not isinstance(target.get("UITargetAppEnvironmentVariables"), dict)
+    ):
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid")
+    test_root = path.parent
+    resolved_app = _resolved_test_product_path(
+        target.get("UITargetAppPath"),
+        test_root,
+        "capture visionOS UI target app",
+    )
+    if resolved_app != app_bundle:
+        raise SharedViewCaptureError("capture visionOS UI target app does not match app bundle")
+    test_host = _resolved_test_product_path(
+        target.get("TestHostPath"),
+        test_root,
+        "capture visionOS UI test host",
+    )
+    test_bundle = _resolved_test_product_path(
+        target.get("TestBundlePath"),
+        test_root,
+        "capture visionOS UI test bundle",
+        test_host=test_host,
+    )
+    if not test_host.is_dir() or test_host.suffix != ".app":
+        raise SharedViewCaptureError("capture visionOS UI test host is invalid")
+    if not test_bundle.is_dir() or test_bundle.suffix != ".xctest":
+        raise SharedViewCaptureError("capture visionOS UI test bundle is invalid")
+    dependent_paths = target.get("DependentProductPaths")
+    if not isinstance(dependent_paths, list) or not dependent_paths:
+        raise SharedViewCaptureError("capture visionOS UI test products are invalid")
+    resolved_dependencies = {
+        _resolved_test_product_path(
+            item,
+            test_root,
+            "capture visionOS UI test product",
+            test_host=test_host,
+        )
+        for item in dependent_paths
+    }
+    if not {app_bundle, test_host, test_bundle}.issubset(resolved_dependencies):
+        raise SharedViewCaptureError("capture visionOS UI test products are invalid")
 
 
 def _stream_sha256(path: Path, label: str) -> str:
@@ -628,11 +781,14 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
         if name not in raw_profiles:
             continue
         raw_profile = raw_profiles[name]
-        if not isinstance(raw_profile, dict) or set(raw_profile) != {
+        expected_profile_keys = {
             "runtimeIdentifier",
             "deviceTypeIdentifier",
             "appBundle",
-        }:
+        }
+        if name == "visionos":
+            expected_profile_keys.add("uiTestRun")
+        if not isinstance(raw_profile, dict) or set(raw_profile) != expected_profile_keys:
             raise SharedViewCaptureError("shared-view capture profile keys are invalid")
         app_bundle = _absolute_existing_directory(
             Path(_require_string(raw_profile["appBundle"], "capture app bundle")),
@@ -662,6 +818,24 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
             or not DEVICE_TYPE_IDENTIFIER_PATTERN.fullmatch(device_type_identifier)
         ):
             raise SharedViewCaptureError("capture simulator identifier is invalid")
+        ui_test_run: Path | None = None
+        ui_test_products_sha256: str | None = None
+        if name == "visionos":
+            ui_test_run = _absolute_existing_file(
+                Path(_require_string(raw_profile["uiTestRun"], "capture visionOS UI test run")),
+                "capture visionOS UI test run",
+                MAX_PLIST_FILE_BYTES,
+            )
+            test_root = _absolute_existing_directory(
+                ui_test_run.parent,
+                "capture visionOS UI test products",
+            )
+            if app_bundle != test_root and test_root not in app_bundle.parents:
+                raise SharedViewCaptureError(
+                    "capture visionOS UI test products do not contain app bundle"
+                )
+            _validate_visionos_ui_test_run(ui_test_run, app_bundle)
+            ui_test_products_sha256 = _bundle_sha256(test_root)
         profiles[name] = CaptureProfile(
             name=name,
             runtime_identifier=runtime_identifier,
@@ -676,6 +850,8 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
             manifest_surfaces=manifest_surfaces,
             version=version,
             build=build,
+            ui_test_run=ui_test_run,
+            ui_test_products_sha256=ui_test_products_sha256,
         )
     return profiles
 
@@ -811,6 +987,12 @@ def _reject_capture_path_overlap(
             output_path, profile.app_bundle
         ):
             raise SharedViewCaptureError("capture paths overlap an app bundle")
+        if profile.ui_test_run is not None:
+            test_root = profile.ui_test_run.parent
+            if _paths_overlap(artifact_root, test_root) or _paths_overlap(
+                output_path, test_root
+            ):
+                raise SharedViewCaptureError("capture paths overlap UI test products")
     for input_path in input_paths:
         resolved_input = input_path.expanduser().resolve(strict=True)
         if _paths_overlap(artifact_root, resolved_input) or output_path == resolved_input:
@@ -1426,6 +1608,288 @@ def _profile_catalog_metadata(
     return metadata, None
 
 
+def _visionos_ui_test_environment(requirement: CaptureRequirement) -> dict[str, str]:
+    try:
+        return {
+            VISIONOS_UI_TEST_ENVIRONMENT["url"]: _capture_url(requirement),
+            VISIONOS_UI_TEST_ENVIRONMENT["fixture"]: requirement.fixture_id,
+            VISIONOS_UI_TEST_ENVIRONMENT["fixture_title"]: VALIDATION_FIXTURE_TITLES[
+                requirement.fixture_id
+            ],
+            VISIONOS_UI_TEST_ENVIRONMENT["family"]: requirement.family,
+            VISIONOS_UI_TEST_ENVIRONMENT["family_title"]: VALIDATION_FAMILY_TITLES[
+                requirement.family
+            ],
+            VISIONOS_UI_TEST_ENVIRONMENT["appearance"]: requirement.appearance,
+            VISIONOS_UI_TEST_ENVIRONMENT["appearance_title"]: (
+                VALIDATION_APPEARANCE_TITLES[requirement.appearance]
+            ),
+            VISIONOS_UI_TEST_ENVIRONMENT["presentation"]: requirement.presentation,
+            VISIONOS_UI_TEST_ENVIRONMENT["presentation_title"]: (
+                VALIDATION_PRESENTATION_TITLES[requirement.presentation]
+            ),
+        }
+    except KeyError as error:
+        raise SharedViewCaptureError("capture visionOS UI test selector is invalid") from error
+
+
+def _write_visionos_ui_test_run(
+    profile: CaptureProfile,
+    requirement: CaptureRequirement,
+) -> Path:
+    if profile.ui_test_run is None:
+        raise SharedViewCaptureError("capture visionOS UI test run is unavailable")
+    try:
+        payload = plistlib.loads(
+            _read_bounded_file(
+                profile.ui_test_run,
+                "capture visionOS UI test run",
+                MAX_PLIST_FILE_BYTES,
+            )
+        )
+    except plistlib.InvalidFileException as error:
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid") from error
+    target = payload.get(VISIONOS_UI_TEST_TARGET) if isinstance(payload, dict) else None
+    if not isinstance(target, dict) or not isinstance(target.get("EnvironmentVariables"), dict):
+        raise SharedViewCaptureError("capture visionOS UI test run is invalid")
+    environment = dict(target["EnvironmentVariables"])
+    requested_environment = _visionos_ui_test_environment(requirement)
+    if set(environment).intersection(requested_environment):
+        raise SharedViewCaptureError("capture visionOS UI test environment is invalid")
+    environment.update(requested_environment)
+    target["EnvironmentVariables"] = environment
+    target["SystemAttachmentLifetime"] = "deleteOnSuccess"
+    target["UserAttachmentLifetime"] = "keepAlways"
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{requirement.requirement_id}.",
+        suffix=".xctestrun",
+        dir=profile.ui_test_run.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            plistlib.dump(payload, stream, fmt=plistlib.FMT_BINARY, sort_keys=True)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o600)
+            os.fsync(stream.fileno())
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    return temporary_path
+
+
+def _temporary_absent_path(directory: Path, prefix: str, suffix: str) -> Path:
+    descriptor, name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=directory)
+    os.close(descriptor)
+    path = Path(name)
+    path.unlink()
+    return path
+
+
+def _load_attachment_manifest(path: Path) -> list[dict[str, Any]]:
+    data = _read_bounded_file(path, "visionOS UI test attachment manifest", MAX_JSON_FILE_BYTES)
+    try:
+        payload = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise SharedViewCaptureError("visionOS UI test attachment manifest is invalid") from error
+    if not isinstance(payload, list):
+        raise SharedViewCaptureError("visionOS UI test attachment manifest is invalid")
+    return payload
+
+
+def _attachment_sample_name(value: object) -> tuple[str, int] | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(
+        r"(baseline|routed)-([1-6])_0_[0-9A-Fa-f-]{36}\.png",
+        value,
+    )
+    if match is None:
+        return None
+    return match.group(1), int(match.group(2))
+
+
+def _visionos_ui_test_attachments(
+    attachment_directory: Path,
+) -> tuple[list[tuple[PNGSnapshot, Path]], list[tuple[PNGSnapshot, Path]]]:
+    payload = _load_attachment_manifest(attachment_directory / "manifest.json")
+    expected_test_identifier = f"{VISIONOS_UI_TEST_TARGET}/{VISIONOS_UI_TEST_METHOD}()"
+    if len(payload) != 1 or not isinstance(payload[0], dict):
+        raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+    record = payload[0]
+    if record.get("testIdentifier") != expected_test_identifier:
+        raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+    raw_attachments = record.get("attachments")
+    if not isinstance(raw_attachments, list) or not 4 <= len(raw_attachments) <= 12:
+        raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+    samples: dict[str, dict[int, tuple[PNGSnapshot, Path]]] = {
+        "baseline": {},
+        "routed": {},
+    }
+    for attachment in raw_attachments:
+        if not isinstance(attachment, dict):
+            raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+        sample = _attachment_sample_name(attachment.get("suggestedHumanReadableName"))
+        exported_name = attachment.get("exportedFileName")
+        if (
+            sample is None
+            or not isinstance(exported_name, str)
+            or Path(exported_name).name != exported_name
+            or not exported_name.endswith(".png")
+            or attachment.get("isAssociatedWithFailure") is not False
+        ):
+            raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+        prefix, sample_index = sample
+        if sample_index in samples[prefix]:
+            raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+        image_path = attachment_directory / exported_name
+        try:
+            snapshot = _png_snapshot(image_path)
+        except (SharedViewCaptureError, MemoryError) as error:
+            raise SharedViewCaptureError("visionOS UI test captured image is invalid") from error
+        samples[prefix][sample_index] = (snapshot, image_path)
+    ordered: dict[str, list[tuple[PNGSnapshot, Path]]] = {}
+    for prefix, indexed_samples in samples.items():
+        indices = sorted(indexed_samples)
+        if not 2 <= len(indices) <= MAX_STABILITY_SAMPLE_COUNT or indices != list(
+            range(1, len(indices) + 1)
+        ):
+            raise SharedViewCaptureError("visionOS UI test attachments are invalid")
+        ordered[prefix] = [indexed_samples[index] for index in indices]
+    return ordered["baseline"], ordered["routed"]
+
+
+def _stable_attachment(
+    samples: list[tuple[PNGSnapshot, Path]],
+) -> tuple[PNGSnapshot, Path] | None:
+    for previous, current in zip(samples, samples[1:]):
+        if previous[0].pixel_digest == current[0].pixel_digest:
+            return current
+    return None
+
+
+def _copy_private_png(source: Path, directory: Path, prefix: str) -> tuple[PNGSnapshot, Path]:
+    data = _read_bounded_file(source, "visionOS UI test captured image", MAX_PNG_FILE_BYTES)
+    descriptor, name = tempfile.mkstemp(prefix=prefix, suffix=".png", dir=directory)
+    destination = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o600)
+            os.fsync(stream.fileno())
+        snapshot = _png_snapshot(destination)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+    return snapshot, destination
+
+
+def _take_visionos_ui_test_capture(
+    runner: Runner,
+    simulator_id: str,
+    profile: CaptureProfile,
+    requirement: CaptureRequirement,
+    artifact_directory: Path,
+) -> tuple[PNGSnapshot | None, PNGSnapshot | None, Path | None, str | None]:
+    if profile.ui_test_run is None or profile.ui_test_products_sha256 is None:
+        return None, None, None, "xcuitest-products-unavailable"
+    xctestrun_path: Path | None = None
+    result_bundle = _temporary_absent_path(
+        artifact_directory,
+        f".{requirement.requirement_id}.",
+        ".xcresult",
+    )
+    attachment_directory = _temporary_absent_path(
+        artifact_directory,
+        f".{requirement.requirement_id}.attachments.",
+        "",
+    )
+    try:
+        prepared_test_run = _write_visionos_ui_test_run(profile, requirement)
+        xctestrun_path = prepared_test_run
+        executed = _run(
+            runner,
+            [
+                "xcodebuild",
+                "test-without-building",
+                "-xctestrun",
+                str(prepared_test_run),
+                "-destination",
+                f"id={simulator_id}",
+                "-parallel-testing-enabled",
+                "NO",
+                "-resultBundlePath",
+                str(result_bundle),
+                f"-only-testing:{VISIONOS_UI_TEST_IDENTIFIER}",
+            ],
+            XCODEBUILD_VISIONOS_CAPTURE_TIMEOUT,
+        )
+        if executed.returncode != 0 or executed.timed_out:
+            return None, None, None, _command_error_code(executed, "xcuitest-capture")
+        installed_app_error = _installed_app_error(runner, simulator_id, profile)
+        if installed_app_error is not None:
+            return None, None, None, installed_app_error
+        exported = _run(
+            runner,
+            [
+                "xcrun",
+                "xcresulttool",
+                "export",
+                "attachments",
+                "--path",
+                str(result_bundle),
+                "--output-path",
+                str(attachment_directory),
+            ],
+            XCRESULT_EXPORT_TIMEOUT,
+        )
+        if exported.returncode != 0 or exported.timed_out:
+            return None, None, None, _command_error_code(
+                exported,
+                "xcresult-attachment-export",
+            )
+        try:
+            baseline_samples, routed_samples = _visionos_ui_test_attachments(
+                attachment_directory
+            )
+        except SharedViewCaptureError as error:
+            if "captured image" in str(error):
+                return None, None, None, "captured-image-invalid"
+            return None, None, None, "xcuitest-attachments-invalid"
+        baseline = _stable_attachment(baseline_samples)
+        if baseline is None:
+            return None, None, None, "baseline-unstable"
+        routed = _stable_attachment(routed_samples)
+        if routed is None:
+            return None, None, None, "capture-unstable"
+        stable_snapshot, stable_path = _copy_private_png(
+            routed[1],
+            artifact_directory,
+            f".{requirement.requirement_id}.capture.",
+        )
+        if stable_snapshot.pixel_digest != routed[0].pixel_digest:
+            stable_path.unlink(missing_ok=True)
+            return None, None, None, "captured-image-invalid"
+        return baseline[0], stable_snapshot, stable_path, None
+    except (OSError, SharedViewCaptureError):
+        return None, None, None, "xcuitest-capture-input-invalid"
+    finally:
+        if xctestrun_path is not None:
+            xctestrun_path.unlink(missing_ok=True)
+        shutil.rmtree(result_bundle, ignore_errors=True)
+        shutil.rmtree(attachment_directory, ignore_errors=True)
+        try:
+            products_unchanged = (
+                _bundle_sha256(profile.ui_test_run.parent)
+                == profile.ui_test_products_sha256
+            )
+        except SharedViewCaptureError:
+            products_unchanged = False
+        if not products_unchanged:
+            raise SharedViewCaptureError("capture UI test products changed")
+
+
 def _take_screenshot(
     runner: Runner,
     simulator_id: str,
@@ -1577,8 +2041,7 @@ def _profile_source_identity(profile: CaptureProfile) -> tuple[object, ...]:
     )
 
 
-def _snapshot_profile(profile: CaptureProfile, directory: Path) -> CaptureProfile:
-    snapshot_path = directory / f".{profile.name}-install.app"
+def _copy_snapshot_directory(source: Path, destination: Path) -> None:
     total_bytes = entries = 0
 
     def bounded_entries(_directory: str, names: list[str]) -> list[str]:
@@ -1588,11 +2051,11 @@ def _snapshot_profile(profile: CaptureProfile, directory: Path) -> CaptureProfil
             raise SharedViewCaptureError("capture app snapshot failed")
         return []
 
-    def bounded_copy(source: str, destination: str) -> str:
+    def bounded_copy(copy_source: str, copy_destination: str) -> str:
         nonlocal total_bytes
         with os.fdopen(
-            os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb"
-        ) as input_stream, open(destination, "xb") as output_stream:
+            os.open(copy_source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb"
+        ) as input_stream, open(copy_destination, "xb") as output_stream:
             source_stat = os.fstat(input_stream.fileno())
             total_bytes += source_stat.st_size
             if (
@@ -1611,22 +2074,54 @@ def _snapshot_profile(profile: CaptureProfile, directory: Path) -> CaptureProfil
             if input_stream.read(1):
                 raise SharedViewCaptureError("capture app snapshot failed")
             os.fchmod(output_stream.fileno(), stat.S_IMODE(source_stat.st_mode))
-        return destination
+        return copy_destination
 
     try:
         shutil.copytree(
-            profile.app_bundle,
-            snapshot_path,
+            source,
+            destination,
             symlinks=True,
             ignore=bounded_entries,
             copy_function=bounded_copy,
         )
     except (OSError, shutil.Error) as error:
-        raise SharedViewCaptureError("capture app snapshot failed") from error
+        raise SharedViewCaptureError("capture input snapshot failed") from error
+
+
+def _snapshot_profile(
+    profile: CaptureProfile,
+    directory: Path,
+) -> tuple[CaptureProfile, Path]:
+    if profile.ui_test_run is not None:
+        source_root = profile.ui_test_run.parent
+        snapshot_root = directory / f".{profile.name}-test-products"
+        try:
+            app_relative_path = profile.app_bundle.relative_to(source_root)
+            run_relative_path = profile.ui_test_run.relative_to(source_root)
+        except ValueError as error:
+            raise SharedViewCaptureError("capture visionOS UI test products are invalid") from error
+        _copy_snapshot_directory(source_root, snapshot_root)
+        snapshot = replace(
+            profile,
+            app_bundle=snapshot_root / app_relative_path,
+            ui_test_run=snapshot_root / run_relative_path,
+        )
+        if (
+            profile.ui_test_products_sha256 is None
+            or _bundle_sha256(snapshot_root) != profile.ui_test_products_sha256
+        ):
+            raise SharedViewCaptureError("capture UI test snapshot identity changed")
+        if _app_metadata(snapshot.app_bundle, profile.name) != _profile_source_identity(profile):
+            raise SharedViewCaptureError("capture app snapshot identity changed")
+        _validate_visionos_ui_test_run(snapshot.ui_test_run, snapshot.app_bundle)
+        return snapshot, snapshot_root
+
+    snapshot_path = directory / f".{profile.name}-install.app"
+    _copy_snapshot_directory(profile.app_bundle, snapshot_path)
     snapshot = replace(profile, app_bundle=snapshot_path)
     if _app_metadata(snapshot_path, profile.name) != _profile_source_identity(profile):
         raise SharedViewCaptureError("capture app snapshot identity changed")
-    return snapshot
+    return snapshot, snapshot_path
 
 
 def _installed_app_error(runner: Runner, simulator_id: str, profile: CaptureProfile) -> str | None:
@@ -1830,7 +2325,15 @@ def _capture_profile(
     elif simulator_id is not None:
         capture_profile = _simulator_capture_profile(profile.name)
         for index, requirement in enumerate(requirements):
+            host_mechanism = (
+                "xcuitest-application-window"
+                if profile.name == "visionos"
+                else "simctl-gallery"
+            )
             appearance_mechanism: str | None = None
+            route_baseline: PNGSnapshot | None = None
+            stable_snapshot: PNGSnapshot | None = None
+            stable_path: Path | None = None
             if index > 0:
                 if profile.name == "visionos":
                     reset_error = _reset_visionos_cell(
@@ -1844,7 +2347,7 @@ def _capture_profile(
                             requirement,
                             status="unknown",
                             captured_at=now(),
-                            host_mechanism="simctl-gallery",
+                            host_mechanism=host_mechanism,
                             appearance_mechanism=None,
                             error_code=reset_error,
                         )
@@ -1861,7 +2364,36 @@ def _capture_profile(
                         ],
                         SIMCTL_TERMINATE_TIMEOUT,
                     )
-            if capture_profile.applies_simulator_appearance:
+            if profile.name == "visionos":
+                (
+                    route_baseline,
+                    stable_snapshot,
+                    stable_path,
+                    capture_error,
+                ) = _take_visionos_ui_test_capture(
+                    runner,
+                    simulator_id,
+                    profile,
+                    requirement,
+                    artifact_directory,
+                )
+                appearance_mechanism = "xcuitest-gallery-route"
+                if (
+                    capture_error is not None
+                    or route_baseline is None
+                    or stable_snapshot is None
+                    or stable_path is None
+                ):
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism=host_mechanism,
+                        appearance_mechanism=appearance_mechanism,
+                        error_code=capture_error,
+                    )
+                    continue
+            elif capture_profile.applies_simulator_appearance:
                 simulator_appearance = (
                     requirement.appearance
                     if requirement.appearance in {"light", "dark"}
@@ -1877,115 +2409,91 @@ def _capture_profile(
                         requirement,
                         status="unknown",
                         captured_at=now(),
-                        host_mechanism="simctl-gallery",
+                        host_mechanism=host_mechanism,
                         appearance_mechanism=None,
                         error_code=_command_error_code(appearance, "simctl-ui"),
                     )
                     continue
                 appearance_mechanism = "simctl-ui-appearance"
                 sleeper(CAPTURE_SETTLE_SECONDS)
-            if profile.name == "visionos":
-                baseline_launch = _run(
+            if profile.name != "visionos":
+                route_baseline, route_baseline_path, baseline_error = _take_stable_screenshot(
                     runner,
-                    [
-                        "xcrun",
-                        "simctl",
-                        "launch",
-                        "--terminate-running-process",
-                        simulator_id,
-                        profile.bundle_identifier,
-                    ],
-                    SIMCTL_VISIONOS_LAUNCH_TIMEOUT,
+                    simulator_id,
+                    artifact_directory,
+                    f".{requirement.requirement_id}.baseline.",
+                    "simctl-baseline-screenshot",
+                    "simulator-baseline-image-invalid",
+                    "baseline-unstable",
+                    sleeper,
                 )
-                if baseline_launch.returncode != 0 or baseline_launch.timed_out:
+                if (
+                    baseline_error is not None
+                    or route_baseline is None
+                    or route_baseline_path is None
+                ):
                     results[requirement.requirement_id] = _result(
                         requirement,
                         status="unknown",
                         captured_at=now(),
-                        host_mechanism="simctl-gallery",
+                        host_mechanism=host_mechanism,
                         appearance_mechanism=appearance_mechanism,
-                        error_code=_command_error_code(
-                            baseline_launch,
-                            "simctl-baseline-launch",
-                        ),
+                        error_code=baseline_error,
                     )
                     continue
+                route_baseline_path.unlink(missing_ok=True)
+                route_command, route_error_base, route_appearance_mechanism = _capture_route(
+                    profile,
+                    simulator_id,
+                    requirement,
+                )
+                route_timeout = (
+                    SIMCTL_LAUNCH_TIMEOUT
+                    if capture_profile.route_kind == "launch"
+                    else SIMCTL_OPENURL_TIMEOUT
+                )
+                routed = _run(runner, route_command, route_timeout)
+                if routed.returncode != 0 or routed.timed_out:
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism=host_mechanism,
+                        appearance_mechanism=appearance_mechanism,
+                        error_code=_command_error_code(routed, route_error_base),
+                    )
+                    continue
+                appearance_mechanism = route_appearance_mechanism
                 sleeper(CAPTURE_SETTLE_SECONDS)
-            route_baseline, route_baseline_path, baseline_error = _take_stable_screenshot(
-                runner,
-                simulator_id,
-                artifact_directory,
-                f".{requirement.requirement_id}.baseline.",
-                "simctl-baseline-screenshot",
-                "simulator-baseline-image-invalid",
-                "baseline-unstable",
-                sleeper,
-            )
-            if (
-                baseline_error is not None
-                or route_baseline is None
-                or route_baseline_path is None
-            ):
-                results[requirement.requirement_id] = _result(
-                    requirement,
-                    status="unknown",
-                    captured_at=now(),
-                    host_mechanism="simctl-gallery",
-                    appearance_mechanism=appearance_mechanism,
-                    error_code=baseline_error,
+                stable_snapshot, stable_path, capture_error = _take_stable_screenshot(
+                    runner,
+                    simulator_id,
+                    artifact_directory,
+                    f".{requirement.requirement_id}.capture.",
+                    "simctl-screenshot",
+                    "captured-image-invalid",
+                    "capture-unstable",
+                    sleeper,
                 )
-                continue
-            route_baseline_path.unlink(missing_ok=True)
-            route_command, route_error_base, route_appearance_mechanism = _capture_route(
-                profile,
-                simulator_id,
-                requirement,
-            )
-            route_timeout = (
-                SIMCTL_LAUNCH_TIMEOUT
-                if capture_profile.route_kind == "launch"
-                else SIMCTL_OPENURL_TIMEOUT
-            )
-            routed = _run(runner, route_command, route_timeout)
-            if routed.returncode != 0 or routed.timed_out:
-                results[requirement.requirement_id] = _result(
-                    requirement,
-                    status="unknown",
-                    captured_at=now(),
-                    host_mechanism="simctl-gallery",
-                    appearance_mechanism=appearance_mechanism,
-                    error_code=_command_error_code(routed, route_error_base),
-                )
-                continue
-            appearance_mechanism = route_appearance_mechanism
-            sleeper(CAPTURE_SETTLE_SECONDS)
-            stable_snapshot, stable_path, capture_error = _take_stable_screenshot(
-                runner,
-                simulator_id,
-                artifact_directory,
-                f".{requirement.requirement_id}.capture.",
-                "simctl-screenshot",
-                "captured-image-invalid",
-                "capture-unstable",
-                sleeper,
-            )
-            if capture_error is not None or stable_snapshot is None or stable_path is None:
-                results[requirement.requirement_id] = _result(
-                    requirement,
-                    status="unknown",
-                    captured_at=now(),
-                    host_mechanism="simctl-gallery",
-                    appearance_mechanism=appearance_mechanism,
-                    error_code=capture_error,
-                )
-                continue
+                if capture_error is not None or stable_snapshot is None or stable_path is None:
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism=host_mechanism,
+                        appearance_mechanism=appearance_mechanism,
+                        error_code=capture_error,
+                    )
+                    continue
+            if route_baseline is None or stable_snapshot is None or stable_path is None:
+                raise SharedViewCaptureError("capture result is unavailable")
             try:
                 if stable_snapshot.pixel_digest == route_baseline.pixel_digest:
                     results[requirement.requirement_id] = _result(
                         requirement,
                         status="unknown",
                         captured_at=now(),
-                        host_mechanism="simctl-gallery",
+                        host_mechanism=host_mechanism,
                         appearance_mechanism=appearance_mechanism,
                         error_code="route-baseline-unchanged",
                     )
@@ -2019,7 +2527,7 @@ def _capture_profile(
                         requirement,
                         status="unknown",
                         captured_at=now(),
-                        host_mechanism="simctl-gallery",
+                        host_mechanism=host_mechanism,
                         appearance_mechanism=appearance_mechanism,
                         error_code="duplicate-artifact-digest",
                     )
@@ -2037,7 +2545,7 @@ def _capture_profile(
                         requirement,
                         status="unknown",
                         captured_at=now(),
-                        host_mechanism="simctl-gallery",
+                        host_mechanism=host_mechanism,
                         appearance_mechanism=appearance_mechanism,
                         error_code="artifact-publish-failed",
                     )
@@ -2049,7 +2557,7 @@ def _capture_profile(
                     requirement,
                     status="captured",
                     captured_at=now(),
-                    host_mechanism="simctl-gallery",
+                    host_mechanism=host_mechanism,
                     appearance_mechanism=appearance_mechanism,
                     snapshot=stable_snapshot,
                 )
@@ -2275,7 +2783,9 @@ def execute_shared_view_capture(
                 else:
                     capture_results.update(_unknown_results(requirements, profile_error, now))
                 continue
-            snapshot_profile = _snapshot_profile(profiles[profile_name], staging_directory)
+            snapshot_profile, snapshot_path = _snapshot_profile(
+                profiles[profile_name], staging_directory
+            )
             emergency_cleanup_targets: list[str] = []
             profile_capture_completed = False
             try:
@@ -2308,9 +2818,9 @@ def execute_shared_view_capture(
                         ) from capture_error
                 raise
             finally:
-                shutil.rmtree(snapshot_profile.app_bundle, ignore_errors=True)
-                if snapshot_profile.app_bundle.exists() and profile_capture_completed:
-                    raise SharedViewCaptureError("capture app snapshot cleanup failed")
+                shutil.rmtree(snapshot_path, ignore_errors=True)
+                if snapshot_path.exists() and profile_capture_completed:
+                    raise SharedViewCaptureError("capture input snapshot cleanup failed")
             cleanup_statuses[profile_name] = outcome.cleanup_status
             capture_results.update(outcome.results)
         captures = [capture_results[requirement.requirement_id] for requirement in plan.requirements]

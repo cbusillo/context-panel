@@ -86,12 +86,15 @@ app/widget-gallery requirements on throwaway simulators. It never builds,
 starts a coordinator session, records a visual decision, reads runtime receipts,
 or claims runtime or placement evidence.
 
-The private schema-v1 config contains only `ios`, `ipados`, `visionos`, or
+The private schema-v2 config contains only `ios`, `ipados`, `visionos`, or
 `watchos` profiles with `runtimeIdentifier`, `deviceTypeIdentifier`, and an
 absolute non-symlink `appBundle`. The iPhone, iPad, and Vision profiles use the
 Context Panel bundle identifier. The Watch profile must use
 `com.shinycomputers.contextpanel.watch`, `WatchSimulator`, device family `4`,
-a `watchOS` runtime, and an `Apple Watch` simulator device family. Every bundle
+a `watchOS` runtime, and an `Apple Watch` simulator device family. The visionOS
+profile additionally requires an absolute non-symlink `uiTestRun`. It must be
+the single app-associated shared-view UI-test run in the same bounded test
+products root as the configured app bundle. Every bundle
 must use bounded numeric version/build values that match the source manifest,
 the expected simulator platform and device family, and the exact embedded
 manifest derived from the supplied canonical current source manifest. The source
@@ -113,36 +116,57 @@ scripts/context-panel-validation.py capture-shared-view-evidence \
 ```
 
 The executor recomputes the planner output, requires exact requirements, source
-manifest, embedded manifest, and captured-surface identity, then copies the app
-to a private run-scoped snapshot. It hashes paths, file types, modes, and bytes,
-installs only that snapshot, and verifies the installed simulator container
-against the same identity except for installation-induced file-mode changes
-before capture. Baseline and routed images may use up to six bounded samples to
-settle, but evidence is accepted only after two consecutive samples have exactly
-the same pixel digest. Exhausted convergence remains `baseline-unstable` or
+manifest, embedded manifest, and captured-surface identity, then copies each
+capture input to a private run-scoped snapshot. iOS, iPadOS, and Watch snapshot
+the app bundle. visionOS snapshots the complete test products root containing
+the app, UI-test runner, test bundle, dependent products, and `.xctestrun`. It
+hashes paths, file types, modes, and bytes, installs only the app from that
+snapshot, and verifies the installed simulator container against the same
+identity except for installation-induced file-mode changes before capture.
+Baseline and routed images may use up to six bounded samples to settle, but
+evidence is accepted only after two consecutive samples have exactly the same
+pixel digest. Exhausted convergence remains `baseline-unstable` or
 `capture-unstable`; no tolerance or partial evidence is introduced.
 Artifact and receipt paths must be disjoint from every input app bundle so
 snapshot creation cannot recursively copy or mutate capture-owned output.
 
 Each simulator name is unique. A pre-create inventory blocks collisions; any
 uncertain create result is cleaned only by a newly observed, profile-matching
-UDID. The executor never deletes by simulator name. Each non-Watch cell resets
-appearance, requires a converged pre-route baseline, then a converged decodable
-routed PNG that differs from the baseline and other cells. Before each visionOS
-baseline, the executor launches a fresh foreground root process with
-`simctl launch --terminate-running-process`; it then delivers the gallery URL to
-that running process so a prior spatial window or cold URL launch cannot be
-mistaken for the baseline or routed gallery. A failed or timed-out foreground
-launch remains unknown as `simctl-baseline-launch-failed` or
-`simctl-baseline-launch-timeout`. The first visionOS cell uses the newly created
-simulator. Before each later cell, the executor shuts down and erases that same
-owned simulator, boots it again, reinstalls the unchanged run-scoped app
-snapshot, and re-verifies both device and installed-container identity before
-applying appearance. A timed-out shutdown or any erase, boot, install, or
-identity failure remains unknown under the bounded `simctl-visionos-cell-*`
-errors or the existing app-container and snapshot-identity errors. The reset
-preserves the owned UDID and final cleanup contract while
-preventing spatial window, scene, or app-container state from crossing cells.
+UDID. The executor never deletes by simulator name. iOS, iPadOS, and Watch use
+the existing `simctl` baseline and routed screenshots. Each capture requires a
+converged pre-route baseline, then a converged decodable routed PNG that differs
+from the baseline and every other cell.
+
+visionOS does not use `simctl io screenshot`, because that framebuffer omits
+spatial app windows. The workflow adds a non-shipping UI-test target around the
+exact requested source worktree without modifying its app source. A Release
+`build-for-testing` produces the app-associated test products and `.xctestrun`.
+For each owned simulator cell, the executor writes a private run-scoped copy of
+that test run with only the canonical URL and selector values, then calls
+`xcodebuild test-without-building`. The UI test launches the associated exact
+app target, captures a stable ordinary-app baseline, opens the allowlisted
+gallery URL without coordinate input or the system custom-scheme confirmation,
+verifies the requested fixture and selected presentation, appearance, and
+widget-family controls through accessibility, selects the unique largest
+gallery window, and captures stable routed samples. `xcresulttool` exports only
+the explicit attachments. The executor requires the exact test identifier,
+contiguous `baseline-1` through `baseline-6` and `routed-1` through `routed-6`
+sample names, successful attachment records, bounded PNGs, and unchanged test
+products before accepting the same exact-pixel, baseline-difference, and
+cross-cell uniqueness checks. Receipts identify this mechanism as
+`xcuitest-application-window`; it remains shared-view evidence and is not a
+visionOS compositor or placement capture.
+
+The first visionOS cell uses the newly created simulator. Before each later
+cell, the executor shuts down and erases that same owned simulator, boots it
+again, reinstalls the unchanged run-scoped app snapshot, and re-verifies both
+device and installed-container identity before running the associated UI test.
+A timed-out shutdown or any erase, boot, install, UI-test, attachment-export,
+or identity failure remains unknown under the bounded
+`simctl-visionos-cell-*`, `xcuitest-*`, `xcresult-*`, app-container, or
+snapshot-identity errors. The reset preserves the owned UDID and final cleanup
+contract while preventing spatial window, scene, app-container, or test-runner
+state from crossing cells.
 The Watch profile
 does not call `simctl ui appearance`; it routes every app or complication cell
 with the fixed argument order `simctl launch --terminate-running-process
@@ -153,7 +177,7 @@ with the fixed argument order `simctl launch --terminate-running-process
 Watch cells retain the same baseline, stability, distinct-image, installed
 identity, cleanup, artifact, and receipt checks. Termination between
 non-visionOS cells is best-effort so one failed route cannot poison the next
-cell; visionOS baseline launches fail closed as unknown evidence.
+cell; visionOS UI-test or attachment failures remain unknown evidence.
 
 The Watch profile does not create or repair a paired iPhone/Watch topology. A
 Watch app that cannot install independently on the selected Watch simulator, a
