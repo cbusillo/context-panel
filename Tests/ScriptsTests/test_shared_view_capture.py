@@ -186,6 +186,7 @@ class FakeRunner:
         unstable: bool = False,
         baseline_unstable: bool = False,
         settles_after_first: bool = False,
+        settles_after_samples: int = 0,
         baseline_equal: bool = False,
         duplicate_routes: bool = False,
         cross_profile_duplicates: bool = False,
@@ -210,6 +211,7 @@ class FakeRunner:
         self.unstable = unstable
         self.baseline_unstable = baseline_unstable
         self.settles_after_first = settles_after_first
+        self.settles_after_samples = settles_after_samples
         self.baseline_equal = baseline_equal
         self.duplicate_routes = duplicate_routes
         self.cross_profile_duplicates = cross_profile_duplicates
@@ -340,6 +342,8 @@ class FakeRunner:
             self.baseline_screenshot_count += 1
             if self.baseline_unstable and count % 2 == 1:
                 baseline_color = (0x12, 0x22, 0x33, 0xFF)
+            elif count < self.settles_after_samples:
+                baseline_color = ((0x12 + count) % 256, 0x22, 0x33, 0xFF)
             elif self.settles_after_first and count == 0:
                 baseline_color = (0x12, 0x22, 0x33, 0xFF)
             return png_bytes(color=baseline_color)
@@ -361,6 +365,8 @@ class FakeRunner:
         self.route_screenshot_counts[route] = count + 1
         if self.unstable and count % 2 == 1:
             color = ((color[0] + 1) % 256, color[1], color[2], color[3])
+        elif count < self.settles_after_samples:
+            color = ((color[0] + count + 1) % 256, color[1], color[2], color[3])
         elif self.settles_after_first and count == 0:
             color = ((color[0] + 1) % 256, color[1], color[2], color[3])
         return png_bytes(color=color)
@@ -642,6 +648,12 @@ class SharedViewCaptureTests(unittest.TestCase):
         ]
         self.assertEqual(2, len(install_calls))
         self.assertEqual([300, 300], [timeout for _, timeout in install_calls])
+        self.assertEqual([300, 300], [
+            timeout for args, timeout in runner.calls if args[2] == "bootstatus"
+        ])
+        self.assertEqual([120, 120], [
+            timeout for args, timeout in runner.calls if args[2] == "get_app_container"
+        ])
 
     def test_visionos_launches_fresh_foreground_baseline_before_each_route(self) -> None:
         self.write_plan(["visionos.app"])
@@ -684,7 +696,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             [args[2] for args in commands[erase_index - 1 : erase_index + 7]],
         )
         self.assertEqual(
-            [60, 300, 60, 120, 300],
+            [60, 300, 60, 300, 300],
             [
                 timeout
                 for args, timeout in runner.calls[erase_index - 1 : erase_index + 4]
@@ -1457,6 +1469,20 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(EXIT_OK, exit_code)
         self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
         self.assertEqual([3.0] * 11, self.sleeps)
+
+    def test_late_transient_frames_converge_at_bounded_sample_limit(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner(settles_after_samples=4)
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured", "captured"], [
+            item["status"] for item in receipt["captures"]
+        ])
+        self.assertEqual(8, runner.baseline_screenshot_count)
+        self.assertEqual([6, 6], sorted(runner.route_screenshot_counts.values()))
 
     def test_cross_duplicates(self) -> None:
         self.write_plan(["ios.app", "ipados.app"])
