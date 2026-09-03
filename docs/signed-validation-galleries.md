@@ -128,7 +128,13 @@ Each simulator name is unique. A pre-create inventory blocks collisions; any
 uncertain create result is cleaned only by a newly observed, profile-matching
 UDID. The executor never deletes by simulator name. Each non-Watch cell resets
 appearance, requires a converged pre-route baseline, then a converged decodable
-routed PNG that differs from the baseline and other cells. The Watch profile
+routed PNG that differs from the baseline and other cells. Before each visionOS
+baseline, the executor launches a fresh foreground root process with
+`simctl launch --terminate-running-process`; it then delivers the gallery URL to
+that running process so a prior spatial window or cold URL launch cannot be
+mistaken for the baseline or routed gallery. A failed or timed-out foreground
+launch remains unknown as `simctl-baseline-launch-failed` or
+`simctl-baseline-launch-timeout`. The Watch profile
 does not call `simctl ui appearance`; it routes every app or complication cell
 with the fixed argument order `simctl launch --terminate-running-process
 <watch-simulator> com.shinycomputers.contextpanel.watch
@@ -136,8 +142,9 @@ with the fixed argument order `simctl launch --terminate-running-process
 --context-panel-validation-fixture <fixture>` plus
 `--context-panel-validation-family <family>` for complication cells.
 Watch cells retain the same baseline, stability, distinct-image, installed
-identity, cleanup, artifact, and receipt checks. Termination between cells is
-best-effort so one failed route cannot poison the next cell.
+identity, cleanup, artifact, and receipt checks. Termination between
+non-visionOS cells is best-effort so one failed route cannot poison the next
+cell; visionOS baseline launches fail closed as unknown evidence.
 
 The Watch profile does not create or repair a paired iPhone/Watch topology. A
 Watch app that cannot install independently on the selected Watch simulator, a

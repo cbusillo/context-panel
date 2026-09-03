@@ -294,7 +294,10 @@ class FakeRunner:
             self.active_route[args[3]] = args[-1]
         if args[:3] == ["xcrun", "simctl", "launch"]:
             simulator_id = args[4]
-            self.active_route[simulator_id] = "&".join(args[6:])
+            route_arguments = args[6:]
+            self.active_route[simulator_id] = (
+                "&".join(route_arguments) if route_arguments else None
+            )
         if args[:4] == ["xcrun", "simctl", "io", args[3] if len(args) > 3 else ""]:
             route = self.active_route.get(args[3])
             image = self._image_for(route)
@@ -620,6 +623,80 @@ class SharedViewCaptureTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(install_calls))
         self.assertEqual(300, install_calls[0][1])
+
+    def test_visionos_launches_fresh_foreground_baseline_before_each_route(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+        runner = FakeRunner()
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        commands = [args for args, _ in runner.calls]
+        baseline_launch = [
+            "xcrun",
+            "simctl",
+            "launch",
+            "--terminate-running-process",
+            SIMULATOR_ID,
+            PROFILE_BUNDLE_IDENTIFIERS["visionos"],
+        ]
+        self.assertEqual([baseline_launch, baseline_launch], [
+            args for args in commands if args[2] == "launch"
+        ])
+        self.assertEqual([300, 300], [
+            timeout for args, timeout in runner.calls if args[2] == "launch"
+        ])
+        self.assertEqual([3.0] * 10, self.sleeps)
+        self.assertFalse(any(args[2] == "terminate" for args in commands))
+        self.assertEqual(
+            [
+                "ui", "launch", "io", "io", "openurl", "io", "io",
+                "ui", "launch", "io", "io", "openurl", "io", "io",
+            ],
+            [
+                args[2]
+                for args in commands
+                if args[2] in {"ui", "launch", "io", "openurl", "terminate"}
+            ],
+        )
+        self.assertEqual(["captured", "captured"], [
+            item["status"] for item in receipt["captures"]
+        ])
+
+    def test_visionos_baseline_launch_failure_is_unknown(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+        runner = FakeRunner(fail_at="launch")
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(
+            receipt,
+            "simctl-baseline-launch-failed",
+            "simctl-baseline-launch-failed",
+        )
+        self.assertEqual(["simctl-ui-appearance"] * 2, [
+            item["appearanceMechanism"] for item in receipt["captures"]
+        ])
+
+    def test_visionos_baseline_launch_timeout_is_unknown(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+        runner = FakeRunner(timeout_at="launch")
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(
+            receipt,
+            "simctl-baseline-launch-timeout",
+            "simctl-baseline-launch-timeout",
+        )
+        self.assertEqual(["simctl-ui-appearance"] * 2, [
+            item["appearanceMechanism"] for item in receipt["captures"]
+        ])
 
     def test_watch_profile_uses_direct_launch_without_appearance_mutation(self) -> None:
         payload = self.write_plan(["watchos.app", "watchos.complication"])

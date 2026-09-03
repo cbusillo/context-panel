@@ -65,6 +65,7 @@ SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
 SIMCTL_OPENURL_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
+SIMCTL_VISIONOS_LAUNCH_TIMEOUT = 300
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 3.0
@@ -1767,7 +1768,7 @@ def _capture_profile(
         capture_profile = _simulator_capture_profile(profile.name)
         for index, requirement in enumerate(requirements):
             appearance_mechanism: str | None = None
-            if index > 0:
+            if index > 0 and profile.name != "visionos":
                 _run(
                     runner,
                     ["xcrun", "simctl", "terminate", simulator_id, profile.bundle_identifier],
@@ -1795,6 +1796,33 @@ def _capture_profile(
                     )
                     continue
                 appearance_mechanism = "simctl-ui-appearance"
+                sleeper(CAPTURE_SETTLE_SECONDS)
+            if profile.name == "visionos":
+                baseline_launch = _run(
+                    runner,
+                    [
+                        "xcrun",
+                        "simctl",
+                        "launch",
+                        "--terminate-running-process",
+                        simulator_id,
+                        profile.bundle_identifier,
+                    ],
+                    SIMCTL_VISIONOS_LAUNCH_TIMEOUT,
+                )
+                if baseline_launch.returncode != 0 or baseline_launch.timed_out:
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism="simctl-gallery",
+                        appearance_mechanism=appearance_mechanism,
+                        error_code=_command_error_code(
+                            baseline_launch,
+                            "simctl-baseline-launch",
+                        ),
+                    )
+                    continue
                 sleeper(CAPTURE_SETTLE_SECONDS)
             route_baseline, route_baseline_path, baseline_error = _take_stable_screenshot(
                 runner,
