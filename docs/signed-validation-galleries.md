@@ -117,15 +117,18 @@ manifest, embedded manifest, and captured-surface identity, then copies the app
 to a private run-scoped snapshot. It hashes paths, file types, modes, and bytes,
 installs only that snapshot, and verifies the installed simulator container
 against the same identity except for installation-induced file-mode changes
-before capture. Artifact and receipt paths must be disjoint from every input app
-bundle so snapshot creation cannot recursively copy or mutate capture-owned
-output.
+before capture. Baseline and routed images may use up to four bounded samples to
+settle, but evidence is accepted only after two consecutive samples have exactly
+the same pixel digest. Exhausted convergence remains `baseline-unstable` or
+`capture-unstable`; no tolerance or partial evidence is introduced.
+Artifact and receipt paths must be disjoint from every input app bundle so
+snapshot creation cannot recursively copy or mutate capture-owned output.
 
 Each simulator name is unique. A pre-create inventory blocks collisions; any
 uncertain create result is cleaned only by a newly observed, profile-matching
 UDID. The executor never deletes by simulator name. Each non-Watch cell resets
-appearance, requires two stable pre-route baselines, then two stable decodable
-routed PNGs that differ from the baseline and other cells. The Watch profile
+appearance, requires a converged pre-route baseline, then a converged decodable
+routed PNG that differs from the baseline and other cells. The Watch profile
 does not call `simctl ui appearance`; it routes every app or complication cell
 with the fixed argument order `simctl launch --terminate-running-process
 <watch-simulator> com.shinycomputers.contextpanel.watch
