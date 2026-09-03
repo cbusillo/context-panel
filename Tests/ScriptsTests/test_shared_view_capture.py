@@ -179,6 +179,8 @@ class FakeRunner:
         catalog: dict[str, Any] | None = None,
         fail_at: str | None = None,
         timeout_at: str | None = None,
+        fail_at_call: tuple[str, int] | None = None,
+        timeout_at_call: tuple[str, int] | None = None,
         create_result: CommandResult | None = None,
         corrupt_png: str | None = None,
         unstable: bool = False,
@@ -195,11 +197,14 @@ class FakeRunner:
         device_list_failure: CommandResult | None = None,
         device_list_failure_after: int = 1,
         persist_after_delete: bool = False,
+        sticky_route_until_erase: bool = False,
     ) -> None:
         self.calls: list[tuple[list[str], int]] = []
         self.catalog = catalog or simulator_catalog()
         self.fail_at = fail_at
         self.timeout_at = timeout_at
+        self.fail_at_call = fail_at_call
+        self.timeout_at_call = timeout_at_call
         self.create_result = create_result
         self.corrupt_png = corrupt_png
         self.unstable = unstable
@@ -216,7 +221,9 @@ class FakeRunner:
         self.device_list_failure = device_list_failure
         self.device_list_failure_after = device_list_failure_after
         self.persist_after_delete = persist_after_delete
+        self.sticky_route_until_erase = sticky_route_until_erase
         self.device_list_calls = 0
+        self.verb_call_counts: dict[str, int] = {}
         self.active_route: dict[str, str | None] = {}
         self.route_screenshot_counts: dict[str, int] = {}
         self.baseline_screenshot_count = 0
@@ -232,6 +239,12 @@ class FakeRunner:
         del environment
         self.calls.append((args, timeout))
         verb = args[2] if len(args) > 2 else ""
+        self.verb_call_counts[verb] = self.verb_call_counts.get(verb, 0) + 1
+        verb_call = (verb, self.verb_call_counts[verb])
+        if self.timeout_at_call == verb_call:
+            return CommandResult(124, "", self.private_stderr, timed_out=True)
+        if self.fail_at_call == verb_call:
+            return CommandResult(1, "", self.private_stderr)
         if self.timeout_at == verb:
             return CommandResult(124, "", self.private_stderr, timed_out=True)
         if self.fail_at == verb:
@@ -285,19 +298,24 @@ class FakeRunner:
             return CommandResult(0, f"{output}\n", "")
         if args[:3] == ["xcrun", "simctl", "terminate"]:
             self.active_route[args[3]] = None
+        if args[:3] == ["xcrun", "simctl", "erase"]:
+            self.active_route[args[3]] = None
+            self.installed_app_bundle = None
         if args[:3] == ["xcrun", "simctl", "delete"] and not self.persist_after_delete:
             self.created_simulator_id = None
             self.created_simulator_name = None
         elif args[:3] == ["xcrun", "simctl", "delete"]:
             self.created_simulator_name = "renamed-after-delete"
         if args[:3] == ["xcrun", "simctl", "openurl"]:
-            self.active_route[args[3]] = args[-1]
+            if not self.sticky_route_until_erase or self.active_route.get(args[3]) is None:
+                self.active_route[args[3]] = args[-1]
         if args[:3] == ["xcrun", "simctl", "launch"]:
             simulator_id = args[4]
             route_arguments = args[6:]
-            self.active_route[simulator_id] = (
-                "&".join(route_arguments) if route_arguments else None
-            )
+            if route_arguments:
+                self.active_route[simulator_id] = "&".join(route_arguments)
+            elif not self.sticky_route_until_erase:
+                self.active_route[simulator_id] = None
         if args[:4] == ["xcrun", "simctl", "io", args[3] if len(args) > 3 else ""]:
             route = self.active_route.get(args[3])
             image = self._image_for(route)
@@ -567,6 +585,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([3.0] * 8, self.sleeps)
         commands = [args for args, _ in runner.calls]
         requirements = payload["requirements"]
+        self.assertFalse(any(args[2] == "erase" for args in commands))
         self.assertEqual(
             [
                 "list", "list", "create", "list", "boot", "bootstatus", "install", "get_app_container",
@@ -621,8 +640,8 @@ class SharedViewCaptureTests(unittest.TestCase):
         install_calls = [
             (args, timeout) for args, timeout in runner.calls if args[2] == "install"
         ]
-        self.assertEqual(1, len(install_calls))
-        self.assertEqual(300, install_calls[0][1])
+        self.assertEqual(2, len(install_calls))
+        self.assertEqual([300, 300], [timeout for _, timeout in install_calls])
 
     def test_visionos_launches_fresh_foreground_baseline_before_each_route(self) -> None:
         self.write_plan(["visionos.app"])
@@ -649,6 +668,28 @@ class SharedViewCaptureTests(unittest.TestCase):
         ])
         self.assertEqual([3.0] * 10, self.sleeps)
         self.assertFalse(any(args[2] == "terminate" for args in commands))
+        self.assertEqual(1, sum(args[2] == "erase" for args in commands))
+        erase_index = next(index for index, args in enumerate(commands) if args[2] == "erase")
+        self.assertEqual(
+            [
+                "shutdown",
+                "erase",
+                "boot",
+                "bootstatus",
+                "install",
+                "get_app_container",
+                "list",
+                "ui",
+            ],
+            [args[2] for args in commands[erase_index - 1 : erase_index + 7]],
+        )
+        self.assertEqual(
+            [60, 300, 60, 120, 300],
+            [
+                timeout
+                for args, timeout in runner.calls[erase_index - 1 : erase_index + 4]
+            ],
+        )
         self.assertEqual(
             [
                 "ui", "launch", "io", "io", "openurl", "io", "io",
@@ -663,6 +704,83 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(["captured", "captured"], [
             item["status"] for item in receipt["captures"]
         ])
+
+    def test_visionos_cell_reset_clears_sticky_route_state(self) -> None:
+        self.write_plan(["visionos.app", "visionos.widget"])
+        self.write_config(("visionos",))
+        runner = FakeRunner(sticky_route_until_erase=True)
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured"] * 4, [
+            item["status"] for item in receipt["captures"]
+        ])
+        self.assertEqual(3, sum(args[2] == "erase" for args, _ in runner.calls))
+
+    def test_visionos_cell_reset_failures_are_unknown(self) -> None:
+        scenarios = (
+            ("shutdown-timeout", None, ("shutdown", 1), "simctl-visionos-cell-shutdown-timeout"),
+            ("erase-failed", ("erase", 1), None, "simctl-visionos-cell-erase-failed"),
+            ("erase-timeout", None, ("erase", 1), "simctl-visionos-cell-erase-timeout"),
+            ("boot-failed", ("boot", 2), None, "simctl-visionos-cell-boot-failed"),
+            ("boot-timeout", None, ("boot", 2), "simctl-visionos-cell-boot-timeout"),
+            (
+                "bootstatus-failed",
+                ("bootstatus", 2),
+                None,
+                "simctl-visionos-cell-bootstatus-failed",
+            ),
+            (
+                "bootstatus-timeout",
+                None,
+                ("bootstatus", 2),
+                "simctl-visionos-cell-bootstatus-timeout",
+            ),
+            ("install-failed", ("install", 2), None, "simctl-visionos-cell-install-failed"),
+            ("install-timeout", None, ("install", 2), "simctl-visionos-cell-install-timeout"),
+            (
+                "container-failed",
+                ("get_app_container", 2),
+                None,
+                "simctl-app-container-failed",
+            ),
+            ("device-failed", ("list", 4), None, "simctl-visionos-cell-device-failed"),
+        )
+        for index, (name, fail_at_call, timeout_at_call, error_code) in enumerate(scenarios):
+            with self.subTest(name=name):
+                self.write_plan(["visionos.app"])
+                self.write_config(("visionos",))
+                runner = FakeRunner(
+                    fail_at_call=fail_at_call,
+                    timeout_at_call=timeout_at_call,
+                )
+
+                exit_code, receipt = self.execute(
+                    runner,
+                    run_id=f"visionos-reset-{index}",
+                    receipt_path=self.root / f"visionos-reset-{index}.json",
+                )
+
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assertEqual("captured", receipt["captures"][0]["status"])
+                self.assertEqual("unknown", receipt["captures"][1]["status"])
+                self.assertEqual(error_code, receipt["captures"][1]["errorCode"])
+                self.assertIsNone(receipt["captures"][1]["appearanceMechanism"])
+                self.assertEqual("deleted", receipt["profiles"][0]["cleanupStatus"])
+
+    def test_visionos_cell_reset_tolerates_shutdown_failure_before_erase(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+        runner = FakeRunner(fail_at_call=("shutdown", 1))
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured", "captured"], [
+            item["status"] for item in receipt["captures"]
+        ])
+        self.assertTrue(any(args[2] == "erase" for args, _ in runner.calls))
 
     def test_visionos_baseline_launch_failure_is_unknown(self) -> None:
         self.write_plan(["visionos.app"])
@@ -708,6 +826,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(EXIT_OK, exit_code)
         self.assertEqual([3.0] * 12, self.sleeps)
         commands = [args for args, _ in runner.calls]
+        self.assertFalse(any(args[2] == "erase" for args in commands))
         self.assertEqual(
             [
                 "list", "list", "create", "list", "boot", "bootstatus", "install", "get_app_container",
@@ -944,7 +1063,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(self.manifest_id, ios_profile["appManifestID"])
         self.assertEqual("deleted", ios_profile["cleanupStatus"])
         self.assertEqual(1, sum(args == ["xcrun", "simctl", "list", "-j"] for args, _ in runner.calls))
-        self.assertEqual(12, sum(args[:5] == ["xcrun", "simctl", "list", "-j", "devices"] for args, _ in runner.calls))
+        self.assertEqual(13, sum(args[:5] == ["xcrun", "simctl", "list", "-j", "devices"] for args, _ in runner.calls))
         serialized = json.dumps(receipt)
         self.assertNotIn(str(self.app), serialized)
         self.assertNotIn(SIMULATOR_ID, serialized)

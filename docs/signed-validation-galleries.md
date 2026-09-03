@@ -134,7 +134,16 @@ baseline, the executor launches a fresh foreground root process with
 that running process so a prior spatial window or cold URL launch cannot be
 mistaken for the baseline or routed gallery. A failed or timed-out foreground
 launch remains unknown as `simctl-baseline-launch-failed` or
-`simctl-baseline-launch-timeout`. The Watch profile
+`simctl-baseline-launch-timeout`. The first visionOS cell uses the newly created
+simulator. Before each later cell, the executor shuts down and erases that same
+owned simulator, boots it again, reinstalls the unchanged run-scoped app
+snapshot, and re-verifies both device and installed-container identity before
+applying appearance. A timed-out shutdown or any erase, boot, install, or
+identity failure remains unknown under the bounded `simctl-visionos-cell-*`
+errors or the existing app-container and snapshot-identity errors. The reset
+preserves the owned UDID and final cleanup contract while
+preventing spatial window, scene, or app-container state from crossing cells.
+The Watch profile
 does not call `simctl ui appearance`; it routes every app or complication cell
 with the fixed argument order `simctl launch --terminate-running-process
 <watch-simulator> com.shinycomputers.contextpanel.watch

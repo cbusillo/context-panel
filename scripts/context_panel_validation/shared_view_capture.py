@@ -66,6 +66,8 @@ SIMCTL_UI_TIMEOUT = 30
 SIMCTL_OPENURL_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
 SIMCTL_VISIONOS_LAUNCH_TIMEOUT = 300
+SIMCTL_VISIONOS_SHUTDOWN_TIMEOUT = 60
+SIMCTL_VISIONOS_ERASE_TIMEOUT = 300
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 3.0
@@ -1651,6 +1653,61 @@ def _installed_app_error(runner: Runner, simulator_id: str, profile: CaptureProf
     return None if installed_identity == source_identity else "simctl-app-container-mismatch"
 
 
+def _reset_visionos_cell(
+    runner: Runner,
+    simulator_id: str,
+    simulator_name: str,
+    profile: CaptureProfile,
+) -> str | None:
+    shutdown = _run(
+        runner,
+        ["xcrun", "simctl", "shutdown", simulator_id],
+        SIMCTL_VISIONOS_SHUTDOWN_TIMEOUT,
+    )
+    if shutdown.timed_out:
+        return "simctl-visionos-cell-shutdown-timeout"
+    commands = (
+        (
+            ["xcrun", "simctl", "erase", simulator_id],
+            SIMCTL_VISIONOS_ERASE_TIMEOUT,
+            "simctl-visionos-cell-erase",
+        ),
+        (
+            ["xcrun", "simctl", "boot", simulator_id],
+            SIMCTL_BOOT_TIMEOUT,
+            "simctl-visionos-cell-boot",
+        ),
+        (
+            ["xcrun", "simctl", "bootstatus", simulator_id, "-b"],
+            SIMCTL_BOOTSTATUS_TIMEOUT,
+            "simctl-visionos-cell-bootstatus",
+        ),
+        (
+            ["xcrun", "simctl", "install", simulator_id, str(profile.app_bundle)],
+            SIMCTL_VISIONOS_INSTALL_TIMEOUT,
+            "simctl-visionos-cell-install",
+        ),
+    )
+    for command, timeout, error_base in commands:
+        result = _run(runner, command, timeout)
+        if result.returncode != 0 or result.timed_out:
+            return _command_error_code(result, error_base)
+    if _app_metadata(profile.app_bundle, profile.name) != _profile_source_identity(profile):
+        return "capture-app-bundle-changed"
+    installed_app_error = _installed_app_error(runner, simulator_id, profile)
+    if installed_app_error is not None:
+        return installed_app_error
+    matches, identity_error = _matching_simulators(
+        runner,
+        profile,
+        simulator_name,
+        error_base="simctl-visionos-cell-device",
+    )
+    if identity_error is not None or matches is None:
+        return identity_error or "simctl-visionos-cell-device-invalid"
+    return None if matches == {simulator_id} else "simctl-visionos-cell-device-mismatch"
+
+
 def _capture_profile(
     profile: CaptureProfile,
     requirements: tuple[CaptureRequirement, ...],
@@ -1768,12 +1825,36 @@ def _capture_profile(
         capture_profile = _simulator_capture_profile(profile.name)
         for index, requirement in enumerate(requirements):
             appearance_mechanism: str | None = None
-            if index > 0 and profile.name != "visionos":
-                _run(
-                    runner,
-                    ["xcrun", "simctl", "terminate", simulator_id, profile.bundle_identifier],
-                    SIMCTL_TERMINATE_TIMEOUT,
-                )
+            if index > 0:
+                if profile.name == "visionos":
+                    reset_error = _reset_visionos_cell(
+                        runner,
+                        simulator_id,
+                        simulator_name,
+                        profile,
+                    )
+                    if reset_error is not None:
+                        results[requirement.requirement_id] = _result(
+                            requirement,
+                            status="unknown",
+                            captured_at=now(),
+                            host_mechanism="simctl-gallery",
+                            appearance_mechanism=None,
+                            error_code=reset_error,
+                        )
+                        continue
+                else:
+                    _run(
+                        runner,
+                        [
+                            "xcrun",
+                            "simctl",
+                            "terminate",
+                            simulator_id,
+                            profile.bundle_identifier,
+                        ],
+                        SIMCTL_TERMINATE_TIMEOUT,
+                    )
             if capture_profile.applies_simulator_appearance:
                 simulator_appearance = (
                     requirement.appearance
