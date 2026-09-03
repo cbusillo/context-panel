@@ -68,6 +68,7 @@ SIMCTL_LAUNCH_TIMEOUT = 60
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 3.0
+MAX_STABILITY_SAMPLE_COUNT = 4
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
 MAX_PNG_DIMENSION = 8_192
@@ -1449,6 +1450,49 @@ def _take_screenshot(
     return snapshot, temporary_path, None
 
 
+def _take_stable_screenshot(
+    runner: Runner,
+    simulator_id: str,
+    artifact_directory: Path,
+    prefix: str,
+    command_base: str,
+    invalid_error_code: str,
+    unstable_error_code: str,
+    sleeper: Callable[[float], None],
+) -> tuple[PNGSnapshot | None, Path | None, str | None]:
+    previous_snapshot, previous_path, error = _take_screenshot(
+        runner,
+        simulator_id,
+        artifact_directory,
+        f"{prefix}1.",
+        command_base,
+        invalid_error_code,
+    )
+    if error is not None or previous_snapshot is None or previous_path is None:
+        return None, None, error
+    for sample_index in range(2, MAX_STABILITY_SAMPLE_COUNT + 1):
+        sleeper(CAPTURE_SETTLE_SECONDS)
+        current_snapshot, current_path, error = _take_screenshot(
+            runner,
+            simulator_id,
+            artifact_directory,
+            f"{prefix}{sample_index}.",
+            command_base,
+            invalid_error_code,
+        )
+        if error is not None or current_snapshot is None or current_path is None:
+            previous_path.unlink(missing_ok=True)
+            return None, None, error
+        if previous_snapshot.pixel_digest == current_snapshot.pixel_digest:
+            previous_path.unlink(missing_ok=True)
+            return current_snapshot, current_path, None
+        previous_path.unlink(missing_ok=True)
+        previous_snapshot = current_snapshot
+        previous_path = current_path
+    previous_path.unlink(missing_ok=True)
+    return None, None, unstable_error_code
+
+
 def _remove_profile_artifacts(
     artifact_paths: dict[str, Path],
 ) -> bool:
@@ -1752,18 +1796,20 @@ def _capture_profile(
                     continue
                 appearance_mechanism = "simctl-ui-appearance"
                 sleeper(CAPTURE_SETTLE_SECONDS)
-            first_baseline, first_baseline_path, first_baseline_error = _take_screenshot(
+            route_baseline, route_baseline_path, baseline_error = _take_stable_screenshot(
                 runner,
                 simulator_id,
                 artifact_directory,
-                f".{requirement.requirement_id}.baseline.first.",
+                f".{requirement.requirement_id}.baseline.",
                 "simctl-baseline-screenshot",
                 "simulator-baseline-image-invalid",
+                "baseline-unstable",
+                sleeper,
             )
             if (
-                first_baseline_error is not None
-                or first_baseline is None
-                or first_baseline_path is None
+                baseline_error is not None
+                or route_baseline is None
+                or route_baseline_path is None
             ):
                 results[requirement.requirement_id] = _result(
                     requirement,
@@ -1771,48 +1817,10 @@ def _capture_profile(
                     captured_at=now(),
                     host_mechanism="simctl-gallery",
                     appearance_mechanism=appearance_mechanism,
-                    error_code=first_baseline_error,
+                    error_code=baseline_error,
                 )
                 continue
-            try:
-                sleeper(CAPTURE_SETTLE_SECONDS)
-                route_baseline, route_baseline_path, route_baseline_error = _take_screenshot(
-                    runner,
-                    simulator_id,
-                    artifact_directory,
-                    f".{requirement.requirement_id}.baseline.second.",
-                    "simctl-baseline-screenshot",
-                    "simulator-baseline-image-invalid",
-                )
-                if (
-                    route_baseline_error is not None
-                    or route_baseline is None
-                    or route_baseline_path is None
-                ):
-                    results[requirement.requirement_id] = _result(
-                        requirement,
-                        status="unknown",
-                        captured_at=now(),
-                        host_mechanism="simctl-gallery",
-                        appearance_mechanism=appearance_mechanism,
-                        error_code=route_baseline_error,
-                    )
-                    continue
-                try:
-                    if first_baseline.pixel_digest != route_baseline.pixel_digest:
-                        results[requirement.requirement_id] = _result(
-                            requirement,
-                            status="unknown",
-                            captured_at=now(),
-                            host_mechanism="simctl-gallery",
-                            appearance_mechanism=appearance_mechanism,
-                            error_code="baseline-unstable",
-                        )
-                        continue
-                finally:
-                    route_baseline_path.unlink(missing_ok=True)
-            finally:
-                first_baseline_path.unlink(missing_ok=True)
+            route_baseline_path.unlink(missing_ok=True)
             route_command, route_error_base, route_appearance_mechanism = _capture_route(
                 profile,
                 simulator_id,
@@ -1836,132 +1844,102 @@ def _capture_profile(
                 continue
             appearance_mechanism = route_appearance_mechanism
             sleeper(CAPTURE_SETTLE_SECONDS)
-            first_snapshot, first_path, first_error = _take_screenshot(
+            stable_snapshot, stable_path, capture_error = _take_stable_screenshot(
                 runner,
                 simulator_id,
                 artifact_directory,
-                f".{requirement.requirement_id}.first.",
+                f".{requirement.requirement_id}.capture.",
                 "simctl-screenshot",
                 "captured-image-invalid",
+                "capture-unstable",
+                sleeper,
             )
-            if first_error is not None or first_snapshot is None:
+            if capture_error is not None or stable_snapshot is None or stable_path is None:
                 results[requirement.requirement_id] = _result(
                     requirement,
                     status="unknown",
                     captured_at=now(),
                     host_mechanism="simctl-gallery",
                     appearance_mechanism=appearance_mechanism,
-                    error_code=first_error,
+                    error_code=capture_error,
                 )
                 continue
             try:
-                sleeper(CAPTURE_SETTLE_SECONDS)
-                second_snapshot, second_path, second_error = _take_screenshot(
-                    runner,
-                    simulator_id,
-                    artifact_directory,
-                    f".{requirement.requirement_id}.second.",
-                    "simctl-screenshot",
-                    "captured-image-invalid",
-                )
-                if second_error is not None or second_snapshot is None or second_path is None:
+                if stable_snapshot.pixel_digest == route_baseline.pixel_digest:
                     results[requirement.requirement_id] = _result(
                         requirement,
                         status="unknown",
                         captured_at=now(),
                         host_mechanism="simctl-gallery",
                         appearance_mechanism=appearance_mechanism,
-                        error_code=second_error,
+                        error_code="route-baseline-unchanged",
                     )
                     continue
-                try:
-                    if first_snapshot.pixel_digest != second_snapshot.pixel_digest:
-                        results[requirement.requirement_id] = _result(
-                            requirement,
-                            status="unknown",
-                            captured_at=now(),
-                            host_mechanism="simctl-gallery",
-                            appearance_mechanism=appearance_mechanism,
-                            error_code="capture-unstable",
-                        )
-                        continue
-                    if second_snapshot.pixel_digest == route_baseline.pixel_digest:
-                        results[requirement.requirement_id] = _result(
-                            requirement,
-                            status="unknown",
-                            captured_at=now(),
-                            host_mechanism="simctl-gallery",
-                            appearance_mechanism=appearance_mechanism,
-                            error_code="route-baseline-unchanged",
-                        )
-                        continue
-                    duplicate_owner = seen_digests.get(second_snapshot.pixel_digest)
-                    if second_snapshot.pixel_digest in seen_digests:
-                        if duplicate_owner is not None:
-                            prior_path = artifact_paths.pop(duplicate_owner, None)
-                            if prior_path is None:
-                                prior_path = published_artifact_paths.pop(
-                                    duplicate_owner, None
-                                )
-                            else:
-                                published_artifact_paths.pop(duplicate_owner, None)
-                            if prior_path is not None:
-                                prior_path.unlink(missing_ok=True)
-                            prior_result = results.get(duplicate_owner) or prior_results.get(
-                                duplicate_owner
+                duplicate_owner = seen_digests.get(stable_snapshot.pixel_digest)
+                if stable_snapshot.pixel_digest in seen_digests:
+                    if duplicate_owner is not None:
+                        prior_path = artifact_paths.pop(duplicate_owner, None)
+                        if prior_path is None:
+                            prior_path = published_artifact_paths.pop(
+                                duplicate_owner, None
                             )
-                            if prior_result is None:
-                                raise SharedViewCaptureError(
-                                    "captured artifact ownership is invalid"
-                                )
-                            _mark_result_unknown(
-                                prior_result,
-                                "duplicate-artifact-digest",
-                                now(),
+                        else:
+                            published_artifact_paths.pop(duplicate_owner, None)
+                        if prior_path is not None:
+                            prior_path.unlink(missing_ok=True)
+                        prior_result = results.get(duplicate_owner) or prior_results.get(
+                            duplicate_owner
+                        )
+                        if prior_result is None:
+                            raise SharedViewCaptureError(
+                                "captured artifact ownership is invalid"
                             )
-                        seen_digests[second_snapshot.pixel_digest] = None
-                        results[requirement.requirement_id] = _result(
-                            requirement,
-                            status="unknown",
-                            captured_at=now(),
-                            host_mechanism="simctl-gallery",
-                            appearance_mechanism=appearance_mechanism,
-                            error_code="duplicate-artifact-digest",
+                        _mark_result_unknown(
+                            prior_result,
+                            "duplicate-artifact-digest",
+                            now(),
                         )
-                        continue
-                    final_path = artifact_directory / f"{requirement.requirement_id}.png"
-                    try:
-                        os.chmod(second_path, 0o600)
-                        _fsync_file(second_path)
-                        os.replace(second_path, final_path)
-                        os.chmod(final_path, 0o600)
-                    except OSError:
-                        final_path.unlink(missing_ok=True)
-                        seen_digests[second_snapshot.pixel_digest] = None
-                        results[requirement.requirement_id] = _result(
-                            requirement,
-                            status="unknown",
-                            captured_at=now(),
-                            host_mechanism="simctl-gallery",
-                            appearance_mechanism=appearance_mechanism,
-                            error_code="artifact-publish-failed",
-                        )
-                        continue
-                    seen_digests[second_snapshot.pixel_digest] = requirement.requirement_id
-                    artifact_paths[requirement.requirement_id] = final_path
-                    published_artifact_paths[requirement.requirement_id] = final_path
+                    seen_digests[stable_snapshot.pixel_digest] = None
                     results[requirement.requirement_id] = _result(
                         requirement,
-                        status="captured",
+                        status="unknown",
                         captured_at=now(),
                         host_mechanism="simctl-gallery",
                         appearance_mechanism=appearance_mechanism,
-                        snapshot=second_snapshot,
+                        error_code="duplicate-artifact-digest",
                     )
-                finally:
-                    second_path.unlink(missing_ok=True)
+                    continue
+                final_path = artifact_directory / f"{requirement.requirement_id}.png"
+                try:
+                    os.chmod(stable_path, 0o600)
+                    _fsync_file(stable_path)
+                    os.replace(stable_path, final_path)
+                    os.chmod(final_path, 0o600)
+                except OSError:
+                    final_path.unlink(missing_ok=True)
+                    seen_digests[stable_snapshot.pixel_digest] = None
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism="simctl-gallery",
+                        appearance_mechanism=appearance_mechanism,
+                        error_code="artifact-publish-failed",
+                    )
+                    continue
+                seen_digests[stable_snapshot.pixel_digest] = requirement.requirement_id
+                artifact_paths[requirement.requirement_id] = final_path
+                published_artifact_paths[requirement.requirement_id] = final_path
+                results[requirement.requirement_id] = _result(
+                    requirement,
+                    status="captured",
+                    captured_at=now(),
+                    host_mechanism="simctl-gallery",
+                    appearance_mechanism=appearance_mechanism,
+                    snapshot=stable_snapshot,
+                )
             finally:
-                first_path.unlink(missing_ok=True)
+                stable_path.unlink(missing_ok=True)
 
     if cleanup_target is None:
         if cleanup_inventory_unknown:

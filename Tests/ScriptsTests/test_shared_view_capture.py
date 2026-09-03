@@ -183,6 +183,7 @@ class FakeRunner:
         corrupt_png: str | None = None,
         unstable: bool = False,
         baseline_unstable: bool = False,
+        settles_after_first: bool = False,
         baseline_equal: bool = False,
         duplicate_routes: bool = False,
         cross_profile_duplicates: bool = False,
@@ -203,6 +204,7 @@ class FakeRunner:
         self.corrupt_png = corrupt_png
         self.unstable = unstable
         self.baseline_unstable = baseline_unstable
+        self.settles_after_first = settles_after_first
         self.baseline_equal = baseline_equal
         self.duplicate_routes = duplicate_routes
         self.cross_profile_duplicates = cross_profile_duplicates
@@ -317,6 +319,8 @@ class FakeRunner:
             self.baseline_screenshot_count += 1
             if self.baseline_unstable and count % 2 == 1:
                 baseline_color = (0x12, 0x22, 0x33, 0xFF)
+            elif self.settles_after_first and count == 0:
+                baseline_color = (0x12, 0x22, 0x33, 0xFF)
             return png_bytes(color=baseline_color)
         if self.baseline_equal:
             return png_bytes(color=baseline_color)
@@ -335,6 +339,8 @@ class FakeRunner:
         count = self.route_screenshot_counts.get(route, 0)
         self.route_screenshot_counts[route] = count + 1
         if self.unstable and count % 2 == 1:
+            color = ((color[0] + 1) % 256, color[1], color[2], color[3])
+        elif self.settles_after_first and count == 0:
             color = ((color[0] + 1) % 256, color[1], color[2], color[3])
         return png_bytes(color=color)
 
@@ -1241,7 +1247,20 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assertEqual(["unknown", "unknown"], [item["status"] for item in receipt["captures"]])
                 self.assert_capture_errors(receipt, error_code, error_code)
-                self.assertFalse(list((self.artifact_root / self.manifest_id / f"scenario-{index}").glob("*.png")))
+                run_directory = self.artifact_root / self.manifest_id / f"scenario-{index}"
+                self.assertFalse(
+                    [path for path in run_directory.iterdir() if path.suffix == ".png"]
+                )
+
+    def test_transient_frames_converge_before_capture(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+
+        exit_code, receipt = self.execute(FakeRunner(settles_after_first=True))
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
+        self.assertEqual([3.0] * 11, self.sleeps)
 
     def test_cross_duplicates(self) -> None:
         self.write_plan(["ios.app", "ipados.app"])
