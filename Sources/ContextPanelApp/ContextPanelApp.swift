@@ -1154,7 +1154,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if hasSavedPromptCacheUsageAuthorization(account) {
             return "Cache stats are enabled for \(account.displayName). Change the usage folder if the widget cannot read cache hit rates."
         }
-        return "Enable cache stats for \(account.displayName) by selecting the usage folder that stores Every Code prompt-cache JSON files."
+        return "Enable cache stats for \(account.displayName) by selecting its \(account.effectiveCodexClient?.telemetryFolderName ?? "usage") folder. Only token counts are shared with the widget."
     }
 
     var backgroundRefreshStatusText: String {
@@ -2178,7 +2178,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         let usageDirectory = promptCacheUsageDirectory(for: account)
 
         let panel = NSOpenPanel()
-        panel.message = "Select the folder that contains Every Code usage JSON files for prompt-cache hit rates. This is usually ~/.code/usage."
+        panel.message = "Select the \(account.effectiveCodexClient?.telemetryFolderName ?? "usage") folder for \(account.displayName). Recent token counts are read locally; session text is never copied."
         panel.prompt = "Select Folder"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -2194,7 +2194,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 return
             }
             guard Self.directoryLooksLikePromptCacheUsage(url) else {
-                errorMessage = "That folder does not contain Every Code usage JSON yet. Select the usage folder that contains usage records."
+                errorMessage = "Select the telemetry folder for this client. Cache stats appear after usage is recorded."
                 return
             }
             do {
@@ -2224,7 +2224,13 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func promptCacheUsageDetailText(for account: LocalProviderAccountConfiguration) -> String? {
         guard account.connectorKind.supportsPromptCacheTelemetry else { return nil }
         let path = promptCacheUsageDirectory(for: account).path
-        return "Cache stats source · \(ConnectorRedactor.redactedPath(path))"
+        let detail: String
+        switch account.effectiveCodexClient {
+        case .codex: detail = "Recent session sample; account unknown"
+        case .codexLab: detail = "Measured between refreshes; first refresh starts a baseline"
+        default: detail = "Cache stats source"
+        }
+        return "\(detail) · \(ConnectorRedactor.redactedPath(path))"
     }
 
     private func detailSourceLabel(for account: LocalProviderAccountConfiguration) -> String {
@@ -2241,15 +2247,15 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
         switch account.connectorKind {
         case .codexRateLimits:
-            if account.displayName.localizedCaseInsensitiveContains("code") {
-                return "Select auth_accounts.json. Every Code accounts are read from this file"
+            if account.effectiveCodexClient == .codexLab || account.effectiveCodexClient == .everyCode {
+                return "Select auth_accounts.json for \(account.effectiveCodexClient?.displayName ?? account.displayName). ChatGPT accounts are read from this file"
             }
-            if account.displayName.localizedCaseInsensitiveContains("codex") {
-                return "Select auth.json for Codex users"
+            if account.effectiveCodexClient == .codex {
+                return "Select auth.json for Codex"
             }
             return "Select the OpenAI CLI auth JSON file"
         case .googleAntigravityQuota:
-            return "Paste Copy Setup into AGY CLI once. Current Every Code AGY runs publish quota; AGY supports one status line and Context Panel never reads its login"
+            return "Paste Copy Setup into AGY CLI once. Current AGY runs publish quota; AGY supports one status line and Context Panel never reads its login"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }
@@ -2263,23 +2269,15 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func promptCacheUsageDirectory(for account: LocalProviderAccountConfiguration) -> URL {
-        if let usageDirectory = ContextPanelLocations.promptCacheUsageDirectory(forAuthPath: account.effectiveAuthPath) {
+        if let usageDirectory = account.promptCacheDirectory {
             return usageDirectory
         }
-        return ContextPanelLocations.everyCodeUsageDirectory()
+        return CodexClient.codex.homeDirectory().appending(path: "sessions", directoryHint: .isDirectory)
     }
 
     private static func directoryLooksLikePromptCacheUsage(_ url: URL, fileManager: FileManager = .default) -> Bool {
-        guard let urls = try? fileManager.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return false }
-        return urls.contains { candidate in
-            guard candidate.pathExtension == "json" else { return false }
-            let resourceValues = try? candidate.resourceValues(forKeys: [.isRegularFileKey])
-            return resourceValues?.isRegularFile == true
-        }
+        var isDirectory: ObjCBool = false
+        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {
@@ -3315,7 +3313,7 @@ private struct ReconnectAccountRow: View {
         }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .codexRateLimits, refreshSummary?.status == .failure {
-            return "Sign in again from Every Code or Codex, then reselect the auth file."
+            return "Sign in again with the configured Codex or Codex Lab client, then reselect its auth file."
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .googleAntigravityQuota {
@@ -3323,7 +3321,7 @@ private struct ReconnectAccountRow: View {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
             return attentionReport?.userFacingErrorMessage
-                ?? "AGY quota updates whenever Every Code or AGY runs. Idle time alone does not require setup again."
+                ?? "AGY quota updates whenever AGY runs. Idle time alone does not require setup again."
         }
         return settingsModel.detailText(for: account)
     }

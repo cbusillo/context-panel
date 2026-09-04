@@ -102,8 +102,9 @@ The package includes development probes for validating provider limit signals
 without printing secrets or raw provider responses:
 
 ```sh
-swift run CodexRateLimitProbe --auth ~/.code/auth_accounts.json
-swift run SnapshotStoreProbe --codex-auth ~/.code/auth_accounts.json
+swift run CodexRateLimitProbe --auth ~/.codex/auth.json
+swift run CodexRateLimitProbe --auth ~/.codex-lab/auth_accounts.json
+swift run SnapshotStoreProbe --codex-auth ~/.codex-lab/auth_accounts.json
 ```
 
 The Codex probe can return live percent-window quota buckets for CLI-backed

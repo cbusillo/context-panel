@@ -44,7 +44,7 @@ import Testing
     let summary = PromptCacheSummary(observations: [
         PromptCacheObservation(
             provider: .openAI,
-            accountID: "latest",
+            accountID: "same-account",
             accountName: "Every Code",
             observedAt: now,
             windowLabel: "Latest",
@@ -52,10 +52,10 @@ import Testing
         ),
         PromptCacheObservation(
             provider: .openAI,
-            accountID: "previous",
+            accountID: "same-account",
             accountName: "Every Code",
             observedAt: now.addingTimeInterval(-60),
-            windowLabel: "Previous",
+            windowLabel: "Latest",
             tokens: PromptCacheTokenSet(inputTokens: 10_000, cachedInputTokens: 9_500)
         ),
     ])
@@ -394,7 +394,7 @@ import Testing
     ) == customCodeHome.appending(path: "usage", directoryHint: .isDirectory))
     #expect(ContextPanelLocations.promptCacheUsageDirectory(
         forAuthPath: customCodexHome.appending(path: "auth.json").path
-    ) == customCodexHome.appending(path: "usage", directoryHint: .isDirectory))
+    ) == customCodexHome.appending(path: "sessions", directoryHint: .isDirectory))
     #expect(ContextPanelLocations.promptCacheUsageDirectory(
         forAuthPath: root.appending(path: "downloads/auth_accounts.json").path
     ) == nil)

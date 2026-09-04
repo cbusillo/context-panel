@@ -37,6 +37,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var isEnabled: Bool
     public var authPath: String?
     public var commandPath: String?
+    public var codexClient: CodexClient?
 
     public init(
         id: String,
@@ -45,7 +46,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         displayName: String,
         isEnabled: Bool = true,
         authPath: String? = nil,
-        commandPath: String? = nil
+        commandPath: String? = nil,
+        codexClient: CodexClient? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -54,6 +56,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.isEnabled = isEnabled
         self.authPath = authPath
         self.commandPath = commandPath
+        self.codexClient = codexClient
     }
 
     public var effectiveAuthPath: String? {
@@ -171,22 +174,23 @@ public struct AccountConfigurationStore: Sendable {
     }
 
     public static func defaultDocument(now: Date = Date()) -> AccountConfigurationDocument {
-        let home = ContextPanelLocations.realUserHomeDirectory().path
         return AccountConfigurationDocument(updatedAt: now, accounts: [
-            LocalProviderAccountConfiguration(
-                id: "openai-code-default",
-                provider: .openAI,
-                connectorKind: .codexRateLimits,
-                displayName: "Every Code",
-                authPath: "\(home)/.code/auth_accounts.json"
-            ),
             LocalProviderAccountConfiguration(
                 id: "openai-codex-default",
                 provider: .openAI,
                 connectorKind: .codexRateLimits,
                 displayName: "Codex",
+                authPath: CodexClient.codex.homeDirectory().appending(path: "auth.json").path,
+                codexClient: .codex
+            ),
+            LocalProviderAccountConfiguration(
+                id: "openai-codex-lab-default",
+                provider: .openAI,
+                connectorKind: .codexRateLimits,
+                displayName: "Codex Lab",
                 isEnabled: false,
-                authPath: "\(home)/.codex/auth.json"
+                authPath: CodexClient.codexLab.homeDirectory().appending(path: "auth_accounts.json").path,
+                codexClient: .codexLab
             ),
             LocalProviderAccountConfiguration(
                 id: "claude-oauth-default",
@@ -220,6 +224,19 @@ public struct AccountConfigurationStore: Sendable {
                 )
             }
             return account
+        }
+        // Add setup choices without repointing existing bookmarks/Keychain keys,
+        // enabling an account the user turned off, or discarding historical IDs.
+        let hasLegacyDefault = document.accounts.contains {
+            $0.id == "openai-code-default" && $0.effectiveCodexClient == .everyCode
+        }
+        for var account in defaultDocument(now: now).accounts where hasLegacyDefault && account.connectorKind == .codexRateLimits {
+            guard !document.accounts.contains(where: {
+                $0.id == account.id || $0.effectiveCodexClient == account.effectiveCodexClient
+            }) else { continue }
+            account.isEnabled = false
+            document.accounts.append(account)
+            changed = true
         }
         if changed {
             document.updatedAt = now
@@ -270,7 +287,7 @@ public enum AccountConnectorFactory {
                     accounts: [CodexAccountConfiguration(
                         configuredAccountID: account.id,
                         authPath: authPath,
-                        accountName: codexAccountName(for: authPath, fallback: account.displayName)
+                        accountName: account.effectiveCodexClient?.displayName ?? codexAccountName(for: authPath, fallback: account.displayName)
                     )],
                     fileLoader: authFileLoader
                 )

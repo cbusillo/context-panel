@@ -132,7 +132,10 @@ public struct PromptCacheSummary: Equatable, Sendable {
     public var hasPossibleCacheBreak: Bool {
         guard observations.count >= 2, let latest, let latestHitRate = latest.hitRate else { return false }
         let previous = observations
-            .filter { $0.id != latest.id && $0.hitRate != nil }
+            .filter {
+                $0.id != latest.id && $0.hitRate != nil && $0.accountID == latest.accountID
+                    && $0.provider == latest.provider && $0.windowLabel == latest.windowLabel
+            }
             .prefix(6)
         guard !previous.isEmpty else { return false }
         let previousSummary = PromptCacheSummary(observations: Array(previous))
@@ -146,6 +149,15 @@ public struct PromptCacheSummary: Equatable, Sendable {
 }
 
 public enum PromptCacheTelemetryReader {
+    public static func mirroredObservations(
+        rootDirectory: URL = ContextPanelLocations.promptCacheTelemetryDirectory(appGroupID: ContextPanelLocations.appGroupID),
+        now: Date = Date(),
+        maximumAge: TimeInterval = PromptCacheSummary.defaultMaximumAge,
+        fileManager: FileManager = .default
+    ) -> [PromptCacheObservation] {
+        everyCodeUsageObservations(rootDirectory: rootDirectory, now: now, maximumAge: maximumAge, fileManager: fileManager)
+    }
+
     public static func everyCodeUsageObservations(
         now: Date = Date(),
         maximumAge: TimeInterval = PromptCacheSummary.defaultMaximumAge,
@@ -176,7 +188,13 @@ public enum PromptCacheTelemetryReader {
         let urls = jsonFileURLs(rootDirectory: rootDirectory, fileManager: fileManager)
 
         return deduplicated(urls
-            .compactMap { url in observation(from: url, now: now, maximumAge: maximumAge) }
+            .flatMap { url -> [PromptCacheObservation] in
+                if let data = try? Data(contentsOf: url),
+                   let mirror = try? JSONDecoder().decode(CodexTelemetryMirror.self, from: data) {
+                    return filteredRecentObservations(mirror.observations, now: now, maximumAge: maximumAge)
+                }
+                return observation(from: url, now: now, maximumAge: maximumAge).map { [$0] } ?? []
+            }
         )
             .sorted { $0.observedAt > $1.observedAt }
     }
@@ -187,7 +205,7 @@ public enum PromptCacheTelemetryReader {
         maximumAge: TimeInterval = PromptCacheSummary.defaultMaximumAge
     ) -> [PromptCacheObservation] {
         observations.filter { observation in
-            now.timeIntervalSince(observation.observedAt) <= maximumAge
+            observation.observedAt <= now && now.timeIntervalSince(observation.observedAt) <= maximumAge
         }
     }
 

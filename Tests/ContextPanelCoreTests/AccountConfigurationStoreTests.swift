@@ -10,8 +10,9 @@ import Testing
 
     #expect(result.status == .unknown)
     #expect(result.document.accounts.count == 4)
-    #expect(result.document.accounts.contains { $0.id == "openai-code-default" && $0.displayName == "Every Code" && $0.isEnabled })
-    #expect(result.document.accounts.contains { $0.id == "openai-codex-default" && $0.displayName == "Codex" && !$0.isEnabled })
+    #expect(!result.document.accounts.contains { $0.effectiveCodexClient == .everyCode })
+    #expect(result.document.accounts.contains { $0.id == "openai-codex-default" && $0.displayName == "Codex" && $0.isEnabled && $0.codexClient == .codex })
+    #expect(result.document.accounts.contains { $0.id == "openai-codex-lab-default" && $0.displayName == "Codex Lab" && !$0.isEnabled && $0.codexClient == .codexLab })
     #expect(result.document.accounts.contains { $0.connectorKind == .googleAntigravityQuota && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.connectorKind == .claudeOAuthUsage && $0.effectiveAuthPath == nil })
 }
@@ -133,6 +134,91 @@ import Testing
 
     #expect(result.status == .healthy)
     #expect(result.document == document)
+}
+
+@Test(arguments: [true, false])
+func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAccount(legacyEnabled: Bool) throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let legacy = LocalProviderAccountConfiguration(
+        id: "openai-code-default",
+        provider: .openAI,
+        connectorKind: .codexRateLimits,
+        displayName: "My retained account",
+        isEnabled: legacyEnabled,
+        authPath: "/Users/example/.code-work/auth_accounts.json"
+    )
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [legacy])
+    try store.save(document)
+
+    let migrated = store.load(now: Date(timeIntervalSince1970: 20))
+    let preserved = try #require(migrated.document.accounts.first { $0.id == legacy.id })
+
+    #expect(migrated.status == .healthy)
+    #expect(migrated.document.schemaVersion == 1)
+    #expect(migrated.document.updatedAt == Date(timeIntervalSince1970: 20))
+    // Credential keys use the configured ID; bookmark keys use the auth path.
+    #expect(preserved == legacy)
+    #expect(preserved.providerReportAccountIDs == legacy.providerReportAccountIDs)
+    #expect(preserved.codexClient == nil)
+    #expect(migrated.document.accounts.map(\.id) == ["openai-code-default", "openai-codex-default", "openai-codex-lab-default"])
+    #expect(migrated.document.accounts.dropFirst().allSatisfy { !$0.isEnabled })
+    #expect(migrated.document.accounts.dropFirst().map(\.effectiveCodexClient) == [.codex, .codexLab])
+
+    let savedBytes = try Data(contentsOf: store.configurationURL)
+    let reloaded = store.load(now: Date(timeIntervalSince1970: 30))
+
+    #expect(reloaded.document == migrated.document)
+    #expect(try Data(contentsOf: store.configurationURL) == savedBytes)
+    #expect(Set(reloaded.document.accounts.map(\.id)).count == 3)
+}
+
+@Test func accountConfigurationStorePreservesExistingDisabledAndCustomClientChoices() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-code-default", provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Every Code", authPath: "/Users/example/.code/auth_accounts.json"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "openai-codex-default", provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Disabled Codex", isEnabled: false, authPath: "/Users/example/.codex/auth.json"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "custom-lab", provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Work Lab", isEnabled: false, authPath: "/Users/example/work-login/auth.json", codexClient: .codexLab
+        ),
+    ])
+    try store.save(document)
+
+    let result = store.load(now: Date(timeIntervalSince1970: 20))
+
+    #expect(result.status == .healthy)
+    #expect(result.document == document)
+    #expect(!result.document.accounts.contains { $0.id == "openai-codex-lab-default" })
+}
+
+@Test(arguments: [
+    ("custom-every-code", "/Users/example/.code/auth_accounts.json"),
+    ("openai-code-default", "/Users/example/custom/auth_accounts.json"),
+    ("openai-code-default", "/Users/example/.codex-lab/auth_accounts.json"),
+])
+func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: String, authPath: String) throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: id, provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Custom account", authPath: authPath
+        ),
+    ])
+    try store.save(document)
+
+    #expect(store.load(now: Date(timeIntervalSince1970: 20)).document == document)
 }
 
 @Test func accountConfigurationStoreMigratesClaudeLocalStatusToOAuth() throws {
@@ -601,22 +687,20 @@ import Testing
     #expect(account.effectiveAuthPath == authURL.path)
 }
 
-@Test func defaultAccountPathsUseRealUserHome() throws {
+@Test func defaultAccountPathsUseConfiguredClientHomes() throws {
     let document = AccountConfigurationStore.defaultDocument(now: Date(timeIntervalSince1970: 0))
-    let expectedHome = try #require(getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) })
 
-    let code = try #require(document.accounts.first { $0.id == "openai-code-default" })
+    let lab = try #require(document.accounts.first { $0.id == "openai-codex-lab-default" })
     let codex = try #require(document.accounts.first { $0.id == "openai-codex-default" })
     let google = try #require(document.accounts.first { $0.id == "google-antigravity-default" })
 
-    #expect(code.authPath == "\(expectedHome)/.code/auth_accounts.json")
-    #expect(codex.authPath == "\(expectedHome)/.codex/auth.json")
-    #expect(codex.isEnabled == false)
+    #expect(lab.authPath == CodexClient.codexLab.homeDirectory().appending(path: "auth_accounts.json").path)
+    #expect(codex.authPath == CodexClient.codex.homeDirectory().appending(path: "auth.json").path)
+    #expect(lab.isEnabled == false)
+    #expect(codex.isEnabled)
     #expect(google.authPath == nil)
     #expect(google.effectiveAuthPath == nil)
     #expect(google.displayName == "Antigravity")
-    #expect(code.authPath?.contains("/Library/Containers/") == false)
-    #expect(codex.authPath?.contains("/Library/Containers/") == false)
 }
 
 @Test func accountConfigurationStoreReportsCorruptFilesAsFailure() throws {

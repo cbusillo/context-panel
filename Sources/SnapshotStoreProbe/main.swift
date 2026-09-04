@@ -67,7 +67,7 @@ struct ProbeConfiguration {
 
     private static func printHelp() {
         print("""
-        Usage: swift run SnapshotStoreProbe [--output /tmp/context-panel-store] [--configured-accounts] [--codex-account Label=~/.code/auth_accounts.json]
+        Usage: swift run SnapshotStoreProbe [--output /tmp/context-panel-store] [--configured-accounts] [--codex-account Label=~/.codex-lab/auth_accounts.json]
 
         Refreshes selected local connectors, writes the normalized snapshot to
         the JSON snapshot store, then reloads it. The store contains normalized
