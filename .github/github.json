@@ -97,7 +97,7 @@
       "releaseEvidenceReleaseReportValidation": "scripts/validate-release-evidence-report.py --report <release-evidence.json> --validation-report <final-report.json> --comparison <comparison.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --selected-rc-ledger <approved-rc-lineage.json> --shadow-evidence <shadow-evidence.json> --version <version> --build-number <build-number> --train release --enforce",
       "appStoreReviewReleaseEvidenceDefault": "enforce",
       "releaseEvidenceTests": "python3 -m unittest Tests/ScriptsTests/test_release_evidence_gate.py Tests/ScriptsTests/test_submit_app_store_review.py Tests/ScriptsTests/test_release_workflows.py",
-      "codexClientCompatibility": "swift test --filter \"codexClient|codexSession|codexTelemetry|accountConfiguration|codexRateLimitConnector\""
+      "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration)\""
     },
     "docsRequiredWhen": [
       "provider behavior changes",

@@ -61,6 +61,101 @@ import Testing
     ])
 
     #expect(summary.hasPossibleCacheBreak)
+    #expect(summary.comparisonStatus == .limited)
+}
+
+@Test func promptCacheIncrementColdStartDoesNotDiagnoseBreakAfterWarmHistory() {
+    let summary = PromptCacheSummary(observations: [
+        cacheIncrement(age: 0, input: 2_000, cached: 0),
+        cacheIncrement(age: 1_000, input: 10_000, cached: 9_500),
+        cacheIncrement(age: 10, input: 1_000, cached: 0, accountID: "other"),
+        cacheIncrement(age: 20, input: 1_000, cached: nil),
+    ])
+
+    #expect(summary.latestHitRate == 0)
+    #expect(summary.tokenWeightedHitRate == 9_500.0 / 13_000)
+    #expect(summary.comparisonStatus == .unknown)
+    #expect(!summary.hasPossibleCacheBreak)
+}
+
+@Test func promptCacheFirstColdIncrementHasNeutralStatus() {
+    let summary = PromptCacheSummary(observations: [cacheIncrement(age: 0, input: 2_000, cached: 0)])
+
+    #expect(summary.isAvailable)
+    #expect(summary.latestHitRate == 0)
+    #expect(summary.comparisonStatus == .unknown)
+    #expect(!summary.hasPossibleCacheBreak)
+}
+
+@Test func promptCacheIncrementLatestRateWeightsOnlyMatchingRecentBucket() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    let summary = PromptCacheSummary(observations: [
+        cacheIncrement(age: 0, input: 2_000, cached: 0),
+        cacheIncrement(age: 60, input: 8_000, cached: 8_000),
+        cacheIncrement(age: 900, input: 10_000, cached: 9_000),
+        cacheIncrement(age: 901, input: 50_000, cached: 0),
+        cacheIncrement(age: 30, input: 100_000, cached: 0, accountID: "other"),
+        cacheIncrement(age: 30, input: 100_000, cached: 0, provider: .anthropic),
+        cacheIncrement(age: 30, input: 100_000, cached: 0, windowLabel: "Different window"),
+        PromptCacheObservation(
+            provider: .openAI, accountID: "same-account", accountName: "Legacy",
+            observedAt: now.addingTimeInterval(-30), windowLabel: "Session increment",
+            tokens: PromptCacheTokenSet(inputTokens: 100_000, cachedInputTokens: 0)
+        ),
+    ])
+
+    #expect(summary.latest?.hitRate == 0)
+    #expect(summary.latestHitRate == 0.85)
+    #expect(summary.totalInputTokens == 470_000)
+    #expect(summary.totalCachedInputTokens == 17_000)
+    #expect(summary.tokenWeightedHitRate == 17_000.0 / 470_000)
+    #expect(summary.latestDeltaFromWeightedAverage == 0.85 - 17_000.0 / 470_000)
+    #expect(summary.comparisonStatus == .healthy)
+    #expect(!summary.hasPossibleCacheBreak)
+}
+
+@Test func promptCacheIncrementNeverUsesLegacyBreakHeuristicAfterMultipleSamples() {
+    let summary = PromptCacheSummary(observations: [
+        cacheIncrement(age: 0, input: 2_000, cached: 0),
+        cacheIncrement(age: 30, input: 1_000, cached: 900),
+        cacheIncrement(age: 60, input: 1_000, cached: 900),
+    ])
+
+    #expect(summary.latestHitRate == 0.45)
+    #expect(!summary.hasPossibleCacheBreak)
+}
+
+@Test func promptCacheObservationDecodesLegacyDataWithoutMeasurementMetadata() throws {
+    let data = Data(#"""
+    {"id":"legacy","provider":"openai","accountID":"same-account","accountName":"Every Code","observedAt":0,"windowLabel":"Last hour","tokens":{"inputTokens":1000,"cachedInputTokens":900}}
+    """#.utf8)
+
+    let observation = try JSONDecoder().decode(PromptCacheObservation.self, from: data)
+    let increment = cacheIncrement(age: 0, input: 1_000, cached: 900)
+
+    #expect(observation.measurement == nil)
+    #expect(PromptCacheSummary(observations: [observation]).latestHitRate == 0.9)
+    #expect(try JSONDecoder().decode(PromptCacheObservation.self, from: JSONEncoder().encode(increment)) == increment)
+    #expect(increment.measurement == .increment)
+}
+
+private func cacheIncrement(
+    age: TimeInterval,
+    input: Int,
+    cached: Int?,
+    accountID: String = "same-account",
+    provider: Provider = .openAI,
+    windowLabel: String = "Session increment"
+) -> PromptCacheObservation {
+    PromptCacheObservation(
+        provider: provider,
+        accountID: accountID,
+        accountName: "Codex",
+        observedAt: Date(timeIntervalSince1970: 10_000).addingTimeInterval(-age),
+        windowLabel: windowLabel,
+        tokens: PromptCacheTokenSet(inputTokens: input, cachedInputTokens: cached),
+        measurement: .increment
+    )
 }
 
 @Test func promptCacheSummaryComparesLatestAgainstRollingAverage() {

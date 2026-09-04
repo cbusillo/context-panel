@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 
 @testable import ContextPanelCore
@@ -98,7 +99,18 @@ import Testing
 
     #expect(unknown.effectiveCodexClient == nil)
     #expect(unknown.promptCacheDirectory == nil)
+    #expect(!unknown.supportsPromptCacheTelemetry)
     #expect(missingPath.promptCacheDirectory == nil)
     #expect(claude.effectiveCodexClient == nil)
     #expect(claude.promptCacheDirectory == nil)
+}
+
+@Test func codexClientDefaultHomesUseLoginHomeOutsideSandboxContainer() throws {
+    let user = try #require(getpwuid(getuid()))
+    let home = URL(fileURLWithPath: String(cString: user.pointee.pw_dir))
+    for (client, folder) in [(CodexClient.codex, ".codex"), (.codexLab, ".codex-lab"), (.everyCode, ".code")] {
+        let actual = client.homeDirectory(environment: ["HOME": "/sandbox/Library/Containers/example"])
+        #expect(actual == home.appending(path: folder, directoryHint: .isDirectory))
+        #expect(!actual.path.contains("/Library/Containers/"))
+    }
 }

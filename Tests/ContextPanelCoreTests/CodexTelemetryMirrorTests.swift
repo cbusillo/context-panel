@@ -76,6 +76,42 @@ private struct CodexMirrorFixture {
     #expect(observations.first?.hitRate == 0.8)
     #expect(observations.first?.windowLabel == "Since refresh")
     #expect(observations.first?.observedAt == later)
+    #expect(observations.first?.measurement == .increment)
+}
+
+@Test func codexLabMirrorTemporaryInvalidRecordPreservesMeasuredHistoryWithoutReusingBaseline() throws {
+    let fixture = try CodexMirrorFixture()
+    defer { fixture.remove() }
+    try fixture.writeLab(input: 1_000, cached: 800, at: fixture.start)
+    try fixture.mirror(at: fixture.start)
+    let measured = fixture.start.addingTimeInterval(60)
+    try fixture.writeLab(input: 1_100, cached: 880, at: measured)
+    try fixture.mirror(at: measured)
+    let original = fixture.observations(at: measured)
+    let invalid = fixture.start.addingTimeInterval(120)
+    try Data("{unfinished".utf8).write(to: fixture.source.appendingPathComponent("private-account.json"))
+    try fixture.mirror(at: invalid)
+    #expect(fixture.observations(at: invalid) == original)
+    #expect(try fixture.persisted().baselines.isEmpty)
+    let recovered = fixture.start.addingTimeInterval(180)
+    try fixture.writeLab(input: 9_000, cached: 8_000, at: recovered)
+    try fixture.mirror(at: recovered)
+    #expect(fixture.observations(at: recovered) == original)
+    #expect(try fixture.persisted().baselines.count == 1)
+}
+
+@Test func codexLabMirrorEarlierRefreshCannotOverwriteNewerBaseline() throws {
+    let fixture = try CodexMirrorFixture()
+    defer { fixture.remove() }
+    try fixture.writeLab(input: 1_000, cached: 800, at: fixture.start)
+    try fixture.mirror(at: fixture.start)
+    let later = fixture.start.addingTimeInterval(60)
+    try fixture.writeLab(input: 1_100, cached: 880, at: later)
+    try fixture.mirror(at: later)
+    let original = fixture.observations(at: later)
+    try fixture.mirror(at: fixture.start)
+    #expect(fixture.observations(at: later) == original)
+    #expect(try fixture.persisted().refreshedAt == later)
 }
 
 @Test func codexLabMirrorIdleTimestampChangesDoNotReplayUsage() throws {

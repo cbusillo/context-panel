@@ -19,6 +19,10 @@ public struct PromptCacheTokenSet: Codable, Equatable, Sendable {
     }
 }
 
+public enum PromptCacheMeasurement: String, Codable, Equatable, Sendable {
+    case increment
+}
+
 public struct PromptCacheObservation: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let provider: Provider
@@ -27,6 +31,7 @@ public struct PromptCacheObservation: Codable, Equatable, Identifiable, Sendable
     public let observedAt: Date
     public let windowLabel: String
     public let tokens: PromptCacheTokenSet
+    public let measurement: PromptCacheMeasurement?
 
     public init(
         id: String? = nil,
@@ -35,7 +40,8 @@ public struct PromptCacheObservation: Codable, Equatable, Identifiable, Sendable
         accountName: String,
         observedAt: Date,
         windowLabel: String,
-        tokens: PromptCacheTokenSet
+        tokens: PromptCacheTokenSet,
+        measurement: PromptCacheMeasurement? = nil
     ) {
         self.id = id ?? "\(provider.rawValue):\(accountID):\(windowLabel):\(observedAt.timeIntervalSince1970)"
         self.provider = provider
@@ -44,6 +50,7 @@ public struct PromptCacheObservation: Codable, Equatable, Identifiable, Sendable
         self.observedAt = observedAt
         self.windowLabel = windowLabel
         self.tokens = tokens
+        self.measurement = measurement
     }
 
     public var hitRate: Double? { tokens.hitRate }
@@ -88,7 +95,12 @@ public struct PromptCacheSummary: Equatable, Sendable {
     }
 
     public var latestHitRate: Double? {
-        latest?.hitRate
+        guard latest?.measurement == .increment else { return latest?.hitRate }
+        let totals = latestIncrementBucket.reduce((input: 0, cached: 0)) { partial, observation in
+            (partial.input + observation.tokens.inputTokens, partial.cached + (observation.tokens.cachedInputTokens ?? 0))
+        }
+        guard totals.input > 0 else { return nil }
+        return min(max(Double(totals.cached) / Double(totals.input), 0), 1)
     }
 
     public var latestDeltaFromWeightedAverage: Double? {
@@ -104,6 +116,7 @@ public struct PromptCacheSummary: Equatable, Sendable {
     }
 
     public var comparisonStatus: UsageStatus {
+        if latest?.measurement == .increment, latestIncrementBucket.count < 3 { return .unknown }
         guard !hasPossibleCacheBreak else { return .limited }
         guard let latestHitRate else { return .unknown }
         guard let delta = latestDeltaFromWeightedAverage else {
@@ -130,11 +143,15 @@ public struct PromptCacheSummary: Equatable, Sendable {
     }
 
     public var hasPossibleCacheBreak: Bool {
-        guard observations.count >= 2, let latest, let latestHitRate = latest.hitRate else { return false }
+        // Per-turn startup misses are expected. Incremental sources need a
+        // validated sustained-change heuristic before diagnosing cache breaks.
+        guard observations.count >= 2, let latest, latest.measurement != .increment,
+              let latestHitRate = latest.hitRate else { return false }
         let previous = observations
             .filter {
                 $0.id != latest.id && $0.hitRate != nil && $0.accountID == latest.accountID
                     && $0.provider == latest.provider && $0.windowLabel == latest.windowLabel
+                    && $0.measurement == latest.measurement
             }
             .prefix(6)
         guard !previous.isEmpty else { return false }
@@ -145,6 +162,16 @@ public struct PromptCacheSummary: Equatable, Sendable {
 
     private var availableObservations: [PromptCacheObservation] {
         observations.filter { $0.tokens.inputTokens > 0 && $0.tokens.cachedInputTokens != nil }
+    }
+
+    private var latestIncrementBucket: [PromptCacheObservation] {
+        guard let latest, latest.measurement == .increment else { return [] }
+        let start = latest.observedAt.addingTimeInterval(-15 * 60)
+        return availableObservations.filter {
+            $0.measurement == .increment && $0.provider == latest.provider
+                && $0.accountID == latest.accountID && $0.windowLabel == latest.windowLabel
+                && $0.observedAt >= start && $0.observedAt <= latest.observedAt
+        }
     }
 }
 
@@ -189,11 +216,11 @@ public enum PromptCacheTelemetryReader {
 
         return deduplicated(urls
             .flatMap { url -> [PromptCacheObservation] in
-                if let data = try? Data(contentsOf: url),
-                   let mirror = try? JSONDecoder().decode(CodexTelemetryMirror.self, from: data) {
+                guard let data = try? Data(contentsOf: url) else { return [] }
+                if let mirror = try? JSONDecoder().decode(CodexTelemetryMirror.self, from: data) {
                     return filteredRecentObservations(mirror.observations, now: now, maximumAge: maximumAge)
                 }
-                return observation(from: url, now: now, maximumAge: maximumAge).map { [$0] } ?? []
+                return observation(from: data, at: url, now: now, maximumAge: maximumAge).map { [$0] } ?? []
             }
         )
             .sorted { $0.observedAt > $1.observedAt }
@@ -233,9 +260,8 @@ public enum PromptCacheTelemetryReader {
         }
     }
 
-    private static func observation(from url: URL, now: Date, maximumAge: TimeInterval) -> PromptCacheObservation? {
+    private static func observation(from data: Data, at url: URL, now: Date, maximumAge: TimeInterval) -> PromptCacheObservation? {
         guard
-            let data = try? Data(contentsOf: url),
             let payload = try? JSONDecoder().decode(EveryCodeUsagePayload.self, from: data),
             let observedAt = payload.lastUpdatedDate,
             now.timeIntervalSince(observedAt) <= maximumAge,

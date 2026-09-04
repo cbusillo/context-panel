@@ -49,6 +49,7 @@ private struct CodexSessionFixture {
     #expect(observations.map(\.tokens.inputTokens) == [200, 300])
     #expect(observations.map(\.tokens.cachedInputTokens) == [100, 200])
     #expect(observations.allSatisfy { $0.windowLabel == "Session increment" })
+    #expect(observations.allSatisfy { $0.measurement == .increment })
 }
 
 @Test func codexSessionSingleTurnRequiresMatchingLastCounters() throws {
@@ -216,4 +217,79 @@ private struct CodexSessionFixture {
         ], name: "\(index).jsonl")
     }
     #expect(fixture.observations().count == CodexSessionTelemetryReader.maximumFiles)
+}
+
+@Test func codexSessionFindsTodayBeforeOversizedHistoricalTree() throws {
+    let fixture = try CodexSessionFixture()
+    defer { fixture.remove() }
+    let historicalDay = fixture.root.appendingPathComponent("2027/01/14")
+    try FileManager.default.createDirectory(at: historicalDay, withIntermediateDirectories: true)
+    // Empty directories exercise the discovery budget without thousands of
+    // JSON writes or reads. Create historical entries before today's bucket.
+    for index in 0...CodexSessionTelemetryReader.maximumEntries {
+        try FileManager.default.createDirectory(
+            at: historicalDay.appendingPathComponent("old-\(index)"),
+            withIntermediateDirectories: false
+        )
+    }
+    try fixture.write([fixture.event(10, input: 100, cached: 80, lastInput: 100, lastCached: 80)])
+    #expect(fixture.observations().map(\.tokens) == [PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)])
+}
+
+@Test func codexSessionRetainsDirectRootCompatibility() throws {
+    let fixture = try CodexSessionFixture()
+    defer { fixture.remove() }
+    let event = fixture.event(10, input: 100, cached: 80, lastInput: 100, lastCached: 80)
+    try (event + "\n").write(
+        to: fixture.root.appendingPathComponent("direct.jsonl"), atomically: true, encoding: .utf8
+    )
+    #expect(fixture.observations().count == 1)
+}
+
+@Test func codexSessionConsidersResumedFilesWithinCalendarHorizon() throws {
+    let fixture = try CodexSessionFixture()
+    defer { fixture.remove() }
+    let oldDay = fixture.root.appendingPathComponent("2026/02/01")
+    try FileManager.default.createDirectory(at: oldDay, withIntermediateDirectories: true)
+    let events = [
+        fixture.event(100, input: 10_000, cached: 8_000),
+        fixture.event(10, input: 10_100, cached: 8_080),
+    ]
+    try (events.joined(separator: "\n") + "\n").write(
+        to: oldDay.appendingPathComponent("resumed.jsonl"), atomically: true, encoding: .utf8
+    )
+    try FileManager.default.setAttributes(
+        [.modificationDate: fixture.now], ofItemAtPath: oldDay.appendingPathComponent("resumed.jsonl").path
+    )
+    // Modification time must keep the resumed older bucket in the bounded read
+    // selection even when today's bucket already has the maximum file count.
+    for index in 0..<CodexSessionTelemetryReader.maximumFiles {
+        let file = try fixture.write([], name: "idle-\(index).jsonl")
+        try FileManager.default.setAttributes([.modificationDate: fixture.now.addingTimeInterval(-100)], ofItemAtPath: file.path)
+    }
+    #expect(fixture.observations().map(\.tokens) == [PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)])
+}
+
+@Test func codexSessionDoesNotSearchBeyondCalendarHorizon() throws {
+    let fixture = try CodexSessionFixture()
+    defer { fixture.remove() }
+    let oldDay = fixture.root.appendingPathComponent("2025/01/15")
+    try FileManager.default.createDirectory(at: oldDay, withIntermediateDirectories: true)
+    let event = fixture.event(10, input: 100, cached: 80, lastInput: 100, lastCached: 80)
+    try (event + "\n").write(
+        to: oldDay.appendingPathComponent("old.jsonl"), atomically: true, encoding: .utf8
+    )
+    #expect(fixture.observations().isEmpty)
+}
+
+@Test func codexSessionRejectsSymlinkedCalendarDirectory() throws {
+    let fixture = try CodexSessionFixture()
+    let outside = try CodexSessionFixture()
+    defer { fixture.remove(); outside.remove() }
+    try outside.write([outside.event(10, input: 100, cached: 80, lastInput: 100, lastCached: 80)])
+    try FileManager.default.createSymbolicLink(
+        at: fixture.root.appendingPathComponent("2027"),
+        withDestinationURL: outside.root.appendingPathComponent("2027")
+    )
+    #expect(fixture.observations().isEmpty)
 }

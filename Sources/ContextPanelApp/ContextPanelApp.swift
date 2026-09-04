@@ -1140,10 +1140,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     var promptCacheSetupAccount: LocalProviderAccountConfiguration? {
         accounts.first { account in
             account.isEnabled &&
-                account.connectorKind.supportsPromptCacheTelemetry &&
+                account.supportsPromptCacheTelemetry &&
                 needsPromptCacheUsageAuthorization(account)
         } ?? accounts.first { account in
-            account.isEnabled && account.connectorKind.supportsPromptCacheTelemetry
+            account.isEnabled && account.supportsPromptCacheTelemetry
         }
     }
 
@@ -1830,12 +1830,12 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func needsPromptCacheUsageAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
-        guard account.isEnabled, account.connectorKind.supportsPromptCacheTelemetry else { return false }
+        guard account.isEnabled, account.supportsPromptCacheTelemetry else { return false }
         return !promptCacheUsagePaths(for: [account]).allSatisfy { authorizedPromptCacheUsagePaths.contains($0) }
     }
 
     func hasSavedPromptCacheUsageAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
-        guard account.connectorKind.supportsPromptCacheTelemetry else { return false }
+        guard account.supportsPromptCacheTelemetry else { return false }
         let paths = promptCacheUsagePaths(for: [account])
         return !paths.isEmpty && paths.allSatisfy { authorizedPromptCacheUsagePaths.contains($0) }
     }
@@ -1853,7 +1853,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func canAuthorizePromptCacheUsage(for account: LocalProviderAccountConfiguration) -> Bool {
-        account.connectorKind.supportsPromptCacheTelemetry
+        account.supportsPromptCacheTelemetry
     }
 
     func canManageOAuth(for account: LocalProviderAccountConfiguration) -> Bool {
@@ -2174,8 +2174,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func authorizePromptCacheUsage(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
-        guard account.connectorKind.supportsPromptCacheTelemetry else { return }
-        let usageDirectory = promptCacheUsageDirectory(for: account)
+        guard let usageDirectory = account.promptCacheDirectory else { return }
 
         let panel = NSOpenPanel()
         panel.message = "Select the \(account.effectiveCodexClient?.telemetryFolderName ?? "usage") folder for \(account.displayName). Recent token counts are read locally; session text is never copied."
@@ -2222,8 +2221,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func promptCacheUsageDetailText(for account: LocalProviderAccountConfiguration) -> String? {
-        guard account.connectorKind.supportsPromptCacheTelemetry else { return nil }
-        let path = promptCacheUsageDirectory(for: account).path
+        guard let path = account.promptCacheDirectory?.path else { return nil }
         let detail: String
         switch account.effectiveCodexClient {
         case .codex: detail = "Recent session sample; account unknown"
@@ -2263,16 +2261,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     private func promptCacheUsagePaths(for accounts: [LocalProviderAccountConfiguration]) -> [String] {
         Array(Set(accounts.compactMap { account -> String? in
-            guard account.isEnabled, account.connectorKind.supportsPromptCacheTelemetry else { return nil }
-            return ContextPanelLocations.normalizedPath(promptCacheUsageDirectory(for: account).path)
+            guard account.isEnabled, let path = account.promptCacheDirectory?.path else { return nil }
+            return ContextPanelLocations.normalizedPath(path)
         })).sorted()
-    }
-
-    private func promptCacheUsageDirectory(for account: LocalProviderAccountConfiguration) -> URL {
-        if let usageDirectory = account.promptCacheDirectory {
-            return usageDirectory
-        }
-        return CodexClient.codex.homeDirectory().appending(path: "sessions", directoryHint: .isDirectory)
     }
 
     private static func directoryLooksLikePromptCacheUsage(_ url: URL, fileManager: FileManager = .default) -> Bool {
@@ -2325,14 +2316,7 @@ private extension AccountConnectorKind {
         }
     }
 
-    var supportsPromptCacheTelemetry: Bool {
-        switch self {
-        case .codexRateLimits:
-            return true
-        case .googleAntigravityQuota, .claudeOAuthUsage:
-            return false
-        }
-    }
+
 }
 
 struct AccountsSidebar: View {

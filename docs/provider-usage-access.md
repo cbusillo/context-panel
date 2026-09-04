@@ -245,7 +245,10 @@ session logs do not reliably identify the account that produced each request,
 so these stats explicitly say **Account unknown** instead of assigning historical
 usage to the current login. The reader samples at most 64 files, 8 MiB total,
 256 KiB per file, 64 KiB per line, and 2,048 observations; very large or old
-session trees can undercount. Copied event fingerprints are counted once.
+session trees can undercount. Calendar folders are visited newest first within
+366 days (plus tomorrow for timezone boundaries), with at most 8,192 directory
+entries inspected. Sessions stored in older folders are outside this sample,
+even if resumed recently. Copied event fingerprints are counted once.
 These measurements are local cache samples, not complete provider billing totals.
 
 Lab's `totals` are cumulative and its `last_updated` can change during a limits
@@ -254,8 +257,15 @@ no recent rate. Later positive counter deltas produce **Since refresh** samples.
 Idle polls do not refresh the observation timestamp. Counter resets, invalid or
 future data, and gaps beyond six hours establish a new baseline without a spike.
 Missing cached-token counts remain unknown. Account labels distinguish local
-Lab records without exposing raw account IDs. Cache-break comparisons only use
-observations from the same source account and measurement window.
+Lab records without exposing raw account IDs. A temporary invalid Lab record
+retains already measured history at its original timestamp but clears its
+baseline so recovery cannot produce a lifetime spike.
+
+For Codex and Lab increments, the latest rate is a token-weighted 15-minute
+bucket for the same source account and measurement window. Fewer than three
+measured samples keep the comparison neutral. Incremental samples do not trigger
+the legacy cache-break warning; an ordinary cold session is not enough evidence
+of a caching regression.
 
 The main app and refresh agent share the same mirror implementation. They read
 only user-authorized source folders and persist normalized counter observations

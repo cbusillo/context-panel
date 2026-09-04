@@ -6,6 +6,7 @@ import Darwin
 struct CodexTelemetryMirror: Codable {
     var observations: [PromptCacheObservation]
     var baselines: [String: Baseline]
+    var refreshedAt: Date? = nil
 
     struct Baseline: Codable {
         let sampledAt: Date
@@ -22,12 +23,15 @@ struct CodexTelemetryMirror: Codable {
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { throw CocoaError(.fileLocking) }
         defer { flock(descriptor, LOCK_UN) }
         let previous = (try? Data(contentsOf: target)).flatMap { try? JSONDecoder().decode(Self.self, from: $0) }
-        let mirror: Self
+        // A refresh that started earlier must not roll back a newer writer.
+        guard previous?.refreshedAt.map({ $0 <= now }) ?? true else { return }
+        var mirror: Self
         if client == .codexLab {
             mirror = try lab(source: source, sourceIDPath: sourceIDPath, previous: previous, now: now, fileManager: fileManager)
         } else {
             mirror = Self(observations: CodexSessionTelemetryReader.observations(rootDirectory: source, now: now, fileManager: fileManager), baselines: [:])
         }
+        mirror.refreshedAt = now
         try JSONEncoder().encode(mirror).write(to: target, options: .atomic)
     }
 
@@ -44,7 +48,12 @@ struct CodexTelemetryMirror: Codable {
         )
         let maximumAge = PromptCacheSummary.defaultMaximumAge
         var result = Self(observations: [], baselines: [:])
+        var presentAccounts = Set<String>()
         for (index, file) in files.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(256).enumerated() {
+            let accountID = ConnectorRedactor.localAccountID(
+                provider: .openAI, path: sourceIDPath + "/" + file.lastPathComponent
+            )
+            presentAccounts.insert(accountID)
             guard file.pathExtension == "json",
                   let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
                   values.isRegularFile == true, values.isSymbolicLink != true,
@@ -56,9 +65,6 @@ struct CodexTelemetryMirror: Codable {
                   sample.totals.inputTokens >= 0, sample.totals.inputTokens <= 1_000_000_000_000,
                   sample.totals.cachedInputTokens.map({ $0 >= 0 && $0 <= sample.totals.inputTokens }) ?? true
             else { continue }
-            let accountID = ConnectorRedactor.localAccountID(
-                provider: .openAI, path: sourceIDPath + "/" + file.lastPathComponent
-            )
             let baseline = Baseline(sampledAt: now, input: sample.totals.inputTokens, cached: sample.totals.cachedInputTokens)
             result.baselines[accountID] = baseline
             guard let old = previous?.baselines[accountID], old.sampledAt <= now,
@@ -73,13 +79,14 @@ struct CodexTelemetryMirror: Codable {
                 result.observations.append(PromptCacheObservation(
                     provider: .openAI, accountID: accountID, accountName: "Codex Lab · Account \(index + 1)",
                     observedAt: now, windowLabel: "Since refresh",
-                    tokens: PromptCacheTokenSet(inputTokens: delta, cachedInputTokens: cached)
+                    tokens: PromptCacheTokenSet(inputTokens: delta, cachedInputTokens: cached),
+                    measurement: .increment
                 ))
             }
         }
         // Retain distinct measured intervals for the bounded recent average.
         result.observations += PromptCacheTelemetryReader.filteredRecentObservations(previous?.observations ?? [], now: now)
-            .filter { result.baselines[$0.accountID] != nil }
+            .filter { presentAccounts.contains($0.accountID) }
         result.observations = Array(result.observations.sorted { $0.observedAt > $1.observedAt }.prefix(2_048))
         return result
     }

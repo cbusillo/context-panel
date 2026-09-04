@@ -45,6 +45,8 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
 }
 
 public extension LocalProviderAccountConfiguration {
+    var supportsPromptCacheTelemetry: Bool { promptCacheDirectory != nil }
+
     var effectiveCodexClient: CodexClient? {
         guard connectorKind == .codexRateLimits else { return nil }
         return codexClient ?? CodexClient.inferred(fromAuthPath: authPath)
