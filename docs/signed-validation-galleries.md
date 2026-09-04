@@ -144,17 +144,21 @@ exact requested source worktree without modifying its app source. A Release
 For each owned simulator cell, the executor writes a private run-scoped copy of
 that test run with only the canonical URL and selector values, then calls
 `xcodebuild test-without-building`. The UI test launches the associated exact
-app target, captures a stable ordinary-app baseline, opens the allowlisted
-gallery URL without coordinate input or the system custom-scheme confirmation,
-verifies the requested fixture and selected presentation, appearance, and
-widget-family controls through accessibility, selects the unique largest
-gallery window, and captures stable routed samples. `xcresulttool` exports only
-the explicit attachments. The executor requires the exact test identifier,
+app target, opens the allowlisted gallery URL without coordinate input or the
+system custom-scheme confirmation, and verifies the requested fixture and
+selected presentation, appearance, and widget-family controls through
+accessibility. It then uses SwiftUI `ImageRenderer` with a non-shipping,
+pure-SwiftUI capture shell to produce stable baseline and routed PNGs from the
+exact fixture, core, companion-support, and widget modules. This avoids the
+1-by-1 placeholder returned by
+`XCUIElement.screenshot()` and the spatial-sheet crop returned by
+`XCUIApplication.screenshot()` on visionOS simulators. `xcresulttool` exports
+only the explicit attachments. The executor requires the exact test identifier,
 contiguous `baseline-1` through `baseline-6` and `routed-1` through `routed-6`
 sample names, successful attachment records, bounded PNGs, and unchanged test
 products before accepting the same exact-pixel, baseline-difference, and
 cross-cell uniqueness checks. Receipts identify this mechanism as
-`xcuitest-application-window`; it remains shared-view evidence and is not a
+`xcuitest-shared-view-renderer`; it remains shared-view evidence and is not a
 visionOS compositor or placement capture.
 
 The first visionOS cell uses the newly created simulator. Before each later

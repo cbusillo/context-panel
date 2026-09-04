@@ -310,6 +310,8 @@ class FakeRunner:
                         image = image[:-5]
                     elif prefix == "routed" and self.corrupt_png == "idat":
                         image = invalid_idat_png_bytes()
+                    elif prefix == "routed" and self.corrupt_png == "placeholder":
+                        image = png_bytes(width=1, height=1)
                     exported_name = f"{str(uuid.uuid4()).upper()}.png"
                     (output_directory / exported_name).write_bytes(image)
                     attachments.append(
@@ -895,7 +897,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(["captured", "captured"], [
             item["status"] for item in receipt["captures"]
         ])
-        self.assertEqual(["xcuitest-application-window"] * 2, [
+        self.assertEqual(["xcuitest-shared-view-renderer"] * 2, [
             item["hostMechanism"] for item in receipt["captures"]
         ])
         self.assertEqual(["xcuitest-gallery-route"] * 2, [
@@ -1087,6 +1089,31 @@ class SharedViewCaptureTests(unittest.TestCase):
             / "invalid-png-diagnostics"
         )
         diagnostic_paths = sorted(diagnostic_directory.glob("*.png"))
+        self.assertEqual(2, len(diagnostic_paths))
+        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in diagnostic_paths))
+
+    def test_visionos_xcui_placeholder_is_rejected_and_preserved(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+
+        exit_code, receipt = self.execute(
+            FakeRunner(corrupt_png="placeholder"),
+            run_id="visionos-placeholder",
+        )
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(
+            receipt,
+            "captured-image-placeholder",
+            "captured-image-placeholder",
+        )
+        diagnostic_directory = (
+            self.artifact_root
+            / self.manifest_id
+            / "visionos-placeholder"
+            / "invalid-png-diagnostics"
+        )
+        diagnostic_paths = list(diagnostic_directory.glob("*.png"))
         self.assertEqual(2, len(diagnostic_paths))
         self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in diagnostic_paths))
 

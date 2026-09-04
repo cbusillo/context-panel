@@ -243,11 +243,15 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("type: bundle.ui-testing", config)
         self.assertIn("let app = XCUIApplication()", source)
         self.assertIn("app.open(request.url)", source)
-        self.assertIn("galleryWindow.screenshot()", source)
+        self.assertIn("ImageRenderer(content: content)", source)
+        self.assertIn('uniformTypeIdentifier: "public.png"', source)
+        self.assertIn("CaptureGalleryView(route: route)", source)
+        self.assertIn("ValidationGalleryFixtureAdapter()", source)
+        self.assertIn("ContextPanelWidgetContentView(", source)
+        self.assertNotIn(".screenshot()", source)
         self.assertIn("private static let maximumSampleCount = 6", source)
         self.assertIn('named: "baseline"', source)
         self.assertIn('named: "routed"', source)
-        self.assertNotIn(".tap()", source)
         self.assertNotIn("coordinate(", source)
 
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):

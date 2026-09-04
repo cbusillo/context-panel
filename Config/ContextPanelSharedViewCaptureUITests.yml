@@ -11,6 +11,11 @@ targets:
       - path: ${CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE}
     dependencies:
       - target: ContextPanelCompanion
+      - target: ContextPanelCoreCompanion
+      - target: ContextPanelWidgetUICompanion
+      - target: ContextPanelCompanionSupport
+      - target: ContextPanelValidationFixturesCompanion
+      - target: ContextPanelValidationGalleryUICompanion
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: >-
