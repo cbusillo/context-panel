@@ -74,7 +74,10 @@ public struct PromptCacheSummary: Equatable, Sendable {
         } ?? observations
         self.observations = recentObservations.sorted { lhs, rhs in
             if lhs.observedAt != rhs.observedAt { return lhs.observedAt > rhs.observedAt }
-            return lhs.windowLabel < rhs.windowLabel
+            if lhs.windowLabel != rhs.windowLabel { return lhs.windowLabel < rhs.windowLabel }
+            if lhs.provider != rhs.provider { return lhs.provider.rawValue < rhs.provider.rawValue }
+            if lhs.accountID != rhs.accountID { return lhs.accountID < rhs.accountID }
+            return lhs.id < rhs.id
         }
     }
 
@@ -83,7 +86,7 @@ public struct PromptCacheSummary: Equatable, Sendable {
     }
 
     public var latest: PromptCacheObservation? {
-        availableObservations.max { lhs, rhs in lhs.observedAt < rhs.observedAt }
+        availableObservations.first
     }
 
     public var tokenWeightedHitRate: Double? {
@@ -104,6 +107,8 @@ public struct PromptCacheSummary: Equatable, Sendable {
     }
 
     public var latestDeltaFromWeightedAverage: Double? {
+        // Sparse increments are neutral in both color and comparison language.
+        if latest?.measurement == .increment, latestIncrementBucket.count < 3 { return nil }
         guard let latestHitRate, let tokenWeightedHitRate else { return nil }
         return latestHitRate - tokenWeightedHitRate
     }

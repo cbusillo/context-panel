@@ -470,6 +470,21 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
     })
 }
 
+@Test func codexAccountConnectorFactoryPreservesCustomClientDisplayName() async throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "custom-lab", provider: .openAI, connectorKind: .codexRateLimits,
+        displayName: "Work Lab", authPath: "/missing-test-client/auth.json", codexClient: .codexLab
+    )
+    let connectors = AccountConnectorFactory.connectors(
+        from: AccountConfigurationDocument(updatedAt: Date(), accounts: [account]),
+        credentialStore: InMemoryProviderCredentialStore(storage: [:]),
+        requiresBookmarkedAuthFiles: true
+    )
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date())
+    #expect(result.reports.map(\.accountName) == ["Work Lab"])
+    #expect(result.reports.allSatisfy { $0.status == .failure })
+}
+
 @Test func accountConnectorFactoryUsesAntigravitySnapshotInsteadOfAppCredentialStoreForGoogle() async throws {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(

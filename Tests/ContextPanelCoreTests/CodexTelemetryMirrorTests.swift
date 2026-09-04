@@ -226,6 +226,24 @@ private struct CodexMirrorFixture {
     #expect(!mirroredText.contains(fixture.source.path))
 }
 
+@Test func codexLabMirrorKeepsAccountLabelsStableWhenAnotherAccountAppears() throws {
+    let fixture = try CodexMirrorFixture()
+    defer { fixture.remove() }
+    try fixture.writeLab(input: 1_000, cached: 800, at: fixture.start)
+    try fixture.mirror(at: fixture.start)
+    let later = fixture.start.addingTimeInterval(60)
+    try fixture.writeLab(input: 1_100, cached: 880, at: later)
+    try fixture.mirror(at: later)
+    let original = try #require(fixture.observations(at: later).first)
+    let added = fixture.start.addingTimeInterval(120)
+    try fixture.writeLab(input: 1_200, cached: 960, at: added)
+    try fixture.writeLab(input: 500, cached: 400, at: added, filename: "aaa-new-account.json")
+    try fixture.mirror(at: added)
+    let names = fixture.observations(at: added).filter { $0.accountID == original.accountID }.map(\.accountName)
+    #expect(names.count == 2)
+    #expect(Set(names) == [original.accountName])
+}
+
 @Test func codexSessionMirrorStoresOnlyNormalizedTelemetry() throws {
     let fixture = try CodexMirrorFixture()
     defer { fixture.remove() }

@@ -246,6 +246,21 @@ private struct CodexSessionFixture {
     #expect(fixture.observations().count == 1)
 }
 
+@Test func codexSessionFindsTodayBeforeOversizedTomorrowDirectory() throws {
+    let fixture = try CodexSessionFixture()
+    defer { fixture.remove() }
+    let tomorrow = fixture.root.appendingPathComponent("2027/01/16")
+    try FileManager.default.createDirectory(at: tomorrow, withIntermediateDirectories: true)
+    for index in 0...CodexSessionTelemetryReader.maximumEntries {
+        try FileManager.default.createDirectory(
+            at: tomorrow.appendingPathComponent("future-\(index)"),
+            withIntermediateDirectories: false
+        )
+    }
+    try fixture.write([fixture.event(10, input: 100, cached: 80, lastInput: 100, lastCached: 80)])
+    #expect(fixture.observations().map(\.tokens) == [PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)])
+}
+
 @Test func codexSessionConsidersResumedFilesWithinCalendarHorizon() throws {
     let fixture = try CodexSessionFixture()
     defer { fixture.remove() }

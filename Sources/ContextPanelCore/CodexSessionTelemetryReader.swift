@@ -8,8 +8,8 @@ import Foundation
 /// is a baseline unless its last-turn counters prove that it contains one turn.
 /// Identical timestamp/counter events from unrelated sessions are conservatively
 /// coalesced; these observations are a recent sample, not an account billing total.
-/// Discovery checks tomorrow and the last 366 UTC date directories, newest first,
-/// plus direct-root files after today's bucket. It visits at most 8,192 direct
+/// Discovery checks today, tomorrow, direct-root files, then the preceding 365 UTC
+/// date directories newest first. It visits at most 8,192 direct
 /// children before choosing the 64 newest files by
 /// modification time. Sessions created before that horizon can be omitted even
 /// when resumed recently. Reads cover at most 8 MiB total / 256 KiB per file,
@@ -141,9 +141,11 @@ public enum CodexSessionTelemetryReader {
             }
         }
         // Address calendar buckets directly: neither a large old subtree nor
-        // filesystem enumeration order can hide today's directory. Tomorrow
-        // also covers clients whose local calendar is ahead of UTC.
-        for offset in stride(from: 1, through: -(maximumCalendarDays - 1), by: -1) {
+        // filesystem enumeration order can hide today's directory. Visit today
+        // before tomorrow so an oversized future bucket cannot spend its budget.
+        // Tomorrow covers clients whose local calendar is ahead of UTC.
+        let offsets = [0, 1] + Array(stride(from: -1, through: -(maximumCalendarDays - 1), by: -1))
+        for offset in offsets {
             if offset == -1 { collectFiles(in: rootDirectory) }
             guard entries < maximumEntries else { break }
             guard let date = calendar.date(byAdding: .day, value: offset, to: today) else { continue }

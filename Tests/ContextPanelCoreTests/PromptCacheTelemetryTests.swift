@@ -75,6 +75,8 @@ import Testing
     #expect(summary.latestHitRate == 0)
     #expect(summary.tokenWeightedHitRate == 9_500.0 / 13_000)
     #expect(summary.comparisonStatus == .unknown)
+    #expect(summary.latestDeltaFromWeightedAverage == nil)
+    #expect(summary.latestRateComparison == .unavailable)
     #expect(!summary.hasPossibleCacheBreak)
 }
 
@@ -84,7 +86,34 @@ import Testing
     #expect(summary.isAvailable)
     #expect(summary.latestHitRate == 0)
     #expect(summary.comparisonStatus == .unknown)
+    #expect(summary.latestDeltaFromWeightedAverage == nil)
+    #expect(summary.latestRateComparison == .unavailable)
     #expect(!summary.hasPossibleCacheBreak)
+}
+
+@Test func promptCacheLatestSelectionIsStableAcrossEqualTimestampInputOrder() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    func observation(id: String, provider: Provider, accountID: String, cached: Int) -> PromptCacheObservation {
+        PromptCacheObservation(
+            id: id, provider: provider, accountID: accountID, accountName: accountID,
+            observedAt: now, windowLabel: "Latest",
+            tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: cached)
+        )
+    }
+    let observations = [
+        observation(id: "openai", provider: .openAI, accountID: "a", cached: 900),
+        observation(id: "claude-b", provider: .anthropic, accountID: "b", cached: 800),
+        observation(id: "claude-a-second", provider: .anthropic, accountID: "a", cached: 700),
+        observation(id: "claude-a-first", provider: .anthropic, accountID: "a", cached: 600),
+    ]
+    let forward = PromptCacheSummary(observations: observations)
+    let reversed = PromptCacheSummary(observations: Array(observations.reversed()))
+
+    #expect(forward == reversed)
+    #expect(forward.observations.map(\.id) == ["claude-a-first", "claude-a-second", "claude-b", "openai"])
+    #expect(forward.latest?.id == "claude-a-first")
+    #expect(forward.latestHitRate == 0.6)
+    #expect(forward.latestRateComparison == reversed.latestRateComparison)
 }
 
 @Test func promptCacheIncrementLatestRateWeightsOnlyMatchingRecentBucket() {

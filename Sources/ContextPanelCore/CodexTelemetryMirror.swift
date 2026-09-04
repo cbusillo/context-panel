@@ -49,13 +49,12 @@ struct CodexTelemetryMirror: Codable {
         let maximumAge = PromptCacheSummary.defaultMaximumAge
         var result = Self(observations: [], baselines: [:])
         var presentAccounts = Set<String>()
-        for (index, file) in files.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(256).enumerated() {
+        for file in files.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(256) {
             let accountID = ConnectorRedactor.localAccountID(
                 provider: .openAI, path: sourceIDPath + "/" + file.lastPathComponent
             )
             presentAccounts.insert(accountID)
-            guard file.pathExtension == "json",
-                  let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
                   values.isRegularFile == true, values.isSymbolicLink != true,
                   let size = values.fileSize, size <= 1_048_576,
                   let data = try? Data(contentsOf: file),
@@ -77,7 +76,7 @@ struct CodexTelemetryMirror: Codable {
                 let cached = baseline.cached.flatMap { value in old.cached.map { value - $0 } }
                 guard cached.map({ $0 <= delta }) ?? true else { continue }
                 result.observations.append(PromptCacheObservation(
-                    provider: .openAI, accountID: accountID, accountName: "Codex Lab · Account \(index + 1)",
+                    provider: .openAI, accountID: accountID, accountName: "Codex Lab · Account \(accountID.suffix(8))",
                     observedAt: now, windowLabel: "Since refresh",
                     tokens: PromptCacheTokenSet(inputTokens: delta, cachedInputTokens: cached),
                     measurement: .increment

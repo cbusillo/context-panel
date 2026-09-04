@@ -2315,8 +2315,6 @@ private extension AccountConnectorKind {
             return false
         }
     }
-
-
 }
 
 struct AccountsSidebar: View {

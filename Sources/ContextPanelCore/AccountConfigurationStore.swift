@@ -287,7 +287,9 @@ public enum AccountConnectorFactory {
                     accounts: [CodexAccountConfiguration(
                         configuredAccountID: account.id,
                         authPath: authPath,
-                        accountName: account.effectiveCodexClient?.displayName ?? codexAccountName(for: authPath, fallback: account.displayName)
+                        accountName: account.displayName.isEmpty
+                            ? (account.effectiveCodexClient?.displayName ?? "OpenAI")
+                            : account.displayName
                     )],
                     fileLoader: authFileLoader
                 )
@@ -357,17 +359,6 @@ public enum AccountConnectorFactory {
         }
     }
 
-    private static func codexAccountName(for authPath: String, fallback: String) -> String {
-        let expanded = NSString(string: authPath).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded)
-        if url.deletingLastPathComponent().lastPathComponent == ".code" {
-            return "Every Code"
-        }
-        if url.deletingLastPathComponent().lastPathComponent == ".codex" {
-            return "Codex"
-        }
-        return fallback
-    }
 }
 
 private struct UnavailableGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
