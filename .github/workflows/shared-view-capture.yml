@@ -257,15 +257,19 @@ jobs:
               MARKETING_VERSION="${CURRENT_VERSION}" CURRENT_PROJECT_VERSION="${CURRENT_BUILD_NUMBER}" \
               CODE_SIGNING_ALLOWED=NO build
           }
-          build_simulator ContextPanelCompanion 'generic/platform=iOS Simulator' "${GITHUB_WORKSPACE}/.build/ios-derived-data"
-          xcodebuild -project ContextPanel.xcodeproj \
-            -scheme ContextPanelCompanionSharedViewCaptureUITests \
-            -configuration Release \
-            -destination 'generic/platform=visionOS Simulator' \
-            -derivedDataPath "${GITHUB_WORKSPACE}/.build/visionos-derived-data" \
-            MARKETING_VERSION="${CURRENT_VERSION}" \
-            CURRENT_PROJECT_VERSION="${CURRENT_BUILD_NUMBER}" \
-            build-for-testing
+          build_ui_tests() {
+            local destination="$1" derived_data="$2"
+            xcodebuild -project ContextPanel.xcodeproj \
+              -scheme ContextPanelCompanionSharedViewCaptureUITests \
+              -configuration Release \
+              -destination "${destination}" \
+              -derivedDataPath "${derived_data}" \
+              MARKETING_VERSION="${CURRENT_VERSION}" \
+              CURRENT_PROJECT_VERSION="${CURRENT_BUILD_NUMBER}" \
+              build-for-testing
+          }
+          build_ui_tests 'generic/platform=iOS Simulator' "${GITHUB_WORKSPACE}/.build/ios-derived-data"
+          build_ui_tests 'generic/platform=visionOS Simulator' "${GITHUB_WORKSPACE}/.build/visionos-derived-data"
           build_simulator ContextPanelWatch 'generic/platform=watchOS Simulator' "${GITHUB_WORKSPACE}/.build/watchos-derived-data"
 
       - name: Create Private Capture Config
@@ -273,20 +277,24 @@ jobs:
         run: |
           set -euo pipefail
           xcrun simctl list --json >"${RUNNER_TEMP}/context-panel-simctl-catalog.json"
+          ios_products="${GITHUB_WORKSPACE}/.build/ios-derived-data/Build/Products"
           visionos_products="${GITHUB_WORKSPACE}/.build/visionos-derived-data/Build/Products"
-          visionos_ui_test_pattern='ContextPanelCompanionSharedViewCaptureUITests_*.xctestrun'
-          visionos_ui_test_count="$({
-            find "${visionos_products}" -maxdepth 1 -type f \
-              -name "${visionos_ui_test_pattern}" -print
-          } | wc -l | tr -d ' ')"
-          [[ "${visionos_ui_test_count}" -eq 1 ]]
-          visionos_ui_test_run="$(
-            find "${visionos_products}" -maxdepth 1 -type f \
-              -name "${visionos_ui_test_pattern}" -print -quit
-          )"
+          ui_test_pattern='ContextPanelCompanionSharedViewCaptureUITests_*.xctestrun'
+          find_ui_test_run() {
+            local products="$1"
+            local count
+            count="$({
+              find "${products}" -maxdepth 1 -type f -name "${ui_test_pattern}" -print
+            } | wc -l | tr -d ' ')"
+            [[ "${count}" -eq 1 ]]
+            find "${products}" -maxdepth 1 -type f -name "${ui_test_pattern}" -print -quit
+          }
+          ios_ui_test_run="$(find_ui_test_run "${ios_products}")"
+          visionos_ui_test_run="$(find_ui_test_run "${visionos_products}")"
           python3 scripts/context-panel-shared-view-capture-workflow.py capture-config \
             --catalog "${RUNNER_TEMP}/context-panel-simctl-catalog.json" \
             --ios-app "${GITHUB_WORKSPACE}/.build/ios-derived-data/Build/Products/Release-iphonesimulator/Context Panel.app" \
+            --ios-ui-test-run "${ios_ui_test_run}" \
             --visionos-app "${GITHUB_WORKSPACE}/.build/visionos-derived-data/Build/Products/Release-xrsimulator/Context Panel.app" \
             --visionos-ui-test-run "${visionos_ui_test_run}" \
             --watchos-app "${GITHUB_WORKSPACE}/.build/watchos-derived-data/Build/Products/Release-watchsimulator/Context Panel.app" \

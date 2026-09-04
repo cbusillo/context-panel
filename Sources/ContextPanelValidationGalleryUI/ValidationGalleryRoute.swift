@@ -98,6 +98,8 @@ public enum ValidationGalleryPresentation: String, CaseIterable, Identifiable, S
 }
 
 public struct ValidationGalleryRoute: Equatable, Hashable, Identifiable, Sendable {
+    public static let companionLaunchArgument = "--context-panel-validation-gallery-url"
+
     private static let allowedSchemes = Set(["contextpanel", "contextpanelcompanion"])
     private static let allowedQueryNames = Set(["fixture", "family", "appearance", "presentation"])
 
@@ -193,5 +195,20 @@ public struct ValidationGalleryRoute: Equatable, Hashable, Identifiable, Sendabl
             appearance: appearance,
             presentation: presentation
         )
+    }
+
+    public init?(companionLaunchArguments arguments: [String]) {
+        let markerIndexes = arguments.indices.filter {
+            arguments[$0] == Self.companionLaunchArgument
+        }
+        guard markerIndexes.count == 1,
+              let markerIndex = markerIndexes.first,
+              markerIndex + 2 == arguments.endIndex,
+              let url = URL(string: arguments[markerIndex + 1]),
+              let route = Self(url: url)
+        else {
+            return nil
+        }
+        self = route
     }
 }

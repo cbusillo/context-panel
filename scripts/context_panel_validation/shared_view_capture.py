@@ -63,7 +63,6 @@ SIMCTL_VISIONOS_INSTALL_TIMEOUT = 300
 SIMCTL_CONTAINER_TIMEOUT = 120
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
-SIMCTL_OPENURL_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
 SIMCTL_VISIONOS_LAUNCH_TIMEOUT = 300
 SIMCTL_VISIONOS_SHUTDOWN_TIMEOUT = 60
@@ -248,7 +247,7 @@ SIMULATOR_CAPTURE_PROFILES = {
         device_family=1,
         runtime_platforms=("iOS",),
         product_family="iPhone",
-        route_kind="openurl",
+        route_kind="xcuitest",
         applies_simulator_appearance=True,
     ),
     "ipados": SimulatorCaptureProfile(
@@ -258,7 +257,7 @@ SIMULATOR_CAPTURE_PROFILES = {
         device_family=2,
         runtime_platforms=("iOS",),
         product_family="iPad",
-        route_kind="openurl",
+        route_kind="xcuitest",
         applies_simulator_appearance=True,
     ),
     "visionos": SimulatorCaptureProfile(
@@ -268,7 +267,7 @@ SIMULATOR_CAPTURE_PROFILES = {
         device_family=7,
         runtime_platforms=("xrOS", "visionOS"),
         product_family="Apple Vision",
-        route_kind="openurl",
+        route_kind="xcuitest",
         applies_simulator_appearance=True,
     ),
     "watchos": SimulatorCaptureProfile(
@@ -283,6 +282,7 @@ SIMULATOR_CAPTURE_PROFILES = {
     ),
 }
 SUPPORTED_PROFILES = tuple(SIMULATOR_CAPTURE_PROFILES)
+COMPANION_UI_TEST_PROFILES = frozenset({"ios", "ipados", "visionos"})
 
 
 @dataclass(frozen=True)
@@ -788,7 +788,7 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
             "deviceTypeIdentifier",
             "appBundle",
         }
-        if name == "visionos":
+        if name in COMPANION_UI_TEST_PROFILES:
             expected_profile_keys.add("uiTestRun")
         if not isinstance(raw_profile, dict) or set(raw_profile) != expected_profile_keys:
             raise SharedViewCaptureError("shared-view capture profile keys are invalid")
@@ -822,19 +822,19 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
             raise SharedViewCaptureError("capture simulator identifier is invalid")
         ui_test_run: Path | None = None
         ui_test_products_sha256: str | None = None
-        if name == "visionos":
+        if name in COMPANION_UI_TEST_PROFILES:
             ui_test_run = _absolute_existing_file(
-                Path(_require_string(raw_profile["uiTestRun"], "capture visionOS UI test run")),
-                "capture visionOS UI test run",
+                Path(_require_string(raw_profile["uiTestRun"], "capture companion UI test run")),
+                "capture companion UI test run",
                 MAX_PLIST_FILE_BYTES,
             )
             test_root = _absolute_existing_directory(
                 ui_test_run.parent,
-                "capture visionOS UI test products",
+                "capture companion UI test products",
             )
             if app_bundle != test_root and test_root not in app_bundle.parents:
                 raise SharedViewCaptureError(
-                    "capture visionOS UI test products do not contain app bundle"
+                    "capture companion UI test products do not contain app bundle"
                 )
             _validate_visionos_ui_test_run(ui_test_run, app_bundle)
             ui_test_products_sha256 = _bundle_sha256(test_root)
@@ -1344,12 +1344,6 @@ def _capture_route(
     requirement: CaptureRequirement,
 ) -> tuple[list[str], str, str | None]:
     capture_profile = _simulator_capture_profile(profile.name)
-    if capture_profile.route_kind == "openurl":
-        return (
-            ["xcrun", "simctl", "openurl", simulator_id, _capture_url(requirement)],
-            "simctl-openurl",
-            "simctl-ui-appearance+gallery-route",
-        )
     if capture_profile.route_kind == "launch":
         if requirement.surface == "watchos.app":
             if requirement.family != "not-applicable" or requirement.fixture_id not in {
@@ -2406,7 +2400,7 @@ def _capture_profile(
         for index, requirement in enumerate(requirements):
             host_mechanism = (
                 "xcuitest-shared-view-renderer"
-                if profile.name == "visionos"
+                if profile.ui_test_run is not None
                 else "simctl-gallery"
             )
             appearance_mechanism: str | None = None
@@ -2443,7 +2437,7 @@ def _capture_profile(
                         ],
                         SIMCTL_TERMINATE_TIMEOUT,
                     )
-            if profile.name == "visionos":
+            if profile.ui_test_run is not None:
                 (
                     route_baseline,
                     stable_snapshot,
@@ -2495,7 +2489,7 @@ def _capture_profile(
                     continue
                 appearance_mechanism = "simctl-ui-appearance"
                 sleeper(CAPTURE_SETTLE_SECONDS)
-            if profile.name != "visionos":
+            if profile.ui_test_run is None:
                 route_baseline, route_baseline_path, baseline_error = _take_stable_screenshot(
                     runner,
                     simulator_id,
@@ -2526,12 +2520,7 @@ def _capture_profile(
                     simulator_id,
                     requirement,
                 )
-                route_timeout = (
-                    SIMCTL_LAUNCH_TIMEOUT
-                    if capture_profile.route_kind == "launch"
-                    else SIMCTL_OPENURL_TIMEOUT
-                )
-                routed = _run(runner, route_command, route_timeout)
+                routed = _run(runner, route_command, SIMCTL_LAUNCH_TIMEOUT)
                 if routed.returncode != 0 or routed.timed_out:
                     results[requirement.requirement_id] = _result(
                         requirement,

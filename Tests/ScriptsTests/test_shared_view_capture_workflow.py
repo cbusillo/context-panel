@@ -444,6 +444,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 "visionos": "/tmp/v.app",
                 "watchos": "/tmp/w.app",
             },
+            "/tmp/ios.xctestrun",
             "/tmp/visionos.xctestrun",
         )
         self.assertEqual(set(config["profiles"]), {"ios", "ipados", "visionos", "watchos"})
@@ -454,6 +455,14 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertEqual(
             config["profiles"]["ios"]["deviceTypeIdentifier"],
             "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+        )
+        self.assertEqual(
+            config["profiles"]["ios"]["uiTestRun"],
+            "/tmp/ios.xctestrun",
+        )
+        self.assertEqual(
+            config["profiles"]["ipados"]["uiTestRun"],
+            "/tmp/ios.xctestrun",
         )
         self.assertEqual(
             config["profiles"]["visionos"]["uiTestRun"],
@@ -470,6 +479,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                     "visionos": "/tmp/v.app",
                     "watchos": "/tmp/w.app",
                 },
+                "/tmp/ios.xctestrun",
                 "/tmp/visionos.xctestrun",
             )
 
@@ -477,6 +487,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         requirements = {
             "requirements": [
                 {"id": "shared-view.ios-app.baseline", "surface": "ios.app", "evidenceClass": "shared-view"},
+                {"id": "shared-view.watchos-app.baseline", "surface": "watchos.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.macos-app.baseline", "surface": "macos.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.tvos-app.baseline", "surface": "tvos.app", "evidenceClass": "shared-view"},
             ]
@@ -486,16 +497,45 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
             "kind": "context-panel-shared-view-capture-receipt",
             "pixelDiffPolicy": "advisory-only",
             "captures": [
-                {"requirementID": "shared-view.ios-app.baseline", "status": "captured"},
-                {"requirementID": "shared-view.macos-app.baseline", "status": "blocked", "errorCode": "unsupported-host-mechanism"},
-                {"requirementID": "shared-view.tvos-app.baseline", "status": "blocked", "errorCode": "unsupported-host-mechanism"},
+                {
+                    "requirementID": "shared-view.ios-app.baseline",
+                    "status": "captured",
+                    "hostMechanism": "xcuitest-shared-view-renderer",
+                    "appearanceMechanism": "xcuitest-gallery-route",
+                    "errorCode": None,
+                },
+                {
+                    "requirementID": "shared-view.watchos-app.baseline",
+                    "status": "captured",
+                    "hostMechanism": "simctl-gallery",
+                    "appearanceMechanism": None,
+                    "errorCode": None,
+                },
+                {
+                    "requirementID": "shared-view.macos-app.baseline",
+                    "status": "blocked",
+                    "hostMechanism": "unsupported-host-mechanism",
+                    "appearanceMechanism": None,
+                    "errorCode": "unsupported-host-mechanism",
+                },
+                {
+                    "requirementID": "shared-view.tvos-app.baseline",
+                    "status": "blocked",
+                    "hostMechanism": "unsupported-host-mechanism",
+                    "appearanceMechanism": None,
+                    "errorCode": "unsupported-host-mechanism",
+                },
             ],
         }
         workflow.qualify_capture_receipt(receipt, requirements)
-        receipt["captures"][1]["errorCode"] = "profile-not-configured"
+        receipt["captures"][0]["hostMechanism"] = "simctl-gallery"
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
-        receipt["captures"][1]["errorCode"] = "unsupported-host-mechanism"
+        receipt["captures"][0]["hostMechanism"] = "xcuitest-shared-view-renderer"
+        receipt["captures"][2]["errorCode"] = "profile-not-configured"
+        with self.assertRaises(workflow.WorkflowEvidenceError):
+            workflow.qualify_capture_receipt(receipt, requirements)
+        receipt["captures"][2]["errorCode"] = "unsupported-host-mechanism"
         receipt["evidenceClass"] = "actual-runtime"
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
@@ -515,6 +555,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("ContextPanelSharedViewCaptureUITests.yml", text)
         self.assertIn("ContextPanelCompanionSharedViewCaptureUITests", text)
         self.assertIn("build-for-testing", text)
+        self.assertIn("--ios-ui-test-run", text)
         self.assertIn("--visionos-ui-test-run", text)
         self.assertIn("python3 scripts/context-panel-validation.py capture-shared-view-evidence", text)
         self.assertIn("--matrix .build/current-source/Config/ContextPanelSharedViewMatrix.json", text)

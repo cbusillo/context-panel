@@ -472,8 +472,10 @@ class SharedViewCaptureTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.root = Path(self.directory.name)
-        self.app = self.root / "Context Panel.app"
-        self.app.mkdir()
+        self.companion_test_root = self.root / "companion-test-products"
+        self.companion_products = self.companion_test_root / "Release-companionsimulator"
+        self.app = self.companion_products / "Context Panel.app"
+        self.app.mkdir(parents=True)
         self.watch_app = self.root / "Context Panel Watch.app"
         self.watch_app.mkdir()
         self.current_manifest_path = self.root / "current-manifest.json"
@@ -495,8 +497,10 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.comparison_path = self.root / "comparison.json"
         self.requirements_path = self.root / "requirements.json"
         self.config_path = self.root / "capture-config.json"
-        self.vision_test_root = self.root / "vision-test-products"
-        self.vision_test_run = self.vision_test_root / "ContextPanelCompanionSharedViewCaptureUITests.xctestrun"
+        self.companion_test_run = (
+            self.companion_test_root
+            / "ContextPanelCompanionSharedViewCaptureUITests.xctestrun"
+        )
         self.artifact_root = self.root / "private-artifacts"
         self.receipt_path = self.root / "capture-receipt.json"
         self.sleeps: list[float] = []
@@ -635,27 +639,22 @@ class SharedViewCaptureTests(unittest.TestCase):
         return payload
 
     def write_config(self, profile_names: tuple[str, ...] = ("ios",)) -> None:
-        vision_app = self.app
-        if "visionos" in profile_names:
-            shutil.rmtree(self.vision_test_root, ignore_errors=True)
-            products = self.vision_test_root / "Release-xrsimulator"
-            products.mkdir(parents=True, exist_ok=True)
-            vision_app = products / "Context Panel.app"
-            shutil.copytree(self.app, vision_app)
+        if any(name in {"ios", "ipados", "visionos"} for name in profile_names):
+            products = self.companion_products
             runner_app = products / "ContextPanelCompanionSharedViewCaptureUITests-Runner.app"
             test_bundle = (
                 runner_app
                 / "PlugIns"
                 / "ContextPanelCompanionSharedViewCaptureUITests.xctest"
             )
-            test_bundle.mkdir(parents=True)
+            test_bundle.mkdir(parents=True, exist_ok=True)
             (runner_app / "Runner").write_bytes(b"ui test runner")
             (test_bundle / "Tests").write_bytes(b"ui tests")
             widget = products / "ContextPanelCompanionWidgetExtension.appex"
-            widget.mkdir()
+            widget.mkdir(exist_ok=True)
             (widget / "Widget").write_bytes(b"widget extension")
             target_name = "ContextPanelCompanionSharedViewCaptureUITests"
-            with self.vision_test_run.open("wb") as stream:
+            with self.companion_test_run.open("wb") as stream:
                 plistlib.dump(
                     {
                         "__xctestrun_metadata__": {
@@ -672,9 +671,9 @@ class SharedViewCaptureTests(unittest.TestCase):
                             "IsXCTRunnerHostedTestBundle": True,
                             "EnvironmentVariables": {},
                             "UITargetAppEnvironmentVariables": {},
-                            "UITargetAppPath": "__TESTROOT__/Release-xrsimulator/Context Panel.app",
+                            "UITargetAppPath": "__TESTROOT__/Release-companionsimulator/Context Panel.app",
                             "TestHostPath": (
-                                "__TESTROOT__/Release-xrsimulator/"
+                                "__TESTROOT__/Release-companionsimulator/"
                                 "ContextPanelCompanionSharedViewCaptureUITests-Runner.app"
                             ),
                             "TestBundlePath": (
@@ -682,18 +681,18 @@ class SharedViewCaptureTests(unittest.TestCase):
                                 "ContextPanelCompanionSharedViewCaptureUITests.xctest"
                             ),
                             "DependentProductPaths": [
-                                "__TESTROOT__/Release-xrsimulator/Context Panel.app",
+                                "__TESTROOT__/Release-companionsimulator/Context Panel.app",
                                 (
-                                    "__TESTROOT__/Release-xrsimulator/"
+                                    "__TESTROOT__/Release-companionsimulator/"
                                     "ContextPanelCompanionSharedViewCaptureUITests-Runner.app"
                                 ),
                                 (
-                                    "__TESTROOT__/Release-xrsimulator/"
+                                    "__TESTROOT__/Release-companionsimulator/"
                                     "ContextPanelCompanionSharedViewCaptureUITests-Runner.app/"
                                     "PlugIns/ContextPanelCompanionSharedViewCaptureUITests.xctest"
                                 ),
                                 (
-                                    "__TESTROOT__/Release-xrsimulator/"
+                                    "__TESTROOT__/Release-companionsimulator/"
                                     "ContextPanelCompanionWidgetExtension.appex"
                                 ),
                             ],
@@ -708,11 +707,11 @@ class SharedViewCaptureTests(unittest.TestCase):
                 "appBundle": str(
                     self.watch_app
                     if name == "watchos"
-                    else vision_app if name == "visionos" else self.app
+                    else self.app
                 ),
                 **(
-                    {"uiTestRun": str(self.vision_test_run)}
-                    if name == "visionos"
+                    {"uiTestRun": str(self.companion_test_run)}
+                    if name in {"ios", "ipados", "visionos"}
                     else {}
                 ),
             }
@@ -759,60 +758,61 @@ class SharedViewCaptureTests(unittest.TestCase):
     def assert_capture_errors(self, receipt: dict[str, Any], *errors: str) -> None:
         self.assertEqual(list(errors), [item["errorCode"] for item in receipt["captures"]])
 
-    def test_exact_terminate_route_and_stability_command_sequence(self) -> None:
-        payload = self.write_plan(["ios.app"])
-        self.write_config()
-        runner = FakeRunner()
+    def test_ios_and_ipados_use_associated_ui_test_capture_for_each_route(self) -> None:
+        for profile_name, surface, family, stress_fixture, stress_presentation in (
+            ("ios", "ios.app", "systemMedium", "dense-accounts", "overview"),
+            ("ipados", "ipados.app", "systemLarge", "fit-fallback", "settings"),
+        ):
+            with self.subTest(profile=profile_name):
+                payload = self.write_plan([surface])
+                self.write_config((profile_name,))
+                runner = FakeRunner()
+                self.sleeps.clear()
 
-        exit_code, receipt = self.execute(runner)
+                exit_code, receipt = self.execute(
+                    runner,
+                    run_id=f"{profile_name}-xcuitest",
+                    receipt_path=self.root / f"{profile_name}-xcuitest.json",
+                )
 
-        self.assertEqual(EXIT_OK, exit_code)
-        self.assertEqual([3.0] * 8, self.sleeps)
-        commands = [args for args, _ in runner.calls]
-        requirements = payload["requirements"]
-        self.assertFalse(any(args[2] == "erase" for args in commands))
-        self.assertEqual(
-            [
-                "list", "list", "create", "list", "boot", "bootstatus", "install", "get_app_container",
-                "ui", "io", "io", "openurl", "io", "io", "terminate",
-                "ui", "io", "io", "openurl", "io", "io", "shutdown", "delete", "list", "list",
-            ],
-            [args[2] for args in commands],
-        )
-        simulator_name = "ContextPanelSharedView-ios-run-fixed"
-        self.assertEqual(
-            ["xcrun", "simctl", "create", simulator_name, DEVICE_TYPE_IDENTIFIERS["ios"], RUNTIME_IDENTIFIERS["ios"]],
-            commands[2],
-        )
-        self.assertEqual(["xcrun", "simctl", "list", "-j", "devices"], commands[1])
-        self.assertEqual(
-            [
-                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "light"],
-                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "dark"],
-            ],
-            [args for args in commands if args[2] == "ui"],
-        )
-        self.assertEqual(
-            [
-                "contextpanelcompanion://validation-gallery?fixture=healthy&family=systemMedium&appearance=light&presentation=overview",
-                "contextpanelcompanion://validation-gallery?fixture=dense-accounts&family=systemMedium&appearance=dark&presentation=overview",
-            ],
-            [args[-1] for args in commands if args[2] == "openurl"],
-        )
-        self.assertEqual([True] * 8, runner.screenshot_destinations_absent)
-        self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
-        self.assertEqual(
-            ["simctl-ui-appearance+gallery-route"] * 2,
-            [item["appearanceMechanism"] for item in receipt["captures"]],
-        )
-        self.assertEqual(
-            canonical_json_hash(REQUIREMENTS_DIGEST_DOMAIN, payload),
-            receipt["requirementsDigest"],
-        )
-        self.assertEqual(
-            [item["id"] for item in requirements],
-            [item["requirementID"] for item in receipt["captures"]],
-        )
+                self.assertEqual(EXIT_OK, exit_code)
+                self.assertEqual([], self.sleeps)
+                commands = [args for args, _ in runner.calls]
+                self.assertEqual(2, sum(args[0] == "xcodebuild" for args in commands))
+                self.assertEqual(2, sum(args[1:3] == ["xcresulttool", "export"] for args in commands))
+                self.assertEqual(1, sum(args[2] == "terminate" for args in commands))
+                self.assertFalse(any(args[2] in {"ui", "launch", "io", "openurl"} for args in commands))
+                self.assertFalse(any(args[2] == "erase" for args in commands))
+                self.assertEqual(
+                    [
+                        (
+                            "contextpanelcompanion://validation-gallery?fixture=healthy&"
+                            f"family={family}&appearance=light&presentation=overview"
+                        ),
+                        (
+                            "contextpanelcompanion://validation-gallery?"
+                            f"fixture={stress_fixture}&family={family}&appearance=dark&"
+                            f"presentation={stress_presentation}"
+                        ),
+                    ],
+                    [
+                        environment[capture_module.VISIONOS_UI_TEST_ENVIRONMENT["url"]]
+                        for environment in runner.xcuitest_environments
+                    ],
+                )
+                self.assertEqual(["captured", "captured"], [
+                    item["status"] for item in receipt["captures"]
+                ])
+                self.assertEqual(["xcuitest-shared-view-renderer"] * 2, [
+                    item["hostMechanism"] for item in receipt["captures"]
+                ])
+                self.assertEqual(["xcuitest-gallery-route"] * 2, [
+                    item["appearanceMechanism"] for item in receipt["captures"]
+                ])
+                self.assertEqual(
+                    canonical_json_hash(REQUIREMENTS_DIGEST_DOMAIN, payload),
+                    receipt["requirementsDigest"],
+                )
 
     def test_visionos_install_uses_cold_runtime_timeout(self) -> None:
         self.write_plan(["visionos.app"])
@@ -1206,6 +1206,10 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([True] * 16, runner.screenshot_destinations_absent)
         self.assertEqual(["captured"] * 4, [item["status"] for item in receipt["captures"]])
         self.assertEqual(
+            ["simctl-gallery"] * 4,
+            [item["hostMechanism"] for item in receipt["captures"]],
+        )
+        self.assertEqual(
             [None] * 4,
             [item["appearanceMechanism"] for item in receipt["captures"]],
         )
@@ -1455,7 +1459,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(["unknown", "unknown"], [item["status"] for item in receipt["captures"]])
                 self.assert_capture_errors(receipt, error_code, error_code)
 
-    def test_adaptive_appearance_resets_simulator_to_automatic(self) -> None:
+    def test_companion_ui_test_applies_route_appearance_without_simulator_mutation(self) -> None:
         matrix_payload = json.loads((REPO_ROOT / "Config/ContextPanelSharedViewMatrix.json").read_text())
         ios_surface = next(surface for surface in matrix_payload["surfaces"] if surface["id"] == "ios.app")
         ios_surface["cells"][0]["appearance"] = "adaptive"
@@ -1468,16 +1472,18 @@ class SharedViewCaptureTests(unittest.TestCase):
         exit_code, receipt = self.execute(runner, matrix_path=matrix_path)
 
         self.assertEqual(EXIT_OK, exit_code)
-        ui_commands = [args for args, _ in runner.calls if args[:3] == ["xcrun", "simctl", "ui"]]
+        self.assertFalse(any(
+            args[:3] == ["xcrun", "simctl", "ui"] for args, _ in runner.calls
+        ))
         self.assertEqual(
+            ["adaptive", "dark"],
             [
-                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "automatic"],
-                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "dark"],
+                environment[capture_module.VISIONOS_UI_TEST_ENVIRONMENT["appearance"]]
+                for environment in runner.xcuitest_environments
             ],
-            ui_commands,
         )
         self.assertEqual(
-            ["simctl-ui-appearance+gallery-route"] * 2,
+            ["xcuitest-gallery-route"] * 2,
             [item["appearanceMechanism"] for item in receipt["captures"]],
         )
 
@@ -1499,12 +1505,6 @@ class SharedViewCaptureTests(unittest.TestCase):
             ({"fail_at": "install"}, "simctl-install-failed", None),
             ({"fail_at": "get_app_container"}, "simctl-app-container-failed", None),
             ({"container_output": "relative/path"}, "simctl-app-container-invalid", None),
-            ({"fail_at": "ui"}, "simctl-ui-failed", None),
-            ({"timeout_at": "ui"}, "simctl-ui-timeout", None),
-            ({"fail_at": "io"}, "simctl-baseline-screenshot-failed", "simctl-ui-appearance"),
-            ({"corrupt_png": "baseline"}, "simulator-baseline-image-invalid", "simctl-ui-appearance"),
-            ({"fail_at": "openurl"}, "simctl-openurl-failed", "simctl-ui-appearance"),
-            ({"timeout_at": "openurl"}, "simctl-openurl-timeout", "simctl-ui-appearance"),
         )
         self.write_plan(["ios.app"])
         self.write_config()
@@ -1794,18 +1794,18 @@ class SharedViewCaptureTests(unittest.TestCase):
                 )
 
     def test_transient_frames_converge_before_capture(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
+        self.write_plan(["watchos.app"])
+        self.write_config(("watchos",))
 
         exit_code, receipt = self.execute(FakeRunner(settles_after_first=True))
 
         self.assertEqual(EXIT_OK, exit_code)
         self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
-        self.assertEqual([3.0] * 11, self.sleeps)
+        self.assertEqual([3.0] * 9, self.sleeps)
 
     def test_late_transient_frames_converge_at_bounded_sample_limit(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
+        self.write_plan(["watchos.app"])
+        self.write_config(("watchos",))
         runner = FakeRunner(settles_after_samples=4)
 
         exit_code, receipt = self.execute(runner)
@@ -2386,7 +2386,7 @@ class SharedViewCaptureTests(unittest.TestCase):
     def test_visionos_config_requires_associated_ui_test_products(self) -> None:
         self.write_config(("visionos",))
         profile = load_capture_config(self.config_path)["visionos"]
-        self.assertEqual(self.vision_test_run, profile.ui_test_run)
+        self.assertEqual(self.companion_test_run, profile.ui_test_run)
         self.assertIsNotNone(profile.ui_test_products_sha256)
 
         config = json.loads(self.config_path.read_text())
@@ -2397,13 +2397,15 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         self.write_config(("visionos",))
         config = json.loads(self.config_path.read_text())
-        config["profiles"]["visionos"]["appBundle"] = str(self.app)
+        outside_app = self.root / "outside.app"
+        shutil.copytree(self.app, outside_app)
+        config["profiles"]["visionos"]["appBundle"] = str(outside_app)
         self.config_path.write_text(json.dumps(config))
         with self.assertRaisesRegex(SharedViewCaptureError, "do not contain app bundle"):
             load_capture_config(self.config_path)
 
         self.write_config(("visionos",))
-        self.vision_test_run.write_text("not a plist")
+        self.companion_test_run.write_text("not a plist")
         with self.assertRaisesRegex(SharedViewCaptureError, "UI test run is invalid"):
             load_capture_config(self.config_path)
 
@@ -2431,7 +2433,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         remove_tree = shutil.rmtree
 
         def retain_snapshot(path, *args, **kwargs):
-            if Path(path).name == ".ios-install.app":
+            if Path(path).name == ".ios-test-products":
                 return None
             return remove_tree(path, *args, **kwargs)
 

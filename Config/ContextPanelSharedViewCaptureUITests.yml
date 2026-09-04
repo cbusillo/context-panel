@@ -5,8 +5,11 @@ include:
 targets:
   ContextPanelCompanionSharedViewCaptureUITests:
     type: bundle.ui-testing
-    platform: visionOS
-    deploymentTarget: "26.0"
+    platform: auto
+    supportedDestinations: [iOS, visionOS]
+    deploymentTarget:
+      iOS: "17.0"
+      visionOS: "26.0"
     sources:
       - path: ${CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE}
     dependencies:
@@ -22,6 +25,7 @@ targets:
           com.shinycomputers.contextpanel.shared-view-capture-ui-tests
         GENERATE_INFOPLIST_FILE: true
         TEST_TARGET_NAME: ContextPanelCompanion
+        TARGETED_DEVICE_FAMILY: "1,2,7"
 schemes:
   ContextPanelCompanionSharedViewCaptureUITests:
     build:

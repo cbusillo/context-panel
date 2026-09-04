@@ -200,6 +200,12 @@ private struct CompanionRootView: View {
     @State private var model = CompanionSyncModel()
     @State private var galleryRoute: ValidationGalleryRoute?
 
+    init(processArguments: [String] = ProcessInfo.processInfo.arguments) {
+        _galleryRoute = State(
+            initialValue: ValidationGalleryRoute(companionLaunchArguments: processArguments)
+        )
+    }
+
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
         model.appearanceSettings.visionOSAppAppearance.cpwThemeVariant
