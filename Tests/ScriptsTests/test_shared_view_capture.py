@@ -1065,6 +1065,31 @@ class SharedViewCaptureTests(unittest.TestCase):
                     "xcuitest-attachments-invalid",
                 )
 
+    def test_visionos_invalid_png_is_preserved_for_private_diagnostics(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+
+        exit_code, receipt = self.execute(
+            FakeRunner(corrupt_png="baseline"),
+            run_id="visionos-invalid-png",
+        )
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(
+            receipt,
+            "captured-image-invalid",
+            "captured-image-invalid",
+        )
+        diagnostic_directory = (
+            self.artifact_root
+            / self.manifest_id
+            / "visionos-invalid-png"
+            / "invalid-png-diagnostics"
+        )
+        diagnostic_paths = sorted(diagnostic_directory.glob("*.png"))
+        self.assertEqual(2, len(diagnostic_paths))
+        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in diagnostic_paths))
+
     def test_visionos_attachment_stability_and_route_baseline_checks(self) -> None:
         scenarios = (
             (FakeRunner(baseline_unstable=True), "baseline-unstable"),

@@ -254,11 +254,13 @@ strict: all supported requirements must be captured, and any uncaptured
 requirements must be macOS or tvOS records with exactly
 `unsupported-host-mechanism`.
 
-Only a qualified run uploads evidence. The public artifact contains the receipt,
-comparison, source manifests, and complete visual requirements. Synthetic PNG
-evidence is uploaded separately with short retention. Neither artifact upgrades
-evidence into `actual-runtime` or `os-composited-placement`; those remain
-physical signed-runtime obligations.
+Only a qualified run uploads public evidence. The public artifact contains the
+receipt, comparison, source manifests, and complete visual requirements. Private
+PNG output is uploaded separately with short retention. On a failed run, that
+private artifact may also contain the first bounded invalid XCUITest attachment
+for each affected cell so the encoder output can be diagnosed; those files are
+not evidence. Neither artifact upgrades evidence into `actual-runtime` or
+`os-composited-placement`; those remain physical signed-runtime obligations.
 
 When capture fails, the workflow may upload a separate short-retention
 `shared-view-capture-diagnostic-*` artifact containing only the public-safe

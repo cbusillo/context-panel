@@ -343,7 +343,7 @@ jobs:
           retention-days: 7
 
       - name: Upload Private PNG Evidence
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: shared-view-capture-png-${{ github.run_id }}
