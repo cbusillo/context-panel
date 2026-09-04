@@ -124,6 +124,7 @@ VALIDATION_PRESENTATION_TITLES = {
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
 MAX_PNG_DECOMPRESSED_BYTES = 256 * 1024 * 1024
+MIN_VISIONOS_CAPTURE_DIMENSION = 100
 MAX_PNG_DIMENSION = 8_192
 MAX_PNG_PIXELS = 33_554_432
 MAX_PNG_CHUNKS = 4_096
@@ -1803,6 +1804,13 @@ def _visionos_ui_test_attachments(
         image_path = attachment_directory / exported_name
         try:
             snapshot = _png_snapshot(image_path)
+            if (
+                snapshot.width < MIN_VISIONOS_CAPTURE_DIMENSION
+                or snapshot.height < MIN_VISIONOS_CAPTURE_DIMENSION
+            ):
+                raise SharedViewCaptureError(
+                    "captured image is invalid: placeholder-dimensions"
+                )
         except (SharedViewCaptureError, MemoryError) as error:
             _preserve_invalid_png(
                 image_path,
@@ -1924,6 +1932,8 @@ def _take_visionos_ui_test_capture(
             if "captured image" in str(error):
                 if "unsupported-format" in str(error):
                     return None, None, None, "captured-image-format-unsupported"
+                if "placeholder-dimensions" in str(error):
+                    return None, None, None, "captured-image-placeholder"
                 return None, None, None, "captured-image-invalid"
             return None, None, None, "xcuitest-attachments-invalid"
         baseline = _stable_attachment(baseline_samples)
@@ -2395,7 +2405,7 @@ def _capture_profile(
         capture_profile = _simulator_capture_profile(profile.name)
         for index, requirement in enumerate(requirements):
             host_mechanism = (
-                "xcuitest-application-window"
+                "xcuitest-shared-view-renderer"
                 if profile.name == "visionos"
                 else "simctl-gallery"
             )
