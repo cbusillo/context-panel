@@ -806,7 +806,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(["xcuitest-shared-view-renderer"] * 2, [
                     item["hostMechanism"] for item in receipt["captures"]
                 ])
-                self.assertEqual(["xcuitest-gallery-route"] * 2, [
+                self.assertEqual(["xcuitest-render-route"] * 2, [
                     item["appearanceMechanism"] for item in receipt["captures"]
                 ])
                 self.assertEqual(
@@ -900,7 +900,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(["xcuitest-shared-view-renderer"] * 2, [
             item["hostMechanism"] for item in receipt["captures"]
         ])
-        self.assertEqual(["xcuitest-gallery-route"] * 2, [
+        self.assertEqual(["xcuitest-render-route"] * 2, [
             item["appearanceMechanism"] for item in receipt["captures"]
         ])
         self.assertIsNotNone(receipt["profiles"][0]["uiTestProductsSHA256"])
@@ -1006,7 +1006,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             "xcuitest-capture-failed",
             "xcuitest-capture-failed",
         )
-        self.assertEqual(["xcuitest-gallery-route"] * 2, [
+        self.assertEqual(["xcuitest-render-route"] * 2, [
             item["appearanceMechanism"] for item in receipt["captures"]
         ])
 
@@ -1023,7 +1023,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             "xcuitest-capture-timeout",
             "xcuitest-capture-timeout",
         )
-        self.assertEqual(["xcuitest-gallery-route"] * 2, [
+        self.assertEqual(["xcuitest-render-route"] * 2, [
             item["appearanceMechanism"] for item in receipt["captures"]
         ])
 
@@ -1483,7 +1483,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            ["xcuitest-gallery-route"] * 2,
+            ["xcuitest-render-route"] * 2,
             [item["appearanceMechanism"] for item in receipt["captures"]],
         )
 

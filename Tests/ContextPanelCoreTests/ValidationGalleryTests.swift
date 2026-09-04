@@ -76,36 +76,6 @@ import WidgetKit
     }
 }
 
-@Test func validationGalleryRouteAcceptsOnlyBoundedCompanionLaunchArguments() throws {
-    let routeURL = try #require(URL(
-        string: "contextpanel://validation-gallery?fixture=stale&family=systemLarge&appearance=dark&presentation=diagnostics"
-    ))
-    let marker = ValidationGalleryRoute.companionLaunchArgument
-    let route = try #require(ValidationGalleryRoute(companionLaunchArguments: [
-        "/Applications/Context Panel.app/Context Panel",
-        "-AppleLanguages",
-        "(en)",
-        marker,
-        routeURL.absoluteString,
-    ]))
-
-    #expect(route.fixtureID == .stale)
-    #expect(route.family == .systemLarge)
-    #expect(route.appearance == .dark)
-    #expect(route.presentation == .diagnostics)
-
-    let invalidArguments = [
-        ["/app"],
-        ["/app", marker],
-        ["/app", marker, "not-a-gallery-url"],
-        ["/app", marker, routeURL.absoluteString, "unexpected"],
-        ["/app", marker, routeURL.absoluteString, marker, routeURL.absoluteString],
-    ]
-    for arguments in invalidArguments {
-        #expect(ValidationGalleryRoute(companionLaunchArguments: arguments) == nil)
-    }
-}
-
 @Test func validationGalleryAdapterUsesInjectedPresentationDate() throws {
     let presentationDate = ValidationFixtureCatalog.referencePresentationDate
     let snapshot = ValidationGalleryFixtureAdapter().snapshot(

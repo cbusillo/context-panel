@@ -213,7 +213,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("supportedPresentations: [.overview, .settings, .diagnostics, .widget]", companion_app)
 
     def test_gallery_activation_is_operator_only(self):
-        gallery = "\n".join(path.read_text() for path in sorted(GALLERY_SOURCE_ROOT.glob("*.swift")))
         mac_app = MAC_APP_SOURCE.read_text()
         companion_app = COMPANION_APP_SOURCE.read_text()
         watch_app = WATCH_APP_SOURCE.read_text()
@@ -236,7 +235,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         project = (REPO_ROOT / "project.yml").read_text()
         config = SHARED_VIEW_UI_TEST_CONFIG.read_text()
         source = SHARED_VIEW_UI_TEST_SOURCE.read_text()
-        gallery_route = (GALLERY_SOURCE_ROOT / "ValidationGalleryRoute.swift").read_text()
 
         self.assertNotIn("ContextPanelCompanionSharedViewCaptureUITests", project)
         self.assertIn("${CONTEXT_PANEL_SHARED_VIEW_SOURCE_ROOT}/project.yml", config)
@@ -244,13 +242,11 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("TEST_TARGET_NAME: ContextPanelCompanion", config)
         self.assertIn("type: bundle.ui-testing", config)
         self.assertIn("let app = XCUIApplication()", source)
-        self.assertIn("ValidationGalleryRoute.companionLaunchArgument", source)
+        self.assertIn("app.launch()", source)
+        self.assertIn("verifyRequest(request)", source)
+        self.assertNotIn("app.launchArguments", source)
         self.assertNotIn("app.open(request.url)", source)
-        launch_argument = "--context-panel-validation-gallery-url"
-        self.assertIn(
-            f'public static let companionLaunchArgument = "{launch_argument}"',
-            gallery_route,
-        )
+        self.assertNotIn("companionLaunchArgument", source)
         self.assertIn("ImageRenderer(content: content)", source)
         self.assertIn('uniformTypeIdentifier: "public.png"', source)
         self.assertIn("CaptureGalleryView(route: route)", source)
