@@ -57,7 +57,7 @@ SIMCTL_CATALOG_TIMEOUT = 30
 MAX_SIMULATOR_DEVICE_COUNT = 256
 SIMCTL_CREATE_TIMEOUT = 30
 SIMCTL_BOOT_TIMEOUT = 60
-SIMCTL_BOOTSTATUS_TIMEOUT = 120
+SIMCTL_BOOTSTATUS_TIMEOUT = 300
 SIMCTL_INSTALL_TIMEOUT = 120
 SIMCTL_VISIONOS_INSTALL_TIMEOUT = 300
 SIMCTL_CONTAINER_TIMEOUT = 120
@@ -1737,8 +1737,38 @@ def _attachment_sample_name(value: object) -> tuple[str, int] | None:
     return match.group(1), int(match.group(2))
 
 
+def _preserve_invalid_png(
+    source: Path,
+    diagnostic_directory: Path,
+    diagnostic_name: str,
+) -> None:
+    data = _read_bounded_file(source, "visionOS UI test invalid PNG", MAX_PNG_FILE_BYTES)
+    if diagnostic_directory.is_symlink():
+        raise SharedViewCaptureError("visionOS UI test invalid PNG diagnostics are unavailable")
+    diagnostic_directory.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(diagnostic_directory, 0o700)
+    destination = diagnostic_directory / diagnostic_name
+    descriptor = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o600)
+            os.fsync(stream.fileno())
+        _fsync_directory(diagnostic_directory)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
 def _visionos_ui_test_attachments(
     attachment_directory: Path,
+    diagnostic_directory: Path,
+    diagnostic_prefix: str,
 ) -> tuple[list[tuple[PNGSnapshot, Path]], list[tuple[PNGSnapshot, Path]]]:
     payload = _load_attachment_manifest(attachment_directory / "manifest.json")
     expected_test_identifier = f"{VISIONOS_UI_TEST_TARGET}/{VISIONOS_UI_TEST_METHOD}()"
@@ -1774,7 +1804,14 @@ def _visionos_ui_test_attachments(
         try:
             snapshot = _png_snapshot(image_path)
         except (SharedViewCaptureError, MemoryError) as error:
-            raise SharedViewCaptureError("visionOS UI test captured image is invalid") from error
+            _preserve_invalid_png(
+                image_path,
+                diagnostic_directory,
+                f"{diagnostic_prefix}-{prefix}-{sample_index}.png",
+            )
+            raise SharedViewCaptureError(
+                f"visionOS UI test captured image is invalid: {error}"
+            ) from error
         samples[prefix][sample_index] = (snapshot, image_path)
     ordered: dict[str, list[tuple[PNGSnapshot, Path]]] = {}
     for prefix, indexed_samples in samples.items():
@@ -1879,7 +1916,9 @@ def _take_visionos_ui_test_capture(
             )
         try:
             baseline_samples, routed_samples = _visionos_ui_test_attachments(
-                attachment_directory
+                attachment_directory,
+                artifact_directory / "invalid-png-diagnostics",
+                requirement.requirement_id,
             )
         except SharedViewCaptureError as error:
             if "captured image" in str(error):

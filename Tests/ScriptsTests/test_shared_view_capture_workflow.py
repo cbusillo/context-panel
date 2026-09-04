@@ -511,6 +511,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: warn", text)
         self.assertNotIn('-sdk "${sdk}"', text)
         self.assertIn("shared-view-capture-diagnostic-${{ github.run_id }}", text)
+        self.assertIn("name: Upload Private PNG Evidence\n        if: always()", text)
         self.assertIn("ContextPanelSharedViewCaptureUITests.yml", text)
         self.assertIn("ContextPanelCompanionSharedViewCaptureUITests", text)
         self.assertIn("build-for-testing", text)
