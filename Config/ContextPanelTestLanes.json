@@ -42,7 +42,7 @@
     }
   },
   "manualLaneJustifications": {
-    "Tests/ContextPanelCompanionSharedViewCaptureUITests/ContextPanelCompanionSharedViewCaptureUITests.swift": "Requires an app-associated visionOS Simulator XCUITest build and the trusted shared-view evidence workflow."
+    "Tests/ContextPanelCompanionSharedViewCaptureUITests/ContextPanelCompanionSharedViewCaptureUITests.swift": "Requires an app-associated iOS or visionOS Simulator XCUITest build and the trusted shared-view evidence workflow."
   },
   "filesByLane": {
     "fast-local-python": [

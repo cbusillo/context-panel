@@ -117,12 +117,13 @@ scripts/context-panel-validation.py capture-shared-view-evidence \
 
 The executor recomputes the planner output, requires exact requirements, source
 manifest, embedded manifest, and captured-surface identity, then copies each
-capture input to a private run-scoped snapshot. iOS, iPadOS, and Watch snapshot
-the app bundle. visionOS snapshots the complete test products root containing
-the app, UI-test runner, test bundle, dependent products, and `.xctestrun`. It
-hashes paths, file types, modes, and bytes, installs only the app from that
-snapshot, and verifies the installed simulator container against the same
-identity except for installation-induced file-mode changes before capture.
+capture input to a private run-scoped snapshot. iOS, iPadOS, and visionOS
+snapshot the complete platform-specific test products root containing the app,
+UI-test runner, test bundle, dependent products, and `.xctestrun`. Watch
+snapshots the app bundle. The executor hashes paths, file types, modes, and
+bytes, installs only the app from that snapshot, and verifies the installed
+simulator container against the same identity except for installation-induced
+file-mode changes before capture.
 Baseline and routed images may use up to six bounded samples to settle, but
 evidence is accepted only after two consecutive samples have exactly the same
 pixel digest. Exhausted convergence remains `baseline-unstable` or
@@ -132,28 +133,31 @@ snapshot creation cannot recursively copy or mutate capture-owned output.
 
 Each simulator name is unique. A pre-create inventory blocks collisions; any
 uncertain create result is cleaned only by a newly observed, profile-matching
-UDID. The executor never deletes by simulator name. iOS, iPadOS, and Watch use
-the existing `simctl` baseline and routed screenshots. Each capture requires a
-converged pre-route baseline, then a converged decodable routed PNG that differs
-from the baseline and every other cell.
+UDID. The executor never deletes by simulator name. Watch uses the existing
+`simctl` baseline and routed screenshots. Each capture requires a converged
+pre-route baseline, then a converged decodable routed PNG that differs from the
+baseline and every other cell.
 
-visionOS does not use `simctl io screenshot`, because that framebuffer omits
-spatial app windows. The workflow adds a non-shipping UI-test target around the
-exact requested source worktree without modifying its app source. A Release
-`build-for-testing` produces the app-associated test products and `.xctestrun`.
-For each owned simulator cell, the executor writes a private run-scoped copy of
-that test run with only the canonical URL and selector values, then calls
-`xcodebuild test-without-building`. The UI test launches the associated exact
-app target, opens the allowlisted gallery URL without coordinate input or the
-system custom-scheme confirmation, and verifies the requested fixture and
-selected presentation, appearance, and widget-family controls through
-accessibility. It then uses SwiftUI `ImageRenderer` with a non-shipping,
-pure-SwiftUI capture shell to produce stable baseline and routed PNGs from the
-exact fixture, core, companion-support, and widget modules. This avoids the
-1-by-1 placeholder returned by
+iOS and iPadOS cannot use `simctl openurl`, because current simulators can
+substitute a custom-scheme confirmation sheet for the gallery. visionOS cannot
+use `simctl io screenshot`, because that framebuffer omits spatial app windows.
+The workflow therefore adds one non-shipping, cross-platform UI-test target
+around the exact requested source worktree without modifying its app source.
+Separate Release `build-for-testing` invocations produce iOS and visionOS
+app-associated test products and `.xctestrun` files. For each owned iPhone,
+iPad, or Vision simulator cell, the executor writes a private run-scoped copy
+of that platform's test run with only the canonical URL and selector values,
+then calls `xcodebuild test-without-building`. The UI test launches the
+associated exact app target with one bounded operator-only gallery URL argument,
+avoiding coordinate input and the system custom-scheme confirmation. It verifies
+the requested fixture and selected presentation, appearance, and widget-family
+controls through accessibility, then uses SwiftUI `ImageRenderer` with a
+non-shipping, pure-SwiftUI capture shell to produce stable baseline and routed
+PNGs from the exact fixture, core, companion-support, and widget modules. On
+visionOS this also avoids the 1-by-1 placeholder returned by
 `XCUIElement.screenshot()` and the spatial-sheet crop returned by
-`XCUIApplication.screenshot()` on visionOS simulators. `xcresulttool` exports
-only the explicit attachments. The executor requires the exact test identifier,
+`XCUIApplication.screenshot()`. `xcresulttool` exports only the explicit
+attachments. The executor requires the exact test identifier,
 contiguous `baseline-1` through `baseline-6` and `routed-1` through `routed-6`
 sample names, successful attachment records, bounded PNGs, and unchanged test
 products before accepting the same exact-pixel, baseline-difference, and

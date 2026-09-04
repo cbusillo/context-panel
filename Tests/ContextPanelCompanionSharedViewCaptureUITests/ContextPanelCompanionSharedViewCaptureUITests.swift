@@ -16,16 +16,17 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
     func testCaptureSharedView() throws {
         let request = try CaptureRequest(environment: ProcessInfo.processInfo.environment)
         let app = XCUIApplication()
+        app.launchArguments = [
+            ValidationGalleryRoute.companionLaunchArgument,
+            request.url.absoluteString,
+        ]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 90))
+        try verifyRoute(request, in: app)
 
         try captureStableImages(named: "baseline") {
             try renderedGalleryPNG(route: .captureBaseline)
         }
-
-        app.open(request.url)
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 90))
-        try verifyRoute(request, in: app)
 
         try captureStableImages(named: "routed") {
             try renderedGalleryPNG(route: request.route)

@@ -39,6 +39,12 @@ MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
 SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos")
 UNSUPPORTED_CAPTURE_SURFACES = ("macos", "tvos")
+EXPECTED_CAPTURE_MECHANISMS = {
+    "ios": ("xcuitest-shared-view-renderer", "xcuitest-gallery-route"),
+    "ipados": ("xcuitest-shared-view-renderer", "xcuitest-gallery-route"),
+    "visionos": ("xcuitest-shared-view-renderer", "xcuitest-gallery-route"),
+    "watchos": ("simctl-gallery", None),
+}
 VALID_RELEASE_WORKFLOW_EVENTS = {"workflow_dispatch", "workflow_call"}
 SEALED_RELEASE_WORKFLOWS = {
     ".github/workflows/app-store-connect-upload.yml",
@@ -286,6 +292,7 @@ def combined_visual_plan(comparison_path: Path, source_root: Path) -> dict[str, 
 def capture_config(
     catalog: dict[str, Any],
     bundles: dict[str, str],
+    ios_ui_test_run: str,
     visionos_ui_test_run: str,
     profiles: tuple[str, ...] = SUPPORTED_CAPTURE_SURFACES,
 ) -> dict[str, Any]:
@@ -348,10 +355,13 @@ def capture_config(
             "deviceTypeIdentifier": selected_device,
             "appBundle": bundle,
         }
-        if name == "visionos":
-            if not Path(visionos_ui_test_run).is_absolute():
-                raise WorkflowEvidenceError("capture visionOS UI test run is invalid")
-            output[name]["uiTestRun"] = visionos_ui_test_run
+        if name in {"ios", "ipados", "visionos"}:
+            ui_test_run = (
+                visionos_ui_test_run if name == "visionos" else ios_ui_test_run
+            )
+            if not Path(ui_test_run).is_absolute():
+                raise WorkflowEvidenceError("capture companion UI test run is invalid")
+            output[name]["uiTestRun"] = ui_test_run
     return {"schemaVersion": CAPTURE_CONFIG_SCHEMA_VERSION, "kind": CAPTURE_CONFIG_KIND, "profiles": output}
 
 
@@ -382,8 +392,22 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
         if prefix in SUPPORTED_CAPTURE_SURFACES:
             if capture.get("status") != "captured":
                 raise WorkflowEvidenceError("supported shared-view requirement was not captured")
+            expected_host, expected_appearance = EXPECTED_CAPTURE_MECHANISMS[prefix]
+            if (
+                capture.get("hostMechanism") != expected_host
+                or capture.get("appearanceMechanism") != expected_appearance
+                or capture.get("errorCode") is not None
+            ):
+                raise WorkflowEvidenceError(
+                    "supported shared-view requirement used an invalid capture mechanism"
+                )
         elif prefix in UNSUPPORTED_CAPTURE_SURFACES:
-            if capture.get("status") != "blocked" or capture.get("errorCode") != "unsupported-host-mechanism":
+            if (
+                capture.get("status") != "blocked"
+                or capture.get("hostMechanism") != "unsupported-host-mechanism"
+                or capture.get("appearanceMechanism") is not None
+                or capture.get("errorCode") != "unsupported-host-mechanism"
+            ):
                 raise WorkflowEvidenceError("unsupported shared-view requirement is not an explicit host limitation")
         else:
             raise WorkflowEvidenceError("capture receipt contains an unknown platform")
@@ -419,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     config = commands.add_parser("capture-config")
     config.add_argument("--catalog", type=Path, required=True)
     config.add_argument("--ios-app", required=True)
+    config.add_argument("--ios-ui-test-run", required=True)
     config.add_argument("--visionos-app", required=True)
     config.add_argument("--visionos-ui-test-run", required=True)
     config.add_argument("--watchos-app", required=True)
@@ -471,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
                         "visionos": args.visionos_app,
                         "watchos": args.watchos_app,
                     },
+                    args.ios_ui_test_run,
                     args.visionos_ui_test_run,
                 ),
             )
