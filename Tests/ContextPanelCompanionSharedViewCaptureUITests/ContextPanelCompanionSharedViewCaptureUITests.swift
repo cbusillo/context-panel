@@ -44,7 +44,7 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
     }
 
     private func renderedGalleryPNG(route: ValidationGalleryRoute) throws -> Data {
-        let content = CaptureGalleryView(route: route)
+        let content = CaptureGalleryView(route: route, surface: .current)
             .frame(width: 840, height: 900)
 
         let renderer = ImageRenderer(content: content)
@@ -80,10 +80,44 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
     }
 }
 
+private enum CaptureSurface {
+    case phone
+    case tablet
+    case spatial
+
+    @MainActor
+    static var current: Self {
+        #if os(visionOS)
+        .spatial
+        #else
+        switch UIDevice.current.userInterfaceIdiom {
+        case .phone:
+            .phone
+        case .pad:
+            .tablet
+        default:
+            preconditionFailure("Unsupported companion capture surface")
+        }
+        #endif
+    }
+
+    var displayName: String {
+        switch self {
+        case .phone:
+            "iPhone"
+        case .tablet:
+            "iPad"
+        case .spatial:
+            "Vision"
+        }
+    }
+}
+
 private struct CaptureGalleryView: View {
     @Environment(\.colorScheme) private var hostColorScheme
 
     let route: ValidationGalleryRoute
+    let surface: CaptureSurface
 
     private let adapter = ValidationGalleryFixtureAdapter()
 
@@ -170,6 +204,7 @@ private struct CaptureGalleryView: View {
                 HStack(spacing: 14) {
                     selectionCard(label: "Presentation", value: route.presentation.displayName)
                     selectionCard(label: "Appearance", value: route.appearance.displayName)
+                    selectionCard(label: "Surface", value: surface.displayName)
                     if route.presentation == .widget {
                         selectionCard(label: "Family", value: route.family.displayName)
                     }
