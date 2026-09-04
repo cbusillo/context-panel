@@ -2450,7 +2450,7 @@ def _capture_profile(
                     requirement,
                     artifact_directory,
                 )
-                appearance_mechanism = "xcuitest-gallery-route"
+                appearance_mechanism = "xcuitest-render-route"
                 if (
                     capture_error is not None
                     or route_baseline is None

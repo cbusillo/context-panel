@@ -40,9 +40,9 @@ SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
 SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos")
 UNSUPPORTED_CAPTURE_SURFACES = ("macos", "tvos")
 EXPECTED_CAPTURE_MECHANISMS = {
-    "ios": ("xcuitest-shared-view-renderer", "xcuitest-gallery-route"),
-    "ipados": ("xcuitest-shared-view-renderer", "xcuitest-gallery-route"),
-    "visionos": ("xcuitest-shared-view-renderer", "xcuitest-gallery-route"),
+    "ios": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
+    "ipados": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
+    "visionos": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "watchos": ("simctl-gallery", None),
 }
 VALID_RELEASE_WORKFLOW_EVENTS = {"workflow_dispatch", "workflow_call"}

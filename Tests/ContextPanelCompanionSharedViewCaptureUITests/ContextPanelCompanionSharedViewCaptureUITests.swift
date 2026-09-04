@@ -13,16 +13,16 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
     private static let maximumSampleCount = 6
     private static let sampleDelay: UInt32 = 3
 
+    override func setUp() {
+        continueAfterFailure = false
+    }
+
     func testCaptureSharedView() throws {
         let request = try CaptureRequest(environment: ProcessInfo.processInfo.environment)
         let app = XCUIApplication()
-        app.launchArguments = [
-            ValidationGalleryRoute.companionLaunchArgument,
-            request.url.absoluteString,
-        ]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 90))
-        try verifyRoute(request, in: app)
+        verifyRequest(request)
 
         try captureStableImages(named: "baseline") {
             try renderedGalleryPNG(route: .captureBaseline)
@@ -33,46 +33,14 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
         }
     }
 
-    private func verifyRoute(_ request: CaptureRequest, in app: XCUIApplication) throws {
-        let fixturePicker = app.descendants(matching: .any)
-            .matching(identifier: "gallery-fixture-picker")
-            .firstMatch
-        XCTAssertTrue(fixturePicker.waitForExistence(timeout: 60))
-        XCTAssertEqual(fixturePicker.label, "Sample state, \(request.fixtureTitle)")
-        XCTAssertTrue(app.staticTexts[request.fixtureTitle].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["Shared-view proof only"].waitForExistence(timeout: 30))
-
-        try verifySelectedSegment(
-            identifier: "gallery-presentation-picker",
-            title: request.presentationTitle,
-            in: app
+    private func verifyRequest(_ request: CaptureRequest) {
+        XCTAssertEqual(
+            request.fixtureTitle,
+            ValidationFixtureCatalog.fixture(id: request.route.fixtureID).title
         )
-        try verifySelectedSegment(
-            identifier: "gallery-appearance-picker",
-            title: request.appearanceTitle,
-            in: app
-        )
-        if request.presentation == "widget" {
-            try verifySelectedSegment(
-                identifier: "gallery-family-picker",
-                title: request.familyTitle,
-                in: app
-            )
-        }
-    }
-
-    private func verifySelectedSegment(
-        identifier: String,
-        title: String,
-        in app: XCUIApplication
-    ) throws {
-        let control = app.descendants(matching: .segmentedControl)
-            .matching(identifier: identifier)
-            .firstMatch
-        XCTAssertTrue(control.waitForExistence(timeout: 30))
-        let segment = control.buttons[title]
-        XCTAssertTrue(segment.exists)
-        XCTAssertTrue(segment.isSelected)
+        XCTAssertEqual(request.familyTitle, request.route.family.displayName)
+        XCTAssertEqual(request.appearanceTitle, request.route.appearance.displayName)
+        XCTAssertEqual(request.presentationTitle, request.route.presentation.displayName)
     }
 
     private func renderedGalleryPNG(route: ValidationGalleryRoute) throws -> Data {

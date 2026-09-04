@@ -501,7 +501,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                     "requirementID": "shared-view.ios-app.baseline",
                     "status": "captured",
                     "hostMechanism": "xcuitest-shared-view-renderer",
-                    "appearanceMechanism": "xcuitest-gallery-route",
+                    "appearanceMechanism": "xcuitest-render-route",
                     "errorCode": None,
                 },
                 {

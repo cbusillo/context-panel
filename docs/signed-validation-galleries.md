@@ -148,19 +148,21 @@ app-associated test products and `.xctestrun` files. For each owned iPhone,
 iPad, or Vision simulator cell, the executor writes a private run-scoped copy
 of that platform's test run with only the canonical URL and selector values,
 then calls `xcodebuild test-without-building`. The UI test launches the
-associated exact app target with one bounded operator-only gallery URL argument,
-avoiding coordinate input and the system custom-scheme confirmation. It verifies
-the requested fixture and selected presentation, appearance, and widget-family
-controls through accessibility, then uses SwiftUI `ImageRenderer` with a
-non-shipping, pure-SwiftUI capture shell to produce stable baseline and routed
-PNGs from the exact fixture, core, companion-support, and widget modules. On
-visionOS this also avoids the 1-by-1 placeholder returned by
+associated exact app target and requires it to reach the foreground, without
+opening a custom-scheme URL or modifying the historical app source. It validates
+the canonical URL and selector contract inside the app-associated harness, then
+uses SwiftUI `ImageRenderer` with a non-shipping, pure-SwiftUI capture shell to
+produce stable baseline and routed PNGs from the exact fixture, core,
+companion-support, and widget modules. This is exact-source shared-view renderer
+evidence, not proof that an arbitrary historical app opened the gallery route.
+On visionOS it also avoids the 1-by-1 placeholder returned by
 `XCUIElement.screenshot()` and the spatial-sheet crop returned by
 `XCUIApplication.screenshot()`. `xcresulttool` exports only the explicit
-attachments. The executor requires the exact test identifier,
-contiguous `baseline-1` through `baseline-6` and `routed-1` through `routed-6`
-sample names, successful attachment records, bounded PNGs, and unchanged test
-products before accepting the same exact-pixel, baseline-difference, and
+attachments. The executor requires the exact test identifier, contiguous
+`baseline-1` through `baseline-N` and `routed-1` through `routed-N` sample names
+for matching `N` values from two through six, successful attachment records,
+bounded PNGs, and unchanged test products before accepting the same exact-pixel,
+baseline-difference, and
 cross-cell uniqueness checks. Receipts identify this mechanism as
 `xcuitest-shared-view-renderer`; it remains shared-view evidence and is not a
 visionOS compositor or placement capture.
