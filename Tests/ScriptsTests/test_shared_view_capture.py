@@ -2409,6 +2409,63 @@ class SharedViewCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(SharedViewCaptureError, "UI test run is invalid"):
             load_capture_config(self.config_path)
 
+    def test_ui_test_products_accept_literal_marker_ancestors(self) -> None:
+        self.write_config(("visionos",))
+        products_root = self.root / "capture__products" / "__TESTHOST__"
+        shutil.copytree(self.companion_test_root, products_root)
+        config = json.loads(self.config_path.read_text())
+        config["profiles"]["visionos"].update(
+            appBundle=str(products_root / self.app.relative_to(self.companion_test_root)),
+            uiTestRun=str(products_root / self.companion_test_run.name),
+        )
+        self.config_path.write_text(json.dumps(config))
+
+        profile = load_capture_config(self.config_path)["visionos"]
+
+        self.assertEqual(products_root / self.companion_test_run.name, profile.ui_test_run)
+        self.assertIsNotNone(profile.ui_test_products_sha256)
+
+    def test_ui_test_products_reject_unsupported_template_markers(self) -> None:
+        self.write_config(("visionos",))
+        payload = plistlib.loads(self.companion_test_run.read_bytes())
+        payload[capture_module.VISIONOS_UI_TEST_TARGET]["DependentProductPaths"].append(
+            "__TESTROOT__/__PLATFORMS__/Existing.app"
+        )
+        (self.companion_test_root / "__PLATFORMS__" / "Existing.app").mkdir(parents=True)
+        self.companion_test_run.write_bytes(plistlib.dumps(payload))
+
+        with self.assertRaisesRegex(SharedViewCaptureError, "UI test run is invalid"):
+            load_capture_config(self.config_path)
+
+    def test_ui_test_product_path_checks_remain_enforced(self) -> None:
+        products_root = self.root / "bounded-products"
+        products_root.mkdir()
+        product = products_root / "Existing.app"
+        product.mkdir()
+        (products_root / "literal__product.app").mkdir()
+        outside = self.root / "Outside.app"
+        outside.mkdir()
+        (products_root / "Link.app").symlink_to(product)
+        (products_root / "escaping-ancestor").symlink_to(self.root)
+        for template in (
+            "__UNKNOWN__/Existing.app",
+            "__TESTHOST__/Existing.app",
+            "__TESTROOT/Existing.app",
+            "__TESTH__TESTROOT__OST__/Existing.app",
+            "__TESTROOT__/literal__product.app",
+            "Existing.app",
+            "__TESTROOT__/Missing.app",
+            "__TESTROOT__/../Outside.app",
+            "__TESTROOT__/Link.app",
+            "__TESTROOT__/escaping-ancestor/Outside.app",
+        ):
+            with self.subTest(template=template), self.assertRaisesRegex(
+                SharedViewCaptureError, "UI test run is invalid"
+            ):
+                capture_module._resolved_test_product_path(
+                    template, products_root, "test product"
+                )
+
     def test_snapshot(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
