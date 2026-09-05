@@ -458,9 +458,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     private static func promptCacheTelemetryDirectoryPath(for account: LocalProviderAccountConfiguration) -> String? {
-        guard let usageDirectory = ContextPanelLocations.promptCacheUsageDirectory(
-            forAuthPath: account.effectiveAuthPath
-        ) else { return nil }
+        guard let usageDirectory = account.promptCacheDirectory else { return nil }
         return ContextPanelLocations.normalizedPath(usageDirectory.path)
     }
 

@@ -199,7 +199,7 @@ private struct CodexAuthRecord: Equatable, Sendable {
 public enum CodexAuthFileParser {
     public static func tokens(from data: Data) throws -> CodexAuthTokens {
         let payload = try JSONDecoder().decode(CodexAuthFilePayload.self, from: data)
-        guard let tokens = payload.tokens, !tokens.accessToken.isEmpty else {
+        guard let tokens = payload.tokens, !tokens.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ConnectorError.invalidAuth("auth file does not contain ChatGPT token auth")
         }
         return CodexAuthTokens(
@@ -213,11 +213,13 @@ public enum CodexAuthFileParser {
     fileprivate static func authRecords(from data: Data, accountName: String) throws -> [CodexAuthRecord] {
         if let accountList = try? JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data) {
             let chatGPTAccounts = accountList.accounts.filter { account in
-                account.mode == nil || account.mode == "chatgpt"
+                (account.mode == nil || account.mode == "chatgpt")
+                    && !account.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && account.tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             }
             let records = chatGPTAccounts.enumerated().compactMap { index, account -> CodexAuthRecord? in
-                guard !account.tokens.accessToken.isEmpty else { return nil }
-                let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: account.tokens.idToken)
+                guard let tokens = account.tokens else { return nil }
+                let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: tokens.idToken)
                 let name = Self.accountDisplayName(
                     configuredName: accountName,
                     accountLabel: account.label,
@@ -226,10 +228,10 @@ public enum CodexAuthFileParser {
                 )
                 return CodexAuthRecord(
                     tokens: CodexAuthTokens(
-                        accessToken: account.tokens.accessToken,
-                        accountID: account.tokens.accountID,
-                        idToken: account.tokens.idToken,
-                        refreshToken: account.tokens.refreshToken
+                        accessToken: tokens.accessToken,
+                        accountID: tokens.accountID,
+                        idToken: tokens.idToken,
+                        refreshToken: tokens.refreshToken
                     ),
                     accountName: name,
                     stableID: account.id,
@@ -524,9 +526,9 @@ public struct CodexRateLimitConnector: ProviderConnector {
 
     private func codexUsageAuthorizationError(auth: CodexAuthTokens) -> ConnectorError {
         if auth.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return ConnectorError.foregroundRefreshRequired("Every Code auth for this ChatGPT account is no longer authorized for Codex usage. Sign in again from Every Code or Codex, then refresh Context Panel.")
+            return ConnectorError.foregroundRefreshRequired("This ChatGPT account is no longer authorized for Codex usage. Sign in again from the configured Codex or Codex Lab client, then refresh Context Panel.")
         }
-        return ConnectorError.invalidAuth("Every Code or Codex auth for this ChatGPT account cannot be refreshed. Sign in again, then refresh Context Panel.")
+        return ConnectorError.invalidAuth("Auth for this ChatGPT account cannot be refreshed. Sign in again from the configured Codex or Codex Lab client, then refresh Context Panel.")
     }
 
     private func fetchModelAvailability(endpoint: URL, auth: CodexAuthTokens) async throws -> CodexModelAvailability {
@@ -790,13 +792,31 @@ private struct CodexAuthFilePayload: Decodable {
 
 private struct CodexAuthAccountsFilePayload: Decodable {
     let accounts: [CodexAuthListedAccountPayload]
+
+    private enum CodingKeys: String, CodingKey {
+        case accounts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // A malformed or unsupported row must not hide valid sibling accounts.
+        accounts = try container.decode([Entry].self, forKey: .accounts).compactMap(\.account)
+    }
+
+    private struct Entry: Decodable {
+        let account: CodexAuthListedAccountPayload?
+
+        init(from decoder: Decoder) throws {
+            account = try? CodexAuthListedAccountPayload(from: decoder)
+        }
+    }
 }
 
 private struct CodexAuthListedAccountPayload: Decodable {
     let id: String
     let mode: String?
     let label: String?
-    let tokens: CodexAuthTokenPayload
+    let tokens: CodexAuthTokenPayload?
 }
 
 private struct CodexAuthTokenPayload: Decodable {

@@ -707,6 +707,107 @@ import Testing
     #expect(Set(result.reports.map(\.accountID)).count == 2)
 }
 
+@Test func codexConnectorReadsValidChatGPTAccountsFromMixedLabCatalog() async throws {
+    let auth = Data(#"""
+    {
+      "version": 1,
+      "accounts": [
+        {"id": "api-key", "mode": "apikey", "openai_api_key": "unused-key"},
+        {"id": "empty", "mode": "chatgpt", "tokens": {"access_token": ""}},
+        {"id": "blank", "mode": "chatgpt", "tokens": {"access_token": " \n\t"}},
+        {"id": "missing-token", "mode": "chatgpt", "tokens": {}},
+        {"id": "malformed", "mode": "chatgpt", "tokens": {"access_token": 42}},
+        {"id": " ", "mode": "chatgpt", "tokens": {"access_token": "unused-token"}},
+        {"mode": "chatgpt", "tokens": {"access_token": "unused-token"}},
+        null,
+        42,
+        {"id": "unsupported", "mode": "future", "tokens": {"access_token": "unused-token"}},
+        {"id": "valid", "mode": "chatgpt", "tokens": {"access_token": "valid-token", "account_id": "account-a"}}
+      ]
+    }
+    """#.utf8)
+    let usage = Data(#"""
+    {"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}
+    """#.utf8)
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/codex-lab/auth_accounts.json", accountName: "Codex Lab")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date())
+    let report = try #require(result.reports.first)
+
+    #expect(result.reports.count == 1)
+    #expect(report.status == .healthy)
+    #expect(report.accountName == "Codex Lab")
+    #expect(report.accountID == ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-a"))
+    #expect(http.requests.count == 1)
+    #expect(http.requests.first?.headers["Authorization"] == "Bearer valid-token")
+}
+
+@Test(arguments: [
+    #"{"accounts":[{"id":"api-key","mode":"apikey","openai_api_key":"unused-key"}]}"#,
+    #"{"accounts":[{"id":"empty","mode":"chatgpt","tokens":{"access_token":""}}]}"#,
+    #"{"accounts":[{"id":"encrypted","mode":"chatgpt","encrypted_tokens":"unreadable"}]}"#,
+    #"{"encrypted_tokens":"unreadable"}"#,
+    #"{"tokens":{"access_token":" \n\t"}}"#,
+])
+func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) async throws {
+    let http = StubHTTPClient(responses: [])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/auth.json", accountName: "Codex")],
+        httpClient: http,
+        fileLoader: { _ in Data(authJSON.utf8) }
+    )
+
+    let result = await connector.refresh(now: Date())
+    let report = try #require(result.reports.first)
+
+    #expect(result.reports.count == 1)
+    #expect(report.status == .failure)
+    #expect(report.errorMessage?.contains("does not contain ChatGPT token auth") == true)
+    #expect(result.snapshot.limits.isEmpty)
+    #expect(http.requests.isEmpty)
+}
+
+@Test func codexAndLabShareAccountAndLimitIdentityAcrossAuthFormats() async throws {
+    let idToken = jwtPayload(email: "same@example.com", name: "Same Account", accountID: "shared-account", planType: "pro")
+    let codexAuth = Data(#"{"tokens":{"access_token":"codex-token","account_id":"shared-account"}}"#.utf8)
+    let labAuth = Data(#"""
+    {"accounts":[{"id":"lab-local-id","mode":"chatgpt","tokens":{"access_token":"lab-token","account_id":"stale-account","id_token":"__TOKEN__"}}]}
+    """#.replacingOccurrences(of: "__TOKEN__", with: idToken).utf8)
+    let usage = Data(#"""
+    {"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}
+    """#.utf8)
+    let http = StubHTTPClient(responses: Array(repeating: ConnectorHTTPResponse(statusCode: 200, data: usage), count: 4))
+    let connector = CodexRateLimitConnector(
+        accounts: [
+            CodexAccountConfiguration(configuredAccountID: "openai-codex-default", authPath: "/tmp/codex/auth.json", accountName: "Codex"),
+            CodexAccountConfiguration(configuredAccountID: "openai-codex-lab-default", authPath: "/tmp/codex-lab/auth_accounts.json", accountName: "Codex Lab"),
+        ],
+        httpClient: http,
+        fileLoader: { $0.hasSuffix("auth_accounts.json") ? labAuth : codexAuth }
+    )
+    let now = Date()
+
+    let raw = await connector.refresh(now: now)
+
+    #expect(raw.reports.count == 2)
+    #expect(Set(raw.reports.map(\.accountID)).count == 1)
+    #expect(raw.reports.allSatisfy { $0.accountID == ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:shared-account") })
+    #expect(raw.snapshot.limits.count == 2)
+    #expect(Set(raw.snapshot.limits.map(\.id)).count == 1)
+
+    let merged = await ProviderConnectorRuntime(connectors: [connector]).refreshAll(now: now)
+
+    #expect(merged.reports.count == 1)
+    #expect(merged.snapshot.limits.count == 1)
+    #expect(merged.snapshot.limits.first?.id == raw.snapshot.limits.first?.id)
+    #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == Array(repeating: "shared-account", count: 4))
+}
+
 @Test func codexConnectorCarriesConfiguredAccountIDForResolvedAuthAccounts() async throws {
     let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
     let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
@@ -1042,7 +1143,7 @@ import Testing
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("Every Code auth") == true)
+    #expect(result.reports[0].errorMessage?.contains("Codex or Codex Lab") == true)
     #expect(result.reports[0].errorMessage?.contains("Sign in again") == true)
     #expect(result.reports[0].errorMessage?.contains("secret body") == false)
     #expect(http.requests.count == 1)
