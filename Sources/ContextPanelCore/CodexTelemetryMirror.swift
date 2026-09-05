@@ -61,7 +61,7 @@ struct CodexTelemetryMirror: Codable {
                   let sample = try? JSONDecoder().decode(LabSample.self, from: data),
                   let updatedAt = ContextPanelDateFormatting.date(from: sample.lastUpdated),
                   updatedAt <= now, now.timeIntervalSince(updatedAt) <= maximumAge,
-                  sample.totals.inputTokens >= 0, sample.totals.inputTokens <= 1_000_000_000_000,
+                  sample.totals.inputTokens >= 0, Int64(sample.totals.inputTokens) <= 1_000_000_000_000,
                   sample.totals.cachedInputTokens.map({ $0 >= 0 && $0 <= sample.totals.inputTokens }) ?? true
             else { continue }
             let baseline = Baseline(sampledAt: now, input: sample.totals.inputTokens, cached: sample.totals.cachedInputTokens)

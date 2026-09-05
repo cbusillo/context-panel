@@ -224,7 +224,7 @@ public enum CodexSessionTelemetryReader {
         let cachedInputTokens: Int?
 
         var isValid: Bool {
-            inputTokens >= 0 && inputTokens <= 1_000_000_000_000
+            inputTokens >= 0 && Int64(inputTokens) <= 1_000_000_000_000
                 && (cachedInputTokens.map { $0 >= 0 && $0 <= inputTokens } ?? true)
         }
 
