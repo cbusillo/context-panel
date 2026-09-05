@@ -380,6 +380,12 @@ public enum ContextPanelLocations {
         return everyCodeUsageDirectories().first ?? defaultUsageDirectory
     }
 
+    public static func codexTelemetryDirectories() -> [URL] {
+        [CodexClient.codex, .codexLab].map { client in
+            client.homeDirectory().appending(path: client.telemetryFolderName, directoryHint: .isDirectory)
+        }
+    }
+
     public static func everyCodeUsageDirectories() -> [URL] {
         everyCodeUsageDirectories(
             environment: ProcessInfo.processInfo.environment,
@@ -417,14 +423,10 @@ public enum ContextPanelLocations {
     }
 
     public static func promptCacheUsageDirectory(forAuthPath authPath: String?) -> URL? {
-        guard let authPath else { return nil }
+        guard let authPath, let client = CodexClient.inferred(fromAuthPath: authPath) else { return nil }
         let expanded = NSString(string: authPath).expandingTildeInPath
         let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
-        let name = authDirectory.lastPathComponent
-        guard name == ".code" || name == ".codex" || name.hasPrefix(".code-") || name.hasPrefix(".codex-") else {
-            return nil
-        }
-        return authDirectory.appending(path: "usage", directoryHint: .isDirectory)
+        return authDirectory.appending(path: client.telemetryFolderName, directoryHint: .isDirectory)
     }
 
     public static func promptCacheTelemetryDirectory(appGroupID: String? = nil) -> URL {

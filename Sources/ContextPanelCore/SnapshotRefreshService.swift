@@ -524,7 +524,7 @@ public struct SnapshotRefreshService: Sendable {
     private let googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)?
     private let companionSyncPublisher: CompanionSyncPublisher?
     private let refreshDiagnosticsStore: RefreshDiagnosticsStateStore?
-    private let promptCacheTelemetryMirror: @Sendable (SecureFileBookmarkStore?, [URL]) -> Void
+    private let promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)?
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
 
     public init(
@@ -535,14 +535,9 @@ public struct SnapshotRefreshService: Sendable {
         googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)? = nil,
         companionSyncPublisher: CompanionSyncPublisher? = nil,
         refreshDiagnosticsStore: RefreshDiagnosticsStateStore? = nil,
-        promptCacheTelemetryMirror: @escaping @Sendable (SecureFileBookmarkStore?, [URL]) -> Void = { bookmarkStore, sourceDirectories in
-            _ = try? PromptCacheTelemetryMirrorService.mirror(
-                bookmarkStore: bookmarkStore,
-                sourceDirectories: sourceDirectories
-            )
-        },
+        promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)? = nil,
         promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
-            PromptCacheTelemetryReader.everyCodeUsageObservations(now: now)
+            PromptCacheTelemetryReader.mirroredObservations(now: now)
         }
     ) {
         self.accountStore = accountStore
@@ -593,24 +588,34 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
-        promptCacheTelemetryMirror(bookmarkStore, promptCacheTelemetrySourceDirectories(now: now))
+        let sources = promptCacheTelemetrySourceDirectories(now: now)
+        if let promptCacheTelemetryMirror {
+            promptCacheTelemetryMirror(bookmarkStore, sources)
+        } else {
+            var clients: [String: CodexClient] = [:]
+            for account in accountStore.load(now: now).document.accounts where account.isEnabled {
+                if let directory = account.promptCacheDirectory, let client = account.effectiveCodexClient {
+                    clients[ContextPanelLocations.normalizedPath(directory.path)] = client
+                }
+            }
+            _ = try? PromptCacheTelemetryMirrorService.mirror(
+                bookmarkStore: bookmarkStore, sourceDirectories: sources, sourceClients: clients, now: now
+            )
+        }
         return promptCacheTelemetryReader(now)
     }
 
     public func promptCacheTelemetrySourceDirectories(now: Date = Date()) -> [URL] {
         let accounts = accountStore.load(now: now).document.accounts
-        var sources = accounts.compactMap { account -> URL? in
+        let sources = accounts.compactMap { account -> URL? in
             guard account.isEnabled, account.connectorKind == .codexRateLimits else { return nil }
             return Self.promptCacheTelemetryDirectory(for: account)
-        }
-        if sources.isEmpty {
-            sources = ContextPanelLocations.everyCodeUsageDirectories()
         }
         return deduplicatedDirectories(sources)
     }
 
     private static func promptCacheTelemetryDirectory(for account: LocalProviderAccountConfiguration) -> URL? {
-        ContextPanelLocations.promptCacheUsageDirectory(forAuthPath: account.effectiveAuthPath)
+        account.promptCacheDirectory
     }
 
     private func deduplicatedDirectories(_ directories: [URL]) -> [URL] {
