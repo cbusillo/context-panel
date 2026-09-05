@@ -94,7 +94,12 @@ Context Panel bundle identifier. The Watch profile must use
 a `watchOS` runtime, and an `Apple Watch` simulator device family. The visionOS
 profile additionally requires an absolute non-symlink `uiTestRun`. It must be
 the single app-associated shared-view UI-test run in the same bounded test
-products root as the configured app bundle. Every bundle
+products root as the configured app bundle. Product-path templates accept
+`__TESTROOT__` and, where a test host is available, `__TESTHOST__`; other
+double-underscore sequences in the template are rejected before expansion.
+Literal double underscores in the resolved root or host paths are preserved.
+Expanded paths must still exist and stay within the bounded products root.
+Every bundle
 must use bounded numeric version/build values that match the source manifest,
 the expected simulator platform and device family, and the exact embedded
 manifest derived from the supplied canonical current source manifest. The source
