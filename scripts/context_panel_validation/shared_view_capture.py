@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 import ctypes
@@ -14,7 +15,7 @@ import stat
 import sys
 import tempfile
 import time
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 import uuid
 import zlib
@@ -1129,7 +1130,8 @@ def _rename_exclusive(source: Path, destination: Path) -> None:
         return
     renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
     renamex_np.restype = ctypes.c_int
-    if renamex_np(os.fsencode(source), os.fsencode(destination), 0x00000004) != 0:
+    rename_exclusive: Callable[[bytes, bytes, int], int] = renamex_np
+    if rename_exclusive(os.fsencode(source), os.fsencode(destination), 0x00000004) != 0:
         error_number = ctypes.get_errno()
         raise OSError(error_number, os.strerror(error_number), destination)
 
