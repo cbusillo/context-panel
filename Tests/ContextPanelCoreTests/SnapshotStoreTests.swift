@@ -1937,7 +1937,7 @@ import Testing
 
     _ = service.promptCacheObservations(now: Date(timeIntervalSince1970: 300))
 
-    #expect(recorder.values == [codeRoot.appending(path: "usage", directoryHint: .isDirectory).path])
+    #expect(recorder.values == [codeRoot.appending(path: "sessions", directoryHint: .isDirectory).path])
 }
 
 @Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryDuringFullRefresh() async throws {

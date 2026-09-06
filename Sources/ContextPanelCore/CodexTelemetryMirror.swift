@@ -2,7 +2,9 @@ import Foundation
 import Darwin
 
 /// Only normalized counts are persisted here. Session text and provider IDs never
-/// enter the app group, and a Lab lifetime counter is never a recent observation.
+/// enter the app group. Native Codex and Codex Lab sessions use bounded JSONL
+/// reads; explicitly configured legacy Lab `usage` roots retain cumulative-delta
+/// compatibility without treating lifetime totals as recent observations.
 struct CodexTelemetryMirror: Codable {
     var observations: [PromptCacheObservation]
     var baselines: [String: Baseline]
@@ -26,10 +28,21 @@ struct CodexTelemetryMirror: Codable {
         // A refresh that started earlier must not roll back a newer writer.
         guard previous?.refreshedAt.map({ $0 <= now }) ?? true else { return }
         var mirror: Self
-        if client == .codexLab {
+        let configuredFolderName = URL(fileURLWithPath: sourceIDPath).lastPathComponent
+        if client == .everyCode {
+            mirror = Self(observations: [], baselines: [:])
+        } else if client == .codexLab, configuredFolderName == "usage" {
             mirror = try lab(source: source, sourceIDPath: sourceIDPath, previous: previous, now: now, fileManager: fileManager)
         } else {
-            mirror = Self(observations: CodexSessionTelemetryReader.observations(rootDirectory: source, now: now, fileManager: fileManager), baselines: [:])
+            mirror = Self(
+                observations: CodexSessionTelemetryReader.observations(
+                    rootDirectory: source,
+                    client: client ?? .codex,
+                    now: now,
+                    fileManager: fileManager
+                ),
+                baselines: [:]
+            )
         }
         mirror.refreshedAt = now
         try JSONEncoder().encode(mirror).write(to: target, options: .atomic)
