@@ -164,10 +164,13 @@ public enum PromptCacheTelemetryMirrorService {
             directoryHint: .isDirectory
         )
         if client == .codex || client == .codexLab || source.lastPathComponent == "sessions" {
+            // Resolve only the explicitly configured root. The session reader
+            // still rejects symlinked descendants, and source identity stays logical.
+            let resolvedSource = source.resolvingSymlinksInPath()
             // Fail before replacing last-good data when a bookmarked folder is unavailable.
-            _ = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+            _ = try fileManager.contentsOfDirectory(at: resolvedSource, includingPropertiesForKeys: nil)
             let target = sourceMirrorDirectory.appending(path: "telemetry.json")
-            try CodexTelemetryMirror.write(source: source, sourceIDPath: sourceIDPath, client: client, target: target, now: now, fileManager: fileManager)
+            try CodexTelemetryMirror.write(source: resolvedSource, sourceIDPath: sourceIDPath, client: client, target: target, now: now, fileManager: fileManager)
             let removed = try removeStaleMirrors(in: sourceMirrorDirectory, preserving: [ContextPanelLocations.normalizedPath(target.path)], fileManager: fileManager)
             return SourceMirrorResult(copied: 1, removed: removed, sourceMirrorPath: ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path))
         }

@@ -2190,14 +2190,11 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            let selectedPath = ContextPanelLocations.normalizedPath(url.path)
+            let hasSecurityScope = url.startAccessingSecurityScopedResource()
+            defer { if hasSecurityScope { url.stopAccessingSecurityScopedResource() } }
             let expectedPath = ContextPanelLocations.normalizedPath(usageDirectory.path)
-            guard selectedPath == expectedPath else {
+            guard ContextPanelLocations.promptCacheDirectorySelectionMatches(selected: url, expected: usageDirectory) else {
                 errorMessage = "Select \(ConnectorRedactor.redactedPath(expectedPath)) for \(account.displayName) cache stats."
-                return
-            }
-            guard Self.directoryLooksLikePromptCacheUsage(url) else {
-                errorMessage = "Select the telemetry folder for this client. Cache stats appear after usage is recorded."
                 return
             }
             do {
@@ -2268,11 +2265,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             guard account.isEnabled, let path = account.promptCacheDirectory?.path else { return nil }
             return ContextPanelLocations.normalizedPath(path)
         })).sorted()
-    }
-
-    private static func directoryLooksLikePromptCacheUsage(_ url: URL, fileManager: FileManager = .default) -> Bool {
-        var isDirectory: ObjCBool = false
-        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {

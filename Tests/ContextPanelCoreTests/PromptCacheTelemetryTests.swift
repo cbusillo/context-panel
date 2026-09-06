@@ -913,3 +913,27 @@ func promptCacheBookmarkedMirrorPreservesExplicitModernClientAtLegacyPath(client
     )
     #expect(FileManager.default.fileExists(atPath: destination.appending(path: "\(sourceID)/telemetry.json").path))
 }
+
+@Test func promptCacheCopiedSessionLabelIsStableAcrossMirrorEnumerationOrder() throws {
+    let root = try promptCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func observation(_ client: String) -> PromptCacheObservation {
+        PromptCacheObservation(
+            id: "codex-session:copied-event", provider: .openAI,
+            accountID: client == "Lab" ? "codex-lab-session-unattributed" : "codex-session-unattributed",
+            accountName: "\(client) · Account unknown", observedAt: now, windowLabel: "Session increment",
+            tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 70), measurement: .increment
+        )
+    }
+    for clients in [["Codex", "Lab"], ["Lab", "Codex"]] {
+        for (index, client) in clients.enumerated() {
+            let mirror = CodexTelemetryMirror(observations: [observation(client)], baselines: [:])
+            try JSONEncoder().encode(mirror).write(to: root.appending(path: "\(index).json"))
+        }
+        let observations = PromptCacheTelemetryReader.mirroredObservations(rootDirectory: root, now: now)
+        #expect(observations.count == 1)
+        #expect(observations.first?.accountID == "codex-lab-session-unattributed")
+        #expect(observations.first?.tokens.inputTokens == 100)
+    }
+}

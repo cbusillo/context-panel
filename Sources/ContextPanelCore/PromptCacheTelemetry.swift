@@ -225,7 +225,10 @@ public enum PromptCacheTelemetryReader {
     private static func deduplicated(_ observations: [PromptCacheObservation]) -> [PromptCacheObservation] {
         var seen = Set<String>()
         return observations.sorted { lhs, rhs in
-            lhs.observedAt > rhs.observedAt
+            if lhs.observedAt != rhs.observedAt { return lhs.observedAt > rhs.observedAt }
+            // Copied session events share an ID across clients. Choose the same
+            // unattributed source label regardless of mirror enumeration order.
+            return lhs.accountID < rhs.accountID
         }.filter { observation in
             seen.insert(observation.id).inserted
         }

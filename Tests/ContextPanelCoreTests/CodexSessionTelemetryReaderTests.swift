@@ -30,9 +30,39 @@ private struct CodexSessionFixture {
         return "{\"timestamp\":\"\(timestamp)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":\(input)\(cachedJSON)}\(lastJSON)}}}"
     }
 
-    func observations(maximumAge: TimeInterval = 3600) -> [PromptCacheObservation] {
-        CodexSessionTelemetryReader.observations(rootDirectory: root, now: now, maximumAge: maximumAge)
+    func observations(
+        client: CodexClient = .codex,
+        maximumAge: TimeInterval = 3600
+    ) -> [PromptCacheObservation] {
+        CodexSessionTelemetryReader.observations(
+            rootDirectory: root,
+            client: client,
+            now: now,
+            maximumAge: maximumAge
+        )
     }
+}
+
+@Test func codexSessionUsesTypedClientIdentityWithoutChangingEventFingerprint() throws {
+    let fixture = try CodexSessionFixture()
+    defer { fixture.remove() }
+    try fixture.write([
+        fixture.event(100, input: 100, cached: 80),
+        fixture.event(90, input: 200, cached: 160),
+    ])
+
+    let codex = try #require(fixture.observations(client: .codex).first)
+    let lab = try #require(fixture.observations(client: .codexLab).first)
+    #expect(codex.id == lab.id)
+    #expect(codex.accountID == "codex-session-unattributed")
+    #expect(codex.accountName == "Codex · Account unknown")
+    #expect(lab.accountID == "codex-lab-session-unattributed")
+    #expect(lab.accountName == "Codex Lab · Account unknown")
+    #expect(CodexSessionTelemetryReader.observations(
+        rootDirectory: fixture.root,
+        client: .everyCode,
+        now: fixture.now
+    ).isEmpty)
 }
 
 @Test func codexSessionDeltasExcludeRepeatedTotalsAndUseBoundaryBaseline() throws {

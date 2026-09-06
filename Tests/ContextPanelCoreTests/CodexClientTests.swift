@@ -48,7 +48,7 @@ import Testing
 }
 
 @Test func explicitCodexClientMetadataSelectsTelemetryAtArbitraryAuthPaths() throws {
-    let cases: [(CodexClient, String)] = [(.codex, "sessions"), (.codexLab, "usage")]
+    let cases: [(CodexClient, String)] = [(.codex, "sessions"), (.codexLab, "sessions")]
     for (client, folder) in cases {
         let account = LocalProviderAccountConfiguration(
             id: "custom", provider: .openAI, connectorKind: .codexRateLimits,
@@ -68,7 +68,7 @@ import Testing
     )
 
     #expect(account.effectiveCodexClient == .codexLab)
-    #expect(account.promptCacheDirectory?.path == "/Users/example/.codex/usage")
+    #expect(account.promptCacheDirectory?.path == "/Users/example/.codex/sessions")
 }
 
 @Test func legacyConfigurationDecodesWithoutClientMetadataAndInfersTelemetry() throws {
@@ -80,7 +80,7 @@ import Testing
 
     #expect(account.codexClient == nil)
     #expect(account.effectiveCodexClient == .codexLab)
-    #expect(account.promptCacheDirectory?.path == "/Users/example/.codex-lab-work/usage")
+    #expect(account.promptCacheDirectory?.path == "/Users/example/.codex-lab-work/sessions")
     #expect(!account.isEnabled)
 }
 

@@ -217,10 +217,14 @@ Cache telemetry needs a separate folder permission from auth-file access:
 | Client | Folder | Recent cache measurement |
 | --- | --- | --- |
 | Codex | `~/.codex/sessions` | Counter increments from a bounded sample of recent session records |
-| Codex Lab | `~/.codex-lab/usage` | Token deltas measured between Context Panel refreshes |
+| Codex Lab | `~/.codex-lab/sessions` | Counter increments from a bounded sample of recent session records |
 
-The picker accepts the matching folder before any usage records exist. Codex
-session logs do not reliably identify the account that produced each request,
+The picker accepts the matching folder before any usage records exist. If the
+configured folder is a symbolic link, selecting that folder or its resolved
+destination is supported. The bookmark stays keyed to the configured source;
+selecting its parent, a child, or an unrelated same-named folder is rejected.
+Codex and Codex Lab session logs do not reliably identify the account that
+produced each request,
 so these stats explicitly say **Account unknown** instead of assigning historical
 usage to the current login. The reader samples at most 64 files, 8 MiB total,
 256 KiB per file, 64 KiB per line, and 2,048 observations; very large or old
@@ -228,17 +232,26 @@ session trees can undercount. Calendar folders are visited newest first within
 366 days (plus tomorrow for timezone boundaries), with at most 8,192 directory
 entries inspected. Sessions stored in older folders are outside this sample,
 even if resumed recently. Copied event fingerprints are counted once.
+An event found under both clients uses a deterministic source label; that label
+does not establish which client originally generated it.
 These measurements are local cache samples, not complete provider billing totals.
 
-Lab's `totals` are cumulative and its `last_updated` can change during a limits
-poll with no tokens used. The first valid read establishes a baseline and emits
-no recent rate. Later positive counter deltas produce **Since refresh** samples.
-Idle polls do not refresh the observation timestamp. Counter resets, invalid or
-future data, and gaps beyond six hours establish a new baseline without a spike.
-Missing cached-token counts remain unknown. Account labels distinguish local
-Lab records without exposing raw account IDs. A temporary invalid Lab record
-retains already measured history at its original timestamp but clears its
-baseline so recovery cannot produce a lifetime spike.
+Current native Codex Lab writes token counts into session JSONL. Its older
+`usage/*.json` files may still receive rate-limit metadata, but native execution
+does not update their token totals. Existing usage-folder bookmarks remain
+stored; they do not authorize the sessions folder. Upgrading users must grant
+sessions-folder access separately. Auth configuration and logical limit accounts
+are unchanged.
+Old temporary usage mirrors are pruned when the source switches to sessions.
+Stored snapshots and history remain intact, but the current cache display can
+be empty until sessions access and fresh logs are available.
+
+Explicit legacy Lab usage mirrors remain compatible with cumulative payloads:
+the first read establishes a baseline, later positive deltas produce **Since
+refresh** samples, and idle polls do not refresh observation timestamps. Counter
+resets, invalid/future data, and expired baselines cannot produce lifetime spikes.
+Normal setup reads native sessions only, so the two formats are not combined.
+Missing cached-token counts remain unknown in both formats.
 
 For Codex and Lab increments, the latest rate is a token-weighted 15-minute
 bucket for the same source account and measurement window. Fewer than three
@@ -248,7 +261,7 @@ of a caching regression.
 
 The main app and refresh agent share the same mirror implementation. They read
 only user-authorized source folders and persist normalized counter observations
-(and hashed Lab baseline keys) into the canonical app-group `PromptCache` folder.
+(and hashed baseline keys for explicit legacy Lab mirrors) into the canonical app-group `PromptCache` folder.
 A per-source lock serializes baseline updates. Codex transcript text, raw Lab
 account identifiers, and auth data never enter these new mirrors. The widget
 reads the app-owned mirror; it does not scan session logs. Unresolvable saved
@@ -260,7 +273,8 @@ terminal access.
 
 The widget's **Enable Cache** action and app's **Enable Cache Stats** action use
 the same source-specific folder. After initial authorization, generate usage and
-refresh twice for Lab to establish and measure a baseline.
+refresh to read the new session increments. Repeated refreshes must not count
+the same events twice. Signed-app and signed-agent reads must both be verified.
 
 ### Codex Limits Connector
 

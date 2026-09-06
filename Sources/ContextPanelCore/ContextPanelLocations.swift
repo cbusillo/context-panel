@@ -420,6 +420,16 @@ public enum ContextPanelLocations {
             .appending(path: fileURL.lastPathComponent)
     }
 
+    /// Compare a user-selected telemetry folder without changing its stored source identity.
+    public static func promptCacheDirectorySelectionMatches(selected: URL, expected: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: selected.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return false }
+        if normalizedPath(selected.path) == normalizedPath(expected.path) { return true }
+        return normalizedPath(selected.resolvingSymlinksInPath().path)
+            == normalizedPath(expected.resolvingSymlinksInPath().path)
+    }
+
     public static func normalizedPath(_ path: String) -> String {
         var normalized = URL(fileURLWithPath: path).standardizedFileURL.path
         if normalized.hasPrefix("/private/var/") {
