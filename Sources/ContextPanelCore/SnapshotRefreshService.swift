@@ -593,7 +593,7 @@ public struct SnapshotRefreshService: Sendable {
             promptCacheTelemetryMirror(bookmarkStore, sources)
         } else {
             var clients: [String: CodexClient] = [:]
-            for account in accountStore.load(now: now).document.accounts where account.isEnabled {
+            for account in accountStore.load(now: now).document.accounts where account.isEnabled && !account.isRetiredSource {
                 if let directory = account.promptCacheDirectory, let client = account.effectiveCodexClient {
                     clients[ContextPanelLocations.normalizedPath(directory.path)] = client
                 }
@@ -608,7 +608,7 @@ public struct SnapshotRefreshService: Sendable {
     public func promptCacheTelemetrySourceDirectories(now: Date = Date()) -> [URL] {
         let accounts = accountStore.load(now: now).document.accounts
         let sources = accounts.compactMap { account -> URL? in
-            guard account.isEnabled, account.connectorKind == .codexRateLimits else { return nil }
+            guard account.isEnabled, !account.isRetiredSource, account.connectorKind == .codexRateLimits else { return nil }
             return Self.promptCacheTelemetryDirectory(for: account)
         }
         return deduplicatedDirectories(sources)
@@ -629,7 +629,7 @@ public struct SnapshotRefreshService: Sendable {
     public func importConfiguredAuthFiles(now: Date = Date()) {
         guard let bookmarkStore, let credentialStore else { return }
         let accountDocument = accountStore.load(now: now).document
-        for account in accountDocument.accounts where account.isEnabled {
+        for account in accountDocument.accounts where account.isEnabled && !account.isRetiredSource {
             guard account.connectorKind.importsAuthFileCredential,
                   let authPath = account.authPath
             else { continue }

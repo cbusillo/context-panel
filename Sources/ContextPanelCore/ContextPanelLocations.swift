@@ -373,57 +373,14 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "webhook-delivery-state.json")
     }
 
-    public static func everyCodeUsageDirectory() -> URL {
-        let defaultUsageDirectory = realUserHomeDirectory()
-            .appending(path: ".code", directoryHint: .isDirectory)
-            .appending(path: "usage", directoryHint: .isDirectory)
-        return everyCodeUsageDirectories().first ?? defaultUsageDirectory
-    }
-
     public static func codexTelemetryDirectories() -> [URL] {
         [CodexClient.codex, .codexLab].map { client in
             client.homeDirectory().appending(path: client.telemetryFolderName, directoryHint: .isDirectory)
         }
     }
 
-    public static func everyCodeUsageDirectories() -> [URL] {
-        everyCodeUsageDirectories(
-            environment: ProcessInfo.processInfo.environment,
-            fileManager: .default
-        )
-    }
-
-    static func everyCodeUsageDirectories(
-        environment: [String: String],
-        fileManager: FileManager
-    ) -> [URL] {
-        var candidates: [URL] = []
-        if let codeHome = environment["CODE_HOME"], !codeHome.isEmpty {
-            candidates.append(URL(fileURLWithPath: codeHome, isDirectory: true)
-                .appending(path: "usage", directoryHint: .isDirectory))
-        }
-        if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
-            candidates.append(URL(fileURLWithPath: codexHome, isDirectory: true)
-                .appending(path: "usage", directoryHint: .isDirectory))
-        }
-
-        let defaultUsageDirectory = realUserHomeDirectory()
-            .appending(path: ".code", directoryHint: .isDirectory)
-            .appending(path: "usage", directoryHint: .isDirectory)
-        candidates.append(defaultUsageDirectory)
-
-        let directories = candidates.reduce(into: [URL]()) { result, url in
-            if !result.contains(where: { normalizedPath($0.path) == normalizedPath(url.path) }) {
-                result.append(url)
-            }
-        }
-        return directories.first(where: { fileManager.fileExists(atPath: $0.path) })
-            .map { [$0] }
-            ?? Array(directories.prefix(1))
-    }
-
     public static func promptCacheUsageDirectory(forAuthPath authPath: String?) -> URL? {
-        guard let authPath, let client = CodexClient.inferred(fromAuthPath: authPath) else { return nil }
+        guard let authPath, let client = CodexClient.inferred(fromAuthPath: authPath), client != .everyCode else { return nil }
         let expanded = NSString(string: authPath).expandingTildeInPath
         let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
         return authDirectory.appending(path: client.telemetryFolderName, directoryHint: .isDirectory)

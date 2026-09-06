@@ -1152,17 +1152,17 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
 @Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
     let root = try widgetSnapshotTemporaryDirectory()
-    let codeDirectory = root.appending(path: ".code-chris", directoryHint: .isDirectory)
+    let codeDirectory = root.appending(path: ".codex-lab-chris", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
     let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
     try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
         LocalProviderAccountConfiguration(
-            id: "openai-code-default",
+            id: "openai-codex-lab-default",
             provider: .openAI,
             connectorKind: .codexRateLimits,
-            displayName: "Every Code",
+            displayName: "Codex Lab",
             authPath: codeDirectory.appending(path: "auth_accounts.json").path
         ),
     ]))
@@ -1178,17 +1178,17 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
 @Test func widgetSnapshotDoesNotRequestPromptCacheAuthorizationAfterUsageBookmarkIsSaved() throws {
     let root = try widgetSnapshotTemporaryDirectory()
-    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let codeDirectory = root.appending(path: ".codex-lab", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
     let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
     try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
         LocalProviderAccountConfiguration(
-            id: "openai-code-default",
+            id: "openai-codex-lab-default",
             provider: .openAI,
             connectorKind: .codexRateLimits,
-            displayName: "Every Code",
+            displayName: "Codex Lab",
             authPath: codeDirectory.appending(path: "auth_accounts.json").path
         ),
     ]))

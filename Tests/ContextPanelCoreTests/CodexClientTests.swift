@@ -48,7 +48,7 @@ import Testing
 }
 
 @Test func explicitCodexClientMetadataSelectsTelemetryAtArbitraryAuthPaths() throws {
-    let cases: [(CodexClient, String)] = [(.codex, "sessions"), (.codexLab, "usage"), (.everyCode, "usage")]
+    let cases: [(CodexClient, String)] = [(.codex, "sessions"), (.codexLab, "usage")]
     for (client, folder) in cases {
         let account = LocalProviderAccountConfiguration(
             id: "custom", provider: .openAI, connectorKind: .codexRateLimits,
@@ -113,4 +113,41 @@ import Testing
         #expect(actual == home.appending(path: folder, directoryHint: .isDirectory))
         #expect(!actual.path.contains("/Library/Containers/"))
     }
+}
+
+@Test func retiredClientRemainsDecodableButHasNoTelemetrySource() throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "retained", provider: .openAI, connectorKind: .codexRateLimits,
+        displayName: "Old account", authPath: "/Users/example/custom/auth.json", codexClient: .everyCode
+    )
+    let decoded = try JSONDecoder().decode(LocalProviderAccountConfiguration.self, from: JSONEncoder().encode(account))
+    #expect(decoded == account)
+    #expect(decoded.isRetiredSource)
+    #expect(decoded.promptCacheDirectory == nil)
+    #expect(!decoded.supportsPromptCacheTelemetry)
+    #expect(ContextPanelLocations.promptCacheUsageDirectory(forAuthPath: "/Users/example/.code/auth.json") == nil)
+}
+
+@Test func codexClientExplicitModernMetadataAtLegacyPathStaysActive() {
+    for client in [CodexClient.codex, .codexLab] {
+        let account = LocalProviderAccountConfiguration(
+            id: "openai-code-default", provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Repointed", authPath: "/Users/example/.code/auth.json", codexClient: client
+        )
+        #expect(!account.isRetiredSource)
+        #expect(account.promptCacheDirectory != nil)
+    }
+}
+
+@Test func settingsAccountsHideRetiredSourcesAndPutAllLabAccountsFirstStably() {
+    func account(_ id: String, _ client: CodexClient) -> LocalProviderAccountConfiguration {
+        LocalProviderAccountConfiguration(id: id, provider: .openAI, connectorKind: .codexRateLimits,
+                                         displayName: id, codexClient: client)
+    }
+    let document = AccountConfigurationDocument(updatedAt: .distantPast, accounts: [
+        account("codex", .codex), account("old", .everyCode), account("lab-work", .codexLab),
+        account("codex-work", .codex), account("lab", .codexLab),
+    ])
+    #expect(document.settingsAccounts.map(\.id) == ["lab-work", "lab", "codex", "codex-work"])
+    #expect(document.accounts.map(\.id) == ["codex", "old", "lab-work", "codex-work", "lab"])
 }

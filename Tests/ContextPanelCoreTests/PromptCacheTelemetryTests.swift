@@ -480,42 +480,14 @@ private func cacheIncrement(
     #expect(firstTarget != secondTarget)
 }
 
-@Test func everyCodeUsageDirectoriesUsesFallbackRootOrder() throws {
-    let root = try promptCacheTemporaryDirectory()
-    let codeHome = root.appending(path: "code-home", directoryHint: .isDirectory)
-    let codexHome = root.appending(path: "codex-home", directoryHint: .isDirectory)
-    let codeUsage = codeHome.appending(path: "usage", directoryHint: .isDirectory)
-    let codexUsage = codexHome.appending(path: "usage", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: codexUsage, withIntermediateDirectories: true)
-
-    var selected = ContextPanelLocations.everyCodeUsageDirectories(
-        environment: [
-            "CODE_HOME": codeHome.path,
-            "CODEX_HOME": codexHome.path,
-        ],
-        fileManager: .default
-    )
-    #expect(selected == [codexUsage])
-
-    try FileManager.default.createDirectory(at: codeUsage, withIntermediateDirectories: true)
-    selected = ContextPanelLocations.everyCodeUsageDirectories(
-        environment: [
-            "CODE_HOME": codeHome.path,
-            "CODEX_HOME": codexHome.path,
-        ],
-        fileManager: .default
-    )
-    #expect(selected == [codeUsage])
-}
-
-@Test func promptCacheUsageDirectorySupportsCustomCodeHomeAuthPaths() throws {
+@Test func promptCacheUsageDirectoryRejectsRetiredHomeAndSupportsCodex() throws {
     let root = try promptCacheTemporaryDirectory()
     let customCodeHome = root.appending(path: ".code-chris", directoryHint: .isDirectory)
     let customCodexHome = root.appending(path: ".codex-work", directoryHint: .isDirectory)
 
     #expect(ContextPanelLocations.promptCacheUsageDirectory(
         forAuthPath: customCodeHome.appending(path: "auth_accounts.json").path
-    ) == customCodeHome.appending(path: "usage", directoryHint: .isDirectory))
+    ) == nil)
     #expect(ContextPanelLocations.promptCacheUsageDirectory(
         forAuthPath: customCodexHome.appending(path: "auth.json").path
     ) == customCodexHome.appending(path: "sessions", directoryHint: .isDirectory))
@@ -897,4 +869,47 @@ private func promptCachePayload(
         }\#(sourceIDLine)
     }
     """#
+}
+
+@Test(arguments: [true, false])
+func promptCacheMirrorRejectsRetiredSourcesAndKeepsOriginalFiles(explicitClient: Bool) throws {
+    let root = try promptCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appending(path: explicitClient ? "custom/usage" : ".code/usage")
+    let destination = root.appending(path: "mirror")
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    let file = source.appending(path: "usage.json")
+    let data = Data(promptCachePayload(lastUpdated: "2026-06-04T17:47:50.196967Z", cachedInputTokens: 90).utf8)
+    try data.write(to: file)
+    let clients: [String: CodexClient] = explicitClient ? [ContextPanelLocations.normalizedPath(source.path): .everyCode] : [:]
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        sourceDirectories: [source], sourceClients: clients, destination: destination
+    )
+    #expect(result.copied == 0)
+    #expect(try Data(contentsOf: file) == data)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+}
+
+@Test(arguments: [CodexClient.codex, .codexLab])
+func promptCacheBookmarkedMirrorPreservesExplicitModernClientAtLegacyPath(client: CodexClient) throws {
+    let root = try promptCacheTemporaryDirectory()
+    let source = root.appending(path: ".code/\(client.telemetryFolderName)")
+    let destination = root.appending(path: "mirror")
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    let sourceFile = source.appending(path: "usage.json")
+    try promptCachePayload(lastUpdated: "2026-06-04T17:47:50.196967Z", cachedInputTokens: 90)
+        .write(to: sourceFile, atomically: true, encoding: .utf8)
+    try bookmarkStore.createAndStoreBookmark(for: source, path: source.path)
+
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        bookmarkStore: bookmarkStore, sourceDirectories: [source],
+        sourceClients: [ContextPanelLocations.normalizedPath(source.path): client], destination: destination
+    )
+
+    #expect(result.copied == 1)
+    let sourceID = ConnectorRedactor.localAccountID(
+        provider: .openAI, path: ContextPanelLocations.normalizedPath(source.path)
+    )
+    #expect(FileManager.default.fileExists(atPath: destination.appending(path: "\(sourceID)/telemetry.json").path))
 }
