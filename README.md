@@ -123,7 +123,7 @@ as an assumed reset until the next AGY run confirms the new window. Assumed
 capacity is not written into observed history or treated as high-confidence
 forecast evidence. AGY supports one custom status-line command, so setup is
 guided and never overwrites or chains an existing customization automatically.
-AGY 1.1.1 compatibility was verified against Every Code's non-interactive
+Historical AGY 1.1.1 compatibility was verified against a non-interactive
 `agy --add-dir <workspace> -p <prompt>` execution: the configured callback
 publishes the documented quota payload even though no separate interactive AGY
 session is running.

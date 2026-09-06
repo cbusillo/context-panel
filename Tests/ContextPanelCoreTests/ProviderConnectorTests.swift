@@ -1740,7 +1740,7 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
 
     #expect(missingReport.status == .unknown)
     #expect(missingReport.errorMessage?.contains("setup is required") == true)
-    #expect(missingReport.errorMessage?.contains("Every Code") == true)
+    #expect(missingReport.errorMessage?.contains("Later AGY runs") == true)
     #expect(unreadableReport.status == .failure)
     #expect(unreadableReport.errorMessage?.contains("could not be read") == true)
     #expect(futureReport.status == .failure)

@@ -6,8 +6,7 @@ struct PromptCacheTelemetryMirror {
     static func main() throws {
         let destination = ContextPanelLocations.promptCacheTelemetryDirectory(appGroupID: ContextPanelLocations.appGroupID)
         let result = try PromptCacheTelemetryMirrorService.mirror(
-            sourceDirectories: ContextPanelLocations.codexTelemetryDirectories()
-                + ContextPanelLocations.everyCodeUsageDirectories(),
+            sourceDirectories: ContextPanelLocations.codexTelemetryDirectories(),
             destination: destination
         )
 

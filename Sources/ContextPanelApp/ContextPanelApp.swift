@@ -396,7 +396,7 @@ struct SettingsPane: View {
             }
 
             Section("Accounts") {
-                ForEach(model.accounts) { account in
+                ForEach(model.settingsAccounts) { account in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             ProviderBadge(provider: account.provider)
@@ -1379,10 +1379,14 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         return Date().timeIntervalSince(lastWebhookTestSentAt) < 30
     }
 
+    var settingsAccounts: [LocalProviderAccountConfiguration] {
+        AccountConfigurationDocument(updatedAt: .distantPast, accounts: accounts).settingsAccounts
+    }
+
     func load() {
         let result = store.load()
         accounts = result.document.accounts
-        var loadedAuthorizedPaths = Set(accounts.compactMap { account -> String? in
+        var loadedAuthorizedPaths = Set(settingsAccounts.compactMap { account -> String? in
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
             let expanded = NSString(string: authPath).expandingTildeInPath
@@ -1393,7 +1397,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         loadedAuthorizedPaths.formUnion(recentlyVerifiedAuthPaths)
         authorizedPaths = loadedAuthorizedPaths
 
-        var loadedMissingPaths = Set(accounts.compactMap { account -> String? in
+        var loadedMissingPaths = Set(settingsAccounts.compactMap { account -> String? in
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
             let expanded = NSString(string: authPath).expandingTildeInPath
@@ -1404,7 +1408,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         loadedMissingPaths.subtract(recentlyVerifiedAuthPaths)
         missingAuthPaths = loadedMissingPaths
 
-        var loadedLegacyPaths = Set(accounts.compactMap { account -> String? in
+        var loadedLegacyPaths = Set(settingsAccounts.compactMap { account -> String? in
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
             let expanded = NSString(string: authPath).expandingTildeInPath
@@ -1729,7 +1733,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func setAccount(_ accountID: String, isEnabled: Bool) {
-        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
         accounts[index].isEnabled = isEnabled
         saveAccounts()
     }
@@ -2245,7 +2249,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
         switch account.connectorKind {
         case .codexRateLimits:
-            if account.effectiveCodexClient == .codexLab || account.effectiveCodexClient == .everyCode {
+            if account.effectiveCodexClient == .codexLab {
                 return "Select auth_accounts.json for \(account.effectiveCodexClient?.displayName ?? account.displayName). ChatGPT accounts are read from this file"
             }
             if account.effectiveCodexClient == .codex {

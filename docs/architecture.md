@@ -144,8 +144,8 @@ and storage code.
 
 MVP connectors:
 
-- `CodexRateLimitConnector`: reads Codex-style auth roots such as `~/.code` or
-  `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
+- `CodexRateLimitConnector`: reads Codex and Codex Lab auth roots such as
+  `~/.codex` or `~/.codex-lab`, calls the live Codex usage endpoint, and normalizes primary,
   secondary, and additional percent-window buckets.
 - Google provider: retired Gemini CLI credential files, Context Panel Google
   OAuth, Antigravity Keychain access, and private Cloud Code Assist requests are
