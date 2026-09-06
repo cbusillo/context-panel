@@ -227,10 +227,12 @@ public struct AccountConfigurationStore: Sendable {
         }
         // Add setup choices without repointing existing bookmarks/Keychain keys,
         // enabling an account the user turned off, or discarding historical IDs.
-        let hasLegacyDefault = document.accounts.contains {
-            $0.id == "openai-code-default" && $0.effectiveCodexClient == .everyCode
+        let hasRetiredSource = document.accounts.contains { $0.isRetiredSource }
+        for index in document.accounts.indices where document.accounts[index].isRetiredSource && document.accounts[index].isEnabled {
+            document.accounts[index].isEnabled = false
+            changed = true
         }
-        for var account in defaultDocument(now: now).accounts where hasLegacyDefault && account.connectorKind == .codexRateLimits {
+        for var account in defaultDocument(now: now).accounts where hasRetiredSource && account.connectorKind == .codexRateLimits {
             guard !document.accounts.contains(where: {
                 $0.id == account.id || $0.effectiveCodexClient == account.effectiveCodexClient
             }) else { continue }
@@ -273,7 +275,7 @@ public enum AccountConnectorFactory {
     ) -> [any ProviderConnector] {
         var hasGoogleAntigravityConnector = false
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
-            guard account.isEnabled else { return nil }
+            guard account.isEnabled, !account.isRetiredSource else { return nil }
             switch account.connectorKind {
             case .codexRateLimits:
                 guard let authPath = account.authPath else { return nil }

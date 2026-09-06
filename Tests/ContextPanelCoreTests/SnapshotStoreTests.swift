@@ -1911,7 +1911,7 @@ import Testing
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let customRoot = try temporaryDirectory().appending(path: "custom-home", directoryHint: .isDirectory)
-    let codeRoot = customRoot.appending(path: ".code-chris", directoryHint: .isDirectory)
+    let codeRoot = customRoot.appending(path: ".codex-lab-chris", directoryHint: .isDirectory)
     let customAuth = codeRoot.appending(path: "auth_accounts.json")
     try FileManager.default.createDirectory(at: codeRoot, withIntermediateDirectories: true)
     try Data().write(to: customAuth)
@@ -2677,7 +2677,7 @@ import Testing
 
 @Test func refreshAttentionSummaryUsesGoogleAntigravitySetupGuidance() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
-    let message = "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. With AGY 1.1.1, later Every Code AGY runs publish quota automatically."
+    let message = "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. Later AGY runs publish quota automatically."
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
         snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),

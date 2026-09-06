@@ -1457,7 +1457,7 @@ Panel.app`.
 
 Before treating a fresh macOS train as release-ready:
 
-1. Authorize one configured auth file and one Every Code usage directory from
+1. Authorize one configured Codex/Lab auth file and its telemetry directory from
    the signed app, then confirm a refresh produces provider limits and
    prompt-cache telemetry.
 2. Run the Production runtime receipt once to inspect the refresh agent's

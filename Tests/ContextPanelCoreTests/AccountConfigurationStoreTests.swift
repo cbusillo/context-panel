@@ -159,7 +159,9 @@ func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAc
     #expect(migrated.document.schemaVersion == 1)
     #expect(migrated.document.updatedAt == Date(timeIntervalSince1970: 20))
     // Credential keys use the configured ID; bookmark keys use the auth path.
-    #expect(preserved == legacy)
+    var retired = legacy
+    retired.isEnabled = false
+    #expect(preserved == retired)
     #expect(preserved.providerReportAccountIDs == legacy.providerReportAccountIDs)
     #expect(preserved.codexClient == nil)
     #expect(migrated.document.accounts.map(\.id) == ["openai-code-default", "openai-codex-default", "openai-codex-lab-default"])
@@ -197,12 +199,14 @@ func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAc
     let result = store.load(now: Date(timeIntervalSince1970: 20))
 
     #expect(result.status == .healthy)
-    #expect(result.document == document)
+    var expected = document
+    expected.accounts[0].isEnabled = false
+    expected.updatedAt = Date(timeIntervalSince1970: 20)
+    #expect(result.document == expected)
     #expect(!result.document.accounts.contains { $0.id == "openai-codex-lab-default" })
 }
 
 @Test(arguments: [
-    ("custom-every-code", "/Users/example/.code/auth_accounts.json"),
     ("openai-code-default", "/Users/example/custom/auth_accounts.json"),
     ("openai-code-default", "/Users/example/.codex-lab/auth_accounts.json"),
 ])
@@ -745,4 +749,38 @@ private struct ThrowingProviderCredentialStore: ProviderCredentialStoring {
     func save(_ data: Data, accountID: String) throws {
         throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed)
     }
+}
+
+@Test func retiredCustomSourceIsDisabledAndPreservedThroughSettingsSave() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let retired = LocalProviderAccountConfiguration(
+        id: "custom-retired", provider: .openAI, connectorKind: .codexRateLimits,
+        displayName: "Historical account", authPath: "/Users/example/custom/auth.json", codexClient: .everyCode
+    )
+    try store.save(AccountConfigurationDocument(updatedAt: .distantPast, accounts: [retired]))
+    var document = store.load().document
+    #expect(!document.accounts[0].isEnabled)
+    #expect(document.settingsAccounts.map(\.effectiveCodexClient) == [.codexLab, .codex])
+    let codex = try #require(document.accounts.firstIndex { $0.effectiveCodexClient == .codex })
+    document.accounts[codex].isEnabled = true
+    try store.save(document)
+    let reloaded = store.load().document
+    #expect(reloaded.accounts.count == 3)
+    var expected = retired
+    expected.isEnabled = false
+    #expect(reloaded.accounts[0] == expected)
+    #expect(reloaded.accounts[codex].isEnabled)
+}
+
+@Test func connectorFactoryRejectsEnabledRetiredDocumentsBeforeAnyRead() async {
+    let retired = LocalProviderAccountConfiguration(
+        id: "legacy", provider: .openAI, connectorKind: .codexRateLimits,
+        displayName: "Retired", authPath: "/Users/example/.code/auth_accounts.json"
+    )
+    let connectors = AccountConnectorFactory.connectors(
+        from: AccountConfigurationDocument(updatedAt: .distantPast, accounts: [retired])
+    )
+    #expect(connectors.isEmpty)
 }

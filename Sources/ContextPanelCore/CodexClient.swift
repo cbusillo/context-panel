@@ -4,6 +4,7 @@ import Foundation
 public enum CodexClient: String, Codable, Equatable, Sendable {
     case codex
     case codexLab
+    // Decode existing configurations and historical records only. Never collect this source.
     case everyCode
 
     public var displayName: String {
@@ -45,6 +46,8 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
 }
 
 public extension LocalProviderAccountConfiguration {
+    var isRetiredSource: Bool { effectiveCodexClient == .everyCode }
+
     var supportsPromptCacheTelemetry: Bool { promptCacheDirectory != nil }
 
     var effectiveCodexClient: CodexClient? {
@@ -53,9 +56,18 @@ public extension LocalProviderAccountConfiguration {
     }
 
     var promptCacheDirectory: URL? {
-        guard let client = effectiveCodexClient, let path = effectiveAuthPath else { return nil }
+        guard let client = effectiveCodexClient, client != .everyCode, let path = effectiveAuthPath else { return nil }
         return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .deletingLastPathComponent()
             .appending(path: client.telemetryFolderName, directoryHint: .isDirectory)
+    }
+}
+
+public extension AccountConfigurationDocument {
+    /// Presentation only: keep the complete stored document when saving settings.
+    var settingsAccounts: [LocalProviderAccountConfiguration] {
+        let available = accounts.filter { !$0.isRetiredSource }
+        return available.filter { $0.effectiveCodexClient == .codexLab }
+            + available.filter { $0.effectiveCodexClient != .codexLab }
     }
 }

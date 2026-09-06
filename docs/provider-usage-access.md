@@ -182,32 +182,11 @@ Codex API-style deployments. The payload maps into rate-limit snapshots with
 provider window buckets, reset times, plan type, credits, reached-limit
 classification, and additional buckets keyed by `limit_id`.
 
-Every Code is useful as a fallback and validation source. It does not derive
-Codex rate-limit snapshots from local token counts. It sends authenticated
-requests to the ChatGPT Codex backend, parses server-reported `x-codex-*`
-response headers into percentage and reset-window snapshots, and persists the
-latest server snapshot under local usage files. The local files are a cache of
-server state plus local token history, which explains why displayed limit
-pressure reflects cloud and other-machine usage for the same account.
-
-Every Code also has a deliberate refresh path: it sends a tiny `"ok"` prompt via
-the selected account, waits for a `RateLimits` event from response headers, then
-persists the snapshot and updates the `/limits` UI. Separately, when the backend
-returns `usage_limit_reached`, it records `plan_type`, `resets_in_seconds`, and
-the reached-limit type as a hint.
-
-That is stronger evidence than visible ChatGPT UI scraping for Codex-style
-limits, but it is still product-surface-specific. Context Panel should separate
-`OpenAI ChatGPT product UI hints` from `OpenAI Codex backend percent windows`.
-The latter looks viable as an automated adapter if Context Panel can reuse the
-same authenticated account flow safely.
-
-Implication: v1 should not promise exact general ChatGPT subscription counters.
-For Codex/Fast Mode, though, the preferred path is a live OpenAI Codex limits
-connector using the same shape as Codex CLI's
-`account/rateLimits/read`/`get_rate_limits_many()` flow. If that cannot be made
-stable or safely testable, fall back to Every Code's local `usage/*.json` cache
-or Codex CLI's app-server request.
+Historical Every Code investigation established that Codex percentage windows
+come from authenticated backend responses rather than local token counts.
+Context Panel now reads those live windows directly through Codex and Codex Lab
+credentials. Every Code is retired: it is not a fallback, setup option, or active
+auth/telemetry source. Historical snapshots remain readable.
 
 ## Codex and Codex Lab setup
 
@@ -221,14 +200,15 @@ API-key entries in a Lab catalog are skipped without discarding its valid
 ChatGPT accounts. Encrypted-only catalogs need a readable client auth file;
 Context Panel does not bypass client credential encryption.
 
-Existing Every Code account configurations, enabled states, IDs, imported
-credentials, and bookmarks remain intact. Migration adds missing Codex/Lab setup
-choices in the off state; it never repoints an old credential key to a new client.
-Authorize and enable the replacement source, confirm its accounts, then switch
-Every Code off. Existing Codex settings remain unchanged. The configuration stays
-at schema version 1 with optional client metadata so older installed runtimes
-can still decode it. The underlying ChatGPT identity continues to deduplicate
-limits when both clients use the same account.
+Existing Every Code configurations are retained as disabled migration records,
+with IDs, paths, imported credentials, bookmarks, and stored history preserved.
+They are excluded from settings, provider polling, credential import, and cache
+collection. Missing Codex/Lab setup choices are added disabled; existing modern
+client settings remain unchanged. Codex Lab appears first in account settings.
+Explicit client metadata takes precedence over path inference, so a modern
+client using a custom path or a historical configured ID remains supported.
+The configuration stays schema 1. No automatic `CODE_HOME` or `.code/usage`
+discovery remains; old payload decoding is retained for archived app data only.
 
 ### Local prompt-cache telemetry
 
@@ -238,7 +218,6 @@ Cache telemetry needs a separate folder permission from auth-file access:
 | --- | --- | --- |
 | Codex | `~/.codex/sessions` | Counter increments from a bounded sample of recent session records |
 | Codex Lab | `~/.codex-lab/usage` | Token deltas measured between Context Panel refreshes |
-| Every Code (existing setups) | `~/.code/usage` | Legacy usage JSON reader |
 
 The picker accepts the matching folder before any usage records exist. Codex
 session logs do not reliably identify the account that produced each request,
@@ -334,8 +313,8 @@ The supported integration is AGY CLI's documented custom status-line command:
 5. The normal Google connector reads the sanitized snapshot. It performs no
    network request and has no access to Antigravity credentials.
 
-Every Code compatibility is validated against the actual non-interactive agent
-invocation, not inferred from the interactive UI. On 2026-07-12, AGY 1.1.1
+Historical non-interactive AGY compatibility was validated against the actual
+agent invocation, not inferred from the interactive UI. On 2026-07-12, AGY 1.1.1
 running as `agy --add-dir <workspace> -p <prompt>` advanced the signed
 TestFlight bridge snapshot during the command and published four current quota
 buckets. A subsequent canonical refresh consumed those buckets as healthy
@@ -359,7 +338,7 @@ cleanup failures are ignored so ingestion and the last good snapshot remain
 independent of housekeeping.
 
 Quota observations are event-driven while AGY CLI runs, not independently
-pollable background data. This includes AGY agent runs launched by Every Code.
+pollable background data, including non-interactive AGY agent runs.
 Missing bridge data is setup-required, and empty or unrecognized data is
 unknown. Idle time alone does not make an observation stale because normal AGY
 usage invokes the callback. When an explicit reset deadline passes without a
@@ -423,7 +402,7 @@ OK." --output-format json --verbose` emitted a `rate_limit_event` with
 `used_percentage` and did not refresh the configured status-line cache. A local
 `claude -p "/usage" --output-format json --verbose` probe returned only that the
 Claude Code subscription was in use, not the five-hour or weekly usage
-percentages. This means Every Code's current external `claude -p` agent path
+percentages. This means an external `claude -p` agent path
 does not by itself provide official subscription percent pressure.
 
 Local binary/bundle inspection found runtime strings for

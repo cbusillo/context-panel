@@ -190,27 +190,8 @@ public enum PromptCacheTelemetryReader {
         everyCodeUsageObservations(rootDirectory: rootDirectory, now: now, maximumAge: maximumAge, fileManager: fileManager)
     }
 
-    public static func everyCodeUsageObservations(
-        now: Date = Date(),
-        maximumAge: TimeInterval = PromptCacheSummary.defaultMaximumAge,
-        fileManager: FileManager = .default
-    ) -> [PromptCacheObservation] {
-        let directories = [
-            ContextPanelLocations.promptCacheTelemetryDirectory(appGroupID: ContextPanelLocations.appGroupID),
-        ] + ContextPanelLocations.everyCodeUsageDirectories()
-        var observations: [PromptCacheObservation] = []
-        var seenDirectories = Set<String>()
-        for directory in directories where seenDirectories.insert(directory.path).inserted {
-            observations.append(contentsOf: everyCodeUsageObservations(
-                rootDirectory: directory,
-                now: now,
-                maximumAge: maximumAge,
-                fileManager: fileManager
-            ))
-        }
-        return deduplicated(observations).sorted { $0.observedAt > $1.observedAt }
-    }
-
+    // Legacy payload formats remain readable in app-owned telemetry mirrors.
+    // This explicit-root reader never discovers or polls retired client homes.
     public static func everyCodeUsageObservations(
         rootDirectory: URL,
         now: Date = Date(),

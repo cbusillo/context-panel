@@ -87,6 +87,14 @@ public enum PromptCacheTelemetryMirrorService {
         preserveUnreadableSource: (URL) -> Bool,
         sourceResolver: (URL, (URL) throws -> SourceMirrorResult) throws -> SourceMirrorResult
     ) throws -> PromptCacheTelemetryMirrorResult {
+        func client(for source: URL) -> CodexClient? {
+            let sourcePath = ContextPanelLocations.normalizedPath(source.path)
+            return sourceClients[sourcePath] ?? [CodexClient.codex, .codexLab].first { client in
+                ContextPanelLocations.normalizedPath(client.homeDirectory().appending(path: client.telemetryFolderName).path) == sourcePath
+            } ?? CodexClient.inferred(fromAuthPath: source.deletingLastPathComponent().appending(path: "auth.json").path)
+        }
+        // Filter before bookmark resolution, file access, and last-good preservation.
+        let sourceDirectories = sourceDirectories.filter { client(for: $0) != .everyCode }
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
         var copied = 0
         var removed = 0
@@ -96,6 +104,7 @@ public enum PromptCacheTelemetryMirrorService {
 
         for source in sourceDirectories {
             let sourcePath = ContextPanelLocations.normalizedPath(source.path)
+            let client = client(for: source)
             guard seenSources.insert(sourcePath).inserted else { continue }
             let sourceMirrorDirectory = destination.appending(
                 path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourcePath),
@@ -105,10 +114,6 @@ public enum PromptCacheTelemetryMirrorService {
             if preserveUnreadableSource(source) || fileManager.fileExists(atPath: source.path) {
                 preservedSourceMirrorDirectories.insert(sourceMirrorPath)
             }
-            let client = sourceClients[sourcePath] ?? [CodexClient.codex, .codexLab].first { client in
-                ContextPanelLocations.normalizedPath(client.homeDirectory().appending(path: client.telemetryFolderName).path) == sourcePath
-            } ?? CodexClient.inferred(fromAuthPath: source.deletingLastPathComponent().appending(path: "auth.json").path)
-
             guard let sourceResult = try? sourceResolver(source, { resolvedSource in
                 try mirrorSource(
                     source: resolvedSource,
