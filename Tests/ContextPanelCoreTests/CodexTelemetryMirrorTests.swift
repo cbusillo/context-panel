@@ -6,10 +6,12 @@ import Testing
 private struct CodexMirrorFixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let start = Date(timeIntervalSince1970: 1_800_000_000)
-    var source: URL { root.appendingPathComponent("private-client/usage") }
+    let sourceFolderName: String
+    var source: URL { root.appendingPathComponent("private-client/\(sourceFolderName)") }
     var destination: URL { root.appendingPathComponent("mirror") }
 
-    init() throws {
+    init(sourceFolderName: String = "usage") throws {
+        self.sourceFolderName = sourceFolderName
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
     }
 
@@ -31,6 +33,24 @@ private struct CodexMirrorFixture {
             "totals": totals,
         ]
         try JSONSerialization.data(withJSONObject: payload).write(to: source.appendingPathComponent(filename))
+    }
+
+    func writeSession(secret: String = "private-transcript-and-auth-token") throws {
+        let directory = source.appendingPathComponent("2027/01/15")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let baselineDate = ISO8601DateFormatter().string(from: start.addingTimeInterval(-60))
+        let recentDate = ISO8601DateFormatter().string(from: start)
+        let records = [
+            "{\"type\":\"response_item\",\"payload\":{\"text\":\"\(secret)\"}}",
+            "{\"timestamp\":\"\(baselineDate)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":1000,\"cached_input_tokens\":800},\"model_context_window\":272000}}}",
+            "{\"timestamp\":\"\(recentDate)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":1100,\"cached_input_tokens\":880},\"last_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80},\"model_context_window\":272000}}}",
+        ]
+        try (records.joined(separator: "\n") + "\n").write(
+            to: directory.appendingPathComponent(secret + ".jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Data("{\"token\":\"\(secret)\"}".utf8).write(to: source.appendingPathComponent("auth.json"))
     }
 
     @discardableResult
@@ -56,6 +76,98 @@ private struct CodexMirrorFixture {
     func observations(at date: Date) -> [PromptCacheObservation] {
         PromptCacheTelemetryReader.mirroredObservations(rootDirectory: destination, now: date)
     }
+}
+
+@Test func codexLabNativeSessionMirrorCountsNormalizedEventsPrivatelyAndIdempotently() throws {
+    let fixture = try CodexMirrorFixture(sourceFolderName: "sessions")
+    defer { fixture.remove() }
+    let secret = "private-lab-transcript-and-auth-token"
+    try fixture.writeSession(secret: secret)
+
+    try fixture.mirror(at: fixture.start, client: .codexLab)
+    let first = try fixture.persisted()
+    try fixture.mirror(at: fixture.start, client: .codexLab)
+    let second = try fixture.persisted()
+
+    #expect(first.observations == second.observations)
+    #expect(first.refreshedAt == second.refreshedAt)
+    #expect(first.baselines.isEmpty)
+    #expect(first.observations.map(\.tokens) == [PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)])
+    #expect(first.observations.first?.accountID == "codex-lab-session-unattributed")
+    #expect(first.observations.first?.accountName == "Codex Lab · Account unknown")
+    let mirroredText = String(decoding: try JSONEncoder().encode(first), as: UTF8.self)
+    #expect(!mirroredText.contains(secret))
+    #expect(!mirroredText.contains("response_item"))
+    #expect(!mirroredText.contains("auth.json"))
+    #expect(!mirroredText.contains(fixture.source.path))
+}
+
+@Test func codexLabConfiguredSessionsPathSelectsNativeReaderAfterResolutionToUsageNamedDirectory() throws {
+    let fixture = try CodexMirrorFixture(sourceFolderName: "usage")
+    defer { fixture.remove() }
+    try fixture.writeSession()
+    let target = fixture.destination.appendingPathComponent("resolved/telemetry.json")
+
+    try CodexTelemetryMirror.write(
+        source: fixture.source,
+        sourceIDPath: fixture.root.appendingPathComponent("configured/sessions").path,
+        client: .codexLab,
+        target: target,
+        now: fixture.start,
+        fileManager: .default
+    )
+
+    let mirror = try JSONDecoder().decode(CodexTelemetryMirror.self, from: Data(contentsOf: target))
+    #expect(mirror.observations.map(\.tokens) == [PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)])
+    #expect(mirror.observations.first?.accountName == "Codex Lab · Account unknown")
+    #expect(mirror.baselines.isEmpty)
+}
+
+@Test func copiedSessionEventDeduplicatesAcrossCodexAndLabMirrors() throws {
+    let fixture = try CodexMirrorFixture(sourceFolderName: "sessions")
+    defer { fixture.remove() }
+    try fixture.writeSession()
+    let codexTarget = fixture.destination.appendingPathComponent("codex/telemetry.json")
+    let labTarget = fixture.destination.appendingPathComponent("lab/telemetry.json")
+    for (client, target) in [(CodexClient.codex, codexTarget), (.codexLab, labTarget)] {
+        try CodexTelemetryMirror.write(
+            source: fixture.source,
+            sourceIDPath: fixture.root.appendingPathComponent("\(client.rawValue)/sessions").path,
+            client: client,
+            target: target,
+            now: fixture.start,
+            fileManager: .default
+        )
+    }
+
+    let codex = try JSONDecoder().decode(CodexTelemetryMirror.self, from: Data(contentsOf: codexTarget))
+    let lab = try JSONDecoder().decode(CodexTelemetryMirror.self, from: Data(contentsOf: labTarget))
+    #expect(codex.observations.first?.id == lab.observations.first?.id)
+    #expect(codex.observations.first?.accountID != lab.observations.first?.accountID)
+    #expect(PromptCacheTelemetryReader.mirroredObservations(
+        rootDirectory: fixture.destination,
+        now: fixture.start
+    ).count == 1)
+}
+
+@Test func retiredExplicitClientCannotMirrorNativeSessions() throws {
+    let fixture = try CodexMirrorFixture(sourceFolderName: "sessions")
+    defer { fixture.remove() }
+    try fixture.writeSession()
+    let target = fixture.destination.appendingPathComponent("retired/telemetry.json")
+
+    try CodexTelemetryMirror.write(
+        source: fixture.source,
+        sourceIDPath: fixture.source.path,
+        client: .everyCode,
+        target: target,
+        now: fixture.start,
+        fileManager: .default
+    )
+
+    let mirror = try JSONDecoder().decode(CodexTelemetryMirror.self, from: Data(contentsOf: target))
+    #expect(mirror.observations.isEmpty)
+    #expect(mirror.baselines.isEmpty)
 }
 
 @Test func codexLabMirrorUsesMeasuredRefreshDeltaInsteadOfLifetimeTotals() throws {
@@ -245,22 +357,10 @@ private struct CodexMirrorFixture {
 }
 
 @Test func codexSessionMirrorStoresOnlyNormalizedTelemetry() throws {
-    let fixture = try CodexMirrorFixture()
+    let fixture = try CodexMirrorFixture(sourceFolderName: "sessions")
     defer { fixture.remove() }
-    let directory = fixture.source.appendingPathComponent("2027/01/15")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let secret = "private-transcript-and-auth-token"
-    let baselineDate = ISO8601DateFormatter().string(from: fixture.start.addingTimeInterval(-60))
-    let recentDate = ISO8601DateFormatter().string(from: fixture.start)
-    let records = [
-        "{\"type\":\"response_item\",\"payload\":{\"text\":\"\(secret)\"}}",
-        "{\"timestamp\":\"\(baselineDate)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":1000,\"cached_input_tokens\":800}}}}",
-        "{\"timestamp\":\"\(recentDate)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":1100,\"cached_input_tokens\":880}}}}",
-    ]
-    try (records.joined(separator: "\n") + "\n").write(
-        to: directory.appendingPathComponent(secret + ".jsonl"), atomically: true, encoding: .utf8
-    )
-    try Data("{\"token\":\"\(secret)\"}".utf8).write(to: fixture.source.appendingPathComponent("auth.json"))
+    try fixture.writeSession(secret: secret)
     try fixture.mirror(at: fixture.start, client: .codex)
     let observations = fixture.observations(at: fixture.start)
     #expect(observations.map(\.tokens) == [PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)])

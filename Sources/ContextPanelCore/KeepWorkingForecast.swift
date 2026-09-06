@@ -67,6 +67,7 @@ public struct KeepWorkingLimitRow: Identifiable, Equatable, Sendable {
 }
 
 public struct KeepWorkingForecast: Equatable, Sendable {
+    private let presentationDate: Date
     public let activeWindow: MainLimitWindow?
     public let isLimited: Bool
     public let remainingPercent: Int?
@@ -95,6 +96,7 @@ public struct KeepWorkingForecast: Equatable, Sendable {
         settings: FastModeForecastSettings,
         now: Date = Date()
     ) {
+        presentationDate = now
         let portfolio = summaries.openAIFastModeCapacityForecast(
             now: now,
             observedBurnRates: observedBurnRates,
@@ -164,7 +166,10 @@ public struct KeepWorkingForecast: Equatable, Sendable {
         return "Resets \(Self.dateText(nextResetAt, density: density))"
     }
 
-    public func outcomeCopy(density: KeepWorkingDateDensity) -> String? {
+    public func outcomeCopy(
+        density: KeepWorkingDateDensity,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String? {
         if isLimited {
             return activeWindow == .fiveHour ? "5-hour limit reached" : "Limit reached"
         }
@@ -172,7 +177,14 @@ public struct KeepWorkingForecast: Equatable, Sendable {
             return "May run low in ~\(Self.durationText(hours: projectedRunLowInHours))"
         }
         if let projectedRunLowAt {
-            return "May run low \(Self.weekdayText(projectedRunLowAt, density: density))"
+            if calendar.isDate(projectedRunLowAt, inSameDayAs: presentationDate) {
+                return "May run low today"
+            }
+            if let tomorrow = calendar.date(byAdding: .day, value: 1, to: presentationDate),
+               calendar.isDate(projectedRunLowAt, inSameDayAs: tomorrow) {
+                return "May run low tomorrow"
+            }
+            return "May run low \(Self.weekdayText(projectedRunLowAt, density: density, calendar: calendar))"
         }
         switch paceBand {
         case .under:
@@ -217,12 +229,22 @@ public struct KeepWorkingForecast: Equatable, Sendable {
         return value
     }
 
-    private static func weekdayText(_ date: Date, density: KeepWorkingDateDensity) -> String {
-        switch density {
+    private static func weekdayText(
+        _ date: Date,
+        density: KeepWorkingDateDensity,
+        calendar: Calendar
+    ) -> String {
+        let locale = calendar.locale ?? .autoupdatingCurrent
+        let style = Date.FormatStyle(
+            locale: locale,
+            calendar: calendar,
+            timeZone: calendar.timeZone
+        )
+        return switch density {
         case .full:
-            date.formatted(.dateTime.weekday(.wide))
+            date.formatted(style.weekday(.wide))
         case .compact:
-            date.formatted(.dateTime.weekday(.abbreviated))
+            date.formatted(style.weekday(.abbreviated))
         }
     }
 

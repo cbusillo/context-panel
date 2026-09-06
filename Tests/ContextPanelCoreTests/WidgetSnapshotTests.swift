@@ -1153,7 +1153,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 @Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
     let root = try widgetSnapshotTemporaryDirectory()
     let codeDirectory = root.appending(path: ".codex-lab-chris", directoryHint: .isDirectory)
-    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: "sessions", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
     let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
@@ -1176,10 +1176,11 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     ) == .needsAuthorization)
 }
 
-@Test func widgetSnapshotDoesNotRequestPromptCacheAuthorizationAfterUsageBookmarkIsSaved() throws {
+@Test(arguments: ["usage", "sessions"])
+func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: String) throws {
     let root = try widgetSnapshotTemporaryDirectory()
     let codeDirectory = root.appending(path: ".codex-lab", directoryHint: .isDirectory)
-    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: folder, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
     let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
@@ -1203,13 +1204,13 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         accountStore: accountStore,
         bookmarkStore: bookmarkStore,
         now: Date(timeIntervalSince1970: 110)
-    ) == nil)
+    ) == (folder == "sessions" ? nil : .needsAuthorization))
 }
 
 @Test func widgetSnapshotTrustsSavedPromptCacheBookmarkRecordWithoutResolvingIt() throws {
     let root = try widgetSnapshotTemporaryDirectory()
-    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
-    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    let codeDirectory = root.appending(path: ".codex-lab", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: "sessions", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
     let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
@@ -1218,7 +1219,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
             id: "openai-code-default",
             provider: .openAI,
             connectorKind: .codexRateLimits,
-            displayName: "Every Code",
+            displayName: "Codex Lab",
             authPath: codeDirectory.appending(path: "auth_accounts.json").path
         ),
     ]))

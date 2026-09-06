@@ -15,7 +15,12 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
         }
     }
 
-    public var telemetryFolderName: String { self == .codex ? "sessions" : "usage" }
+    public var telemetryFolderName: String {
+        switch self {
+        case .codex, .codexLab: "sessions"
+        case .everyCode: "usage"
+        }
+    }
 
     public static func inferred(fromAuthPath path: String?) -> CodexClient? {
         guard let path else { return nil }

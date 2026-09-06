@@ -347,6 +347,12 @@ recent observed rate from the rate that would last until reset. When recent
 history is insufficient, say `Measuring recent use` or `Not enough recent data
 yet`; never present a planning default as active or observed usage.
 
+When the projected run-low date is the presentation date, say `May run low
+today`; when it is the next calendar day, say `May run low tomorrow`. Use the
+user's calendar and time zone for these comparisons, including dates around
+midnight and daylight-saving transitions. Keep localized weekday copy for
+later dates.
+
 When the 5-hour guardrail is exhausted, replace pace guidance with the direct
 status `5-hour limit reached`, identify the 5-hour window beside the capacity
 number, and say that capacity is available after reset. Do not pair a weekly

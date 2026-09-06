@@ -92,6 +92,7 @@
       "Tests/ContextPanelCoreTests/MainLimitAnswerSelectionTests.swift",
       "Tests/ContextPanelCoreTests/MetricProgressTests.swift",
       "Tests/ContextPanelCoreTests/PortableSettingsUITests.swift",
+      "Tests/ContextPanelCoreTests/PromptCacheDirectorySelectionTests.swift",
       "Tests/ContextPanelCoreTests/PromptCacheTelemetryTests.swift",
       "Tests/ContextPanelCoreTests/ProviderConnectorTests.swift",
       "Tests/ContextPanelCoreTests/RefreshAgentRegistrationTests.swift",
