@@ -1,3 +1,4 @@
+from collections.abc import Callable
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
 import copy
@@ -1575,8 +1576,8 @@ class SharedViewCaptureTests(unittest.TestCase):
             (CommandResult(0, payload([{**device, "isAvailable": False}]), ""), "simctl-created-device-mismatch"),
         )
         for result, expected in cases:
-            runner = mock.Mock()
-            runner.run.return_value = result
+            runner = FakeRunner()
+            runner.run = mock.Mock(return_value=result)
             with self.subTest(expected=expected, stdout=result.stdout):
                 self.assertEqual(expected, _verify_created_simulator(runner, profile, name, SIMULATOR_ID))
 
@@ -2118,7 +2119,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(EXIT_UNKNOWN, exit_code)
         self.assert_capture_errors(receipt, *("artifact-publish-failed",) * 2)
 
-        original_unlink = Path.unlink
+        original_unlink: Callable[..., None] = Path.unlink
 
         def fail_final_artifact(path: Path, *args: Any, **kwargs: Any) -> None:
             if path.suffix == ".png" and not path.name.startswith("."):
@@ -2498,7 +2499,7 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         def retain_snapshot(path: str | Path, *args: Any, **kwargs: Any) -> None:
             if Path(path).name == ".ios-test-products":
-                return None
+                return
             remove_tree(path, *args, **kwargs)
 
         with mock.patch.object(
@@ -2579,7 +2580,8 @@ class SharedViewCaptureTests(unittest.TestCase):
             )
         ]
         for result in (CommandResult(1, "", ""), CommandResult(124, "", "", timed_out=True)):
-            runner = mock.Mock(run=mock.Mock(return_value=result))
+            runner = FakeRunner()
+            runner.run = mock.Mock(return_value=result)
             cases.append((runner, capture_module._command_error_code(result, "simctl-app-container")))
         for runner, expected in cases:
             self.assertEqual(expected, capture_module._installed_app_error(runner, SIMULATOR_ID, profile))
