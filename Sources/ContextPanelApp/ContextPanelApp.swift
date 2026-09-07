@@ -31,9 +31,13 @@ struct ContextPanelApp: App {
         }
         .defaultSize(width: 1080, height: 720)
         .handlesExternalEvents(matching: ["overview", "reconnect"])
-
-        Settings {
-            SettingsPane(appModel: appDelegate.model, navigation: appDelegate.settingsNavigation)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.presentSettingsWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
@@ -59,6 +63,11 @@ final class SettingsNavigationModel: ObservableObject {
 
     func clear() {
         request = SettingsNavigationRequest(destination: nil)
+    }
+
+    func clearIfIdle() {
+        guard request == nil else { return }
+        clear()
     }
 
     func consumeRequest() -> SettingsNavigationRequest? {
@@ -284,21 +293,17 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func presentSettingsWindow(destination: SettingsNavigationRequest.Destination? = nil) {
+    func presentSettingsWindow(destination: SettingsNavigationRequest.Destination? = nil) {
         NSApp.activate(ignoringOtherApps: true)
 
         if let destination {
             settingsNavigation.focus(destination)
         } else {
-            settingsNavigation.clear()
-        }
-
-        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) ||
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil) {
-            return
+            settingsNavigation.clearIfIdle()
         }
 
         if let window = settingsWindow {
+            window.deminiaturize(nil)
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -2225,8 +2230,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard let path = account.promptCacheDirectory?.path else { return nil }
         let detail: String
         switch account.effectiveCodexClient {
-        case .codex: detail = "Recent session sample; account unknown"
-        case .codexLab: detail = "Measured between refreshes; first refresh starts a baseline"
+        case .codex, .codexLab: detail = "Recent session sample; account unknown"
         default: detail = "Cache stats source"
         }
         return "\(detail) · \(ConnectorRedactor.redactedPath(path))"
