@@ -158,7 +158,7 @@ Context Panel's reset-credit integration is permanently read-only. It performs
 GET requests only and will not implement redemption, consumption, or any other
 provider mutation route.
 
-## Local Probe And Every Code Evidence
+## Local Probe And Historical Every Code Evidence
 
 The first OpenAI Limit Probe run confirmed the uncomfortable but useful shape of
 the problem:
@@ -182,50 +182,99 @@ Codex API-style deployments. The payload maps into rate-limit snapshots with
 provider window buckets, reset times, plan type, credits, reached-limit
 classification, and additional buckets keyed by `limit_id`.
 
-Every Code is useful as a fallback and validation source. It does not derive
-Codex rate-limit snapshots from local token counts. It sends authenticated
-requests to the ChatGPT Codex backend, parses server-reported `x-codex-*`
-response headers into percentage and reset-window snapshots, and persists the
-latest server snapshot under local usage files. The local files are a cache of
-server state plus local token history, which explains why displayed limit
-pressure reflects cloud and other-machine usage for the same account.
+Historical Every Code investigation established that Codex percentage windows
+come from authenticated backend responses rather than local token counts.
+Context Panel now reads those live windows directly through Codex and Codex Lab
+credentials. Every Code is retired: it is not a fallback, setup option, or active
+auth/telemetry source. Historical snapshots remain readable.
 
-Every Code also has a deliberate refresh path: it sends a tiny `"ok"` prompt via
-the selected account, waits for a `RateLimits` event from response headers, then
-persists the snapshot and updates the `/limits` UI. Separately, when the backend
-returns `usage_limit_reached`, it records `plan_type`, `resets_in_seconds`, and
-the reached-limit type as a hint.
+## Codex and Codex Lab setup
 
-That is stronger evidence than visible ChatGPT UI scraping for Codex-style
-limits, but it is still product-surface-specific. Context Panel should separate
-`OpenAI ChatGPT product UI hints` from `OpenAI Codex backend percent windows`.
-The latter looks viable as an automated adapter if Context Panel can reuse the
-same authenticated account flow safely.
+New installations offer Codex (`~/.codex/auth.json`, enabled) and Codex Lab
+(`~/.codex-lab/auth_accounts.json`, initially off). Explicit `CODEX_HOME` and
+`CODEX_LAB_HOME` directories are respected when available to the process.
+Signed apps launched by macOS do not inherit arbitrary terminal environment
+variables; their saved account configuration and user-approved bookmarks are
+what determine access. Both sources use the existing live Codex limits connector.
+API-key entries in a Lab catalog are skipped without discarding its valid
+ChatGPT accounts. Encrypted-only catalogs need a readable client auth file;
+Context Panel does not bypass client credential encryption.
 
-Implication: v1 should not promise exact general ChatGPT subscription counters.
-For Codex/Fast Mode, though, the preferred path is a live OpenAI Codex limits
-connector using the same shape as Codex CLI's
-`account/rateLimits/read`/`get_rate_limits_many()` flow. If that cannot be made
-stable or safely testable, fall back to Every Code's local `usage/*.json` cache
-or Codex CLI's app-server request.
+Existing Every Code configurations are retained as disabled migration records,
+with IDs, paths, imported credentials, bookmarks, and stored history preserved.
+They are excluded from settings, provider polling, credential import, and cache
+collection. Missing Codex/Lab setup choices are added disabled; existing modern
+client settings remain unchanged. Codex Lab appears first in account settings.
+Explicit client metadata takes precedence over path inference, so a modern
+client using a custom path or a historical configured ID remains supported.
+The configuration stays schema 1. No automatic `CODE_HOME` or `.code/usage`
+discovery remains; old payload decoding is retained for archived app data only.
 
-In signed app and widget builds, prompt-cache telemetry from Every Code usage
-files requires a separate user-approved bookmark for the matching usage folder,
-normally `~/.code/usage`. The main app mirrors those JSON files into the
-canonical app-group `PromptCache` directory before building the shared snapshot,
-so the widget reads only normalized app-owned data. The refresh agent may update
-that mirror from the raw user-approved files when its sandbox can resolve the
-bookmark; otherwise it preserves and reads the last-good mirror until the main
-app refreshes it again. Do not assume that an app-scoped bookmark created by the
-main app is transferable to the separately sandboxed login item. The Production
-runtime receipt reports aggregate refresh-agent bookmark resolution without
-paths or account IDs. This usage-folder permission is intentionally separate
-from the `auth_accounts.json` permission used to seed the shared Keychain
-credential for live Codex limit refresh.
-When an enabled Codex/Every Code account is missing that usage-folder bookmark,
-medium and large widgets may show a compact `Enable Cache` pill that opens the
-app's settings flow; the settings row uses the more explicit `Enable Cache Stats`
-label before presenting the folder picker.
+### Local prompt-cache telemetry
+
+Cache telemetry needs a separate folder permission from auth-file access:
+
+| Client | Folder | Recent cache measurement |
+| --- | --- | --- |
+| Codex | `~/.codex/sessions` | Counter increments from a bounded sample of recent session records |
+| Codex Lab | `~/.codex-lab/sessions` | Counter increments from a bounded sample of recent session records |
+
+The picker accepts the matching folder before any usage records exist. If the
+configured folder is a symbolic link, selecting that folder or its resolved
+destination is supported. The bookmark stays keyed to the configured source;
+selecting its parent, a child, or an unrelated same-named folder is rejected.
+Codex and Codex Lab session logs do not reliably identify the account that
+produced each request,
+so these stats explicitly say **Account unknown** instead of assigning historical
+usage to the current login. The reader samples at most 64 files, 8 MiB total,
+256 KiB per file, 64 KiB per line, and 2,048 observations; very large or old
+session trees can undercount. Calendar folders are visited newest first within
+366 days (plus tomorrow for timezone boundaries), with at most 8,192 directory
+entries inspected. Sessions stored in older folders are outside this sample,
+even if resumed recently. Copied event fingerprints are counted once.
+An event found under both clients uses a deterministic source label; that label
+does not establish which client originally generated it.
+These measurements are local cache samples, not complete provider billing totals.
+
+Current native Codex Lab writes token counts into session JSONL. Its older
+`usage/*.json` files may still receive rate-limit metadata, but native execution
+does not update their token totals. Existing usage-folder bookmarks remain
+stored; they do not authorize the sessions folder. Upgrading users must grant
+sessions-folder access separately. Auth configuration and logical limit accounts
+are unchanged.
+Old temporary usage mirrors are pruned when the source switches to sessions.
+Stored snapshots and history remain intact, but the current cache display can
+be empty until sessions access and fresh logs are available.
+
+Explicit legacy Lab usage mirrors remain compatible with cumulative payloads:
+the first read establishes a baseline, later positive deltas produce **Since
+refresh** samples, and idle polls do not refresh observation timestamps. Counter
+resets, invalid/future data, and expired baselines cannot produce lifetime spikes.
+Normal setup reads native sessions only, so the two formats are not combined.
+Missing cached-token counts remain unknown in both formats.
+
+For Codex and Lab increments, the latest rate is a token-weighted 15-minute
+bucket for the same source account and measurement window. Fewer than three
+measured samples keep the comparison neutral. Incremental samples do not trigger
+the legacy cache-break warning; an ordinary cold session is not enough evidence
+of a caching regression.
+
+The main app and refresh agent share the same mirror implementation. They read
+only user-authorized source folders and persist normalized counter observations
+(and hashed baseline keys for explicit legacy Lab mirrors) into the canonical app-group `PromptCache` folder.
+A per-source lock serializes baseline updates. Codex transcript text, raw Lab
+account identifiers, and auth data never enter these new mirrors. The widget
+reads the app-owned mirror; it does not scan session logs. Unresolvable saved
+bookmarks preserve last-good mirrors, whose observations still expire normally.
+Turning off every OpenAI source clears its mirrored telemetry on refresh.
+An app-scoped bookmark may not resolve inside the separately sandboxed refresh
+agent; the signed runtime must verify that behavior instead of inferring it from
+terminal access.
+
+The widget's **Enable Cache** action and app's **Enable Cache Stats** action use
+the same source-specific folder. After initial authorization, generate usage and
+refresh to read the new session increments. Repeated refreshes must not count
+the same events twice. Signed-app and signed-agent reads must both be verified.
 
 ### Codex Limits Connector
 
@@ -278,8 +327,8 @@ The supported integration is AGY CLI's documented custom status-line command:
 5. The normal Google connector reads the sanitized snapshot. It performs no
    network request and has no access to Antigravity credentials.
 
-Every Code compatibility is validated against the actual non-interactive agent
-invocation, not inferred from the interactive UI. On 2026-07-12, AGY 1.1.1
+Historical non-interactive AGY compatibility was validated against the actual
+agent invocation, not inferred from the interactive UI. On 2026-07-12, AGY 1.1.1
 running as `agy --add-dir <workspace> -p <prompt>` advanced the signed
 TestFlight bridge snapshot during the command and published four current quota
 buckets. A subsequent canonical refresh consumed those buckets as healthy
@@ -303,7 +352,7 @@ cleanup failures are ignored so ingestion and the last good snapshot remain
 independent of housekeeping.
 
 Quota observations are event-driven while AGY CLI runs, not independently
-pollable background data. This includes AGY agent runs launched by Every Code.
+pollable background data, including non-interactive AGY agent runs.
 Missing bridge data is setup-required, and empty or unrecognized data is
 unknown. Idle time alone does not make an observation stale because normal AGY
 usage invokes the callback. When an explicit reset deadline passes without a
@@ -367,7 +416,7 @@ OK." --output-format json --verbose` emitted a `rate_limit_event` with
 `used_percentage` and did not refresh the configured status-line cache. A local
 `claude -p "/usage" --output-format json --verbose` probe returned only that the
 Claude Code subscription was in use, not the five-hour or weekly usage
-percentages. This means Every Code's current external `claude -p` agent path
+percentages. This means an external `claude -p` agent path
 does not by itself provide official subscription percent pressure.
 
 Local binary/bundle inspection found runtime strings for

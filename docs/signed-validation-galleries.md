@@ -1,5 +1,10 @@
 # Signed Validation Galleries
 
+For the normal validation sequence, start with
+[Validation Authority and Operator Route](validation-authority.md). The signed
+routes below are available operator mechanisms, not a requirement to navigate a
+physical app whenever automated capture is unavailable.
+
 Signed validation galleries provide deterministic shared-view evidence without
 changing live account data or production companion state. They render fixed
 synthetic fixtures through the same value-driven SwiftUI entry points used by
@@ -94,7 +99,12 @@ Context Panel bundle identifier. The Watch profile must use
 a `watchOS` runtime, and an `Apple Watch` simulator device family. The visionOS
 profile additionally requires an absolute non-symlink `uiTestRun`. It must be
 the single app-associated shared-view UI-test run in the same bounded test
-products root as the configured app bundle. Every bundle
+products root as the configured app bundle. Product-path templates accept
+`__TESTROOT__` and, where a test host is available, `__TESTHOST__`; other
+double-underscore sequences in the template are rejected before expansion.
+Literal double underscores in the resolved root or host paths are preserved.
+Expanded paths must still exist and stay within the bounded products root.
+Every bundle
 must use bounded numeric version/build values that match the source manifest,
 the expected simulator platform and device family, and the exact embedded
 manifest derived from the supplied canonical current source manifest. The source
@@ -155,8 +165,10 @@ uses SwiftUI `ImageRenderer` with a non-shipping, pure-SwiftUI capture shell to
 produce stable baseline and routed PNGs from the exact fixture, core,
 companion-support, and widget modules. The shell labels its runtime surface as
 iPhone, iPad, or Vision so cross-surface duplicates remain an explicit evidence
-failure rather than an ambiguous identical artifact. This is exact-source
-shared-view renderer evidence, not proof that an arbitrary historical app opened
+failure rather than an ambiguous identical artifact. The label identifies the
+executing host idiom; all three surfaces use the same 840-by-900-point canvas,
+not device-specific screen geometry. This is exact-source shared-view renderer
+evidence, not proof that an arbitrary historical app opened
 the gallery route. On visionOS it also avoids the 1-by-1 placeholder returned by
 `XCUIElement.screenshot()` and the spatial-sheet crop returned by
 `XCUIApplication.screenshot()`. `xcresulttool` exports only the explicit

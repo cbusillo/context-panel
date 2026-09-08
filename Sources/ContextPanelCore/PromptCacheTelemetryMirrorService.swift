@@ -19,13 +19,17 @@ private struct SourceMirrorResult {
 public enum PromptCacheTelemetryMirrorService {
     public static func mirror(
         bookmarkStore: SecureFileBookmarkStore?,
-        sourceDirectories: [URL] = ContextPanelLocations.everyCodeUsageDirectories(),
+        sourceDirectories: [URL] = ContextPanelLocations.codexTelemetryDirectories(),
+        sourceClients: [String: CodexClient] = [:],
+        now: Date = Date(),
         destination: URL = ContextPanelLocations.promptCacheTelemetryDirectory(appGroupID: ContextPanelLocations.appGroupID),
         fileManager: FileManager = .default
     ) throws -> PromptCacheTelemetryMirrorResult {
         guard let bookmarkStore else {
             return try mirror(
                 sourceDirectories: sourceDirectories,
+                sourceClients: sourceClients,
+                now: now,
                 destination: destination,
                 fileManager: fileManager
             )
@@ -35,6 +39,8 @@ public enum PromptCacheTelemetryMirrorService {
 
         return try mirror(
             sourceDirectories: sourceDirectories,
+            sourceClients: sourceClients,
+            now: now,
             destination: destination,
             fileManager: fileManager,
             preserveUnreadableSource: { source in
@@ -46,18 +52,25 @@ public enum PromptCacheTelemetryMirrorService {
                 if let result = try bookmarkStore.withResolvedURL(for: path, body) {
                     return result
                 }
+                if ContextPanelLocations.isRunningInAppSandbox {
+                    throw CocoaError(.fileReadNoPermission)
+                }
                 return try body(source)
             }
         )
     }
 
     public static func mirror(
-        sourceDirectories: [URL] = ContextPanelLocations.everyCodeUsageDirectories(),
+        sourceDirectories: [URL] = ContextPanelLocations.codexTelemetryDirectories(),
+        sourceClients: [String: CodexClient] = [:],
+        now: Date = Date(),
         destination: URL = ContextPanelLocations.promptCacheTelemetryDirectory(appGroupID: ContextPanelLocations.appGroupID),
         fileManager: FileManager = .default
     ) throws -> PromptCacheTelemetryMirrorResult {
         try mirror(
             sourceDirectories: sourceDirectories,
+            sourceClients: sourceClients,
+            now: now,
             destination: destination,
             fileManager: fileManager,
             preserveUnreadableSource: { _ in false },
@@ -67,11 +80,21 @@ public enum PromptCacheTelemetryMirrorService {
 
     private static func mirror(
         sourceDirectories: [URL],
+        sourceClients: [String: CodexClient],
+        now: Date,
         destination: URL,
         fileManager: FileManager,
         preserveUnreadableSource: (URL) -> Bool,
         sourceResolver: (URL, (URL) throws -> SourceMirrorResult) throws -> SourceMirrorResult
     ) throws -> PromptCacheTelemetryMirrorResult {
+        func client(for source: URL) -> CodexClient? {
+            let sourcePath = ContextPanelLocations.normalizedPath(source.path)
+            return sourceClients[sourcePath] ?? [CodexClient.codex, .codexLab].first { client in
+                ContextPanelLocations.normalizedPath(client.homeDirectory().appending(path: client.telemetryFolderName).path) == sourcePath
+            } ?? CodexClient.inferred(fromAuthPath: source.deletingLastPathComponent().appending(path: "auth.json").path)
+        }
+        // Filter before bookmark resolution, file access, and last-good preservation.
+        let sourceDirectories = sourceDirectories.filter { client(for: $0) != .everyCode }
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
         var copied = 0
         var removed = 0
@@ -81,20 +104,22 @@ public enum PromptCacheTelemetryMirrorService {
 
         for source in sourceDirectories {
             let sourcePath = ContextPanelLocations.normalizedPath(source.path)
+            let client = client(for: source)
             guard seenSources.insert(sourcePath).inserted else { continue }
             let sourceMirrorDirectory = destination.appending(
                 path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourcePath),
                 directoryHint: .isDirectory
             )
             let sourceMirrorPath = ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path)
-            if preserveUnreadableSource(source) {
+            if preserveUnreadableSource(source) || fileManager.fileExists(atPath: source.path) {
                 preservedSourceMirrorDirectories.insert(sourceMirrorPath)
             }
-
             guard let sourceResult = try? sourceResolver(source, { resolvedSource in
                 try mirrorSource(
                     source: resolvedSource,
                     sourceIDPath: sourcePath,
+                    client: client,
+                    now: now,
                     destination: destination,
                     fileManager: fileManager
                 )
@@ -105,12 +130,21 @@ public enum PromptCacheTelemetryMirrorService {
             preservedSourceMirrorDirectories.insert(sourceResult.sourceMirrorPath)
         }
 
-        if !readableSourceMirrorDirectories.isEmpty {
-            removed += try removeOrphanedSourceMirrors(
-                in: destination,
-                preserving: preservedSourceMirrorDirectories,
-                fileManager: fileManager
-            )
+        if readableSourceMirrorDirectories.isEmpty {
+            // Keep configured last-good sources during transient access failures,
+            // while still removing sources the user has switched off.
+            for source in sourceDirectories {
+                preservedSourceMirrorDirectories.insert(ContextPanelLocations.normalizedPath(
+                    destination.appending(path: ConnectorRedactor.localAccountID(
+                        provider: .openAI, path: ContextPanelLocations.normalizedPath(source.path)
+                    )).path
+                ))
+            }
+        }
+        removed += try removeOrphanedSourceMirrors(
+            in: destination, preserving: preservedSourceMirrorDirectories, fileManager: fileManager
+        )
+        if !readableSourceMirrorDirectories.isEmpty || sourceDirectories.isEmpty {
             removed += try removeLegacyFlatMirrors(in: destination, fileManager: fileManager)
         }
 
@@ -120,6 +154,8 @@ public enum PromptCacheTelemetryMirrorService {
     private static func mirrorSource(
         source: URL,
         sourceIDPath: String,
+        client: CodexClient?,
+        now: Date,
         destination: URL,
         fileManager: FileManager
     ) throws -> SourceMirrorResult {
@@ -127,6 +163,17 @@ public enum PromptCacheTelemetryMirrorService {
             path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourceIDPath),
             directoryHint: .isDirectory
         )
+        if client == .codex || client == .codexLab || source.lastPathComponent == "sessions" {
+            // Resolve only the explicitly configured root. The session reader
+            // still rejects symlinked descendants, and source identity stays logical.
+            let resolvedSource = source.resolvingSymlinksInPath()
+            // Fail before replacing last-good data when a bookmarked folder is unavailable.
+            _ = try fileManager.contentsOfDirectory(at: resolvedSource, includingPropertiesForKeys: nil)
+            let target = sourceMirrorDirectory.appending(path: "telemetry.json")
+            try CodexTelemetryMirror.write(source: resolvedSource, sourceIDPath: sourceIDPath, client: client, target: target, now: now, fileManager: fileManager)
+            let removed = try removeStaleMirrors(in: sourceMirrorDirectory, preserving: [ContextPanelLocations.normalizedPath(target.path)], fileManager: fileManager)
+            return SourceMirrorResult(copied: 1, removed: removed, sourceMirrorPath: ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path))
+        }
         guard let urls = usageJSONFileURLs(in: source, fileManager: fileManager) else {
             throw CocoaError(.fileReadNoSuchFile)
         }

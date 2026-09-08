@@ -20,9 +20,8 @@
 - Monitor the optional status-line quota schema and keep unknown or missing
   fields explicit. Never infer reset windows from timestamps; only recognize
   literal window tokens already present in provider bucket identifiers.
-- Revalidate that Every Code's non-interactive `agy --add-dir ... -p ...` path
-  still invokes the configured status-line callback when AGY is upgraded. Treat
-  a detected stopped callback as unavailable data, never as a reason to restore
+- Revalidate AGY's non-interactive status-line callback when AGY is upgraded.
+  Treat a detected stopped callback as unavailable data, never as a reason to restore
   credential reads or private Cloud Code Assist requests. Idle time by itself
   is not evidence that the callback stopped.
 - Preserve observed quota history across scheduled resets. Present an elapsed

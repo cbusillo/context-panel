@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 import ctypes
@@ -14,7 +15,7 @@ import stat
 import sys
 import tempfile
 import time
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 import uuid
 import zlib
@@ -394,15 +395,15 @@ def _resolved_test_product_path(
     *,
     test_host: Path | None = None,
 ) -> Path:
-    path_value = _require_string(value, label)
+    template = _require_string(value, label)
     replacements = {"__TESTROOT__": str(test_root)}
     if test_host is not None:
         replacements["__TESTHOST__"] = str(test_host)
-    for marker, replacement in replacements.items():
-        path_value = path_value.replace(marker, replacement)
-    if "__" in path_value:
+    # Validate the template before inserting literal paths, and never rescan them.
+    marker_pattern = re.compile("|".join(re.escape(marker) for marker in replacements))
+    if "__" in marker_pattern.sub("", template):
         raise SharedViewCaptureError("capture visionOS UI test run is invalid")
-    path = Path(path_value)
+    path = Path(marker_pattern.sub(lambda match: replacements[match.group()], template))
     if not path.is_absolute() or path.is_symlink():
         raise SharedViewCaptureError("capture visionOS UI test run is invalid")
     try:
@@ -1129,7 +1130,8 @@ def _rename_exclusive(source: Path, destination: Path) -> None:
         return
     renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
     renamex_np.restype = ctypes.c_int
-    if renamex_np(os.fsencode(source), os.fsencode(destination), 0x00000004) != 0:
+    rename_exclusive: Callable[[bytes, bytes, int], int] = renamex_np
+    if rename_exclusive(os.fsencode(source), os.fsencode(destination), 0x00000004) != 0:
         error_number = ctypes.get_errno()
         raise OSError(error_number, os.strerror(error_number), destination)
 

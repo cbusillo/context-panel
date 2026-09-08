@@ -42,6 +42,11 @@ history, and settings.
 
 ## Validation
 
+Start with [Validation Authority and Operator Route](docs/validation-authority.md)
+to distinguish the agreed simulator-first contract, implemented capture support,
+and qualification evidence. Missing capture inputs or an unsupported adapter
+do not by themselves justify asking Chris to navigate a signed gallery.
+
 Before changing or validating app/widget/provider behavior, identify the active
 runtime. Mixed runtimes caused repeated false positives during App Store release
 prep, so treat them as a blocker rather than background noise.
@@ -55,10 +60,12 @@ app:
 
 Do not test app, widget, login-item, provider, sandbox, or storage behavior from
 an arbitrary DerivedData, `.build`, `/tmp`, or worktree app bundle. Build outputs
-are allowed as intermediate artifacts only; the runtime gate must install the
-fresh build to `/Applications/Context Panel.app`, register that app and its
-embedded widget, and quarantine or unregister competing bundles with the same
-bundle identifiers.
+are allowed as intermediate artifacts only. For Development-runtime testing,
+the runtime gate installs the fresh build to `/Applications/Context Panel.app`,
+registers that app and its embedded widget, and quarantines or unregisters
+competing bundles with the same bundle identifiers. For signed Production,
+TestFlight, or App Store validation, preserve the installed app and use the
+read-only Production receipts below; do not replace it with a Development build.
 
 Before telling Chris the app/widget are ready to test, run the runtime baseline
 receipt and require it to pass:
@@ -106,8 +113,10 @@ preserving the user's placed widget:
 scripts/context-panel-runtime-baseline.sh install --launch
 ```
 
-Use the full reset gate only when Chris explicitly asks for a fresh install,
-container/storage reset, or when cleaning up a mixed runtime:
+For a Development runtime, use the full reset gate only when Chris explicitly
+asks for a fresh install or container/storage reset, or when cleaning up a mixed
+Development runtime. The signed Production/TestFlight protection above also
+applies to mixed-runtime cleanup:
 
 ```sh
 scripts/context-panel-runtime-baseline.sh reset --launch
@@ -154,9 +163,10 @@ acceptable.
   app, widget, or login item is a mixed runtime and must not be called fixed.
 - Auto-review or agent worktrees must not leave globally registered WidgetKit or
   LaunchServices bundles behind. Prefer `swift build`/`swift test` for review
-  work. If an agent must build the Xcode app target, run the runtime reset gate
-  afterward so stale `.code/working`, DerivedData, `/tmp`, and repo `.build`
-  app/widget artifacts are quarantined or unregistered.
+  work. If an agent must build the Xcode app target, check for stale
+  `.code/working`, DerivedData, `/tmp`, and repo `.build` app/widget registrations
+  afterward. Apply the runtime-specific cleanup rules above; do not run
+  `install` or `reset` while preserving a signed Production publisher.
 - For signed/App Store-style validation, terminal success is not proof that the
   app works. Reproduce provider reads from the signed app or signed refresh
   agent, because sandbox, TCC prompts, security-scoped bookmarks, app groups,
@@ -255,6 +265,13 @@ acceptable.
   shadow mode and the current
   physical runbook authoritative until two signed shadow trains have resolved
   every disagreement; only then may the submission workflow use `enforce`.
+  This qualification condition does not instruct agents to change the existing
+  live submission default, `release_evidence_mode=enforce`. Submission evidence
+  enforcement and candidate-policy shadow evaluation are separate operations;
+  both evaluate the current configured policy. The default can correctly block
+  an unqualified candidate. Neither this description nor a plan authorizes
+  changing workflow inputs to bypass a block or declaring a pending gate passed.
+  See the [mode distinction](docs/validation-authority.md#evaluation-and-submission).
 - Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
   and Apple TV product UI must not expose gallery buttons, toolbar actions, list
   rows, or runway items. Use the allowlisted signed routes and the bounded Watch
@@ -306,7 +323,11 @@ development installs.
 The installed widget can still be older than the rebuilt app. Check
 `pluginkit -m -A -D -vvv | rg contextpanel` and verify the registered extension
 path is under `/Applications/Context Panel.app`. If WidgetKit is registered to
-any other path, run the full reset gate before judging the widget.
+any other path, report the mixed runtime and follow the runtime-specific rules
+above before judging the widget. Preserve signed Production/TestFlight apps and
+use `check --require-production-runtime`; that check diagnoses the mismatch and
+does not itself repair competing registrations. Use the reset gate only when
+the Development-runtime conditions above apply.
 
 The app, widget, refresh agent, and Claude cache scripts use
 `MM5YXC7T6E.group.com.shinycomputers.contextpanel` as canonical shared storage.

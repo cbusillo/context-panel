@@ -45,13 +45,10 @@ struct ProbeConfiguration {
     private static func defaultAuthPath() -> String {
         let environment = ProcessInfo.processInfo.environment
         let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
-        if let codeHome = environment["CODE_HOME"], !codeHome.isEmpty {
-            return "\(codeHome)/auth_accounts.json"
-        }
         if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
             return "\(codexHome)/auth.json"
         }
-        return "\(home)/.code/auth_accounts.json"
+        return "\(home)/.codex/auth.json"
     }
 
     private static func printHelp() {

@@ -726,7 +726,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 generatedAt: now,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. With AGY 1.1.1, later Every Code AGY runs publish quota automatically."
+                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. Later AGY runs publish quota automatically."
             )
         }
 

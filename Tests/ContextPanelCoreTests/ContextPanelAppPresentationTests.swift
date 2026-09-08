@@ -8,6 +8,40 @@ import Testing
 @testable import ContextPanelValidationFixtures
 @testable import ContextPanelValidationGalleryUI
 
+@MainActor
+@Test func settingsNavigationRequestSurvivesUntilSettingsConsumesIt() throws {
+    let navigation = SettingsNavigationModel()
+    navigation.focus(.cacheStats)
+
+    #expect(navigation.request?.destination == .cacheStats)
+    let request = try #require(navigation.consumeRequest())
+    #expect(request.destination == .cacheStats)
+    #expect(navigation.consumeRequest() == nil)
+}
+
+@MainActor
+@Test func settingsNavigationRequestIdentityDistinguishesRepeatedDestinations() throws {
+    let navigation = SettingsNavigationModel()
+    navigation.focus(.cacheStats)
+    let first = try #require(navigation.consumeRequest())
+
+    navigation.focus(.cacheStats)
+    let second = try #require(navigation.consumeRequest())
+
+    #expect(first.id != second.id)
+    #expect(second.destination == .cacheStats)
+}
+
+@MainActor
+@Test func defaultSettingsPresentationPreservesPendingDeepLink() {
+    let navigation = SettingsNavigationModel()
+    navigation.focus(.cacheStats)
+
+    navigation.clearIfIdle()
+
+    #expect(navigation.request?.destination == .cacheStats)
+}
+
 @Test func appProviderStatusIncludesBlockedAccessBeyondHealthyCapacity() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
     let summary = try #require(UsageSnapshot(
