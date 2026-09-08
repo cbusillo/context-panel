@@ -791,14 +791,16 @@ func codexConnectorRejectsAmbiguousOrUnusableActiveRow(extraRow: String) async {
     #expect(http.requests.isEmpty)
 }
 
-@Test func codexConnectorRejectsMalformedCatalogDespiteTopLevelTokens() async {
+@Test(arguments: ["null", "[]"])
+func codexConnectorRejectsMalformedOrEmptyCatalogDespiteTopLevelTokens(accounts: String) async {
     let http = StubHTTPClient(responses: [])
     let connector = CodexRateLimitConnector(
         accounts: [.init(authPath: "/unused")], httpClient: http,
-        fileLoader: { _ in Data(#"{"accounts":null,"active_account_id":"a","tokens":{"access_token":"must-not-fallback"}}"#.utf8) }
+        fileLoader: { _ in Data("{\"accounts\":\(accounts),\"tokens\":{\"access_token\":\"must-not-fallback\"}}".utf8) }
     )
     let result = await connector.refresh(now: Date())
     #expect(result.reports.first?.status == .failure)
+    #expect(result.reports.first?.errorMessage?.contains("account catalog") == true)
     #expect(http.requests.isEmpty)
 }
 
@@ -862,7 +864,10 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
 
     #expect(result.reports.count == 1)
     #expect(report.status == .failure)
-    #expect(report.errorMessage?.contains("does not contain ChatGPT token auth") == true)
+    let expectedError = authJSON.contains("\"accounts\"")
+        ? "The configured Codex client's account catalog has no readable ChatGPT accounts."
+        : "auth file does not contain ChatGPT token auth"
+    #expect(report.errorMessage?.contains(expectedError) == true)
     #expect(result.snapshot.limits.isEmpty)
     #expect(http.requests.isEmpty)
 }

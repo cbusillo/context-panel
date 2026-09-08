@@ -215,7 +215,9 @@ public enum CodexAuthFileParser {
            object.keys.contains("accounts") {
             // A catalog is authoritative, even when malformed. Never fall back
             // to an unrelated top-level token after an invalid selection.
-            let accountList = try JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data)
+            guard let accountList = try? JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data) else {
+                throw ConnectorError.invalidAuth("The configured Codex client's account catalog cannot be read. Sign in from that client, then refresh Context Panel.")
+            }
             let selectedAccounts: [CodexAuthListedAccountPayload]
             if accountList.hasActiveAccountSelection {
                 guard let activeID = accountList.activeAccountID,
@@ -262,6 +264,7 @@ public enum CodexAuthFileParser {
             if accountList.hasActiveAccountSelection {
                 throw ConnectorError.invalidAuth("The configured Codex client's active account has no readable ChatGPT credentials. Sign in with ChatGPT from that client, then refresh Context Panel.")
             }
+            throw ConnectorError.invalidAuth("The configured Codex client's account catalog has no readable ChatGPT accounts.")
         }
 
         let authTokens = try tokens(from: data)

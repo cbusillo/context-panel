@@ -206,7 +206,9 @@ API-key entries in those catalogs are skipped without discarding valid ChatGPT
 accounts. Multiple independently configured client/auth sources remain supported
 and the same ChatGPT account across sources is deduplicated. Context Panel does
 not rotate client refresh tokens. A usage-service 401/403 means credentials were
-rejected, not proof that the subscription or account access was revoked. Encrypted-only catalogs need a readable client auth file;
+rejected, not proof that the subscription or account access was revoked.
+
+Encrypted-only catalogs need a readable client auth file;
 Context Panel does not bypass client credential encryption.
 
 Existing Every Code configurations are retained as disabled migration records,
