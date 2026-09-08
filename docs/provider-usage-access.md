@@ -196,8 +196,17 @@ New installations offer Codex (`~/.codex/auth.json`, enabled) and Codex Lab
 Signed apps launched by macOS do not inherit arbitrary terminal environment
 variables; their saved account configuration and user-approved bookmarks are
 what determine access. Both sources use the existing live Codex limits connector.
-API-key entries in a Lab catalog are skipped without discarding its valid
-ChatGPT accounts. Encrypted-only catalogs need a readable client auth file;
+A catalog with `active_account_id` follows only the selected ChatGPT account on
+each refresh; remembered accounts are not additional monitoring subscriptions.
+Switching the active ID replaces the previous account in the current snapshot
+after a successful refresh, while stored history is retained. Null, invalid,
+ambiguous, or unsupported selections report a setup error without polling old
+credentials. Catalogs without this selector retain legacy multi-account reads;
+API-key entries in those catalogs are skipped without discarding valid ChatGPT
+accounts. Multiple independently configured client/auth sources remain supported
+and the same ChatGPT account across sources is deduplicated. Context Panel does
+not rotate client refresh tokens. A usage-service 401/403 means credentials were
+rejected, not proof that the subscription or account access was revoked. Encrypted-only catalogs need a readable client auth file;
 Context Panel does not bypass client credential encryption.
 
 Existing Every Code configurations are retained as disabled migration records,
