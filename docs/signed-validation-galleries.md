@@ -163,9 +163,13 @@ opening a custom-scheme URL or modifying the historical app source. It validates
 the canonical URL and selector contract inside the app-associated harness, then
 uses SwiftUI `ImageRenderer` with a non-shipping, pure-SwiftUI capture shell to
 produce stable baseline and routed PNGs from the exact fixture, core,
-companion-support, and widget modules. This is exact-source shared-view renderer
-evidence, not proof that an arbitrary historical app opened the gallery route.
-On visionOS it also avoids the 1-by-1 placeholder returned by
+companion-support, and widget modules. The shell labels its runtime surface as
+iPhone, iPad, or Vision so cross-surface duplicates remain an explicit evidence
+failure rather than an ambiguous identical artifact. The label identifies the
+executing host idiom; all three surfaces use the same 840-by-900-point canvas,
+not device-specific screen geometry. This is exact-source shared-view renderer
+evidence, not proof that an arbitrary historical app opened
+the gallery route. On visionOS it also avoids the 1-by-1 placeholder returned by
 `XCUIElement.screenshot()` and the spatial-sheet crop returned by
 `XCUIApplication.screenshot()`. `xcresulttool` exports only the explicit
 attachments. The executor requires the exact test identifier, contiguous
