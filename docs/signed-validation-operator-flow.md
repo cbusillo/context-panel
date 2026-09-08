@@ -1,5 +1,9 @@
 # Signed Validation Operator Flow
 
+Start with [Validation Authority and Operator Route](validation-authority.md).
+This document describes coordinator behavior; a generated action does not
+independently establish the agreed operator workflow or authorize a release.
+
 The signed validation coordinator turns machine evidence into one calm operator
 queue. It does not manage devices, deliver notifications, make visual judgments,
 or change release gates. It records explicit human approve/reject decisions but
@@ -29,6 +33,15 @@ inputs are recorded as an unsupported terminal attempt so the human review can
 proceed honestly rather than looping. That unsupported fallback is visible in
 the automation report but does not degrade an otherwise healthy
 `advance-automation` exit code.
+
+A terminal unsupported attempt can expose a review action without having
+collected an image. Operators must inspect the attempt and capture evidence
+before acting on that queue entry. Correct missing inputs as machine work;
+report an unsupported adapter as a collection gap. Follow the
+[capture procedure](validation-authority.md#capture-before-review) rather than
+turning that fallback into an unrequested signed-gallery walkthrough. Preserve
+the diagnostic record and continue independent machine work; it is neither
+successful capture nor proof of a product regression.
 
 A missing or incompatible Watch simulator topology, install, or container
 identity is fail-closed shared-view capture evidence, not a signal to create a

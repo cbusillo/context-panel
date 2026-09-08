@@ -1,5 +1,10 @@
 # Signed Validation Galleries
 
+For the normal validation sequence, start with
+[Validation Authority and Operator Route](validation-authority.md). The signed
+routes below are available operator mechanisms, not a requirement to navigate a
+physical app whenever automated capture is unavailable.
+
 Signed validation galleries provide deterministic shared-view evidence without
 changing live account data or production companion state. They render fixed
 synthetic fixtures through the same value-driven SwiftUI entry points used by

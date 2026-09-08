@@ -42,6 +42,11 @@ history, and settings.
 
 ## Validation
 
+Start with [Validation Authority and Operator Route](docs/validation-authority.md)
+to distinguish the agreed simulator-first contract, implemented capture support,
+and qualification evidence. Missing capture inputs or an unsupported adapter
+do not by themselves justify asking Chris to navigate a signed gallery.
+
 Before changing or validating app/widget/provider behavior, identify the active
 runtime. Mixed runtimes caused repeated false positives during App Store release
 prep, so treat them as a blocker rather than background noise.
@@ -260,6 +265,13 @@ acceptable.
   shadow mode and the current
   physical runbook authoritative until two signed shadow trains have resolved
   every disagreement; only then may the submission workflow use `enforce`.
+  This qualification condition does not instruct agents to change the existing
+  live submission default, `release_evidence_mode=enforce`. Submission evidence
+  enforcement and candidate-policy shadow evaluation are separate operations;
+  both evaluate the current configured policy. The default can correctly block
+  an unqualified candidate. Neither this description nor a plan authorizes
+  changing workflow inputs to bypass a block or declaring a pending gate passed.
+  See the [mode distinction](docs/validation-authority.md#evaluation-and-submission).
 - Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
   and Apple TV product UI must not expose gallery buttons, toolbar actions, list
   rows, or runway items. Use the allowlisted signed routes and the bounded Watch

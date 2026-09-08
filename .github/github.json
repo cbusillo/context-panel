@@ -8,6 +8,7 @@
     "architecture": "docs/architecture.md",
     "designDirection": "docs/design-direction.md",
     "release": "docs/release.md",
+    "validationAuthority": "docs/validation-authority.md",
     "signedValidationFingerprints": "docs/signed-validation-fingerprints.md",
     "signedValidationRuntimeReceipts": "docs/signed-validation-runtime-receipts.md",
     "signedValidationOperatorFlow": "docs/signed-validation-operator-flow.md",

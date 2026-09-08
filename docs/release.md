@@ -2,6 +2,10 @@
 
 Last verified: 2026-08-31.
 
+Start with [Validation Authority and Operator Route](validation-authority.md)
+for the agreed validation contract, supported capture path, and the distinction
+between policy qualification and live submission evidence enforcement.
+
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
 version:
@@ -1035,10 +1039,23 @@ coordinator report. Every live build attachment or submission requires the
 `enforce` mode, plus the exact selected-RC lineage bundle, the full
 comparison and a JSON array containing every sealed expected-build manifest
 needed by its required scope. The submission workflow defaults to
-`release_evidence_mode=enforce` after the two signed shadow trains and exact-RC
-reuse gate completed on August 10, 2026. Use `shadow` only for explicit
-diagnostic comparison; it is no longer the live-submission default. Enforce mode
-requires an approved ledger with passed shadow evidence; missing, expired,
+`release_evidence_mode=enforce`. That submission evidence control and exact-RC
+reuse were introduced before later simulator-first policy revisions; their
+existence does not establish qualification of the current policy. The mode
+controls report acceptance, not policy selection: both modes bind the current
+configured policy and surface-policy digests. There is no implicit legacy-policy
+selection in `enforce` mode.
+
+Use `context-panel-release-gate.py shadow` for candidate-policy evaluation and
+disagreement classification. Current qualification and cutover evidence belong
+to [#616](https://github.com/cbusillo/context-panel/issues/616) and
+[#612](https://github.com/cbusillo/context-panel/issues/612). Shadow evaluation
+does not authorize weakening the live submission default or bypassing a pending
+qualification gate. An unqualified current-policy candidate remains blocked by
+submission evidence enforcement. See the
+[evaluation and submission distinction](validation-authority.md#evaluation-and-submission).
+Enforce mode requires an approved ledger with passed shadow evidence; missing,
+expired,
 host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
 blocks submission. Dry runs, cancel-only operations, and prepare-only operations
 without a build remain exempt. The ledger binds the canonical configured policy,
@@ -1351,9 +1368,17 @@ check below, where one iPhone or iPad may be sufficient for a targeted smoke
 test.
 
 This remains a narrow exact-build runtime stop within the complete release
-policy. Fresh visual approval state is now reported by the coordinator,
-but approval carry-forward, host-OS invalidation across trains, and exact-RC reuse
-remain `not-evaluated` until #523 integrates them into release gates.
+policy. The coordinator reports runtime and fresh visual approval state; that
+report alone does not evaluate approval carry-forward, host-OS compatibility,
+or exact-RC reuse. The full release evaluator in
+[`context_panel_release_gate/core.py`](../scripts/context_panel_release_gate/core.py)
+implements those checks through `_carried_evidence`, `_host_os_compatible`,
+`evaluate_release_evidence`, and `release_evidence_report_blockers`.
+[`submit-app-store-review.py`](../scripts/submit-app-store-review.py) supplies the
+current policies, complete build manifests, lineage, host-OS evidence, and shadow
+evidence to reconstruct the release verdict. Implemented checks still require
+valid candidate evidence; neither coordinator success nor implemented integration
+establishes that a particular train is approved.
 
 When the exact Watch build is confirmed, the coordinator requests the existing
 post-install restart without performing it. After the physical restart, record
