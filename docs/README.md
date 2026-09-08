@@ -7,6 +7,7 @@
 - [Local Limit Probe Design](local-limit-probe.md)
 - [Provider Usage Access Research](provider-usage-access.md)
 - [TODO](todo.md)
+- [Validation Authority and Operator Route](validation-authority.md)
 - [Release Path](release.md)
 - [Signed Validation Fingerprints](signed-validation-fingerprints.md)
 - [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md)
