@@ -211,8 +211,28 @@ public enum CodexAuthFileParser {
     }
 
     fileprivate static func authRecords(from data: Data, accountName: String) throws -> [CodexAuthRecord] {
-        if let accountList = try? JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data) {
-            let chatGPTAccounts = accountList.accounts.filter { account in
+        if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object.keys.contains("accounts") {
+            // A catalog is authoritative, even when malformed. Never fall back
+            // to an unrelated top-level token after an invalid selection.
+            guard let accountList = try? JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data) else {
+                throw ConnectorError.invalidAuth("The configured Codex client's account catalog cannot be read. Sign in from that client, then refresh Context Panel.")
+            }
+            let selectedAccounts: [CodexAuthListedAccountPayload]
+            if accountList.hasActiveAccountSelection {
+                guard let activeID = accountList.activeAccountID,
+                      !activeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      accountList.accountIDs.filter({ $0 == activeID }).count == 1,
+                      let activeAccount = accountList.accounts.first(where: { $0.id == activeID })
+                else {
+                    throw ConnectorError.invalidAuth("The configured Codex client has no valid active account. Sign in from that client, then refresh Context Panel.")
+                }
+                selectedAccounts = [activeAccount]
+            } else {
+                // Legacy catalogs without a selector retain multi-account support.
+                selectedAccounts = accountList.accounts
+            }
+            let chatGPTAccounts = selectedAccounts.filter { account in
                 (account.mode == nil || account.mode == "chatgpt")
                     && !account.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && account.tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -241,6 +261,10 @@ public enum CodexAuthFileParser {
             if !records.isEmpty {
                 return records
             }
+            if accountList.hasActiveAccountSelection {
+                throw ConnectorError.invalidAuth("The configured Codex client's active account has no readable ChatGPT credentials. Sign in with ChatGPT from that client, then refresh Context Panel.")
+            }
+            throw ConnectorError.invalidAuth("The configured Codex client's account catalog has no readable ChatGPT accounts.")
         }
 
         let authTokens = try tokens(from: data)
@@ -526,7 +550,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
 
     private func codexUsageAuthorizationError(auth: CodexAuthTokens) -> ConnectorError {
         if auth.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return ConnectorError.foregroundRefreshRequired("This ChatGPT account is no longer authorized for Codex usage. Sign in again from the configured Codex or Codex Lab client, then refresh Context Panel.")
+            return ConnectorError.foregroundRefreshRequired("The configured Codex client's credentials were rejected by the usage service. They may have expired. Refresh your sign-in from Codex or Codex Lab, then refresh Context Panel.")
         }
         return ConnectorError.invalidAuth("Auth for this ChatGPT account cannot be refreshed. Sign in again from the configured Codex or Codex Lab client, then refresh Context Panel.")
     }
@@ -792,22 +816,35 @@ private struct CodexAuthFilePayload: Decodable {
 
 private struct CodexAuthAccountsFilePayload: Decodable {
     let accounts: [CodexAuthListedAccountPayload]
+    let accountIDs: [String]
+    let hasActiveAccountSelection: Bool
+    let activeAccountID: String?
 
     private enum CodingKeys: String, CodingKey {
         case accounts
+        case activeAccountID = "active_account_id"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // A malformed or unsupported row must not hide valid sibling accounts.
-        accounts = try container.decode([Entry].self, forKey: .accounts).compactMap(\.account)
+        let entries = try container.decode([Entry].self, forKey: .accounts)
+        accounts = entries.compactMap(\.account)
+        accountIDs = entries.compactMap(\.id)
+        hasActiveAccountSelection = container.contains(.activeAccountID)
+        activeAccountID = try? container.decode(String.self, forKey: .activeAccountID)
     }
 
     private struct Entry: Decodable {
         let account: CodexAuthListedAccountPayload?
+        let id: String?
+
+        private enum CodingKeys: String, CodingKey { case id }
 
         init(from decoder: Decoder) throws {
             account = try? CodexAuthListedAccountPayload(from: decoder)
+            let container = try? decoder.container(keyedBy: CodingKeys.self)
+            id = try? container?.decode(String.self, forKey: .id)
         }
     }
 }

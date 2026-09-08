@@ -619,13 +619,12 @@ import Testing
     #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai-a"])
 }
 
-@Test func codexConnectorReadsAuthAccountsFile() async throws {
+@Test func codexConnectorReadsLegacyAuthAccountsFile() async throws {
     let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
     let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
     let authAccountsJSON = #"""
     {
       "version": 1,
-      "active_account_id": "local-account-a",
       "accounts": [
         {
           "id": "local-account-a",
@@ -707,6 +706,104 @@ import Testing
     #expect(Set(result.reports.map(\.accountID)).count == 2)
 }
 
+private func selectedCodexCatalog(selector: String, extraRows: String = "") -> Data {
+    Data("""
+    {"active_account_id": \(selector), "tokens":{"access_token":"must-not-fallback"}, "accounts":[
+      {"id":"a","mode":"chatgpt","tokens":{"access_token":"token-a","account_id":"account-a"}},
+      {"id":"b","mode":"chatgpt","tokens":{"access_token":"token-b","account_id":"account-b"}}
+      \(extraRows)
+    ]}
+    """.utf8)
+}
+
+@Test func codexConnectorFollowsActiveSelectionAndDropsPreviousSnapshotRows() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let authFile = root.appendingPathComponent("auth_accounts.json")
+    let store = JSONSnapshotStore(rootDirectory: root.appendingPathComponent("snapshots"))
+    let usage = Data(#"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#.utf8)
+    let http = StubHTTPClient(responses: [.init(statusCode: 200, data: usage)])
+    let connector = CodexRateLimitConnector(
+        accounts: [.init(configuredAccountID: "lab", authPath: authFile.path, accountName: "Lab")],
+        httpClient: http
+    )
+    // Keep another intentional source active while Lab switches.
+    let other = CodexRateLimitConnector(
+        accounts: [.init(configuredAccountID: "other", authPath: "/unused", accountName: "Other")],
+        httpClient: http,
+        fileLoader: { _ in Data(#"{"tokens":{"access_token":"token-c","account_id":"account-c"}}"#.utf8) }
+    )
+    let runtime = ProviderConnectorRuntime(connectors: [connector, other])
+    var legacy = try #require(JSONSerialization.jsonObject(with: selectedCodexCatalog(selector: "null")) as? [String: Any])
+    legacy.removeValue(forKey: "active_account_id")
+    try JSONSerialization.data(withJSONObject: legacy).write(to: authFile)
+    let initial = await runtime.refreshAll(now: Date(timeIntervalSince1970: 1_799_999_999))
+    try store.save(StoredUsageSnapshot(savedAt: initial.generatedAt, refreshResult: initial))
+    #expect(initial.reports.count == 3)
+    for (index, active) in ["a", "b"].enumerated() {
+        try selectedCodexCatalog(selector: "\"\(active)\"").write(to: authFile)
+        let now = Date(timeIntervalSince1970: 1_800_000_000 + Double(index))
+        let result = await runtime.refreshAll(now: now)
+        try store.saveMerged(refreshResult: result, savedAt: now, preservesUnreportedAccounts: false)
+        let snapshot = try #require(store.loadCurrent().snapshot)
+        let expectedIDs = Set([active, "c"].map {
+            ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-\($0)")
+        })
+        #expect(Set(snapshot.reports.map(\.accountID)) == expectedIDs)
+        #expect(Set(snapshot.snapshot.limits.map(\.accountID)) == expectedIDs)
+        #expect(snapshot.reports.count == 2)
+        #expect(snapshot.reports.first { $0.configuredAccountID == "lab" }?.accountName == "Lab")
+    }
+    #expect(http.requests.map { $0.headers["Authorization"] } == ["Bearer token-a", "Bearer token-b", "Bearer token-c", "Bearer token-a", "Bearer token-c", "Bearer token-b", "Bearer token-c"])
+}
+
+@Test(arguments: ["null", "42", "\"\"", "\" \"", "\"missing\"", "{}"])
+func codexConnectorRejectsInvalidActiveSelectionWithoutFallback(selector: String) async {
+    let http = StubHTTPClient(responses: [])
+    let connector = CodexRateLimitConnector(
+        accounts: [.init(authPath: "/unused", accountName: "Lab")], httpClient: http,
+        fileLoader: { _ in selectedCodexCatalog(selector: selector) }
+    )
+    let result = await connector.refresh(now: Date())
+    #expect(result.reports.first?.status == .failure)
+    #expect(result.reports.first?.errorMessage?.contains("no valid active account") == true)
+    #expect(http.requests.isEmpty)
+}
+
+@Test(arguments: [
+    #",{"id":"a","tokens":{"access_token":"duplicate"}}"#,
+    #",{"id":"a","tokens":{"access_token":42}}"#,
+    #",{"id":"selected","mode":"apikey","openai_api_key":"unused"}"#,
+    #",{"id":"selected","mode":"future","tokens":{"access_token":"unused"}}"#,
+    #",{"id":"selected","tokens":{"access_token":"  "}}"#,
+    #",{"id":"selected","tokens":{"access_token":42}}"#
+])
+func codexConnectorRejectsAmbiguousOrUnusableActiveRow(extraRow: String) async {
+    let selector = extraRow.contains("\"id\":\"a\"") ? "\"a\"" : "\"selected\""
+    let http = StubHTTPClient(responses: [])
+    let connector = CodexRateLimitConnector(
+        accounts: [.init(authPath: "/unused")], httpClient: http,
+        fileLoader: { _ in selectedCodexCatalog(selector: selector, extraRows: extraRow) }
+    )
+    let result = await connector.refresh(now: Date())
+    #expect(result.reports.first?.status == .failure)
+    #expect(http.requests.isEmpty)
+}
+
+@Test(arguments: ["null", "[]"])
+func codexConnectorRejectsMalformedOrEmptyCatalogDespiteTopLevelTokens(accounts: String) async {
+    let http = StubHTTPClient(responses: [])
+    let connector = CodexRateLimitConnector(
+        accounts: [.init(authPath: "/unused")], httpClient: http,
+        fileLoader: { _ in Data("{\"accounts\":\(accounts),\"tokens\":{\"access_token\":\"must-not-fallback\"}}".utf8) }
+    )
+    let result = await connector.refresh(now: Date())
+    #expect(result.reports.first?.status == .failure)
+    #expect(result.reports.first?.errorMessage?.contains("account catalog") == true)
+    #expect(http.requests.isEmpty)
+}
+
 @Test func codexConnectorReadsValidChatGPTAccountsFromMixedLabCatalog() async throws {
     let auth = Data(#"""
     {
@@ -767,7 +864,10 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
 
     #expect(result.reports.count == 1)
     #expect(report.status == .failure)
-    #expect(report.errorMessage?.contains("does not contain ChatGPT token auth") == true)
+    let expectedError = authJSON.contains("\"accounts\"")
+        ? "The configured Codex client's account catalog has no readable ChatGPT accounts."
+        : "auth file does not contain ChatGPT token auth"
+    #expect(report.errorMessage?.contains(expectedError) == true)
     #expect(result.snapshot.limits.isEmpty)
     #expect(http.requests.isEmpty)
 }
@@ -1130,9 +1230,10 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
     #expect(http.requests.count == 1)
 }
 
-@Test func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken() async {
+@Test(arguments: [401, 403])
+func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(statusCode: Int) async {
     let auth = #"{"tokens":{"access_token":"token-secret","refresh_token":"refresh-secret","account_id":"account-a"}}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 401, data: Data("secret body".utf8))])
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: statusCode, data: Data("secret body".utf8))])
     let connector = CodexRateLimitConnector(
         accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
         httpClient: http,
@@ -1144,7 +1245,8 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].errorMessage?.contains("Codex or Codex Lab") == true)
-    #expect(result.reports[0].errorMessage?.contains("Sign in again") == true)
+    #expect(result.reports[0].errorMessage?.contains("credentials were rejected") == true)
+    #expect(result.reports[0].errorMessage?.contains("no longer authorized") == false)
     #expect(result.reports[0].errorMessage?.contains("secret body") == false)
     #expect(http.requests.count == 1)
 }
