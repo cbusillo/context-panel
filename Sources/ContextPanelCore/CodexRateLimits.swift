@@ -214,25 +214,13 @@ public enum CodexAuthFileParser {
         if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
            object.keys.contains("accounts") {
             // A catalog is authoritative, even when malformed. Never fall back
-            // to an unrelated top-level token after an invalid selection.
+            // to an unrelated top-level token after an invalid catalog.
             guard let accountList = try? JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data) else {
                 throw ConnectorError.invalidAuth("The configured Codex client's account catalog cannot be read. Sign in from that client, then refresh Context Panel.")
             }
-            let selectedAccounts: [CodexAuthListedAccountPayload]
-            if accountList.hasActiveAccountSelection {
-                guard let activeID = accountList.activeAccountID,
-                      !activeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      accountList.accountIDs.filter({ $0 == activeID }).count == 1,
-                      let activeAccount = accountList.accounts.first(where: { $0.id == activeID })
-                else {
-                    throw ConnectorError.invalidAuth("The configured Codex client has no valid active account. Sign in from that client, then refresh Context Panel.")
-                }
-                selectedAccounts = [activeAccount]
-            } else {
-                // Legacy catalogs without a selector retain multi-account support.
-                selectedAccounts = accountList.accounts
-            }
-            let chatGPTAccounts = selectedAccounts.filter { account in
+            // CLI selection is not dashboard membership. Monitor every readable
+            // ChatGPT account, even when active_account_id is absent or invalid.
+            let chatGPTAccounts = accountList.accounts.filter { account in
                 (account.mode == nil || account.mode == "chatgpt")
                     && !account.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && account.tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -260,9 +248,6 @@ public enum CodexAuthFileParser {
             }
             if !records.isEmpty {
                 return records
-            }
-            if accountList.hasActiveAccountSelection {
-                throw ConnectorError.invalidAuth("The configured Codex client's active account has no readable ChatGPT credentials. Sign in with ChatGPT from that client, then refresh Context Panel.")
             }
             throw ConnectorError.invalidAuth("The configured Codex client's account catalog has no readable ChatGPT accounts.")
         }
@@ -816,13 +801,9 @@ private struct CodexAuthFilePayload: Decodable {
 
 private struct CodexAuthAccountsFilePayload: Decodable {
     let accounts: [CodexAuthListedAccountPayload]
-    let accountIDs: [String]
-    let hasActiveAccountSelection: Bool
-    let activeAccountID: String?
 
     private enum CodingKeys: String, CodingKey {
         case accounts
-        case activeAccountID = "active_account_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -830,21 +811,13 @@ private struct CodexAuthAccountsFilePayload: Decodable {
         // A malformed or unsupported row must not hide valid sibling accounts.
         let entries = try container.decode([Entry].self, forKey: .accounts)
         accounts = entries.compactMap(\.account)
-        accountIDs = entries.compactMap(\.id)
-        hasActiveAccountSelection = container.contains(.activeAccountID)
-        activeAccountID = try? container.decode(String.self, forKey: .activeAccountID)
     }
 
     private struct Entry: Decodable {
         let account: CodexAuthListedAccountPayload?
-        let id: String?
-
-        private enum CodingKeys: String, CodingKey { case id }
 
         init(from decoder: Decoder) throws {
             account = try? CodexAuthListedAccountPayload(from: decoder)
-            let container = try? decoder.container(keyedBy: CodingKeys.self)
-            id = try? container?.decode(String.self, forKey: .id)
         }
     }
 }

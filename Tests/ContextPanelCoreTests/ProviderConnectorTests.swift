@@ -716,7 +716,7 @@ private func selectedCodexCatalog(selector: String, extraRows: String = "") -> D
     """.utf8)
 }
 
-@Test func codexConnectorFollowsActiveSelectionAndDropsPreviousSnapshotRows() async throws {
+@Test func codexConnectorPreservesCatalogAccountsAcrossActiveSelectionChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -739,56 +739,64 @@ private func selectedCodexCatalog(selector: String, extraRows: String = "") -> D
     legacy.removeValue(forKey: "active_account_id")
     try JSONSerialization.data(withJSONObject: legacy).write(to: authFile)
     let initial = await runtime.refreshAll(now: Date(timeIntervalSince1970: 1_799_999_999))
-    try store.save(StoredUsageSnapshot(savedAt: initial.generatedAt, refreshResult: initial))
     #expect(initial.reports.count == 3)
+    // Reproduce the regressed TestFlight snapshot, then recover by enumeration,
+    // without changing configuration or importing old history.
+    let collapsed = ConnectorRefreshResult(generatedAt: initial.generatedAt, reports: initial.reports.filter {
+        $0.accountID != ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-a")
+    })
+    try store.save(StoredUsageSnapshot(savedAt: initial.generatedAt, refreshResult: collapsed))
+    #expect(store.loadCurrent().snapshot?.reports.count == 2)
     for (index, active) in ["a", "b"].enumerated() {
         try selectedCodexCatalog(selector: "\"\(active)\"").write(to: authFile)
         let now = Date(timeIntervalSince1970: 1_800_000_000 + Double(index))
         let result = await runtime.refreshAll(now: now)
         try store.saveMerged(refreshResult: result, savedAt: now, preservesUnreportedAccounts: false)
         let snapshot = try #require(store.loadCurrent().snapshot)
-        let expectedIDs = Set([active, "c"].map {
+        let expectedIDs = Set(["a", "b", "c"].map {
             ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-\($0)")
         })
         #expect(Set(snapshot.reports.map(\.accountID)) == expectedIDs)
         #expect(Set(snapshot.snapshot.limits.map(\.accountID)) == expectedIDs)
-        #expect(snapshot.reports.count == 2)
-        #expect(snapshot.reports.first { $0.configuredAccountID == "lab" }?.accountName == "Lab")
+        #expect(snapshot.reports.count == 3)
+        #expect(snapshot.reports.filter { $0.configuredAccountID == "lab" }.map(\.accountName) == ["Lab 1", "Lab 2"])
     }
-    #expect(http.requests.map { $0.headers["Authorization"] } == ["Bearer token-a", "Bearer token-b", "Bearer token-c", "Bearer token-a", "Bearer token-c", "Bearer token-b", "Bearer token-c"])
+    #expect(http.requests.map { $0.headers["Authorization"] } == Array(repeating: ["Bearer token-a", "Bearer token-b", "Bearer token-c"], count: 3).flatMap { $0 })
 }
 
 @Test(arguments: ["null", "42", "\"\"", "\" \"", "\"missing\"", "{}"])
-func codexConnectorRejectsInvalidActiveSelectionWithoutFallback(selector: String) async {
-    let http = StubHTTPClient(responses: [])
+func codexConnectorIgnoresInvalidActiveSelectionWithoutTopLevelFallback(selector: String) async {
+    let usage = Data(#"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#.utf8)
+    let http = StubHTTPClient(responses: [.init(statusCode: 200, data: usage)])
     let connector = CodexRateLimitConnector(
         accounts: [.init(authPath: "/unused", accountName: "Lab")], httpClient: http,
         fileLoader: { _ in selectedCodexCatalog(selector: selector) }
     )
     let result = await connector.refresh(now: Date())
-    #expect(result.reports.first?.status == .failure)
-    #expect(result.reports.first?.errorMessage?.contains("no valid active account") == true)
-    #expect(http.requests.isEmpty)
+    #expect(result.reports.count == 2)
+    #expect(result.reports.allSatisfy { $0.status == .healthy })
+    #expect(http.requests.map { $0.headers["Authorization"] } == ["Bearer token-a", "Bearer token-b"])
 }
 
 @Test(arguments: [
-    #",{"id":"a","tokens":{"access_token":"duplicate"}}"#,
     #",{"id":"a","tokens":{"access_token":42}}"#,
     #",{"id":"selected","mode":"apikey","openai_api_key":"unused"}"#,
     #",{"id":"selected","mode":"future","tokens":{"access_token":"unused"}}"#,
     #",{"id":"selected","tokens":{"access_token":"  "}}"#,
     #",{"id":"selected","tokens":{"access_token":42}}"#
 ])
-func codexConnectorRejectsAmbiguousOrUnusableActiveRow(extraRow: String) async {
+func codexConnectorSkipsUnusableSelectedRowWithoutHidingHealthySiblings(extraRow: String) async {
     let selector = extraRow.contains("\"id\":\"a\"") ? "\"a\"" : "\"selected\""
-    let http = StubHTTPClient(responses: [])
+    let usage = Data(#"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#.utf8)
+    let http = StubHTTPClient(responses: [.init(statusCode: 200, data: usage)])
     let connector = CodexRateLimitConnector(
         accounts: [.init(authPath: "/unused")], httpClient: http,
         fileLoader: { _ in selectedCodexCatalog(selector: selector, extraRows: extraRow) }
     )
     let result = await connector.refresh(now: Date())
-    #expect(result.reports.first?.status == .failure)
-    #expect(http.requests.isEmpty)
+    #expect(result.reports.count == 2)
+    #expect(result.reports.allSatisfy { $0.status == .healthy })
+    #expect(http.requests.map { $0.headers["Authorization"] } == ["Bearer token-a", "Bearer token-b"])
 }
 
 @Test(arguments: ["null", "[]"])
@@ -802,6 +810,99 @@ func codexConnectorRejectsMalformedOrEmptyCatalogDespiteTopLevelTokens(accounts:
     #expect(result.reports.first?.status == .failure)
     #expect(result.reports.first?.errorMessage?.contains("account catalog") == true)
     #expect(http.requests.isEmpty)
+}
+
+@Test func codexCatalogRefreshRetainsFailuresButRemovesDeletedAndDisabledAccounts() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let authFile = root.appendingPathComponent("auth_accounts.json")
+    let store = JSONSnapshotStore(rootDirectory: root.appendingPathComponent("snapshots"))
+    let usage = Data(#"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        .init(statusCode: 200, data: usage), .init(statusCode: 200, data: usage),
+        .init(statusCode: 401, data: Data()), .init(statusCode: 200, data: usage),
+        .init(statusCode: 200, data: usage),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [.init(configuredAccountID: "lab", authPath: authFile.path, accountName: "Lab")],
+        httpClient: http
+    )
+    let runtime = ProviderConnectorRuntime(connectors: [connector])
+    let first = Date(timeIntervalSince1970: 1_800_000_000)
+    let accountA = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-a")
+    let accountB = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-b")
+    try selectedCodexCatalog(selector: "\"b\"").write(to: authFile)
+    let initial = await runtime.refreshAll(now: first)
+    try store.saveMerged(refreshResult: initial, savedAt: first, preservesUnreportedAccounts: false)
+    #expect(initial.reports.count == 2)
+
+    // An expired inactive account must not hide itself or poison the active sibling.
+    let second = first.addingTimeInterval(60)
+    let failed = await runtime.refreshAll(now: second)
+    try store.saveMerged(refreshResult: failed, savedAt: second, preservesUnreportedAccounts: false)
+    let stale = try #require(store.loadCurrent().snapshot)
+    #expect(stale.reports.count == 2)
+    #expect(stale.reports.first { $0.accountID == accountA }?.status == .failure)
+    #expect(stale.reports.first { $0.accountID == accountB }?.status == .healthy)
+    #expect(stale.snapshot.limits.first { $0.accountID == accountA }?.status == .stale)
+    #expect(stale.snapshot.limits.first { $0.accountID == accountA }?.lastUpdatedAt == first)
+    #expect(stale.snapshot.limits.first { $0.accountID == accountB }?.lastUpdatedAt == second)
+
+    // A broken catalog is a source failure, not authoritative account removal.
+    try Data(#"{"accounts":null,"tokens":{"access_token":"must-not-fallback"}}"#.utf8).write(to: authFile)
+    let third = second.addingTimeInterval(60)
+    let unreadable = await runtime.refreshAll(now: third)
+    try store.saveMerged(refreshResult: unreadable, savedAt: third, preservesUnreportedAccounts: false)
+    let preserved = try #require(store.loadCurrent().snapshot)
+    #expect(Set(preserved.snapshot.limits.map(\.accountID)) == [accountA, accountB])
+    #expect(preserved.snapshot.limits.allSatisfy { $0.status == .stale })
+    #expect(preserved.reports.first?.status == .failure)
+    #expect(http.requests.count == 4)
+
+    // A successful enumeration that removes A must not retain a ghost lane.
+    var catalog = try #require(JSONSerialization.jsonObject(with: selectedCodexCatalog(selector: "\"b\"")) as? [String: Any])
+    let rows = try #require(catalog["accounts"] as? [[String: Any]])
+    catalog["accounts"] = rows.filter { $0["id"] as? String == "b" }
+    try JSONSerialization.data(withJSONObject: catalog).write(to: authFile)
+    let fourth = third.addingTimeInterval(60)
+    let removed = await runtime.refreshAll(now: fourth)
+    try store.saveMerged(refreshResult: removed, savedAt: fourth, preservesUnreportedAccounts: false)
+    let remaining = try #require(store.loadCurrent().snapshot)
+    #expect(remaining.reports.map(\.accountID) == [accountB])
+    #expect(remaining.snapshot.limits.map(\.accountID) == [accountB])
+
+    // A disabled source is omitted from a full runtime refresh.
+    let fifth = fourth.addingTimeInterval(60)
+    let disabled = await ProviderConnectorRuntime(connectors: []).refreshAll(now: fifth)
+    try store.saveMerged(refreshResult: disabled, savedAt: fifth, preservesUnreportedAccounts: false)
+    let empty = try #require(store.loadCurrent().snapshot)
+    #expect(empty.reports.isEmpty)
+    #expect(empty.snapshot.limits.isEmpty)
+}
+
+@Test(arguments: [0, 2])
+func codexCatalogDuplicateIdentityKeepsHealthyCredentialsRegardlessOfOrder(expiredIndex: Int) async throws {
+    let usage = Data(#"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#.utf8)
+    let http = StubHTTPClient(responses: (0..<3).map { index in
+        index == expiredIndex ? .init(statusCode: 401, data: Data()) : .init(statusCode: 200, data: usage)
+    })
+    let connector = CodexRateLimitConnector(
+        accounts: [.init(configuredAccountID: "lab", authPath: "/unused", accountName: "Lab")],
+        httpClient: http,
+        fileLoader: { _ in selectedCodexCatalog(
+            selector: "\"a\"",
+            extraRows: #",{"id":"a","tokens":{"access_token":"duplicate-token-a","account_id":"account-a"}}"#
+        ) }
+    )
+    let result = await ProviderConnectorRuntime(connectors: [connector]).refreshAll(now: Date())
+    #expect(result.reports.count == 2)
+    #expect(Set(result.reports.map(\.accountID)).count == 2)
+    #expect(result.reports.allSatisfy { $0.status == .healthy })
+    #expect(result.snapshot.limits.count == 2)
+    #expect(Set(result.snapshot.limits.map(\.id)).count == 2)
+    // Try alternate credentials before deduplicating; first-wins could keep a 401.
+    #expect(http.requests.map { $0.headers["Authorization"] } == ["Bearer token-a", "Bearer token-b", "Bearer duplicate-token-a"])
 }
 
 @Test func codexConnectorReadsValidChatGPTAccountsFromMixedLabCatalog() async throws {
