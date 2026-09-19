@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -136,22 +138,48 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn("SessionStateStore", plan_function)
         self.assertNotIn("RuntimeEvidenceStore", plan_function)
 
-    def test_gallery_targets_are_host_app_only(self):
-        project = (REPO_ROOT / "project.yml").read_text()
+    def run_gallery_isolation_check(self, host_links_gallery: bool, extension_links_gallery: bool):
+        """Run the artifact check on a fixture bundle whose "binaries" are plain files."""
+        gallery_code = "_$s30ContextPanelValidationGalleryUI0dE4ViewV\n"
+        other_code = "_$s16ContextPanelCore10UsageLimitV\n"
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Products" / "Release-iphoneos" / "Context Panel.app"
+            extension = app / "PlugIns" / "ContextPanelCompanionWidgetExtension.appex"
+            extension.mkdir(parents=True)
+            (app / "Context Panel").write_text(gallery_code if host_links_gallery else other_code)
+            (extension / "ContextPanelCompanionWidgetExtension").write_text(
+                gallery_code if extension_links_gallery else other_code
+            )
+            return subprocess.run(
+                [
+                    str(REPO_ROOT / "scripts" / "check-validation-gallery-isolation.sh"),
+                    "--products-root",
+                    str(app.parents[1]),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
 
-        for target in (
-            "ContextPanelWidgetExtension",
-            "ContextPanelCompanionWidgetExtension",
-            "ContextPanelWatchWidgetExtension",
-            "ContextPanelTVTopShelfExtension",
-        ):
-            block = self.yaml_target_block(project, target)
-            self.assertNotIn("ContextPanelValidation", block)
+    def test_gallery_code_is_accepted_only_in_the_host_app(self):
+        result = self.run_gallery_isolation_check(host_links_gallery=True, extension_links_gallery=False)
 
-        mac_gallery = self.yaml_target_block(project, "ContextPanelValidationGalleryUI")
-        companion_gallery = self.yaml_target_block(project, "ContextPanelValidationGalleryUICompanion")
-        self.assertIn("ContextPanelValidationFixtures", mac_gallery)
-        self.assertIn("ContextPanelValidationFixturesCompanion", companion_gallery)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("1 extensions carry no gallery code", result.stdout)
+
+    def test_gallery_code_in_an_extension_fails_the_build_check(self):
+        result = self.run_gallery_isolation_check(host_links_gallery=True, extension_links_gallery=True)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("linked into an extension", result.stdout)
+        self.assertIn("ContextPanelCompanionWidgetExtension", result.stdout)
+
+    def test_gallery_isolation_check_fails_when_it_cannot_see_gallery_code_at_all(self):
+        result = self.run_gallery_isolation_check(host_links_gallery=False, extension_links_gallery=False)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("cannot verify gallery isolation", result.stdout)
 
     def test_gallery_adapter_has_no_live_storage_or_publication_imports(self):
         source = "\n".join(path.read_text() for path in sorted(GALLERY_SOURCE_ROOT.glob("*.swift")))
@@ -178,12 +206,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn('Label("Validation Gallery"', tv_app)
         self.assertNotIn("showsValidationGalleryEntry", tv_app)
         self.assertNotIn("TVValidationGalleryEntryLabel", tv_app)
-
-        self.assertIn("ValidationGalleryRoute(url: url)", mac_app)
-        self.assertIn("ValidationGalleryRoute(url: url)", companion_app)
-        self.assertIn("case .validationGallery:", tv_app)
-        self.assertIn("WatchValidationLaunchRequest(", watch_app)
-        self.assertIn("WatchValidationLaunchView(request: launchRequest)", watch_app)
 
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()

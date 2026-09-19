@@ -417,6 +417,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cache_helper = scripts_path / "context-panel-companion-cache.sh"
         cache_helper.write_text(self.read("scripts/context-panel-companion-cache.sh"))
         cache_helper.chmod(0o755)
+        isolation_check = scripts_path / "check-validation-gallery-isolation.sh"
+        isolation_check.write_text("#!/bin/bash\nexit 0\n")
+        isolation_check.chmod(0o755)
 
         temp_path = checkout_root / ".runner-temp"
         temp_path.mkdir(exist_ok=True)
@@ -647,6 +650,9 @@ sleep 30
             cache_helper = scripts_path / "context-panel-companion-cache.sh"
             cache_helper.write_text(self.read("scripts/context-panel-companion-cache.sh"))
             cache_helper.chmod(0o755)
+            isolation_check = scripts_path / "check-validation-gallery-isolation.sh"
+            isolation_check.write_text("#!/bin/bash\nexit 0\n")
+            isolation_check.chmod(0o755)
 
             environment = os.environ.copy()
             environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)

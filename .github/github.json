@@ -52,6 +52,7 @@
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
       "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos",
       "companionTVArchive": "scripts/validate-companion-builds.sh --configuration Release --archive tvos",
+      "validationGalleryIsolation": "scripts/check-validation-gallery-isolation.sh --products-root <derived-data>/Build/Products (run by validate-companion-builds.sh after every build or archive)",
       "companionCachePreflight": "scripts/context-panel-companion-cache.sh preflight",
       "companionCacheQuarantine": "scripts/context-panel-companion-cache.sh quarantine --root <absolute-.build-or-derived-data/companion-build-validation-root>",
       "signedValidationCoordinator": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number>",
