@@ -819,7 +819,12 @@ sleep 30
             widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
             refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
             built_app_path={shlex.quote(str(built_app))}
+            repo_root={shlex.quote(str(root / 'checkout'))}
             lsregister=traced_lsregister
+            fixture_root={shlex.quote(str(root))}
+            for fixture_path in "$HOME" "$app_path" "$built_app_path" "$repo_root"; do
+              [[ "$fixture_path" == "$fixture_root"/* ]] || exit 99
+            done
             trace={shlex.quote(str(trace))}
             flipped={shlex.quote(str(flipped))}
             production_after={shlex.quote(production_after or '')}

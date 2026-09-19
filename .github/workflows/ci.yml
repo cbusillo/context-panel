@@ -115,6 +115,9 @@ jobs:
       - name: Report time budget
         if: always()
         run: |
+          if [[ -z "${CI_JOB_STARTED_AT:-}" ]]; then
+            exit 0
+          fi
           elapsed_minutes=$(( ($(date +%s) - CI_JOB_STARTED_AT) / 60 ))
           echo "CI job time: ${elapsed_minutes}m (budget ${CI_TIME_BUDGET_MINUTES}m)" >> "$GITHUB_STEP_SUMMARY"
           if (( elapsed_minutes > CI_TIME_BUDGET_MINUTES )); then
