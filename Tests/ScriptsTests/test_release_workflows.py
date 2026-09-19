@@ -170,7 +170,12 @@ def workflow_run_blocks(workflow: str) -> tuple[str, ...]:
     lines = workflow.splitlines()
     blocks: list[str] = []
     for index, line in enumerate(lines):
-        if line.strip() not in {"run: |", "run: |-", "run: >", "run: >-"}:
+        stripped = line.strip().removeprefix("- ")
+        if not stripped.startswith("run:"):
+            continue
+        inline = stripped.removeprefix("run:").strip()
+        if inline not in {"|", "|-", ">", ">-"}:
+            blocks.append(inline)
             continue
         indent = len(line) - len(line.lstrip())
         block_lines: list[str] = []
@@ -1249,20 +1254,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 )
                 self.assertNotIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", guard)
 
-    def test_release_workflow_shell_blocks_do_not_expand_actions_expressions(self):
-        workflow_paths = (
-            ".github/workflows/release.yml",
-            ".github/workflows/ship.yml",
-            ".github/workflows/app-store-connect-upload.yml",
-            ".github/workflows/app-store-connect-companion-upload.yml",
-            ".github/workflows/testflight-beta-distribution.yml",
-            ".github/workflows/submit-app-store-review.yml",
-            ".github/workflows/upload-app-store-screenshots.yml",
-        )
+    def test_workflow_shell_blocks_do_not_expand_actions_expressions(self):
+        workflow_paths = sorted((REPO_ROOT / ".github/workflows").glob("*.yml"))
+        self.assertTrue(workflow_paths)
 
         for workflow_path in workflow_paths:
-            with self.subTest(workflow=workflow_path):
-                for run_block in workflow_run_blocks(self.read(workflow_path)):
+            with self.subTest(workflow=workflow_path.name):
+                for run_block in workflow_run_blocks(workflow_path.read_text()):
                     self.assertNotIn("${{", run_block)
 
     def test_release_workflow_guard_rejects_untrusted_inputs_and_refs(self):
