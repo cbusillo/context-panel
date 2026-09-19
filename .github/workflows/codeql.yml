@@ -49,6 +49,10 @@ jobs:
         with:
           languages: swift
           db-location: ${{ env.CONTEXT_PANEL_CODEQL_DB_LOCATION }}
+          # Temporary pin for #699: the 2.27.0 bundle's build tracer makes SwiftPM's
+          # sandbox-exec spawn fail with "Bad CPU type in executable" on the
+          # self-hosted runner. Remove once a fixed bundle ships.
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-osx64.tar.gz
 
       - name: Build
         env:
