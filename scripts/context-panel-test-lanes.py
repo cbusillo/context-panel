@@ -147,6 +147,25 @@ def validate_manifest(
         raise TestLaneError("unmapped files under Tests/: " + ", ".join(missing))
     if stale:
         raise TestLaneError("manifest paths do not exist: " + ", ".join(stale))
+
+    routinely_run = {
+        path
+        for lane_name, lane in lanes.items()
+        if lane["runner"] == "python-unittest" and lane["ciPolicy"] == "safe"
+        for path in normalized[lane_name]
+    }
+    never_run = sorted(
+        path
+        for path in seen_paths - routinely_run
+        if Path(path).name.startswith("test_")
+        and Path(path).suffix == ".py"
+        and path not in manual_justifications
+    )
+    if never_run:
+        raise TestLaneError(
+            "Python test files must run in a safe python-unittest lane or carry a manual justification: "
+            + ", ".join(never_run)
+        )
     return normalized
 
 

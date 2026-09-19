@@ -33,7 +33,6 @@ WATCH_WIDGET_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatchWidget" / "Conte
 TV_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "ContextPanelTVApp.swift"
 TV_GALLERY_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVValidationGallery.swift"
 TV_PREVIEW_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVPreviewFixtures.swift"
-TV_SYSTEM_SURFACES_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVSystemSurfaces.swift"
 TV_RUNWAY_PRESENTATION_SOURCE = (
     REPO_ROOT / "Sources" / "ContextPanelTVSupport" / "TVRunwayPresentation.swift"
 )
@@ -43,13 +42,6 @@ TV_TOP_SHELF_SOURCE = (
 SHARED_VIEW_EVIDENCE_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "shared_view_evidence.py"
 VALIDATION_CLI_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "cli.py"
 VALIDATION_ENTRY_POINT = REPO_ROOT / "scripts" / "context-panel-validation.py"
-SHARED_VIEW_UI_TEST_CONFIG = REPO_ROOT / "Config" / "ContextPanelSharedViewCaptureUITests.yml"
-SHARED_VIEW_UI_TEST_SOURCE = (
-    REPO_ROOT
-    / "Tests"
-    / "ContextPanelCompanionSharedViewCaptureUITests"
-    / "ContextPanelCompanionSharedViewCaptureUITests.swift"
-)
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):

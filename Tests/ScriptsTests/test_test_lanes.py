@@ -73,6 +73,22 @@ class TestLaneTests(unittest.TestCase):
                 discovered=FIXTURE_FILES | {"Tests/new_test.py"},
             )
 
+    def test_python_test_parked_in_the_support_lane_fails_closed(self):
+        payload = self.manifest()
+        path = payload["filesByLane"]["routine-ci-python"].pop()
+        payload["filesByLane"]["support-only"].append(path)
+
+        with self.assertRaisesRegex(module.TestLaneError, "must run in a safe python-unittest lane"):
+            self.validate(payload)
+
+    def test_python_test_in_the_swift_lane_fails_closed(self):
+        payload = self.manifest()
+        path = payload["filesByLane"]["fast-local-python"].pop()
+        payload["filesByLane"]["routine-ci-swift"].append(path)
+
+        with self.assertRaisesRegex(module.TestLaneError, "must run in a safe python-unittest lane"):
+            self.validate(payload)
+
     def test_support_files_are_not_selected_for_execution(self):
         payload = self.manifest()
         executable = {
@@ -146,7 +162,10 @@ class TestLaneTests(unittest.TestCase):
             )
 
     def test_time_command_requires_a_swiftpm_lane(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "discovered_test_files", return_value=set(FIXTURE_FILES)),
+        ):
             with self.assertRaisesRegex(module.TestLaneError, "does not use the SwiftPM runner"):
                 module.time_command(
                     self.manifest(),
