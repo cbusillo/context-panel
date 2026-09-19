@@ -1112,7 +1112,6 @@ class ReportTests(unittest.TestCase):
 
 
 class StateStoreTests(unittest.TestCase):
-
     def test_watch_restart_attestation_persists_without_device_identifiers(self):
         target = Target("1.0.53", "202607301200")
         recorded_at = datetime(2026, 7, 30, 17, 0, tzinfo=timezone.utc)
@@ -1877,7 +1876,6 @@ class StateStoreTests(unittest.TestCase):
 
 
 class CLITests(unittest.TestCase):
-
     def test_internal_error_does_not_print_private_paths(self):
         args = SimpleNamespace(command="status")
         stderr = io.StringIO()

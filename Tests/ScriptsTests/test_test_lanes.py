@@ -73,6 +73,17 @@ class TestLaneTests(unittest.TestCase):
                 discovered=FIXTURE_FILES | {"Tests/new_test.py"},
             )
 
+    def test_safe_python_lanes_select_every_python_test_once(self):
+        fast = set(module.files_for_lane(self.manifest(), "fast-local-python", require_safe=True))
+        routine = set(module.files_for_lane(self.manifest(), "routine-ci-python", require_safe=True))
+        expected = {
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (REPO_ROOT / "Tests" / "ScriptsTests").glob("test_*.py")
+        }
+
+        self.assertFalse(fast & routine)
+        self.assertEqual(fast | routine, expected)
+
     def test_support_files_are_not_selected_for_execution(self):
         payload = self.manifest()
         executable = {
