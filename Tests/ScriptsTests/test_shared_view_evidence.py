@@ -19,6 +19,7 @@ from context_panel_comparison_schema import derive_risk_fields, derive_runtime_d
 from context_panel_validation import ExpectedSurfaceIdentity, load_visual_review_plan
 from context_panel_validation import cli as cli_module
 from context_panel_validation.shared_view_evidence import (
+    CANONICAL_CELL_ORDER,
     DEFAULT_MATRIX_PATH,
     DEFAULT_SURFACE_POLICY_PATH,
     SharedViewEvidenceError,
@@ -165,9 +166,14 @@ class SharedViewEvidenceTests(unittest.TestCase):
     def test_matrix_is_bounded_canonical_and_uses_two_justified_cells_per_surface(self) -> None:
         self.assertEqual(VISUAL_MAXIMUM_REQUIREMENT_COUNT, MAXIMUM_REQUIREMENT_COUNT)
         self.assertLessEqual(self.matrix.max_cell_count, MAXIMUM_REQUIREMENT_COUNT)
-        self.assertLessEqual(
+        self.assertEqual(self.matrix.cell_order, CANONICAL_CELL_ORDER)
+        self.assertEqual(
             sum(len(surface.cells) for surface in self.matrix.surfaces),
+            len(self.matrix.surfaces) * len(self.matrix.cell_order),
+        )
+        self.assertEqual(
             self.matrix.max_cell_count,
+            len(self.matrix.surfaces) * len(self.matrix.cell_order),
         )
         for surface in self.matrix.surfaces:
             self.assertEqual(tuple(cell.id for cell in surface.cells), self.matrix.cell_order)

@@ -146,7 +146,10 @@ class TestLaneTests(unittest.TestCase):
             )
 
     def test_time_command_requires_a_swiftpm_lane(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "discovered_test_files", return_value=set(FIXTURE_FILES)),
+        ):
             with self.assertRaisesRegex(module.TestLaneError, "does not use the SwiftPM runner"):
                 module.time_command(
                     self.manifest(),
