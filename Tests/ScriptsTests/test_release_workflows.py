@@ -1646,44 +1646,133 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     notes="release notes",
                 )
 
-    def test_ship_preflight_platform_mapping_is_exhaustive(self):
-        workflow = self.read(".github/workflows/ship.yml")
-        validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
-        companion_case_match = re.search(
-            r'case\s+"\$\{INPUT_COMPANION_PLATFORM\}"\s+in(?P<body>.*?)\besac\b',
-            validate_run,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(companion_case_match)
-        assert companion_case_match is not None
-        companion_case = companion_case_match.group("body")
-
-        self.assertRegex(
-            re.sub(r"\s+", " ", validate_run),
-            r'if \[\[ "\$\{app_store_channel\}" == "upload" \]\]; then '
-            r'preflight_app_store_version MAC_OS fi',
-        )
-        self.assertRegex(
-            re.sub(r"\s+", " ", validate_run),
-            r'if \[\[ "\$\{companion_app_store_channel\}" == "upload" \]\]; then '
-            r'case "\$\{INPUT_COMPANION_PLATFORM\}" in',
-        )
-        mappings = dict(
-            re.findall(
-                r"^\s*(ios|visionos|tvos)\)\s*$\n\s*preflight_app_store_version ([A-Z_]+)\s*$",
-                companion_case,
-                re.MULTILINE,
+    def run_ship_validate_inputs(
+        self,
+        guard_exit: int = 0,
+        **overrides: str,
+    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], str]:
+        """Run scripts/ship-validate-inputs.sh with a recording python3 stub as the version guard."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            stub_dir = root / "bin"
+            stub_dir.mkdir()
+            guard_log = root / "guard.log"
+            stub = stub_dir / "python3"
+            stub.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$*\" >>{shlex.quote(str(guard_log))}\n"
+                f"exit {guard_exit}\n"
             )
+            stub.chmod(0o755)
+            output = root / "output"
+            environment = {
+                "PATH": f"{stub_dir}:/usr/bin:/bin",
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                "GITHUB_SHA": "0" * 40,
+                "INPUT_VERSION": "9.9.9",
+                "INPUT_BUILD_NUMBER": "202601010000",
+                "INPUT_GITHUB_RELEASE": "false",
+                "INPUT_NOTARIZE_GITHUB_RELEASE": "false",
+                "INPUT_APP_STORE_CHANNEL": "skip",
+                "INPUT_COMPANION_APP_STORE_CHANNEL": "skip",
+                "INPUT_COMPANION_PLATFORM": "ios",
+                "INPUT_TESTFLIGHT_BETA": "false",
+                "INPUT_TESTFLIGHT_BETA_SOURCE": "companion",
+                "INPUT_TESTFLIGHT_BETA_GROUPS": "",
+                "INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS": "false",
+                "INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64": "cmVjZWlwdA==",
+                "APP_STORE_CONNECT_KEY_ID": "key",
+                "APP_STORE_CONNECT_ISSUER_ID": "issuer",
+                "APP_STORE_CONNECT_API_KEY_P8_BASE64": "cDg=",
+            }
+            environment.update(overrides)
+            result = subprocess.run(
+                [str(REPO_ROOT / "scripts/ship-validate-inputs.sh")],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            guard_calls = [line.split() for line in guard_log.read_text().splitlines()] if guard_log.exists() else []
+            return result, guard_calls, output.read_text() if output.exists() else ""
+
+    @staticmethod
+    def guard_platform(call: list[str]) -> str:
+        return call[call.index("--platform") + 1]
+
+    def test_ship_preflights_every_companion_platform_the_workflow_offers(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        platforms = {}
+        for option in workflow_choice_options(workflow, "companion_platform"):
+            with self.subTest(companion_platform=option):
+                result, guard_calls, output = self.run_ship_validate_inputs(
+                    INPUT_COMPANION_APP_STORE_CHANNEL="upload",
+                    INPUT_COMPANION_PLATFORM=option,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(len(guard_calls), 1)
+                self.assertIn("9.9.9", guard_calls[0])
+                platforms[option] = self.guard_platform(guard_calls[0])
+                self.assertIn("build_number=202601010000", output)
+
+        self.assertEqual(len(set(platforms.values())), len(platforms), platforms)
+        self.assertNotIn("MAC_OS", platforms.values())
+
+    def test_ship_rejects_an_unknown_companion_platform_without_preflight(self):
+        result, guard_calls, output = self.run_ship_validate_inputs(
+            INPUT_COMPANION_APP_STORE_CHANNEL="upload",
+            INPUT_COMPANION_PLATFORM="watchos",
         )
-        self.assertEqual(
-            mappings,
-            {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"},
+
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("unsupported companion_platform", result.stdout)
+        self.assertEqual(guard_calls, [])
+        self.assertEqual(output, "")
+
+    def test_ship_preflights_the_mac_app_store_channel(self):
+        result, guard_calls, _ = self.run_ship_validate_inputs(INPUT_APP_STORE_CHANNEL="upload")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([self.guard_platform(call) for call in guard_calls], ["MAC_OS"])
+
+    def test_ship_stops_when_the_version_guard_rejects_the_version(self):
+        result, guard_calls, output = self.run_ship_validate_inputs(
+            guard_exit=3,
+            INPUT_APP_STORE_CHANNEL="upload",
         )
-        self.assertEqual(set(mappings), set(workflow_choice_options(workflow, "companion_platform")))
-        self.assertRegex(
-            companion_case,
-            r"(?ms)^\s*\*\)\s*$.*unsupported companion_platform.*?^\s*exit 2\s*$",
-        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(guard_calls), 1)
+        self.assertEqual(output, "")
+
+    def test_ship_refuses_live_channels_without_required_inputs(self):
+        cases = {
+            "no channel": {},
+            "no schema receipt": {
+                "INPUT_GITHUB_RELEASE": "true",
+                "INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64": "",
+            },
+            "no App Store Connect credentials": {
+                "INPUT_APP_STORE_CHANNEL": "upload",
+                "APP_STORE_CONNECT_API_KEY_P8_BASE64": "",
+            },
+            "TestFlight source without its upload": {
+                "INPUT_GITHUB_RELEASE": "true",
+                "INPUT_TESTFLIGHT_BETA": "true",
+                "INPUT_TESTFLIGHT_BETA_SOURCE": "macos",
+            },
+            "closed version": {"INPUT_GITHUB_RELEASE": "true", "INPUT_VERSION": "1.0"},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                result, guard_calls, output = self.run_ship_validate_inputs(**overrides)
+
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(guard_calls, [])
+                self.assertEqual(output, "")
 
     def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
