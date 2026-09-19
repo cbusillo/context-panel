@@ -305,8 +305,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .build/public
-          set +e
-          python3 scripts/context-panel-validation.py capture-shared-view-evidence \
+          python3 scripts/context-panel-shared-view-capture-workflow.py capture-and-qualify \
+            --receipt .build/public/shared-view-capture-receipt.json \
+            --requirements .build/visual-review-requirements.json \
+            -- \
+            python3 scripts/context-panel-validation.py capture-shared-view-evidence \
             --surface-comparison .build/surface-comparison.json \
             --current-manifest .build/current-source-manifest.json \
             --matrix .build/current-source/Config/ContextPanelSharedViewMatrix.json \
@@ -315,14 +318,6 @@ jobs:
             --capture-config "${RUNNER_TEMP}/context-panel-capture-config.json" \
             --artifact-root "${RUNNER_TEMP}/context-panel-shared-view-artifacts" \
             --output "${GITHUB_WORKSPACE}/.build/public/shared-view-capture-receipt.json"
-          capture_status=$?
-          set -e
-          if [[ "${capture_status}" -ne 0 && "${capture_status}" -ne 20 ]]; then
-            exit "${capture_status}"
-          fi
-          python3 scripts/context-panel-shared-view-capture-workflow.py qualify-receipt \
-            --receipt .build/public/shared-view-capture-receipt.json \
-            --requirements .build/visual-review-requirements.json
 
       - name: Upload Public Evidence
         if: success()

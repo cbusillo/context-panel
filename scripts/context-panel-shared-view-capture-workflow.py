@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 from typing import Any
 
@@ -16,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from context_panel_comparison_schema import ComparisonSchemaError, validate_current_comparison
+from context_panel_validation.models import EXIT_BLOCKED, EXIT_OK
 from context_panel_validation.shared_view_capture import (
     CAPTURE_CONFIG_KIND,
     CAPTURE_CONFIG_SCHEMA_VERSION,
@@ -413,6 +415,25 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
             raise WorkflowEvidenceError("capture receipt contains an unknown platform")
 
 
+def capture_and_qualify(command: list[str], receipt_path: Path, requirements_path: Path) -> int:
+    """Run the capture command, then qualify its receipt.
+
+    A blocked capture is expected while some hosts have no capture mechanism: the
+    receipt must still be qualified so that only explicit host limitations pass.
+    Any other capture failure is returned unchanged without qualification.
+    """
+    if not command:
+        raise WorkflowEvidenceError("capture command is required")
+    capture_status = subprocess.run(command, check=False).returncode
+    if capture_status not in (EXIT_OK, EXIT_BLOCKED):
+        return capture_status
+    qualify_capture_receipt(
+        _read_json(receipt_path, "capture receipt"),
+        _read_json(requirements_path, "visual review requirements"),
+    )
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -451,6 +472,10 @@ def main(argv: list[str] | None = None) -> int:
     qualify = commands.add_parser("qualify-receipt")
     qualify.add_argument("--receipt", type=Path, required=True)
     qualify.add_argument("--requirements", type=Path, required=True)
+    capture = commands.add_parser("capture-and-qualify")
+    capture.add_argument("--receipt", type=Path, required=True)
+    capture.add_argument("--requirements", type=Path, required=True)
+    capture.add_argument("capture_command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-artifact":
@@ -500,6 +525,11 @@ def main(argv: list[str] | None = None) -> int:
                     args.visionos_ui_test_run,
                 ),
             )
+        elif args.command == "capture-and-qualify":
+            command = args.capture_command
+            if command[:1] == ["--"]:
+                command = command[1:]
+            return capture_and_qualify(command, args.receipt, args.requirements)
         else:
             qualify_capture_receipt(_read_json(args.receipt, "capture receipt"), _read_json(args.requirements, "visual review requirements"))
     except WorkflowEvidenceError as error:

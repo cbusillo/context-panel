@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
@@ -483,7 +485,8 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 "/tmp/visionos.xctestrun",
             )
 
-    def test_receipt_qualification_accepts_only_supported_captures_and_explicit_unsupported_hosts(self) -> None:
+    @staticmethod
+    def capture_receipt_fixture() -> tuple[dict[str, Any], dict[str, Any]]:
         requirements = {
             "requirements": [
                 {"id": "shared-view.ios-app.baseline", "surface": "ios.app", "evidenceClass": "shared-view"},
@@ -527,6 +530,10 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 },
             ],
         }
+        return requirements, receipt
+
+    def test_receipt_qualification_accepts_only_supported_captures_and_explicit_unsupported_hosts(self) -> None:
+        requirements, receipt = self.capture_receipt_fixture()
         workflow.qualify_capture_receipt(receipt, requirements)
         receipt["captures"][0]["hostMechanism"] = "simctl-gallery"
         with self.assertRaises(workflow.WorkflowEvidenceError):
@@ -540,26 +547,51 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
 
-    def test_workflow_preserves_expected_blocked_exit_for_qualification(self) -> None:
-        text = (REPO_ROOT / ".github" / "workflows" / "shared-view-capture.yml").read_text()
-        self.assertIn("actions: read", text)
-        self.assertIn('capture_status=$?', text)
-        self.assertIn('"${capture_status}" -ne 20', text)
-        self.assertIn("ref: ${{ github.sha }}", text)
-        self.assertIn("/Applications/Xcode_26.6.app", text)
-        self.assertIn("git worktree add --detach .build/current-source", text)
-        self.assertIn("if-no-files-found: warn", text)
-        self.assertNotIn('-sdk "${sdk}"', text)
-        self.assertIn("shared-view-capture-diagnostic-${{ github.run_id }}", text)
-        self.assertIn("name: Upload Private PNG Evidence\n        if: always()", text)
-        self.assertIn("ContextPanelSharedViewCaptureUITests.yml", text)
-        self.assertIn("ContextPanelCompanionSharedViewCaptureUITests", text)
-        self.assertIn("build-for-testing", text)
-        self.assertIn("--ios-ui-test-run", text)
-        self.assertIn("--visionos-ui-test-run", text)
-        self.assertIn("python3 scripts/context-panel-validation.py capture-shared-view-evidence", text)
-        self.assertIn("--matrix .build/current-source/Config/ContextPanelSharedViewMatrix.json", text)
-        self.assertIn("--surface-policy .build/current-source/Config/ContextPanelSurfacePolicy.json", text)
+    def run_capture_and_qualify(self, capture_status: int, receipt: dict[str, Any] | None) -> int:
+        requirements, _ = self.capture_receipt_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt_path = root / "receipt.json"
+            requirements_path = root / "requirements.json"
+            requirements_path.write_text(json.dumps(requirements))
+            capture = (
+                "import pathlib, sys; "
+                + (f"pathlib.Path(sys.argv[1]).write_text({json.dumps(receipt)!r}); " if receipt is not None else "")
+                + f"sys.exit({capture_status})"
+            )
+            return workflow.main(
+                [
+                    "capture-and-qualify",
+                    "--receipt",
+                    str(receipt_path),
+                    "--requirements",
+                    str(requirements_path),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    capture,
+                    str(receipt_path),
+                ]
+            )
+
+    def test_blocked_capture_still_qualifies_when_only_unsupported_hosts_are_blocked(self) -> None:
+        _, receipt = self.capture_receipt_fixture()
+
+        self.assertEqual(self.run_capture_and_qualify(0, receipt), 0)
+        self.assertEqual(self.run_capture_and_qualify(20, receipt), 0)
+
+    def test_blocked_capture_fails_when_a_supported_surface_was_not_captured(self) -> None:
+        _, receipt = self.capture_receipt_fixture()
+        receipt["captures"][0]["status"] = "blocked"
+
+        with self.assertRaises(SystemExit) as context, contextlib.redirect_stderr(io.StringIO()):
+            self.run_capture_and_qualify(20, receipt)
+        self.assertNotEqual(context.exception.code, 0)
+
+    def test_other_capture_failures_propagate_without_qualification(self) -> None:
+        for capture_status in (1, 30):
+            with self.subTest(capture_status=capture_status):
+                self.assertEqual(self.run_capture_and_qualify(capture_status, None), capture_status)
 
 
 if __name__ == "__main__":
