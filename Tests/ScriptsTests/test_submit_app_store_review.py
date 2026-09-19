@@ -1930,7 +1930,8 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(version["id"], "version-1-0-14")
         self.assertTrue(force_prepare)
 
-    def test_prepare_only_can_reuse_rejected_version_without_review_removal(self):
+    @patch.object(submit_app_store_review.time, "sleep", return_value=None)
+    def test_prepare_only_can_reuse_rejected_version_without_review_removal(self, _sleep):
         class RejectedReuseClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -1995,7 +1996,8 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         review_paths = [request[1] for request in client.requests if request[1].startswith("/reviewSubmission")]
         self.assertEqual(review_paths, [])
 
-    def test_review_submission_cannot_reuse_rejected_version_without_prepare_only(self):
+    @patch.object(submit_app_store_review.time, "sleep", return_value=None)
+    def test_review_submission_cannot_reuse_rejected_version_without_prepare_only(self, _sleep):
         class RejectedReuseClient:
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 if method == "GET" and path == "/apps/app-id/appStoreVersions":
