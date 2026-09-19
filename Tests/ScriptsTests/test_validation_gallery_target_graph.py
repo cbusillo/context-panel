@@ -130,18 +130,34 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn("SessionStateStore", plan_function)
         self.assertNotIn("RuntimeEvidenceStore", plan_function)
 
-    def run_gallery_isolation_check(self, host_links_gallery: bool, extension_links_gallery: bool):
-        """Run the artifact check on a fixture bundle whose "binaries" are plain files."""
+    def run_gallery_isolation_check(
+        self,
+        host_links_gallery: bool,
+        extension_links_gallery: bool,
+        *,
+        debug_dylibs: bool = False,
+    ):
+        """Run the artifact check on a fixture bundle whose "binaries" are plain files.
+
+        With debug_dylibs the executables are stubs and the code sits in
+        <name>.debug.dylib, as Xcode lays out Debug builds.
+        """
         gallery_code = "_$s30ContextPanelValidationGalleryUI0dE4ViewV\n"
         other_code = "_$s16ContextPanelCore10UsageLimitV\n"
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / "Products" / "Release-iphoneos" / "Context Panel.app"
             extension = app / "PlugIns" / "ContextPanelCompanionWidgetExtension.appex"
             extension.mkdir(parents=True)
-            (app / "Context Panel").write_text(gallery_code if host_links_gallery else other_code)
-            (extension / "ContextPanelCompanionWidgetExtension").write_text(
-                gallery_code if extension_links_gallery else other_code
-            )
+            host_code = gallery_code if host_links_gallery else other_code
+            extension_code = gallery_code if extension_links_gallery else other_code
+            if debug_dylibs:
+                (app / "Context Panel").write_text("stub\n")
+                (app / "Context Panel.debug.dylib").write_text(host_code)
+                (extension / "ContextPanelCompanionWidgetExtension").write_text("stub\n")
+                (extension / "ContextPanelCompanionWidgetExtension.debug.dylib").write_text(extension_code)
+            else:
+                (app / "Context Panel").write_text(host_code)
+                (extension / "ContextPanelCompanionWidgetExtension").write_text(extension_code)
             return subprocess.run(
                 [
                     str(REPO_ROOT / "scripts" / "check-validation-gallery-isolation.sh"),
@@ -166,6 +182,24 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("linked into an extension", result.stdout)
         self.assertIn("ContextPanelCompanionWidgetExtension", result.stdout)
+
+    def test_gallery_isolation_check_reads_debug_dylibs(self):
+        clean = self.run_gallery_isolation_check(True, False, debug_dylibs=True)
+        contaminated = self.run_gallery_isolation_check(True, True, debug_dylibs=True)
+
+        self.assertEqual(clean.returncode, 0, clean.stdout)
+        self.assertEqual(contaminated.returncode, 1, contaminated.stdout)
+        self.assertIn("linked into an extension", contaminated.stdout)
+
+    def test_mac_widget_target_does_not_depend_on_gallery_code(self):
+        # The artifact check runs on companion builds only; until the macOS build
+        # gate calls it too, keep the macOS widget's dependency list honest here.
+        project = (REPO_ROOT / "project.yml").read_text()
+
+        self.assertNotIn(
+            "ContextPanelValidation",
+            self.yaml_target_block(project, "ContextPanelWidgetExtension"),
+        )
 
     def test_gallery_isolation_check_fails_when_it_cannot_see_gallery_code_at_all(self):
         result = self.run_gallery_isolation_check(host_links_gallery=False, extension_links_gallery=False)

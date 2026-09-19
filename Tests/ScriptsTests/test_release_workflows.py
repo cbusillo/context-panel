@@ -143,29 +143,6 @@ def workflow_job(workflow: str, job_name: str) -> str:
     return indented_block(workflow, job_name, 2)
 
 
-def workflow_step_run(workflow: str, job_name: str, step_name: str) -> str:
-    job = workflow_job(workflow, job_name)
-    lines = job.splitlines()
-    target = f"      - name: {step_name}"
-    matches = [index for index, line in enumerate(lines) if line == target]
-    if len(matches) != 1:
-        raise AssertionError(f"expected one {target!r} step, found {len(matches)}")
-
-    start = matches[0]
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        line = lines[index]
-        if line.startswith("      - "):
-            end = index
-            break
-    lines = lines[start:end]
-    target = "        run: |"
-    matches = [index for index, line in enumerate(lines) if line == target]
-    if len(matches) != 1:
-        raise AssertionError(f"expected one run block, found {len(matches)}")
-    return textwrap.dedent("\n".join(lines[matches[0] + 1 :]))
-
-
 def workflow_run_blocks(workflow: str) -> tuple[str, ...]:
     lines = workflow.splitlines()
     blocks: list[str] = []
@@ -175,6 +152,8 @@ def workflow_run_blocks(workflow: str) -> tuple[str, ...]:
             continue
         inline = stripped.removeprefix("run:").strip()
         if inline not in {"|", "|-", ">", ">-"}:
+            if inline[:1] in {"|", ">"}:
+                raise AssertionError(f"unsupported run block scalar header: {inline!r}")
             blocks.append(inline)
             continue
         indent = len(line) - len(line.lstrip())
@@ -1745,8 +1724,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 platforms[option] = self.guard_platform(guard_calls[0])
                 self.assertIn("build_number=202601010000", output)
 
-        self.assertEqual(len(set(platforms.values())), len(platforms), platforms)
-        self.assertNotIn("MAC_OS", platforms.values())
+        self.assertEqual(platforms, {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"})
+
+    def test_ship_validate_step_supplies_every_variable_the_script_reads(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        job = workflow_job(workflow, "validate")
+        step = job[job.index("      - name: Validate Inputs\n") :]
+        step = step.split("\n      - name:", 1)[0]
+        provided = set(re.findall(r"^          ([A-Z][A-Z0-9_]*):", step, re.MULTILINE))
+        script = self.read("scripts/ship-validate-inputs.sh")
+        required = set(re.findall(r"\$\{((?:INPUT|APP_STORE_CONNECT)_[A-Z0-9_]+)", script))
+
+        self.assertIn("        run: scripts/ship-validate-inputs.sh", step)
+        self.assertTrue(required)
+        self.assertEqual(required - provided, set())
 
     def test_ship_rejects_an_unknown_companion_platform_without_preflight(self):
         result, guard_calls, output = self.run_ship_validate_inputs(

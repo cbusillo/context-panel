@@ -424,7 +424,12 @@ def capture_and_qualify(command: list[str], receipt_path: Path, requirements_pat
     """
     if not command:
         raise WorkflowEvidenceError("capture command is required")
-    capture_status = subprocess.run(command, check=False).returncode
+    try:
+        capture_status = subprocess.run(command, check=False).returncode
+    except OSError as error:
+        raise WorkflowEvidenceError(f"capture command could not be started: {error}") from error
+    if capture_status < 0:
+        capture_status = 128 - capture_status
     if capture_status not in (EXIT_OK, EXIT_BLOCKED):
         return capture_status
     qualify_capture_receipt(

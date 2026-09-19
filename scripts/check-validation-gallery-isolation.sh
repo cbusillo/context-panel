@@ -23,11 +23,22 @@ bundle_executable() {
 	printf '%s/%s' "$bundle" "$name"
 }
 
-gallery_reference_count() {
+binary_reference_count() {
 	local binary="$1" symbols strings_count
 	symbols="$(nm "$binary" 2>/dev/null | grep -c "$marker" || true)"
 	strings_count="$(strings -a "$binary" 2>/dev/null | grep -c "$marker" || true)"
 	printf '%s' "$((symbols + strings_count))"
+}
+
+# Debug builds keep the target's code in <name>.debug.dylib beside a stub
+# executable, so count the executable and every dylib at the bundle's top level.
+gallery_reference_count() {
+	local bundle="$1" total=0 candidate
+	for candidate in "$(bundle_executable "$bundle")" "$bundle"/*.dylib; do
+		[[ -f "$candidate" ]] || continue
+		total=$((total + $(binary_reference_count "$candidate")))
+	done
+	printf '%s' "$total"
 }
 
 check_app_bundle() {
@@ -42,7 +53,7 @@ check_app_bundle() {
 		echo "app executable not found: $host_binary" >&2
 		return 2
 	fi
-	if [[ "$(gallery_reference_count "$host_binary")" == "0" ]]; then
+	if [[ "$(gallery_reference_count "$app_bundle")" == "0" ]]; then
 		echo "cannot verify gallery isolation: no Validation Gallery code is visible in the host app $host_binary" >&2
 		return 1
 	fi
@@ -54,7 +65,7 @@ check_app_bundle() {
 			status=1
 			continue
 		fi
-		count="$(gallery_reference_count "$extension_binary")"
+		count="$(gallery_reference_count "$extension")"
 		if [[ "$count" != "0" ]]; then
 			echo "Validation Gallery code is linked into an extension ($count references): $extension_binary" >&2
 			status=1
@@ -70,7 +81,7 @@ app_bundles=()
 if [[ $# -eq 2 && "$1" == "--products-root" ]]; then
 	while IFS= read -r -d '' found; do
 		app_bundles+=("$found")
-	done < <(find "$2" -mindepth 2 -maxdepth 2 -type d -name '*.app' -print0 2>/dev/null)
+	done < <(find "$2" -mindepth 2 -maxdepth 2 -type d -name 'Context Panel*.app' -print0 2>/dev/null)
 	if ((${#app_bundles[@]} == 0)); then
 		echo "no app bundle found under build products: $2" >&2
 		exit 2
