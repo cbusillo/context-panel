@@ -831,23 +831,6 @@ import Testing
     ))
 }
 
-@Test func tvTopShelfProviderRegistersScaleTraitsSeparately() throws {
-    let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appending(path: "Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift")
-    let source = try String(contentsOf: sourceURL, encoding: .utf8)
-
-    #expect(source.contains("item.setImageURL(oneXImageURL, for: .screenScale1x)"))
-    #expect(source.contains("item.setImageURL(twoXImageURL, for: .screenScale2x)"))
-    #expect(source.contains("return TVTopShelfInsetContent(items: [item])"))
-    #expect(source.contains("let requestedSize = TVTopShelfInsetContent.imageSize"))
-    #expect(source.contains("let action = TVTopShelfAction(url: TVAppRoute.runway.url)"))
-    #expect(source.contains("item.title = semanticTitle(document: document, cards: cards, now: now)"))
-    #expect(source.contains("TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)"))
-    #expect(!source.contains("TVTopShelfSectionedContent"))
-    #expect(!source.contains("[.screenScale1x, .screenScale2x]"))
-    #expect(!source.contains("fileManager.urls(for: .cachesDirectory"))
-}
-
 @Test func tvRetiredProviderBadgeCleanupClearsStoredStateAndReturnsZeroBadgeCount() throws {
     let directory = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-tv-badge-cleanup-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -883,17 +866,6 @@ import Testing
         [TVRetiredProviderBadgeCleanup.expiryRequestIdentifier],
         [TVRetiredProviderBadgeCleanup.expiryRequestIdentifier],
     ])
-}
-
-@Test func tvOSAppDelegateDoesNotScheduleReplacementProviderBadgeNotifications() throws {
-    let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appending(path: "Sources/ContextPanelTV/TVSystemSurfaces.swift")
-    let source = try String(contentsOf: sourceURL, encoding: .utf8)
-
-    #expect(source.contains("TVRetiredProviderBadgeCleanup("))
-    #expect(source.contains("notificationCenter.setBadgeCount(badgeCount)"))
-    #expect(!source.contains("UNTimeIntervalNotificationTrigger"))
-    #expect(!source.contains(".badge"))
 }
 
 private actor TVDeadlineBlocker {

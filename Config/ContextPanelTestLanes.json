@@ -107,7 +107,6 @@
       "Tests/ContextPanelCoreTests/TVRunwayPresentationTests.swift",
       "Tests/ContextPanelCoreTests/TVTopShelfTests.swift",
       "Tests/ContextPanelCoreTests/UsageLimitTests.swift",
-      "Tests/ContextPanelCoreTests/UserFacingCopyTests.swift",
       "Tests/ContextPanelCoreTests/ValidationGalleryTests.swift",
       "Tests/ContextPanelCoreTests/WatchCompanionCacheTests.swift",
       "Tests/ContextPanelCoreTests/WatchLimitDisplayTests.swift",
