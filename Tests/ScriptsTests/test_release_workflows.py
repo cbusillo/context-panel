@@ -225,6 +225,24 @@ def workflow_choice_options(workflow: str, input_name: str) -> tuple[str, ...]:
     return tuple(options)
 
 
+def assert_lines_in_order(document: str, *expected_lines: str) -> None:
+    normalized_lines = [re.sub(r"\s+", " ", line).strip() for line in document.splitlines()]
+    search_start = 0
+    previous_line = "the start of the document"
+    for expected_line in expected_lines:
+        normalized_expected_line = re.sub(r"\s+", " ", expected_line).strip()
+        if not normalized_expected_line:
+            raise AssertionError("expected lines must not be empty")
+        try:
+            line_index = normalized_lines.index(normalized_expected_line, search_start)
+        except ValueError as error:
+            raise AssertionError(
+                f"expected line {normalized_expected_line!r} after {previous_line}"
+            ) from error
+        previous_line = f"line {line_index + 1} ({normalized_expected_line!r})"
+        search_start = line_index + 1
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
@@ -3855,6 +3873,185 @@ exit 65
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
         self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
+
+    # The three companion upload tests below assert script text. They stay until the
+    # companion upload script has fixture-driven tests for its Production CloudKit
+    # profile preflights and signed-entitlement checks (issue #695).
+    def test_companion_upload_preflights_cloudkit_app_widget_and_watch_profiles(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_profile_icloud_service()", script)
+        self.assertIn("assert_profile_icloud_environment()", script)
+        self.assertIn("assert_profile_ubiquity_container()", script)
+        self.assertIn("assert_profile_push_notifications()", script)
+        self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudDocuments\"", script)
+        self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudKit\"", script)
+        self.assertIn(
+            "assert_profile_icloud_environment \"$app_profile\" \"companion app\" \"Production\"",
+            script,
+        )
+        self.assertIn("assert_profile_ubiquity_container \"$app_profile\" \"companion app\"", script)
+        self.assertIn("assert_profile_push_notifications \"$app_profile\" \"companion app\" \"production\"", script)
+        self.assertIn("--watch-profile PATH", script)
+        self.assertIn("--watch-widget-profile PATH", script)
+        self.assertIn("companion watch provisioning profile not found", script)
+        self.assertIn("companion watch widget provisioning profile not found", script)
+        self.assertIn(
+            "assert_profile_bundle_id \"$watch_profile\" \"companion watch\" \"com.shinycomputers.contextpanel.watch\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_bundle_id \"$watch_widget_profile\" \"companion watch widget\" \"com.shinycomputers.contextpanel.watch.widget\"",
+            script,
+        )
+        self.assertIn("assert_profile_platform_any \"$watch_profile\" \"companion watch\" iOS watchOS", script)
+        self.assertIn(
+            "assert_profile_platform_any \"$watch_widget_profile\" \"companion watch widget\" iOS watchOS",
+            script,
+        )
+        self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
+        self.assertIn(
+            "assert_profile_icloud_service \"$watch_widget_profile\" \"companion watch widget\" \"CloudKit\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_icloud_environment \"$watch_profile\" \"companion watch\" \"Production\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_icloud_environment \"$watch_widget_profile\" \"companion watch widget\" \"Production\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_app_group \"$watch_profile\" \"companion watch\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_app_group \"$watch_widget_profile\" \"companion watch widget\"",
+            script,
+        )
+        self.assertIn('if [[ "$profile" == "$destination" ]]; then', script)
+        self.assertIn("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER=\"$watch_profile_uuid\"", script)
+        self.assertIn(
+            "CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER=\"$watch_widget_profile_uuid\"",
+            script,
+        )
+        self.assertIn("<key>com.shinycomputers.contextpanel.watch</key>", script)
+        self.assertIn("<key>com.shinycomputers.contextpanel.watch.widget</key>", script)
+        self.assertIn(
+            "assert_profile_icloud_service \"$widget_profile\" \"companion widget\" \"CloudKit\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_icloud_environment \"$widget_profile\" \"companion widget\" \"Production\"",
+            script,
+        )
+        self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
+        self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)
+
+    def test_companion_upload_validates_signed_widget_and_watch_entitlements_before_export(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_companion_widget_archive_ready()", script)
+        self.assertIn("assert_ios_watch_archive_ready()", script)
+        self.assertIn("assert_bundle_version()", script)
+        self.assertIn("assert_bundle_info_value()", script)
+        self.assertIn("assert_code_signature_valid()", script)
+        self.assertIn("/usr/bin/codesign -d --entitlements - --xml", script)
+        self.assertIn("assert_signed_entitlement_array_value_absent()", script)
+        self.assertIn("assert_signed_entitlement_value()", script)
+        self.assertNotIn("assert_signed_app_group_exact", script)
+        self.assertNotIn("group.com.shinycomputers.contextpanel.watch", script)
+        self.assertIn(
+            "assert_signed_entitlement_array_value \"$watch_app_entitlements\" \"companion Watch app\" \\",
+            script,
+        )
+        self.assertIn(
+            "assert_signed_entitlement_array_value \"$watch_widget_entitlements\" \"companion Watch widget\" \\",
+            script,
+        )
+        self.assertGreaterEqual(
+            script.count("'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'"),
+            3,
+        )
+        self.assertIn("'com.apple.developer.icloud-services' 'CloudKit'", script)
+        self.assertIn(
+            "'com.apple.developer.icloud-services' 'CloudDocuments'",
+            script,
+        )
+        self.assertIn(
+            "'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'",
+            script,
+        )
+        self.assertEqual(
+            script.count("'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'"),
+            4,
+        )
+        self.assertEqual(
+            script.count("'com.apple.developer.icloud-container-environment' 'Production'"),
+            4,
+        )
+        assert_lines_in_order(
+            script,
+            'run_xcodebuild "${archive_args[@]}" archive',
+            "assert_companion_widget_archive_ready",
+            "assert_ios_watch_archive_ready",
+            "-exportArchive \\",
+        )
+
+    def test_companion_upload_requires_tvos_layered_app_icon(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+        project = self.read("project.yml")
+        entitlements = self.read("Config/ContextPanelTV.entitlements")
+
+        self.assertIn("assert_tvos_archive_ready()", script)
+        self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
+        self.assertIn("tvOS archive is missing the embedded Top Shelf extension", script)
+        self.assertIn("tvOS Top Shelf extension is missing the required arm64 device capability", script)
+        self.assertIn("UIRequiredDeviceCapabilities", script)
+        self.assertIn("tvOS archive is missing compiled brand assets", script)
+        self.assertIn("tvOS archive is missing the primary layered app icon", script)
+        self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
+        self.assertIn('extract_signed_entitlements "$app_path" "tvOS app"', script)
+        self.assertIn(
+            "'com.apple.developer.icloud-container-environment' 'Production'",
+            script,
+        )
+        self.assertIn("'aps-environment' 'production'", script)
+        self.assertIn(
+            "'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'",
+            script,
+        )
+        self.assertIn("<key>com.apple.developer.icloud-container-environment</key>", entitlements)
+        self.assertIn("<string>$(CLOUDKIT_ENVIRONMENT)</string>", entitlements)
+        self.assertIn("CLOUDKIT_ENVIRONMENT: Development", project)
+        self.assertIn("CLOUDKIT_ENVIRONMENT: Production", project)
+        self.assertIn('if [[ "$platform" == "tvos" ]]; then\n\tassert_tvos_archive_ready', script)
+
+    def test_live_review_submission_defaults_to_enforced_release_evidence(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        defaults = []
+        for trigger in ("workflow_dispatch", "workflow_call"):
+            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
+            mode = indented_block(inputs, "release_evidence_mode", 6)
+            defaults.append(re.search(r"^        default: (\S+)$", mode, re.MULTILINE).group(1))
+        metadata = json.loads(self.read(".github/github.json"))
+
+        self.assertEqual(defaults, ["enforce", "enforce"])
+        self.assertIn('"appStoreReviewReleaseEvidenceDefault": "enforce"', json.dumps(metadata))
+
+    def test_release_workflows_have_no_push_trigger_or_direct_release_mutation(self):
+        for workflow_path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
+            if workflow_path.name in {"ci.yml", "codeql.yml"}:
+                continue
+            with self.subTest(workflow=workflow_path.name):
+                workflow = workflow_path.read_text()
+                triggers = indented_block(workflow, '"on"', 0)
+                self.assertNotIn("push:", triggers)
+                self.assertNotIn("pull_request", triggers)
+        release = self.read(".github/workflows/release.yml")
+        for forbidden in ("--clobber", "gh release upload", "gh release edit"):
+            self.assertNotIn(forbidden, release)
 
     def test_runtime_baseline_guard_allows_absent_or_development_runtime(self):
         absent = self.run_runtime_identity_fixture(None)
