@@ -73,16 +73,21 @@ class TestLaneTests(unittest.TestCase):
                 discovered=FIXTURE_FILES | {"Tests/new_test.py"},
             )
 
-    def test_safe_python_lanes_select_every_python_test_once(self):
-        fast = set(module.files_for_lane(self.manifest(), "fast-local-python", require_safe=True))
-        routine = set(module.files_for_lane(self.manifest(), "routine-ci-python", require_safe=True))
-        expected = {
-            path.relative_to(REPO_ROOT).as_posix()
-            for path in (REPO_ROOT / "Tests" / "ScriptsTests").glob("test_*.py")
-        }
+    def test_python_test_parked_in_the_support_lane_fails_closed(self):
+        payload = self.manifest()
+        path = payload["filesByLane"]["routine-ci-python"].pop()
+        payload["filesByLane"]["support-only"].append(path)
 
-        self.assertFalse(fast & routine)
-        self.assertEqual(fast | routine, expected)
+        with self.assertRaisesRegex(module.TestLaneError, "must run in a safe python-unittest lane"):
+            self.validate(payload)
+
+    def test_python_test_in_the_swift_lane_fails_closed(self):
+        payload = self.manifest()
+        path = payload["filesByLane"]["fast-local-python"].pop()
+        payload["filesByLane"]["routine-ci-swift"].append(path)
+
+        with self.assertRaisesRegex(module.TestLaneError, "must run in a safe python-unittest lane"):
+            self.validate(payload)
 
     def test_support_files_are_not_selected_for_execution(self):
         payload = self.manifest()
