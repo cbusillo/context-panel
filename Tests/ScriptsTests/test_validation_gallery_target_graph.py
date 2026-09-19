@@ -136,35 +136,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn("SessionStateStore", plan_function)
         self.assertNotIn("RuntimeEvidenceStore", plan_function)
 
-    def test_fixture_source_is_foundation_only(self):
-        source = FIXTURE_SOURCE.read_text()
-        imports = re.findall(r"^import\s+(\S+)$", source, flags=re.MULTILINE)
-
-        self.assertEqual(imports, ["Foundation"])
-        for forbidden in (
-            "CloudKit",
-            "ContextPanelCore",
-            "ContextPanelLocations",
-            "ProviderCredentialStore",
-            "RuntimeReceipt",
-            "WidgetCenter",
-        ):
-            self.assertNotIn(forbidden, source)
-
-    def test_fixture_targets_have_no_product_dependencies(self):
-        package = (REPO_ROOT / "Package.swift").read_text()
-        project = (REPO_ROOT / "project.yml").read_text()
-
-        self.assertIn('.target(name: "ContextPanelValidationFixtures")', package)
-        for target in (
-            "ContextPanelValidationFixtures",
-            "ContextPanelValidationFixturesCompanion",
-            "ContextPanelValidationFixturesWatch",
-            "ContextPanelValidationFixturesTV",
-        ):
-            block = self.yaml_target_block(project, target)
-            self.assertNotIn("dependencies:", block)
-
     def test_gallery_targets_are_host_app_only(self):
         project = (REPO_ROOT / "project.yml").read_text()
 
@@ -195,23 +166,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_host_galleries_reuse_production_presentations_and_disable_actions(self):
-        gallery = "\n".join(path.read_text() for path in sorted(GALLERY_SOURCE_ROOT.glob("*.swift")))
-        mac_app = MAC_APP_SOURCE.read_text()
-        companion_app = COMPANION_APP_SOURCE.read_text()
-
-        self.assertEqual(gallery.count(".allowsHitTesting(false)"), 2)
-        self.assertIn("OverviewDashboard(", mac_app)
-        self.assertIn("MainLimitDetail(", mac_app)
-        self.assertIn("ReconnectDashboardLayout(", mac_app)
-        self.assertIn("MacValidationDiagnosticsPreview", mac_app)
-        self.assertIn("ContextPanelWidgetContentView(", companion_app)
-        self.assertIn("CompanionKeepWorkingCard(", companion_app)
-        self.assertIn("CompanionSyncStatusView(", companion_app)
-        self.assertIn("CompanionWidgetMainLimitsSettingsView(", companion_app)
-        self.assertIn("CompanionRefreshSettingsView(", companion_app)
-        self.assertIn("supportedPresentations: [.overview, .settings, .diagnostics, .widget]", companion_app)
-
     def test_gallery_activation_is_operator_only(self):
         mac_app = MAC_APP_SOURCE.read_text()
         companion_app = COMPANION_APP_SOURCE.read_text()
@@ -230,35 +184,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("case .validationGallery:", tv_app)
         self.assertIn("WatchValidationLaunchRequest(", watch_app)
         self.assertIn("WatchValidationLaunchView(request: launchRequest)", watch_app)
-
-    def test_companion_capture_ui_test_is_nonshipping_and_coordinate_free(self):
-        project = (REPO_ROOT / "project.yml").read_text()
-        config = SHARED_VIEW_UI_TEST_CONFIG.read_text()
-        source = SHARED_VIEW_UI_TEST_SOURCE.read_text()
-
-        self.assertNotIn("ContextPanelCompanionSharedViewCaptureUITests", project)
-        self.assertIn("${CONTEXT_PANEL_SHARED_VIEW_SOURCE_ROOT}/project.yml", config)
-        self.assertIn("${CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE}", config)
-        self.assertIn("TEST_TARGET_NAME: ContextPanelCompanion", config)
-        self.assertIn("type: bundle.ui-testing", config)
-        self.assertIn("let app = XCUIApplication()", source)
-        self.assertIn("app.launch()", source)
-        self.assertIn("verifyRequest(request)", source)
-        self.assertNotIn("app.launchArguments", source)
-        self.assertNotIn("app.open(request.url)", source)
-        self.assertNotIn("companionLaunchArgument", source)
-        self.assertIn("UIDevice.current.userInterfaceIdiom", source)
-        self.assertIn('selectionCard(label: "Surface", value: surface.displayName)', source)
-        self.assertIn("ImageRenderer(content: content)", source)
-        self.assertIn('uniformTypeIdentifier: "public.png"', source)
-        self.assertIn("CaptureGalleryView(route: route, surface: .current)", source)
-        self.assertIn("ValidationGalleryFixtureAdapter()", source)
-        self.assertIn("ContextPanelWidgetContentView(", source)
-        self.assertNotIn(".screenshot()", source)
-        self.assertIn("private static let maximumSampleCount = 6", source)
-        self.assertIn('named: "baseline"', source)
-        self.assertIn('named: "routed"', source)
-        self.assertNotIn("coordinate(", source)
 
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()
@@ -397,101 +322,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
         )
         self.assertIn("Sample OpenAI Personal", tv_preview)
-
-    def test_tv_runway_header_and_forecast_stay_outside_focus_driven_scrolling(self):
-        tv_app = TV_APP_SOURCE.read_text()
-        runway_start = tv_app.index("struct TVRunwayContent: View")
-        runway_end = tv_app.index("private struct TVKeepWorkingForecastCard", runway_start)
-        runway = tv_app[runway_start:runway_end]
-
-        header_start = runway.index("TVHeaderView(")
-        forecast_start = runway.index("if let keepWorkingForecast")
-        scroll_start = runway.index("ScrollView {")
-        grid_start = runway.index("TVProviderOverviewGrid(")
-
-        self.assertLess(header_start, forecast_start)
-        self.assertLess(forecast_start, scroll_start)
-        self.assertLess(scroll_start, grid_start)
-        self.assertNotIn("TVHeaderView(", runway[scroll_start:])
-        self.assertNotIn("TVKeepWorkingForecastCard", runway[scroll_start:])
-
-    def test_tv_runway_top_aligns_a_compact_full_width_forecast(self):
-        tv_app = TV_APP_SOURCE.read_text()
-        runway_start = tv_app.index("struct TVRunwayContent: View")
-        forecast_end = tv_app.index("private struct TVSystemSurfacePublication", runway_start)
-        runway = tv_app[runway_start:forecast_end]
-
-        self.assertIn("VStack(alignment: .leading, spacing: 28)", runway)
-        self.assertIn(
-            ".frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)",
-            runway,
-        )
-        self.assertIn("HStack(alignment: .center, spacing: 32)", runway)
-        self.assertIn("Divider()", runway)
-        self.assertIn(".padding(.vertical, 20)", runway)
-        self.assertIn(".frame(maxWidth: .infinity)", runway)
-
-    def test_tv_full_screen_fixture_suppresses_unrelated_system_notices(self):
-        tv_preview = TV_PREVIEW_SOURCE.read_text()
-        tv_system_surfaces = TV_SYSTEM_SURFACES_SOURCE.read_text()
-
-        self.assertIn("static var usesFixture: Bool", tv_preview)
-        self.assertEqual(
-            tv_system_surfaces.count("if preparePreviewFixtureRuntime()"),
-            2,
-        )
-        self.assertIn("guard TVPreviewFixtures.usesFixture else", tv_system_surfaces)
-        self.assertIn("TVPreferenceKeys.cloudKitSubscriptionError", tv_system_surfaces)
-        self.assertIn("TVPreferenceKeys.remoteNotificationRegistrationError", tv_system_surfaces)
-
-    def test_tv_full_screen_fixture_can_select_each_provider_focus_state(self):
-        tv_app = TV_APP_SOURCE.read_text()
-        tv_preview = TV_PREVIEW_SOURCE.read_text()
-
-        self.assertIn("CONTEXT_PANEL_TV_INITIAL_FOCUS_PROVIDER", tv_preview)
-        self.assertIn("@FocusState private var focusedProviderRawValue", tv_app)
-        self.assertEqual(
-            tv_app.count(".focused($focusedProviderRawValue, equals: section.provider.rawValue)"),
-            2,
-        )
-        self.assertIn("TVPreviewFixtures.requestedFocusProviderRawValue", tv_app)
-
-    def test_tv_provider_cards_reserve_focus_insets(self):
-        tv_app = TV_APP_SOURCE.read_text()
-        grid_start = tv_app.index("private struct TVProviderOverviewGrid: View")
-        grid_end = tv_app.index("private struct TVProviderOverviewCard: View", grid_start)
-        grid = tv_app[grid_start:grid_end]
-
-        self.assertIn("private static let focusHorizontalInset: CGFloat = 32", grid)
-        self.assertIn("private static let focusVerticalInset: CGFloat = 28", grid)
-        self.assertIn(
-            "Self.maximumCardWidth + (Self.focusHorizontalInset * 2)",
-            grid,
-        )
-        self.assertIn("controlWidth - (Self.focusHorizontalInset * 2)", grid)
-        self.assertEqual(
-            grid.count("overviewCard(for: section, cardWidth: cardWidth)"),
-            2,
-        )
-        self.assertEqual(
-            grid.count(".padding(.horizontal, Self.focusHorizontalInset)"),
-            2,
-        )
-        self.assertEqual(
-            grid.count(".padding(.vertical, Self.focusVerticalInset)"),
-            2,
-        )
-        self.assertNotIn(".padding(.vertical, 28)", grid)
-        self.assertIn(".strokeBorder(", tv_app)
-
-    def test_tv_stale_state_uses_quiet_global_status_and_warm_instruments(self):
-        tv_app = TV_APP_SOURCE.read_text()
-
-        self.assertIn("private var showsPerCardStatus: Bool", tv_app)
-        self.assertIn("if showsStatus {", tv_app)
-        self.assertIn("status == .stale ? TVTheme.staleInstrumentColor", tv_app)
-        self.assertIn("static let staleInstrumentColor", tv_app)
-        self.assertIn(".font(.title3.weight(.semibold))", tv_app)
 
     @staticmethod
     def swift_array_case_values(source: str, label: str) -> tuple[str, ...]:

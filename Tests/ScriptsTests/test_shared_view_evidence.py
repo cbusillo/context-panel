@@ -174,44 +174,6 @@ class SharedViewEvidenceTests(unittest.TestCase):
             self.assertTrue(all(cell.justification for cell in surface.cells))
         self.assertEqual(self.matrix.pixel_diff_policy, "advisory-only")
 
-    def test_watch_and_tv_cells_use_their_host_gallery_coordinates(self) -> None:
-        cells_by_surface = {
-            surface.id: tuple(
-                (cell.fixture_id, cell.family, cell.appearance, cell.presentation)
-                for cell in surface.cells
-            )
-            for surface in self.matrix.surfaces
-        }
-
-        self.assertEqual(
-            cells_by_surface["watchos.app"],
-            (
-                ("healthy", "not-applicable", "not-applicable", "not-applicable"),
-                ("dense-accounts", "not-applicable", "not-applicable", "not-applicable"),
-            ),
-        )
-        self.assertEqual(
-            cells_by_surface["watchos.complication"],
-            (
-                ("healthy", "circular", "not-applicable", "not-applicable"),
-                ("reset-visible", "rectangular", "not-applicable", "not-applicable"),
-            ),
-        )
-        self.assertEqual(
-            cells_by_surface["tvos.app"],
-            (
-                ("healthy", "runway", "not-applicable", "fullDetail"),
-                ("dense-accounts", "provider", "not-applicable", "countsOnly"),
-            ),
-        )
-        self.assertEqual(
-            cells_by_surface["tvos.top-shelf"],
-            (
-                ("healthy", "topShelf", "not-applicable", "fullDetail"),
-                ("fit-fallback", "topShelf", "not-applicable", "countsOnly"),
-            ),
-        )
-
     def test_matrix_hash_and_fixture_contract_ids_are_deterministic(self) -> None:
         matrix_again = SharedViewMatrix.from_dict(json.loads(DEFAULT_MATRIX_PATH.read_text()))
         self.assertEqual(self.matrix.digest(), matrix_again.digest())

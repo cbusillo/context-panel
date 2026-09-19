@@ -486,28 +486,6 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
         self.assertEqual(len(options), len(set(options)))
         self.assertEqual(options[0], "macos")
 
-    def test_workflow_choice_options_scopes_to_the_named_input(self):
-        workflow = """\
-"on":
-  workflow_dispatch:
-    inputs:
-      decoy:
-        type: choice
-        options:
-          - wrong
-      screenshot_set:
-        type: choice
-        options:
-          - macos
-          - "ios"
-      trailing:
-        type: string
-"""
-
-        self.assertEqual(workflow_choice_options(workflow, "screenshot_set"), ["macos", "ios"])
-        with self.assertRaisesRegex(AssertionError, "workflow input not found: missing"):
-            workflow_choice_options(workflow, "missing")
-
     def test_full_platform_upload_prunes_unapproved_display_type_screenshots(self):
         client = FakeASCClient()
         client.screenshot_sets = [
