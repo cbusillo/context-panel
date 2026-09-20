@@ -5,6 +5,11 @@ scheme="ContextPanelCompanion"
 configuration="Debug"
 archive=0
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
+stall_seconds="${CONTEXT_PANEL_XCODEBUILD_STALL_SECONDS:-300}"
+if [[ ! "$stall_seconds" =~ ^[1-9][0-9]*$ ]]; then
+	echo "CONTEXT_PANEL_XCODEBUILD_STALL_SECONDS must be a positive integer" >&2
+	exit 2
+fi
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 derived_data_root=""
 platforms=()
@@ -333,8 +338,8 @@ run_xcodebuild() {
 		if [[ "$current_log_size" != "$last_log_size" ]]; then
 			last_log_size="$current_log_size"
 			last_output_at=$SECONDS
-		elif ((SECONDS - last_output_at >= 5 * 60)); then
-			echo "xcodebuild produced no output for 5 minutes" >&2
+		elif ((SECONDS - last_output_at >= stall_seconds)); then
+			echo "xcodebuild produced no output for $stall_seconds seconds" >&2
 			terminate_xcodebuild_job "$job_pid" "$process_group" || true
 			clear_active_xcodebuild_job
 			/bin/rm -f "$log_file"
