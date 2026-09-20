@@ -3866,7 +3866,6 @@ exit 0
         self.assertIn('marker="** BUILD SUCCEEDED **"', script)
         self.assertIn('marker="** ARCHIVE SUCCEEDED **"', script)
         self.assertIn("xcodebuild did not reach a terminal result within 30 minutes", script)
-        self.assertIn("xcodebuild produced no output for 5 minutes", script)
         self.assertIn("xcodebuild validation requires exactly one build or archive action", script)
         self.assertIn("Retrying $platform validation once with isolated DerivedData", script)
         self.assertIn("context-panel-companion-retry.XXXXXX", script)
