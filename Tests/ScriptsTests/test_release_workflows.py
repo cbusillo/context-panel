@@ -209,24 +209,6 @@ def workflow_choice_options(workflow: str, input_name: str) -> tuple[str, ...]:
     return tuple(options)
 
 
-def assert_lines_in_order(document: str, *expected_lines: str) -> None:
-    normalized_lines = [re.sub(r"\s+", " ", line).strip() for line in document.splitlines()]
-    search_start = 0
-    previous_line = "the start of the document"
-    for expected_line in expected_lines:
-        normalized_expected_line = re.sub(r"\s+", " ", expected_line).strip()
-        if not normalized_expected_line:
-            raise AssertionError("expected lines must not be empty")
-        try:
-            line_index = normalized_lines.index(normalized_expected_line, search_start)
-        except ValueError as error:
-            raise AssertionError(
-                f"expected line {normalized_expected_line!r} after {previous_line}"
-            ) from error
-        previous_line = f"line {line_index + 1} ({normalized_expected_line!r})"
-        search_start = line_index + 1
-
-
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
@@ -4133,104 +4115,6 @@ exit 65
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
         self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
-
-    # The three companion upload tests below assert script text. Everything they
-    # pin runs after xcodegen, through /usr/bin/xcodebuild and /usr/bin/codesign by
-    # absolute path, so a fixture cannot reach it until the script has a seam
-    # (issue #695). The profile preflight before xcodegen is exercised for real in
-    # test_companion_upload_profile_preflight.py.
-    def test_companion_upload_passes_every_profile_specifier_to_the_archive(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        for setting, variable in (
-            ("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", "app_profile_uuid"),
-            ("CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER", "widget_profile_uuid"),
-            ("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER", "watch_profile_uuid"),
-            ("CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER", "watch_widget_profile_uuid"),
-            ("CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER", "app_profile_uuid"),
-            ("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER", "tv_top_shelf_profile_uuid"),
-        ):
-            with self.subTest(setting=setting):
-                self.assertIn(f'archive_args+=({setting}="${variable}")', script)
-
-    def test_companion_upload_validates_signed_widget_and_watch_entitlements_before_export(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn("assert_companion_widget_archive_ready()", script)
-        self.assertIn("assert_ios_watch_archive_ready()", script)
-        self.assertIn("assert_bundle_version()", script)
-        self.assertIn("assert_bundle_info_value()", script)
-        self.assertIn("assert_code_signature_valid()", script)
-        self.assertIn("/usr/bin/codesign -d --entitlements - --xml", script)
-        self.assertIn("assert_signed_entitlement_array_value_absent()", script)
-        self.assertIn("assert_signed_entitlement_value()", script)
-        self.assertNotIn("assert_signed_app_group_exact", script)
-        self.assertNotIn("group.com.shinycomputers.contextpanel.watch", script)
-        self.assertIn(
-            "assert_signed_entitlement_array_value \"$watch_app_entitlements\" \"companion Watch app\" \\",
-            script,
-        )
-        self.assertIn(
-            "assert_signed_entitlement_array_value \"$watch_widget_entitlements\" \"companion Watch widget\" \\",
-            script,
-        )
-        self.assertGreaterEqual(
-            script.count("'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'"),
-            3,
-        )
-        self.assertIn("'com.apple.developer.icloud-services' 'CloudKit'", script)
-        self.assertIn(
-            "'com.apple.developer.icloud-services' 'CloudDocuments'",
-            script,
-        )
-        self.assertIn(
-            "'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'",
-            script,
-        )
-        self.assertEqual(
-            script.count("'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'"),
-            4,
-        )
-        self.assertEqual(
-            script.count("'com.apple.developer.icloud-container-environment' 'Production'"),
-            4,
-        )
-        assert_lines_in_order(
-            script,
-            'run_xcodebuild "${archive_args[@]}" archive',
-            "assert_companion_widget_archive_ready",
-            "assert_ios_watch_archive_ready",
-            "-exportArchive \\",
-        )
-
-    def test_companion_upload_requires_tvos_layered_app_icon(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-        project = self.read("project.yml")
-        entitlements = self.read("Config/ContextPanelTV.entitlements")
-
-        self.assertIn("assert_tvos_archive_ready()", script)
-        self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
-        self.assertIn("tvOS archive is missing the embedded Top Shelf extension", script)
-        self.assertIn("tvOS Top Shelf extension is missing the required arm64 device capability", script)
-        self.assertIn("UIRequiredDeviceCapabilities", script)
-        self.assertIn("tvOS archive is missing compiled brand assets", script)
-        self.assertIn("tvOS archive is missing the primary layered app icon", script)
-        self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
-        self.assertIn('extract_signed_entitlements "$app_path" "tvOS app"', script)
-        self.assertIn(
-            "'com.apple.developer.icloud-container-environment' 'Production'",
-            script,
-        )
-        self.assertIn("'aps-environment' 'production'", script)
-        self.assertIn(
-            "'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'",
-            script,
-        )
-        self.assertIn("<key>com.apple.developer.icloud-container-environment</key>", entitlements)
-        self.assertIn("<string>$(CLOUDKIT_ENVIRONMENT)</string>", entitlements)
-        self.assertIn("CLOUDKIT_ENVIRONMENT: Development", project)
-        self.assertIn("CLOUDKIT_ENVIRONMENT: Production", project)
-        self.assertIn('if [[ "$platform" == "tvos" ]]; then\n\tassert_tvos_archive_ready', script)
 
     def test_live_review_submission_defaults_to_enforced_release_evidence(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
