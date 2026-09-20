@@ -255,6 +255,17 @@ critical encodings or transparency chunks are reported as `captured-image-invali
 Cleanup removes only a run whose private ownership token still matches, and a
 failed emergency simulator cleanup is surfaced without exposing command output.
 
+macOS has no simulator, and building the Mac app or widget on a host registers
+competing LaunchServices and PlugInKit bundles. `ContextPanelSharedViewRenderer`
+(`swift run ContextPanelSharedViewRenderer --fixture <id> --family <family>
+--appearance <light|dark> --presentation widget --output <png>`) therefore renders
+a macOS gallery cell offscreen from the shared views and synthetic fixtures. It
+builds no app or extension bundle, registers nothing, needs no screen-recording
+permission, refuses to overwrite its output, and refuses application
+presentations, because those are drawn by views inside the Mac app target and
+the gallery would otherwise fall back to the widget. It lives under `Tools/`,
+outside the governed shipping inputs. It is not yet wired into the capture
+executor, so in receipts
 Mac remains an explicit `unsupported-host-mechanism` result; missing
 profiles are blocked and command, image, stability, identity, cleanup, or
 publication faults are unknown. A zero exit means every requested capture was
