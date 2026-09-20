@@ -102,6 +102,7 @@
       "Tests/ContextPanelCoreTests/RuntimeReceiptRemoteSyncTests.swift",
       "Tests/ContextPanelCoreTests/RuntimeReceiptTests.swift",
       "Tests/ContextPanelCoreTests/SecureFileBookmarkTests.swift",
+      "Tests/ContextPanelCoreTests/SharedViewRendererToolTests.swift",
       "Tests/ContextPanelCoreTests/SnapshotFreshnessTests.swift",
       "Tests/ContextPanelCoreTests/SnapshotStoreTests.swift",
       "Tests/ContextPanelCoreTests/TVRunwayPresentationTests.swift",

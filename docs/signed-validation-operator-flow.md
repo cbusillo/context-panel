@@ -353,9 +353,10 @@ scripts/context-panel-validation.py clear-deferral \
 
 Hosted shared-view collection is not a coordinator session or runtime-receipt
 substitute. The `Shared-View Capture Evidence` workflow may prepare the complete
-mixed visual requirements file, but it records only simulator shared-view output.
+mixed visual requirements file, but it records only simulator and host-renderer
+shared-view output.
 It retains every fresh placement requirement for the coordinator and fails
-closed if one cannot be represented. macOS and tvOS executor records remain
+closed if one cannot be represented. `macos.app` executor records remain
 `unsupported-host-mechanism`; they are never converted into shared-view,
 actual-runtime, or OS-composited-placement proof. The public hosted receipt and
 short-retention synthetic PNGs contain no coordinator state, runtime receipt,

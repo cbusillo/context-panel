@@ -203,6 +203,36 @@ identity, cleanup, artifact, and receipt checks. Termination between
 non-visionOS cells is best-effort so one failed route cannot poison the next
 cell; visionOS UI-test or attachment failures remain unknown evidence.
 
+The tvOS profile works the same way on a throwaway Apple TV simulator and needs
+no physical Apple TV. It routes `tvos.app` and `tvos.top-shelf` cells with
+`simctl launch --terminate-running-process <tv-simulator>
+com.shinycomputers.contextpanel --context-panel-validation-gallery
+--context-panel-validation-surface <surface> --context-panel-validation-fixture
+<fixture> --context-panel-validation-family <runway|provider|topShelf>
+--context-panel-validation-presentation <fullDetail|projectOnly|countsOnly>`.
+The app accepts only that bounded vocabulary; anything else exits with
+`EX_USAGE`, exactly like the Watch app, and there is still no UI entry point,
+feature flag, or persistent unlock. A validation launch shows one sample under
+the "SAMPLE DATA · READ ONLY" banner and never opens CloudKit, registers for
+notifications, or relays receipts. Three tvOS-specific rules apply:
+
+- tvOS relaunches an app in the background when it is started immediately
+  after termination, so the executor settles after each terminate.
+- The executor trusts the launch route only when the app's code contains
+  `--context-panel-validation-presentation`. Product source older than the
+  route is recorded as `blocked/validation-launch-unsupported-by-app` rather
+  than captured showing its normal UI. Because tvOS is now a supported capture
+  surface, that blocked record fails receipt qualification by design: a
+  comparison whose current source predates the tvOS launch route cannot qualify
+  tvOS shared-view requirements on the hosted lane.
+- Launching with only `--context-panel-validation-gallery` opens the gallery
+  index with live services off. The `contextpaneltv://validation-gallery` URL
+  route opens the same gallery inside the normally running app. Both show
+  synthetic fixtures only.
+- The Top Shelf cells render the production Top Shelf renderer in-app. They are
+  shared-view evidence only; real Top Shelf placement remains
+  `os-composited-placement` evidence from a physical Apple TV.
+
 The Watch profile does not create or repair a paired iPhone/Watch topology. A
 Watch app that cannot install independently on the selected Watch simulator, a
 container identity mismatch, malformed selector, or catalog topology mismatch
@@ -225,7 +255,67 @@ critical encodings or transparency chunks are reported as `captured-image-invali
 Cleanup removes only a run whose private ownership token still matches, and a
 failed emergency simulator cleanup is surfaced without exposing command output.
 
-Mac and Apple TV remain explicit `unsupported-host-mechanism` results; missing
+macOS has no simulator, and building the Mac app or widget on a host registers
+competing LaunchServices and PlugInKit bundles. `ContextPanelSharedViewRenderer`
+(`swift run ContextPanelSharedViewRenderer --fixture <id> --family <family>
+--appearance <light|dark> --presentation widget --output <png>`) therefore renders
+a macOS gallery cell offscreen from the shared views and synthetic fixtures. It
+builds no app or extension bundle, registers nothing, needs no screen-recording
+permission, refuses to overwrite its output, and refuses application
+presentations, because those are drawn by views inside the Mac app target and
+the gallery would otherwise fall back to the widget. It lives under `Tools/`,
+outside the governed shipping inputs. It renders one pixel per point at a fixed
+size and pins its own time zone and locale, so the same source gives the same
+PNG on any host with the same OS fonts; byte stability across macOS versions is
+not claimed.
+
+The executor uses it for `macos.widget` only, through a `macos` capture-config
+entry that names a source root (`{"sourceRoot": "<absolute path>"}`). For each
+run the executor:
+
+1. regenerates the surface manifest by running that source root's own
+   `scripts/context-panel-surface-manifest.py generate`, the generator that
+   produced the plan's manifest, with the source fields of the current manifest,
+   and requires its ID to equal the plan's `currentManifestID`; otherwise every
+   cell is `blocked/host-renderer-source-mismatch` (or `-source-invalid`) and
+   nothing is built;
+2. builds the tool itself with `swift build --configuration release` into a
+   scratch directory inside the capture run, so a prebuilt binary cannot be
+   substituted, and rejects a binary that is a symlink, is not a regular file,
+   or resolves outside that directory;
+3. renders each cell, validates the PNG like any other capture, refuses
+   duplicate images, removes the build directory, and aborts the whole run
+   unpublished if that directory cannot be removed.
+
+Capture paths may not overlap the source root. The hosted workflow passes a
+second, untouched worktree (`.build/current-source-pristine`), because xcodegen
+rewrites governed `Info.plist` files inside `.build/current-source` before
+capture and would otherwise change the regenerated manifest.
+
+The receipt records this profile as `hostMechanism:
+swiftpm-shared-view-renderer` with `rendererExecutableSHA256`,
+`rendererSourceSHA256`, and `rendererSourceManifestID`; captures use
+`appearanceMechanism: renderer-argument`, and qualification requires exactly
+one such profile whose manifest ID equals the receipt's `currentManifestID`.
+
+What this does and does not prove: the surface manifest governs the shared
+views and fixtures the image is drawn from, so the manifest check binds the
+image to that source. It does not fingerprint the renderer itself:
+`Package.swift` is an intentionally ignored input and
+`Tools/ContextPanelSharedViewRenderer` is outside the governed patterns. Their
+digest is therefore recorded separately as `rendererSourceSHA256`: SHA-256 over
+one `<posix relative path>\0<file sha256 hex>\0` record per file, ordered by
+that path, covering `Package.swift` and every file under the tool's directory.
+An auditor can recompute it from a clean checkout of the source commit; a
+working tree with untracked files there will not match. The binary hash
+identifies what ran but is not reproducible. Unlike the simulator profiles there is no app bundle with an
+embedded manifest; the link between binary and source is that the executor built
+it from the verified root. Product source older than the tool is
+`blocked/host-renderer-unavailable` and fails qualification by design.
+
+`macos.app` remains an explicit `unsupported-host-mechanism` result: its
+presentations are drawn by views inside the Mac app target, and a Mac app is not
+built on the host for capture. Missing
 profiles are blocked and command, image, stability, identity, cleanup, or
 publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an
@@ -272,10 +362,11 @@ Before capture, the workflow derives a generic placement base from every fresh
 placement surface and merges the canonical shared-view plan into it. This is
 deliberately fail-closed: an uncovered placement surface blocks the lane rather
 than being omitted. It builds unsigned fresh Release simulator bundles only for
-iOS/iPadOS, visionOS, and standalone watchOS, embeds the current manifest, then
+iOS/iPadOS, visionOS, standalone watchOS, and tvOS, embeds the current manifest, then
 invokes `capture-shared-view-evidence` unchanged. The qualification boundary is
-strict: all supported requirements must be captured, and any uncaptured
-requirements must be macOS or tvOS records with exactly
+strict: all supported requirements must be captured, `macos.widget`
+requirements must be captured by `swiftpm-shared-view-renderer`, and any
+uncaptured requirements must be `macos.app` records with exactly
 `unsupported-host-mechanism`.
 
 Only a qualified run uploads public evidence. The public artifact contains the

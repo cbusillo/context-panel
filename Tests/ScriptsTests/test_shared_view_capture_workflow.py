@@ -429,6 +429,15 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                         {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm"},
                     ],
                 },
+                {
+                    "identifier": "com.apple.CoreSimulator.SimRuntime.tvOS-26-0",
+                    "platform": "tvOS",
+                    "version": "26.0",
+                    "isAvailable": True,
+                    "supportedDeviceTypes": [
+                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K"},
+                    ],
+                },
             ],
             "devicetypes": [
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17", "productFamily": "iPhone"},
@@ -436,6 +445,8 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5", "productFamily": "iPad"},
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro", "productFamily": "Apple Vision"},
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm", "productFamily": "Apple Watch"},
+                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-1080p", "productFamily": "Apple TV"},
+                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K", "productFamily": "Apple TV"},
             ],
         }
         config = workflow.capture_config(
@@ -445,11 +456,21 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 "ipados": "/tmp/i.app",
                 "visionos": "/tmp/v.app",
                 "watchos": "/tmp/w.app",
+                "tvos": "/tmp/t.app",
             },
             "/tmp/ios.xctestrun",
             "/tmp/visionos.xctestrun",
+            macos_source_root="/tmp/current-source",
         )
-        self.assertEqual(set(config["profiles"]), {"ios", "ipados", "visionos", "watchos"})
+        self.assertEqual(
+            set(config["profiles"]), {*workflow.SUPPORTED_CAPTURE_SURFACES, "macos"}
+        )
+        self.assertEqual(config["profiles"]["macos"], {"sourceRoot": "/tmp/current-source"})
+        self.assertEqual(
+            config["profiles"]["tvos"]["deviceTypeIdentifier"],
+            "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K",
+        )
+        self.assertNotIn("uiTestRun", config["profiles"]["tvos"])
         self.assertEqual(
             config["profiles"]["ios"]["runtimeIdentifier"],
             "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
@@ -488,17 +509,30 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
     @staticmethod
     def capture_receipt_fixture() -> tuple[dict[str, Any], dict[str, Any]]:
         requirements = {
+            "currentManifestID": "a" * 64,
             "requirements": [
                 {"id": "shared-view.ios-app.baseline", "surface": "ios.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.watchos-app.baseline", "surface": "watchos.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.macos-app.baseline", "surface": "macos.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.tvos-app.baseline", "surface": "tvos.app", "evidenceClass": "shared-view"},
+                {"id": "shared-view.macos-widget.baseline", "surface": "macos.widget", "evidenceClass": "shared-view"},
             ]
         }
         receipt: dict[str, Any] = {
             "schemaVersion": 1,
             "kind": "context-panel-shared-view-capture-receipt",
             "pixelDiffPolicy": "advisory-only",
+            "currentManifestID": "a" * 64,
+            "profiles": [
+                {"profile": "ios", "appBundleSHA256": "b" * 64},
+                {
+                    "profile": workflow.HOST_RENDERER_PROFILE,
+                    "hostMechanism": workflow.HOST_RENDERER_MECHANISM,
+                    "rendererExecutableSHA256": "c" * 64,
+                    "rendererSourceSHA256": "d" * 64,
+                    "rendererSourceManifestID": "a" * 64,
+                },
+            ],
             "captures": [
                 {
                     "requirementID": "shared-view.ios-app.baseline",
@@ -523,10 +557,17 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 },
                 {
                     "requirementID": "shared-view.tvos-app.baseline",
-                    "status": "blocked",
-                    "hostMechanism": "unsupported-host-mechanism",
+                    "status": "captured",
+                    "hostMechanism": "simctl-gallery",
                     "appearanceMechanism": None,
-                    "errorCode": "unsupported-host-mechanism",
+                    "errorCode": None,
+                },
+                {
+                    "requirementID": "shared-view.macos-widget.baseline",
+                    "status": "captured",
+                    "hostMechanism": workflow.HOST_RENDERER_MECHANISM,
+                    "appearanceMechanism": workflow.HOST_RENDERER_APPEARANCE_MECHANISM,
+                    "errorCode": None,
                 },
             ],
         }
@@ -546,6 +587,72 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         receipt["evidenceClass"] = "actual-runtime"
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
+
+    def test_mac_widget_must_be_rendered_by_the_host_renderer_to_qualify(self) -> None:
+        requirements, valid = self.capture_receipt_fixture()
+        workflow.qualify_capture_receipt(valid, requirements)
+        substitutions = (
+            {"status": "blocked", "hostMechanism": "unsupported-host-mechanism",
+             "appearanceMechanism": None, "errorCode": "unsupported-host-mechanism"},
+            {"hostMechanism": "simctl-gallery", "appearanceMechanism": None},
+            {"status": "unknown", "errorCode": "host-renderer-failed"},
+        )
+        for substitution in substitutions:
+            with self.subTest(substitution=substitution):
+                _, receipt = self.capture_receipt_fixture()
+                widget = next(
+                    item for item in receipt["captures"]
+                    if item["requirementID"] == "shared-view.macos-widget.baseline"
+                )
+                widget.update(substitution)
+                with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "macOS widget"):
+                    workflow.qualify_capture_receipt(receipt, requirements)
+
+    def test_rendered_mac_widget_cells_need_a_matching_renderer_identity_in_the_receipt(self) -> None:
+        requirements, _ = self.capture_receipt_fixture()
+
+        def renderer(receipt: dict[str, Any]) -> dict[str, Any]:
+            return next(
+                item for item in receipt["profiles"]
+                if item["profile"] == workflow.HOST_RENDERER_PROFILE
+            )
+
+        mutations = {
+            "no renderer profile": lambda receipt: receipt["profiles"].remove(renderer(receipt)),
+            "two renderer profiles": lambda receipt: receipt["profiles"].append(dict(renderer(receipt))),
+            "no executable hash": lambda receipt: renderer(receipt).update(rendererExecutableSHA256=None),
+            "no source hash": lambda receipt: renderer(receipt).update(rendererSourceSHA256="not-a-hash"),
+            "another manifest": lambda receipt: renderer(receipt).update(rendererSourceManifestID="e" * 64),
+            "wrong mechanism": lambda receipt: renderer(receipt).update(hostMechanism="simctl-gallery"),
+            "profiles missing": lambda receipt: receipt.pop("profiles"),
+            "null manifest id on both sides": lambda receipt: (
+                renderer(receipt).update(rendererSourceManifestID=None),
+                receipt.pop("currentManifestID"),
+            ),
+            "receipt for another plan": lambda receipt: (
+                renderer(receipt).update(rendererSourceManifestID="e" * 64),
+                receipt.update(currentManifestID="e" * 64),
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name):
+                _, receipt = self.capture_receipt_fixture()
+                mutate(receipt)
+                with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "renderer identity"):
+                    workflow.qualify_capture_receipt(receipt, requirements)
+
+    def test_a_plan_without_mac_widget_cells_needs_no_renderer_identity(self) -> None:
+        requirements, receipt = self.capture_receipt_fixture()
+        requirements["requirements"] = [
+            item for item in requirements["requirements"] if item["surface"] != "macos.widget"
+        ]
+        receipt["captures"] = [
+            item for item in receipt["captures"]
+            if item["requirementID"] != "shared-view.macos-widget.baseline"
+        ]
+        receipt["profiles"] = []
+
+        workflow.qualify_capture_receipt(receipt, requirements)
 
     def run_capture_and_qualify(self, capture_status: int, receipt: dict[str, Any] | None) -> int:
         requirements, _ = self.capture_receipt_fixture()

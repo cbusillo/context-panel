@@ -102,6 +102,14 @@ let package = Package(
             dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync"]
         ),
         .executableTarget(
+            name: "ContextPanelSharedViewRenderer",
+            dependencies: [
+                "ContextPanelValidationFixtures",
+                "ContextPanelValidationGalleryUI",
+            ],
+            path: "Tools/ContextPanelSharedViewRenderer"
+        ),
+        .executableTarget(
             name: "OpenAILimitProbe",
             dependencies: ["ContextPanelCore"]
         ),
@@ -130,6 +138,7 @@ let package = Package(
             dependencies: [
                 "ContextPanelApp",
                 "ContextPanelCore",
+                "ContextPanelSharedViewRenderer",
                 "ContextPanelCloudKitSync",
                 "ContextPanelCompanionSupport",
                 "ContextPanelSettingsUI",

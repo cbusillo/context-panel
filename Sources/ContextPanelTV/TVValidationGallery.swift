@@ -29,8 +29,23 @@ struct TVValidationGalleryView: View {
     @State private var topShelfScale = 1
 
     private let adapter = TVValidationFixtureAdapter()
+    private let showsOnlyTheSample: Bool
+
+    /// Opens one fixed sample without controls, for operator-only host-side capture.
+    init(sample: TVValidationLaunchSample) {
+        showsOnlyTheSample = true
+        let surface: TVValidationSurface = switch sample.family {
+        case .runway: .runway
+        case .provider: .provider
+        case .topShelf: .topShelf
+        }
+        _surface = State(initialValue: surface)
+        _state = State(initialValue: sample.state)
+        _presentationModeRawValue = State(initialValue: sample.presentation.rawValue)
+    }
 
     init() {
+        showsOnlyTheSample = false
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
         if let rawSurface = environment["CONTEXT_PANEL_TV_VALIDATION_SURFACE"],
@@ -91,8 +106,10 @@ struct TVValidationGalleryView: View {
     var body: some View {
         VStack(spacing: 0) {
             sampleBanner
-            controls
-            Divider().opacity(0.25)
+            if !showsOnlyTheSample {
+                controls
+                Divider().opacity(0.25)
+            }
             preview
         }
         .background(Color.black.ignoresSafeArea())

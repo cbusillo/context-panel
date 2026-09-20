@@ -22,6 +22,10 @@ from context_panel_validation.shared_view_capture import (
     CAPTURE_CONFIG_KIND,
     CAPTURE_CONFIG_SCHEMA_VERSION,
     CAPTURE_RECEIPT_KIND,
+    HOST_RENDERER_APPEARANCE_MECHANISM,
+    HOST_RENDERER_MECHANISM,
+    HOST_RENDERER_PROFILE,
+    HOST_RENDERER_SURFACES,
     SIMULATOR_CAPTURE_PROFILES,
 )
 from context_panel_validation.shared_view_evidence import (
@@ -39,13 +43,14 @@ EXPECTED_BUILD_ID = re.compile(r"^[0-9a-f]{64}$")
 MAX_ARTIFACT_FILES = 256
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
-SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos")
-UNSUPPORTED_CAPTURE_SURFACES = ("macos", "tvos")
+SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos", "tvos")
+UNSUPPORTED_CAPTURE_SURFACES = ("macos",)
 EXPECTED_CAPTURE_MECHANISMS = {
     "ios": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "ipados": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "visionos": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "watchos": ("simctl-gallery", None),
+    "tvos": ("simctl-gallery", None),
 }
 VALID_RELEASE_WORKFLOW_EVENTS = {"workflow_dispatch", "workflow_call"}
 SEALED_RELEASE_WORKFLOWS = {
@@ -297,6 +302,7 @@ def capture_config(
     ios_ui_test_run: str,
     visionos_ui_test_run: str,
     profiles: tuple[str, ...] = SUPPORTED_CAPTURE_SURFACES,
+    macos_source_root: str | None = None,
 ) -> dict[str, Any]:
     runtimes = catalog.get("runtimes")
     device_types = catalog.get("devicetypes")
@@ -364,6 +370,10 @@ def capture_config(
             if not Path(ui_test_run).is_absolute():
                 raise WorkflowEvidenceError("capture companion UI test run is invalid")
             output[name]["uiTestRun"] = ui_test_run
+    if macos_source_root is not None:
+        if not Path(macos_source_root).is_absolute():
+            raise WorkflowEvidenceError("capture macOS source root is invalid")
+        output[HOST_RENDERER_PROFILE] = {"sourceRoot": macos_source_root}
     return {"schemaVersion": CAPTURE_CONFIG_SCHEMA_VERSION, "kind": CAPTURE_CONFIG_KIND, "profiles": output}
 
 
@@ -388,10 +398,44 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
     actual = {item.get("requirementID"): item for item in captures}
     if len(actual) != len(captures) or set(actual) != set(expected):
         raise WorkflowEvidenceError("capture receipt does not cover the complete shared-view plan")
+    if any(surface in HOST_RENDERER_SURFACES for surface in expected.values()):
+        # Rendered macOS cells count only when the receipt says which tool drew them and
+        # that its source root reproduced this plan's manifest.
+        profiles = receipt.get("profiles")
+        renderer_profiles = [
+            item
+            for item in (profiles if isinstance(profiles, list) else [])
+            if isinstance(item, dict) and item.get("profile") == HOST_RENDERER_PROFILE
+        ]
+        if (
+            len(renderer_profiles) != 1
+            or renderer_profiles[0].get("hostMechanism") != HOST_RENDERER_MECHANISM
+            or not all(
+                isinstance(renderer_profiles[0].get(key), str)
+                and re.fullmatch(r"[0-9a-f]{64}", renderer_profiles[0][key])
+                for key in (
+                    "rendererExecutableSHA256",
+                    "rendererSourceSHA256",
+                    "rendererSourceManifestID",
+                )
+            )
+            or renderer_profiles[0]["rendererSourceManifestID"] != receipt.get("currentManifestID")
+            or renderer_profiles[0]["rendererSourceManifestID"] != requirements.get("currentManifestID")
+        ):
+            raise WorkflowEvidenceError("macOS widget renderer identity is missing or does not match")
     for requirement_id, surface in expected.items():
         capture = actual[requirement_id]
         prefix = surface.split(".", 1)[0]
-        if prefix in SUPPORTED_CAPTURE_SURFACES:
+        if surface in HOST_RENDERER_SURFACES:
+            # macOS widget cells are drawn on the host by the SwiftPM renderer.
+            if (
+                capture.get("status") != "captured"
+                or capture.get("hostMechanism") != HOST_RENDERER_MECHANISM
+                or capture.get("appearanceMechanism") != HOST_RENDERER_APPEARANCE_MECHANISM
+                or capture.get("errorCode") is not None
+            ):
+                raise WorkflowEvidenceError("macOS widget shared-view requirement was not rendered")
+        elif prefix in SUPPORTED_CAPTURE_SURFACES:
             if capture.get("status") != "captured":
                 raise WorkflowEvidenceError("supported shared-view requirement was not captured")
             expected_host, expected_appearance = EXPECTED_CAPTURE_MECHANISMS[prefix]
@@ -473,6 +517,8 @@ def main(argv: list[str] | None = None) -> int:
     config.add_argument("--visionos-app", required=True)
     config.add_argument("--visionos-ui-test-run", required=True)
     config.add_argument("--watchos-app", required=True)
+    config.add_argument("--tvos-app", required=True)
+    config.add_argument("--macos-source-root")
     config.add_argument("--output", type=Path, required=True)
     qualify = commands.add_parser("qualify-receipt")
     qualify.add_argument("--receipt", type=Path, required=True)
@@ -525,9 +571,11 @@ def main(argv: list[str] | None = None) -> int:
                         "ipados": args.ios_app,
                         "visionos": args.visionos_app,
                         "watchos": args.watchos_app,
+                        "tvos": args.tvos_app,
                     },
                     args.ios_ui_test_run,
                     args.visionos_ui_test_run,
+                    macos_source_root=args.macos_source_root,
                 ),
             )
         elif args.command == "capture-and-qualify":
