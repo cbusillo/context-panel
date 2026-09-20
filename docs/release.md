@@ -666,6 +666,13 @@ and cancel-only operations remain available without a receipt. The `Ship`
 workflow requires and forwards the same input whenever any publication, upload,
 or TestFlight channel is selected.
 
+`scripts/upload-app-store-connect-companion-app.sh` has one test-only input,
+`CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR`. It replaces `xcodebuild`, `codesign`,
+and `xcrun` with fixtures so the script's archive checks can be tested without
+building. Never set it in a workflow or an operator shell. The script refuses to
+start an upload while it is set, and an export made with it prints a warning
+that the result is not a release artifact.
+
 The release entrypoints enforce this themselves, not only the workflows.
 `publish-github-release.py`, both `upload-app-store-connect-*-app.sh` scripts in
 upload mode, `distribute-testflight-beta.py` without `--dry-run`, and

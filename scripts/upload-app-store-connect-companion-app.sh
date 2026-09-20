@@ -138,6 +138,23 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+# Test seam. Fixture tests stand in for the Xcode tools so the archive checks
+# below run without building anything. Only a local export may use it: an upload
+# refuses to start when it is set, and always runs the system tools.
+xcodebuild_tool=/usr/bin/xcodebuild
+codesign_tool=/usr/bin/codesign
+xcrun_tool=/usr/bin/xcrun
+if [[ -n "${CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR:-}" ]]; then
+	if [[ "$upload" == "true" ]]; then
+		echo "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR cannot be used for an upload" >&2
+		exit 2
+	fi
+	echo "WARNING: using fixture Xcode tools from $CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR; this export is not a release artifact" >&2
+	xcodebuild_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/xcodebuild"
+	codesign_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/codesign"
+	xcrun_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/xcrun"
+fi
+
 # Uploading is a live App Store Connect mutation; export-only is not.
 if [[ "$upload" == "true" ]]; then
 	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
@@ -581,7 +598,7 @@ xcodebuild_system_path() {
 }
 
 run_xcodebuild() {
-	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
+	PATH="$(xcodebuild_system_path)" "$xcodebuild_tool" "$@"
 }
 
 assert_tvos_archive_ready() {
@@ -653,7 +670,7 @@ extract_signed_entitlements() {
 	local bundle="$1"
 	local label="$2"
 	local destination="$3"
-	if ! /usr/bin/codesign -d --entitlements - --xml "$bundle" >"$destination" 2>/dev/null; then
+	if ! "$codesign_tool" -d --entitlements - --xml "$bundle" >"$destination" 2>/dev/null; then
 		echo "could not read signed entitlements from $label: $bundle" >&2
 		exit 1
 	fi
@@ -746,7 +763,7 @@ assert_bundle_info_value() {
 assert_code_signature_valid() {
 	local bundle="$1"
 	local label="$2"
-	if ! /usr/bin/codesign --verify --strict --verbose=2 "$bundle"; then
+	if ! "$codesign_tool" --verify --strict --verbose=2 "$bundle"; then
 		echo "$label code signature verification failed: $bundle" >&2
 		exit 1
 	fi
@@ -775,7 +792,7 @@ bundle_executable_uuids() {
 	local executable_path
 	local uuid_lines
 	executable_path="$(bundle_executable_path "$bundle")" || return 1
-	uuid_lines="$(/usr/bin/xcrun dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
+	uuid_lines="$("$xcrun_tool" dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
 	if [[ -z "$uuid_lines" ]]; then
 		echo "bundle executable has no DWARF UUIDs: $executable_path" >&2
 		return 1
@@ -793,13 +810,13 @@ matching_dsym_relative_path() {
 	local uuid
 	local missing_uuid
 	executable_path="$(bundle_executable_path "$bundle")" || return 1
-	binary_uuids="$(/usr/bin/xcrun dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
+	binary_uuids="$("$xcrun_tool" dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
 	if [[ -z "$binary_uuids" ]]; then
 		echo "$label executable has no DWARF UUIDs" >&2
 		return 1
 	fi
 	while IFS= read -r -d '' dsym; do
-		dsym_uuids="$(/usr/bin/xcrun dwarfdump --uuid "$dsym" 2>/dev/null | /usr/bin/awk '/^UUID: / { print $2 }' || true)"
+		dsym_uuids="$("$xcrun_tool" dwarfdump --uuid "$dsym" 2>/dev/null | /usr/bin/awk '/^UUID: / { print $2 }' || true)"
 		[[ -n "$dsym_uuids" ]] || continue
 		missing_uuid=0
 		for uuid in $binary_uuids; do
