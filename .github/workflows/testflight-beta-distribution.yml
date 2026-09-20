@@ -135,6 +135,10 @@ jobs:
       - name: Distribute Beta
         shell: bash
         env:
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
+            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_PLATFORM: ${{ inputs.platform }}

@@ -1202,65 +1202,200 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 job_header = secret_job.split("\n    steps:", maxsplit=1)[0]
                 self.assertNotIn("${{ secrets.", job_header)
 
-    def test_live_release_mutations_verify_production_cloudkit_schema_receipt(self):
-        workflows = (
-            (
-                ".github/workflows/release.yml",
-                "macos",
-                "if: ${{ inputs.create_github_release }}",
-                "      - name: Publish GitHub Release",
-            ),
-            (
-                ".github/workflows/app-store-connect-upload.yml",
-                "upload",
-                "if: ${{ inputs.upload }}",
-                "      - name: Archive and Upload",
-            ),
-            (
-                ".github/workflows/app-store-connect-companion-upload.yml",
-                "upload",
-                "if: ${{ inputs.upload }}",
-                "      - name: Archive and Upload",
-            ),
-            (
-                ".github/workflows/testflight-beta-distribution.yml",
-                "distribute",
-                "if: ${{ !inputs.dry_run }}",
-                "      - name: Distribute Beta",
-            ),
-            (
-                ".github/workflows/submit-app-store-review.yml",
-                "submit",
-                "if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}",
-                "      - name: Submit Review",
-            ),
+    def test_mutating_workflow_steps_supply_the_schema_receipt_and_key(self):
+        # The entrypoints refuse without these; this only checks the workflows hand them over.
+        mutation_steps = {
+            "release.yml": "Publish GitHub Release",
+            "app-store-connect-upload.yml": "Archive and Upload",
+            "app-store-connect-companion-upload.yml": "Archive and Upload",
+            "testflight-beta-distribution.yml": "Distribute Beta",
+            "submit-app-store-review.yml": "Submit Review",
+        }
+        for workflow_name, step_name in mutation_steps.items():
+            with self.subTest(workflow=workflow_name):
+                workflow = self.read(f".github/workflows/{workflow_name}")
+                step = workflow[workflow.index(f"      - name: {step_name}\n") :]
+                step = step.split("\n      - name:", 1)[0]
+                provided = set(re.findall(r"^          ([A-Z][A-Z0-9_]*):", step, re.MULTILINE))
+
+                self.assertLessEqual(
+                    {
+                        "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64",
+                        "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY",
+                    },
+                    provided,
+                )
+
+    RECEIPT_KEY = "fixture-cloudkit-schema-receipt-key-0123456789"
+    RECEIPT_COMMIT = "a" * 40
+
+    def issue_schema_receipt(self, directory: Path, source_commit: str | None = None) -> Path:
+        receipt = directory / "receipt.json"
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"] = self.RECEIPT_KEY
+        issued = subprocess.run(
+            [
+                "python3",
+                str(REPO_ROOT / "scripts/cloudkit-schema-receipt.py"),
+                "issue",
+                "--source-commit",
+                source_commit or self.RECEIPT_COMMIT,
+                "--output",
+                str(receipt),
+            ],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(issued.returncode, 0, issued.stderr)
+        return receipt
+
+    def release_environment(self, **overrides: str) -> dict[str, str]:
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT", "APP_STORE_CONNECT_", "GITHUB_"))
+        }
+        environment.update(overrides)
+        return environment
+
+    def run_release_command(self, command: list[str], **environment: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            env=self.release_environment(**environment),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
         )
 
-        for workflow_path, job_name, condition, mutation_step in workflows:
-            with self.subTest(workflow=workflow_path):
-                workflow = self.read(workflow_path)
-                job = workflow_job(workflow, job_name)
-                guard = workflow_job(workflow, "guard")
-                self.assertIn("cloudkit_schema_receipt_base64:", workflow)
-                self.assertIn("environment: release", job)
-                self.assertIn(
-                    "      - name: Verify Production CloudKit Schema Receipt",
-                    job,
-                )
-                self.assertIn(condition, job)
-                self.assertIn(
-                    "secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY",
-                    job,
-                )
-                self.assertIn(
-                    "--receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64",
-                    job,
-                )
-                self.assertLess(
-                    job.index("Verify Production CloudKit Schema Receipt"),
-                    job.index(mutation_step),
-                )
-                self.assertNotIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", guard)
+    def test_schema_receipt_gate_accepts_only_a_valid_receipt_for_the_commit(self):
+        gate = [str(REPO_ROOT / "scripts/require-cloudkit-schema-receipt.sh"), "--source-commit", self.RECEIPT_COMMIT]
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = self.issue_schema_receipt(Path(directory))
+            encoded = base64.b64encode(receipt.read_bytes()).decode()
+            key = {"CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY": self.RECEIPT_KEY}
+
+            from_path = self.run_release_command(gate, CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH=str(receipt), **key)
+            from_base64 = self.run_release_command(gate, CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64=encoded, **key)
+            from_github_sha = self.run_release_command(
+                gate[:1],
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64=encoded,
+                GITHUB_SHA=self.RECEIPT_COMMIT,
+                **key,
+            )
+            refused = {
+                "no receipt": self.run_release_command(gate, **key),
+                "no key": self.run_release_command(gate, CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64=encoded),
+                "wrong key": self.run_release_command(
+                    gate,
+                    CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64=encoded,
+                    CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY="x" * 40,
+                ),
+                "other commit": self.run_release_command(
+                    [gate[0], "--source-commit", "b" * 40],
+                    CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64=encoded,
+                    **key,
+                ),
+            }
+
+        for accepted in (from_path, from_base64, from_github_sha):
+            self.assertEqual(accepted.returncode, 0, accepted.stdout)
+        for name, result in refused.items():
+            with self.subTest(name):
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("refusing live release mutation", result.stdout)
+
+    def live_release_commands(self, directory: Path) -> dict[str, tuple[list[str], list[str] | None]]:
+        """Each live entrypoint, and the same entrypoint in its non-mutating mode if it has one."""
+        notes = directory / "notes.md"
+        notes.write_text("notes")
+        version = ["--version", "9.9.9", "--build-number", "202601010000"]
+        # A missing profile stops the upload scripts before any build, on every machine.
+        missing_profile = ["--app-profile", str(directory / "missing.provisionprofile")]
+        return {
+            "github release": (
+                [
+                    "python3", "scripts/publish-github-release.py", "--repository", "example/example",
+                    "--tag", "v9.9.9", "--source-commit", self.RECEIPT_COMMIT, *version,
+                    "--title", "t", "--notes-file", str(notes), "--metadata", str(notes), "--asset", str(notes),
+                ],
+                None,
+            ),
+            "mac upload": (
+                ["scripts/upload-app-store-connect-macos-app.sh", *version],
+                ["scripts/upload-app-store-connect-macos-app.sh", *version, *missing_profile, "--export-only"],
+            ),
+            "companion upload": (
+                ["scripts/upload-app-store-connect-companion-app.sh", "--platform", "ios", *version],
+                [
+                    "scripts/upload-app-store-connect-companion-app.sh", "--platform", "ios", *version,
+                    *missing_profile, "--export-only",
+                ],
+            ),
+            "testflight distribution": (
+                ["python3", "scripts/distribute-testflight-beta.py", *version, "--platform", "IOS"],
+                ["python3", "scripts/distribute-testflight-beta.py", *version, "--platform", "IOS", "--dry-run"],
+            ),
+            "review submission": (
+                ["python3", "scripts/submit-app-store-review.py", "--platform", "IOS", "--version", "9.9.9"],
+                ["python3", "scripts/submit-app-store-review.py", "--platform", "IOS", "--version", "9.9.9", "--dry-run"],
+            ),
+        }
+
+    def test_every_live_release_entrypoint_refuses_without_a_schema_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for name, (live, _) in self.live_release_commands(Path(directory)).items():
+                with self.subTest(name):
+                    result = self.run_release_command(live)
+
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("refusing live release mutation: no Production CloudKit schema receipt", result.stdout)
+
+    def test_non_mutating_release_modes_do_not_ask_for_a_schema_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for name, (_, harmless) in self.live_release_commands(Path(directory)).items():
+                if harmless is None:
+                    continue
+                with self.subTest(name):
+                    result = self.run_release_command(harmless)
+
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertNotIn("refusing live release mutation", result.stdout)
+
+    def test_a_valid_schema_receipt_lets_a_live_entrypoint_proceed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = self.issue_schema_receipt(Path(directory))
+            result = self.run_release_command(
+                ["python3", "scripts/distribute-testflight-beta.py", "--version", "9.9.9",
+                 "--build-number", "202601010000", "--platform", "IOS"],
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH=str(receipt),
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=self.RECEIPT_KEY,
+                GITHUB_SHA=self.RECEIPT_COMMIT,
+            )
+
+        self.assertIn("CloudKit Production schema receipt OK", result.stdout)
+        self.assertIn("APP_STORE_CONNECT_KEY_ID", result.stdout)
+
+    def test_operator_wrapper_reuses_a_valid_receipt_and_runs_the_command_with_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = self.issue_schema_receipt(Path(directory))
+            result = self.run_release_command(
+                [
+                    "scripts/with-cloudkit-schema-receipt.sh",
+                    "--",
+                    "scripts/require-cloudkit-schema-receipt.sh",
+                ],
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH=str(receipt),
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=self.RECEIPT_KEY,
+                GITHUB_SHA=self.RECEIPT_COMMIT,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("CloudKit Production schema receipt OK", result.stdout)
+        self.assertNotIn("Issuing a fresh", result.stdout)
 
     def test_workflow_shell_blocks_do_not_expand_actions_expressions(self):
         workflow_paths = sorted((REPO_ROOT / ".github/workflows").glob("*.yml"))

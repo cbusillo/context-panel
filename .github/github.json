@@ -47,6 +47,7 @@
     "validate": {
       "default": "scripts/commit-gate.sh",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
+      "cloudKitSchemaReceiptGate": "scripts/require-cloudkit-schema-receipt.sh (called by every live release entrypoint; local live runs use scripts/with-cloudkit-schema-receipt.sh -- <command>)",
       "cloudKitProductionSchemaReceipt": "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=\"$(security find-generic-password -a \"$USER\" -s com.shinycomputers.contextpanel.cloudkit-schema-receipt -w)\" scripts/validate-cloudkit-companion-schema.sh --live --environment production --source-commit \"$(git rev-parse HEAD)\" --receipt-output .build/cloudkit-production-schema-receipt.json",
       "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
