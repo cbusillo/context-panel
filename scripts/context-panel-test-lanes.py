@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -22,6 +23,12 @@ ALLOWED_ROLES = {"test", "support"}
 # change only the lane manifest skip that step, so validation has to catch a
 # manifest the step would refuse.
 COMMIT_GATE_SWIFT_LANE = "routine-ci-swift"
+# Lanes whose membership may be claimed by a glob. SwiftPM runs every file in the
+# test target whatever this manifest says, and support files never run, so a
+# list of them records nothing a pattern does not. Python and manual lanes stay
+# explicit: putting a file in one is a judgement that it is hermetic, or why it
+# is not.
+PATTERN_RUNNERS = {"none", "swiftpm"}
 
 
 class TestLaneError(RuntimeError):
@@ -45,6 +52,26 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TestLaneError("test lane manifest must contain a JSON object")
     return payload
+
+
+def pattern_regex(pattern: str) -> re.Pattern[str]:
+    """`*` and `?` stay within one path component; `**` crosses components."""
+    parts = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**", index):
+            parts.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            parts.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            parts.append("[^/]")
+            index += 1
+        else:
+            parts.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(parts))
 
 
 def discovered_test_files(root: Path = REPO_ROOT / "Tests") -> set[str]:
@@ -146,6 +173,10 @@ def validate_manifest(
                     raise TestLaneError(f"manual test lane path requires a justification: {path}")
             seen_paths.add(path)
 
+    if discovered is None:
+        discovered = discovered_test_files()
+    claim_by_pattern(payload, lanes, normalized, seen_paths, discovered)
+
     unknown_justifications = sorted(set(manual_justifications) - seen_paths)
     if unknown_justifications:
         raise TestLaneError(
@@ -153,8 +184,6 @@ def validate_manifest(
             + ", ".join(unknown_justifications)
         )
 
-    if discovered is None:
-        discovered = discovered_test_files()
     missing = sorted(discovered - seen_paths)
     stale = sorted(seen_paths - discovered)
     if missing:
@@ -181,6 +210,42 @@ def validate_manifest(
             + ", ".join(never_run)
         )
     return normalized
+
+
+def claim_by_pattern(
+    payload: dict[str, Any],
+    lanes: dict[str, Any],
+    normalized: dict[str, list[str]],
+    seen_paths: set[str],
+    discovered: set[str],
+) -> None:
+    """Assign discovered files that no lane lists to the lane whose pattern matches."""
+    patterns_by_lane = payload.get("patternsByLane", {})
+    if not isinstance(patterns_by_lane, dict):
+        raise TestLaneError("patternsByLane must be an object")
+    claims: dict[str, list[str]] = {}
+    for lane_name, patterns in patterns_by_lane.items():
+        if lane_name not in lanes:
+            raise TestLaneError(f"patternsByLane names an unknown lane: {lane_name}")
+        if lanes[lane_name]["runner"] not in PATTERN_RUNNERS:
+            raise TestLaneError(f"test lane must list its files explicitly: {lane_name}")
+        if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
+            raise TestLaneError(f"test lane pattern list must contain strings: {lane_name}")
+        for pattern in patterns:
+            if not pattern.startswith("Tests/") or ".." in Path(pattern).parts:
+                raise TestLaneError(f"test lane pattern must remain under Tests/: {pattern}")
+            regex = pattern_regex(pattern)
+            matched = [path for path in discovered - seen_paths if regex.fullmatch(path)]
+            if not matched:
+                raise TestLaneError(f"test lane pattern matches no unlisted file: {pattern}")
+            for path in matched:
+                claims.setdefault(path, []).append(lane_name)
+    contested = sorted(path for path, owners in claims.items() if len(set(owners)) > 1)
+    if contested:
+        raise TestLaneError("files are claimed by patterns of more than one lane: " + ", ".join(contested))
+    for path, owners in claims.items():
+        normalized[owners[0]] = sorted({*normalized[owners[0]], path})
+        seen_paths.add(path)
 
 
 def files_for_lane(
