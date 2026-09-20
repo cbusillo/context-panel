@@ -4134,9 +4134,25 @@ exit 65
         self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
         self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
 
-    # The three companion upload tests below assert script text. They stay until the
-    # companion upload script has fixture-driven tests for its Production CloudKit
-    # profile preflights and signed-entitlement checks (issue #695).
+    # The three companion upload tests below assert script text. Everything they
+    # pin runs after xcodegen, through /usr/bin/xcodebuild and /usr/bin/codesign by
+    # absolute path, so a fixture cannot reach it until the script has a seam
+    # (issue #695). The profile preflight before xcodegen is exercised for real in
+    # test_companion_upload_profile_preflight.py.
+    def test_companion_upload_passes_every_profile_specifier_to_the_archive(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        for setting, variable in (
+            ("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", "app_profile_uuid"),
+            ("CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER", "widget_profile_uuid"),
+            ("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER", "watch_profile_uuid"),
+            ("CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER", "watch_widget_profile_uuid"),
+            ("CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER", "app_profile_uuid"),
+            ("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER", "tv_top_shelf_profile_uuid"),
+        ):
+            with self.subTest(setting=setting):
+                self.assertIn(f'archive_args+=({setting}="${variable}")', script)
+
     def test_companion_upload_validates_signed_widget_and_watch_entitlements_before_export(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 

@@ -6,7 +6,7 @@ run against profiles this test controls. A fake `xcodegen` stops the run at the
 first step after the preflight, before anything is built.
 """
 
-import copy
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import plistlib
@@ -81,15 +81,24 @@ def tvos_profiles() -> dict[str, dict]:
     }
 
 
-class CompanionUploadProfilePreflightTests(unittest.TestCase):
-    def run_preflight(self, platform: str, profiles: dict[str, dict]):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
+INSTALL_DIRECTORY = "Library/MobileDevice/Provisioning Profiles"
+
+
+def run_preflight(
+    platform: str,
+    profiles: dict[str, dict],
+    *,
+    missing: tuple[str, ...] = (),
+    already_installed: tuple[str, ...] = (),
+):
+    """Returns the script result, the ExportOptions it wrote, and the installed profile names."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
         home = root / "home"
         bin_path = root / "bin"
-        for directory in (home, bin_path):
-            directory.mkdir()
+        installed = home / INSTALL_DIRECTORY
+        for path in (installed, bin_path):
+            path.mkdir(parents=True)
 
         fake_security = bin_path / "security"
         fake_security.write_text(
@@ -121,7 +130,10 @@ class CompanionUploadProfilePreflightTests(unittest.TestCase):
         ]  # fmt: skip
         for name, content in profiles.items():
             path = root / f"{name}.provisionprofile"
-            path.write_bytes(plistlib.dumps(content))
+            if name in already_installed:
+                path = installed / f"{content['UUID']}.provisionprofile"
+            if name not in missing:
+                path.write_bytes(plistlib.dumps(content))
             arguments += [f"--{name}-profile", str(path)]
 
         environment = {
@@ -140,20 +152,28 @@ class CompanionUploadProfilePreflightTests(unittest.TestCase):
             stderr=subprocess.STDOUT,
             check=False,
         )
-        installed = home / "Library/MobileDevice/Provisioning Profiles"
         return (
             result,
             plistlib.loads(export_options.read_bytes()) if export_options.exists() else {},
-            sorted(path.name for path in installed.glob("*")) if installed.exists() else [],
+            sorted(path.name for path in installed.glob("*")),
         )
 
-    def assert_refused(self, platform: str, profiles: dict[str, dict], message: str) -> None:
-        result, export_options, installed = self.run_preflight(platform, profiles)
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn(message, result.stdout)
-        # A refused profile set must not be installed or reach the export step.
-        self.assertEqual(export_options, {})
-        self.assertEqual(installed, [])
+
+class CompanionUploadProfilePreflightTests(unittest.TestCase):
+    def run_preflight(self, platform: str, profiles: dict[str, dict], **options):
+        return run_preflight(platform, profiles, **options)
+
+    def assert_each_refused(self, platform: str, cases: list[tuple[dict[str, dict], str]]) -> None:
+        # Every case is an independent script run in its own directory.
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(lambda case: run_preflight(platform, case[0]), cases))
+        for (_, message), (result, export_options, installed) in zip(cases, outcomes, strict=True):
+            with self.subTest(message=message):
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stdout)
+                # A refused profile set must not be installed or reach the export step.
+                self.assertEqual(export_options, {})
+                self.assertEqual(installed, [])
 
     def test_valid_ios_profiles_are_installed_and_mapped_to_every_bundle(self):
         result, export_options, installed = self.run_preflight("ios", ios_profiles())
@@ -244,11 +264,12 @@ class CompanionUploadProfilePreflightTests(unittest.TestCase):
             (with_value("watch", APPLICATION_GROUPS, []), "companion watch provisioning profile does not authorize app group"),
             (with_value("watch-widget", APPLICATION_GROUPS, []), "companion watch widget provisioning profile does not authorize app group"),
         ]  # fmt: skip
+        refusals = []
         for mutate, message in cases:
-            with self.subTest(message=message):
-                profiles = copy.deepcopy(ios_profiles())
-                mutate(profiles)
-                self.assert_refused("ios", profiles, message)
+            profiles = ios_profiles()
+            mutate(profiles)
+            refusals.append((profiles, message))
+        self.assert_each_refused("ios", refusals)
 
     def test_each_tvos_profile_defect_is_refused(self):
         cases = [
@@ -262,14 +283,52 @@ class CompanionUploadProfilePreflightTests(unittest.TestCase):
             ("app", APS_ENVIRONMENT, "development", "companion app provisioning profile has APNs environment 'development'"),
             ("app", ICLOUD_ENVIRONMENT, ["Development"], "companion app provisioning profile does not authorize iCloud environment: Production"),
         ]  # fmt: skip
+        refusals = []
         for name, key, value, message in cases:
-            with self.subTest(message=message):
-                profiles = tvos_profiles()
-                if key == "Platform":
-                    profiles[name]["Platform"] = value
-                else:
-                    profiles[name]["Entitlements"][key] = value
-                self.assert_refused("tvos", profiles, message)
+            profiles = tvos_profiles()
+            if key == "Platform":
+                profiles[name]["Platform"] = value
+            else:
+                profiles[name]["Entitlements"][key] = value
+            refusals.append((profiles, message))
+        self.assert_each_refused("tvos", refusals)
+
+    def test_watch_profiles_may_target_either_ios_or_watchos(self):
+        for watch, watch_widget in ((["watchOS"], ["iOS"]), (["iOS"], ["watchOS"])):
+            with self.subTest(watch=watch, watch_widget=watch_widget):
+                profiles = ios_profiles()
+                profiles["watch"]["Platform"] = watch
+                profiles["watch-widget"]["Platform"] = watch_widget
+
+                result, _, _ = self.run_preflight("ios", profiles)
+
+                self.assertEqual(result.returncode, XCODEGEN_REACHED, result.stdout)
+
+    def test_a_missing_profile_file_is_named_before_any_profile_is_decoded(self):
+        for name, message in (
+            ("widget", "companion widget provisioning profile not found"),
+            ("watch", "companion watch provisioning profile not found"),
+            ("watch-widget", "companion watch widget provisioning profile not found"),
+        ):
+            with self.subTest(name=name):
+                result, _, installed = self.run_preflight("ios", ios_profiles(), missing=(name,))
+
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stdout)
+                self.assertEqual(installed, [])
+
+        result, _, _ = self.run_preflight("tvos", tvos_profiles(), missing=("tv-top-shelf",))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("tvOS Top Shelf provisioning profile not found", result.stdout)
+
+    def test_a_profile_already_at_its_install_location_is_accepted(self):
+        result, export_options, installed = self.run_preflight(
+            "ios", ios_profiles(), already_installed=("app", "watch")
+        )
+
+        self.assertEqual(result.returncode, XCODEGEN_REACHED, result.stdout)
+        self.assertEqual(len(installed), 4)
+        self.assertEqual(export_options["provisioningProfiles"]["com.shinycomputers.contextpanel"], "UUID-APP")
 
 
 if __name__ == "__main__":
