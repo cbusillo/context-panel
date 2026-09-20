@@ -398,6 +398,26 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
     actual = {item.get("requirementID"): item for item in captures}
     if len(actual) != len(captures) or set(actual) != set(expected):
         raise WorkflowEvidenceError("capture receipt does not cover the complete shared-view plan")
+    if any(surface in HOST_RENDERER_SURFACES for surface in expected.values()):
+        # Rendered macOS cells count only when the receipt says which tool drew them and
+        # that its source root reproduced this plan's manifest.
+        profiles = receipt.get("profiles")
+        renderer_profiles = [
+            item
+            for item in (profiles if isinstance(profiles, list) else [])
+            if isinstance(item, dict) and item.get("profile") == HOST_RENDERER_PROFILE
+        ]
+        if (
+            len(renderer_profiles) != 1
+            or renderer_profiles[0].get("hostMechanism") != HOST_RENDERER_MECHANISM
+            or not all(
+                isinstance(renderer_profiles[0].get(key), str)
+                and re.fullmatch(r"[0-9a-f]{64}", renderer_profiles[0][key])
+                for key in ("rendererExecutableSHA256", "rendererSourceSHA256")
+            )
+            or renderer_profiles[0].get("rendererSourceManifestID") != receipt.get("currentManifestID")
+        ):
+            raise WorkflowEvidenceError("macOS widget renderer identity is missing or does not match")
     for requirement_id, surface in expected.items():
         capture = actual[requirement_id]
         prefix = surface.split(".", 1)[0]
@@ -493,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
     config.add_argument("--visionos-ui-test-run", required=True)
     config.add_argument("--watchos-app", required=True)
     config.add_argument("--tvos-app", required=True)
-    config.add_argument("--macos-source-root", required=True)
+    config.add_argument("--macos-source-root")
     config.add_argument("--output", type=Path, required=True)
     qualify = commands.add_parser("qualify-receipt")
     qualify.add_argument("--receipt", type=Path, required=True)

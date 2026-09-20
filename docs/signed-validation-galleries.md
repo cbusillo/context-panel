@@ -273,24 +273,40 @@ The executor uses it for `macos.widget` only, through a `macos` capture-config
 entry that names a source root (`{"sourceRoot": "<absolute path>"}`). For each
 run the executor:
 
-1. regenerates the surface manifest from that source root, using the source
-   fields of the current manifest, and requires its ID to equal the plan's
-   `currentManifestID`; otherwise every cell is
-   `blocked/host-renderer-source-mismatch` (or `-source-invalid`) and nothing
-   is built;
+1. regenerates the surface manifest by running that source root's own
+   `scripts/context-panel-surface-manifest.py generate`, the generator that
+   produced the plan's manifest, with the source fields of the current manifest,
+   and requires its ID to equal the plan's `currentManifestID`; otherwise every
+   cell is `blocked/host-renderer-source-mismatch` (or `-source-invalid`) and
+   nothing is built;
 2. builds the tool itself with `swift build --configuration release` into a
    scratch directory inside the capture run, so a prebuilt binary cannot be
-   substituted, and rejects a binary located anywhere else;
+   substituted, and rejects a binary that is a symlink, is not a regular file,
+   or resolves outside that directory;
 3. renders each cell, validates the PNG like any other capture, refuses
-   duplicate images, and removes the build directory.
+   duplicate images, removes the build directory, and aborts the whole run
+   unpublished if that directory cannot be removed.
+
+Capture paths may not overlap the source root. The hosted workflow passes a
+second, untouched worktree (`.build/current-source-pristine`), because xcodegen
+rewrites governed `Info.plist` files inside `.build/current-source` before
+capture and would otherwise change the regenerated manifest.
 
 The receipt records this profile as `hostMechanism:
-swiftpm-shared-view-renderer` with `rendererExecutableSHA256` and
-`rendererSourceManifestID`; captures use `appearanceMechanism:
-renderer-argument`. Unlike the simulator profiles, this binds the image to a
-verified source tree and the tool built from it, not to an app bundle with an
-embedded manifest; the link between the binary and the source is that the
-executor built it there. Product source older than the tool is
+swiftpm-shared-view-renderer` with `rendererExecutableSHA256`,
+`rendererSourceSHA256`, and `rendererSourceManifestID`; captures use
+`appearanceMechanism: renderer-argument`, and qualification requires exactly
+one such profile whose manifest ID equals the receipt's `currentManifestID`.
+
+What this does and does not prove: the surface manifest governs the shared
+views and fixtures the image is drawn from, so the manifest check binds the
+image to that source. It does not govern the renderer itself (`Package.swift`
+and `Tools/ContextPanelSharedViewRenderer`), which is why their digest is
+recorded separately as `rendererSourceSHA256`: an auditor can compare it with
+the same paths at the source commit. The binary hash identifies what ran but is
+not reproducible. Unlike the simulator profiles there is no app bundle with an
+embedded manifest; the link between binary and source is that the executor built
+it from the verified root. Product source older than the tool is
 `blocked/host-renderer-unavailable` and fails qualification by design.
 
 `macos.app` remains an explicit `unsupported-host-mechanism` result: its

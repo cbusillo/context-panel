@@ -521,6 +521,17 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
             "schemaVersion": 1,
             "kind": "context-panel-shared-view-capture-receipt",
             "pixelDiffPolicy": "advisory-only",
+            "currentManifestID": "a" * 64,
+            "profiles": [
+                {"profile": "ios", "appBundleSHA256": "b" * 64},
+                {
+                    "profile": workflow.HOST_RENDERER_PROFILE,
+                    "hostMechanism": workflow.HOST_RENDERER_MECHANISM,
+                    "rendererExecutableSHA256": "c" * 64,
+                    "rendererSourceSHA256": "d" * 64,
+                    "rendererSourceManifestID": "a" * 64,
+                },
+            ],
             "captures": [
                 {
                     "requirementID": "shared-view.ios-app.baseline",
@@ -553,8 +564,8 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 {
                     "requirementID": "shared-view.macos-widget.baseline",
                     "status": "captured",
-                    "hostMechanism": "swiftpm-shared-view-renderer",
-                    "appearanceMechanism": "renderer-argument",
+                    "hostMechanism": workflow.HOST_RENDERER_MECHANISM,
+                    "appearanceMechanism": workflow.HOST_RENDERER_APPEARANCE_MECHANISM,
                     "errorCode": None,
                 },
             ],
@@ -595,6 +606,44 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 widget.update(substitution)
                 with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "macOS widget"):
                     workflow.qualify_capture_receipt(receipt, requirements)
+
+    def test_rendered_mac_widget_cells_need_a_matching_renderer_identity_in_the_receipt(self) -> None:
+        requirements, _ = self.capture_receipt_fixture()
+
+        def renderer(receipt: dict[str, Any]) -> dict[str, Any]:
+            return next(
+                item for item in receipt["profiles"]
+                if item["profile"] == workflow.HOST_RENDERER_PROFILE
+            )
+
+        mutations = {
+            "no renderer profile": lambda receipt: receipt["profiles"].remove(renderer(receipt)),
+            "two renderer profiles": lambda receipt: receipt["profiles"].append(dict(renderer(receipt))),
+            "no executable hash": lambda receipt: renderer(receipt).update(rendererExecutableSHA256=None),
+            "no source hash": lambda receipt: renderer(receipt).update(rendererSourceSHA256="not-a-hash"),
+            "another manifest": lambda receipt: renderer(receipt).update(rendererSourceManifestID="e" * 64),
+            "wrong mechanism": lambda receipt: renderer(receipt).update(hostMechanism="simctl-gallery"),
+            "profiles missing": lambda receipt: receipt.pop("profiles"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name):
+                _, receipt = self.capture_receipt_fixture()
+                mutate(receipt)
+                with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "renderer identity"):
+                    workflow.qualify_capture_receipt(receipt, requirements)
+
+    def test_a_plan_without_mac_widget_cells_needs_no_renderer_identity(self) -> None:
+        requirements, receipt = self.capture_receipt_fixture()
+        requirements["requirements"] = [
+            item for item in requirements["requirements"] if item["surface"] != "macos.widget"
+        ]
+        receipt["captures"] = [
+            item for item in receipt["captures"]
+            if item["requirementID"] != "shared-view.macos-widget.baseline"
+        ]
+        receipt["profiles"] = []
+
+        workflow.qualify_capture_receipt(receipt, requirements)
 
     def run_capture_and_qualify(self, capture_status: int, receipt: dict[str, Any] | None) -> int:
         requirements, _ = self.capture_receipt_fixture()

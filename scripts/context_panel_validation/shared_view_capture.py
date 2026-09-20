@@ -22,9 +22,7 @@ import zlib
 
 from context_panel_surface_manifest import SurfacePolicyError, embedded_manifest
 from context_panel_surface_manifest.core import canonical_json as manifest_canonical_json
-from context_panel_surface_manifest.core import generate_manifest as generate_source_manifest
 from context_panel_surface_manifest.core import hash_parts as manifest_hash_parts
-from context_panel_surface_manifest.core import resolve_policy as resolve_source_policy
 
 from .models import CommandResult, EXIT_BLOCKED, EXIT_OK, EXIT_UNKNOWN, Runner, iso8601, utc_now
 from .shared_view_evidence import (
@@ -1040,9 +1038,15 @@ def _reject_capture_path_overlap(
     output_path: Path,
     profiles: dict[str, CaptureProfile],
     input_paths: tuple[Path, ...],
+    host_renderer_profile: HostRendererProfile | None = None,
 ) -> None:
     if _paths_overlap(artifact_root, output_path):
         raise SharedViewCaptureError("capture artifact and output paths overlap")
+    if host_renderer_profile is not None and (
+        _paths_overlap(artifact_root, host_renderer_profile.source_root)
+        or _paths_overlap(output_path, host_renderer_profile.source_root)
+    ):
+        raise SharedViewCaptureError("capture paths overlap the renderer source root")
     for profile in profiles.values():
         if _paths_overlap(artifact_root, profile.app_bundle) or _paths_overlap(
             output_path, profile.app_bundle
@@ -2767,28 +2771,78 @@ def _capture_profile(
     return ProfileCaptureOutcome(results=results, cleanup_status=cleanup_status)
 
 
+HOST_RENDERER_SOURCE_PATHS = ("Package.swift", "Tools/ContextPanelSharedViewRenderer")
+HOST_RENDERER_MANIFEST_TIMEOUT = 300
+
+
+def _host_renderer_source_sha256(source_root: Path) -> str | None:
+    """Digest of the renderer's own sources, which the surface manifest does not govern."""
+    digest = hashlib.sha256()
+    try:
+        files: list[Path] = []
+        for relative in HOST_RENDERER_SOURCE_PATHS:
+            path = source_root / relative
+            if path.is_symlink():
+                return None
+            if path.is_dir():
+                files.extend(item for item in path.rglob("*") if item.is_file() or item.is_symlink())
+            elif path.is_file():
+                files.append(path)
+            else:
+                return None
+        for path in sorted(files):
+            if path.is_symlink():
+                return None
+            digest.update(path.relative_to(source_root).as_posix().encode() + b"\0")
+            digest.update(_stream_sha256(path, "capture renderer source").encode() + b"\0")
+    except (OSError, SharedViewCaptureError):
+        return None
+    return digest.hexdigest()
+
+
 def _host_renderer_source_error(
     profile: HostRendererProfile,
     current_manifest_path: Path,
     current_manifest_id: str,
+    runner: Runner,
+    scratch_directory: Path,
 ) -> str | None:
-    """Regenerate the manifest from the renderer's source root; it must be the plan's manifest."""
+    """Regenerate the manifest from the renderer's source root; it must be the plan's manifest.
+
+    The source root's own generator is used, because that is the code that produced the
+    plan's manifest.
+    """
+    output = scratch_directory / ".host-renderer-manifest.json"
     try:
         source = _load_json_object(current_manifest_path, "current surface manifest").get("source")
         if not isinstance(source, dict):
             return "host-renderer-source-invalid"
-        regenerated = generate_source_manifest(
-            resolve_source_policy(profile.source_root),
-            marketing_version=_require_string(source.get("marketingVersion"), "marketing version"),
-            build_number=_require_string(source.get("buildNumber"), "build number"),
-            source_commit=_require_string(source.get("commit"), "source commit"),
-            configuration=_require_string(source.get("configuration"), "configuration"),
-            xcode_build=_require_string(source.get("xcodeBuild"), "Xcode build"),
-            tree_state=_require_string(source.get("treeState"), "tree state"),
+        generator = profile.source_root / "scripts" / "context-panel-surface-manifest.py"
+        if generator.is_symlink() or not generator.is_file():
+            return "host-renderer-source-invalid"
+        generated = _run(
+            runner,
+            [
+                sys.executable, str(generator), "generate",
+                "--root", str(profile.source_root),
+                "--marketing-version", _require_string(source.get("marketingVersion"), "marketing version"),
+                "--build-number", _require_string(source.get("buildNumber"), "build number"),
+                "--commit", _require_string(source.get("commit"), "source commit"),
+                "--configuration", _require_string(source.get("configuration"), "configuration"),
+                "--xcode-build", _require_string(source.get("xcodeBuild"), "Xcode build"),
+                "--tree-state", _require_string(source.get("treeState"), "tree state"),
+                "--output", str(output),
+            ],
+            HOST_RENDERER_MANIFEST_TIMEOUT,
         )
-    except (OSError, ValueError, SurfacePolicyError, SharedViewEvidenceError):
+        if generated.timed_out or generated.returncode != 0:
+            return "host-renderer-source-invalid"
+        regenerated_id = _load_json_object(output, "regenerated surface manifest").get("manifestId")
+    except (OSError, ValueError, SharedViewEvidenceError):
         return "host-renderer-source-invalid"
-    if regenerated.get("manifestId") != current_manifest_id:
+    finally:
+        output.unlink(missing_ok=True)
+    if regenerated_id != current_manifest_id:
         return "host-renderer-source-mismatch"
     return None
 
@@ -2807,6 +2861,7 @@ def _capture_host_renderer(
 ) -> HostRendererOutcome:
     """Build the renderer from the verified source root and draw each macOS widget cell."""
     renderer_sha256: str | None = None
+    renderer_source_sha256 = _host_renderer_source_sha256(profile.source_root)
 
     def outcome(results: dict[str, dict[str, object]], source_verified: bool) -> HostRendererOutcome:
         return HostRendererOutcome(
@@ -2815,6 +2870,7 @@ def _capture_host_renderer(
                 "profile": HOST_RENDERER_PROFILE,
                 "hostMechanism": HOST_RENDERER_MECHANISM,
                 "rendererExecutableSHA256": renderer_sha256,
+                "rendererSourceSHA256": renderer_source_sha256 if source_verified else None,
                 "rendererSourceManifestID": current_manifest_id if source_verified else None,
             },
         )
@@ -2832,7 +2888,13 @@ def _capture_host_renderer(
             for requirement in requirements
         }
 
-    source_error = _host_renderer_source_error(profile, current_manifest_path, current_manifest_id)
+    source_error = (
+        "host-renderer-source-invalid"
+        if renderer_source_sha256 is None
+        else _host_renderer_source_error(
+            profile, current_manifest_path, current_manifest_id, runner, artifact_directory
+        )
+    )
     if source_error is not None:
         return outcome(all_results("blocked", source_error), False)
 
@@ -2849,17 +2911,22 @@ def _capture_host_renderer(
             # Product source older than the tool has nothing to build.
             return outcome(all_results("blocked", "host-renderer-unavailable"), True)
         located = _run(runner, [*build_command, "--show-bin-path"], HOST_RENDERER_RENDER_TIMEOUT)
-        binary_directory = Path(located.stdout.strip()) if located.returncode == 0 else None
-        if (
-            binary_directory is None
-            or not binary_directory.is_absolute()
-            or build_directory.resolve() not in binary_directory.resolve().parents
-        ):
-            return outcome(all_results("unknown", "host-renderer-location-invalid"), True)
-        renderer = binary_directory / HOST_RENDERER_PRODUCT
         try:
+            if located.timed_out or located.returncode != 0:
+                raise ValueError("renderer location is unavailable")
+            renderer = Path(located.stdout.strip()) / HOST_RENDERER_PRODUCT
+            # The binary must be a regular file that really lives in this run's build
+            # directory: no symlink out of it, and no path the build did not produce.
+            if (
+                not renderer.is_absolute()
+                or renderer.is_symlink()
+                or not renderer.is_file()
+                or build_directory.resolve(strict=True) not in renderer.resolve(strict=True).parents
+            ):
+                raise ValueError("renderer location is outside the build directory")
             renderer_sha256 = _stream_sha256(renderer, "capture renderer executable")
-        except SharedViewCaptureError:
+        except (OSError, RuntimeError, ValueError, SharedViewCaptureError):
+            renderer_sha256 = None
             return outcome(all_results("unknown", "host-renderer-location-invalid"), True)
 
         results: dict[str, dict[str, object]] = {}
@@ -2936,6 +3003,9 @@ def _capture_host_renderer(
         return outcome(results, True)
     finally:
         shutil.rmtree(build_directory, ignore_errors=True)
+        if os.path.lexists(build_directory):
+            # The staging directory becomes the published run; a build tree must never ride along.
+            raise SharedViewCaptureError("host renderer build cleanup failed")
 
 
 def execute_shared_view_capture(
@@ -3011,6 +3081,7 @@ def execute_shared_view_capture(
             matrix_path,
             resolved_policy_path,
         ),
+        host_renderer_profile,
     )
     active_runner = runner or SubprocessRunner()
     configured_groups: dict[str, list[CaptureRequirement]] = {profile: [] for profile in SUPPORTED_PROFILES}
