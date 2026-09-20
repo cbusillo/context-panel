@@ -56,6 +56,11 @@ Useful entry points:
 
 ## Local App Bundle
 
+`ContextPanel.xcodeproj` is generated from `project.yml` and is not committed.
+Run `xcodegen generate --spec project.yml` before opening the project in Xcode;
+every build script does the same. Change targets, settings, and schemes in
+`project.yml`, never in the generated project.
+
 To build the native macOS app with the embedded WidgetKit extension:
 
 ```sh
