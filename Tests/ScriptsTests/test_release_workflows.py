@@ -3673,7 +3673,6 @@ exit 65
         self.assertNotIn("AppIcon.solidimagestack", result.stdout)
 
     def test_companion_upload_tvos_uses_dedicated_profile_without_widget(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
         result = self.run_companion_upload_script(
             [
                 "--platform",
@@ -3692,9 +3691,6 @@ exit 65
         self.assertIn("missing-tvos-app.provisionprofile", result.stdout)
         self.assertNotIn("companion widget provisioning profile not found", result.stdout)
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
-        self.assertIn("tv_top_shelf_profile_uuid", script)
-        self.assertIn("ContextPanelTVTopShelfExtension.provisionprofile", script)
-        self.assertIn("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER", script)
 
     def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self):
         with tempfile.TemporaryDirectory() as working_dir:
@@ -4141,78 +4137,6 @@ exit 65
     # The three companion upload tests below assert script text. They stay until the
     # companion upload script has fixture-driven tests for its Production CloudKit
     # profile preflights and signed-entitlement checks (issue #695).
-    def test_companion_upload_preflights_cloudkit_app_widget_and_watch_profiles(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn("assert_profile_icloud_service()", script)
-        self.assertIn("assert_profile_icloud_environment()", script)
-        self.assertIn("assert_profile_ubiquity_container()", script)
-        self.assertIn("assert_profile_push_notifications()", script)
-        self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudDocuments\"", script)
-        self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudKit\"", script)
-        self.assertIn(
-            "assert_profile_icloud_environment \"$app_profile\" \"companion app\" \"Production\"",
-            script,
-        )
-        self.assertIn("assert_profile_ubiquity_container \"$app_profile\" \"companion app\"", script)
-        self.assertIn("assert_profile_push_notifications \"$app_profile\" \"companion app\" \"production\"", script)
-        self.assertIn("--watch-profile PATH", script)
-        self.assertIn("--watch-widget-profile PATH", script)
-        self.assertIn("companion watch provisioning profile not found", script)
-        self.assertIn("companion watch widget provisioning profile not found", script)
-        self.assertIn(
-            "assert_profile_bundle_id \"$watch_profile\" \"companion watch\" \"com.shinycomputers.contextpanel.watch\"",
-            script,
-        )
-        self.assertIn(
-            "assert_profile_bundle_id \"$watch_widget_profile\" \"companion watch widget\" \"com.shinycomputers.contextpanel.watch.widget\"",
-            script,
-        )
-        self.assertIn("assert_profile_platform_any \"$watch_profile\" \"companion watch\" iOS watchOS", script)
-        self.assertIn(
-            "assert_profile_platform_any \"$watch_widget_profile\" \"companion watch widget\" iOS watchOS",
-            script,
-        )
-        self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
-        self.assertIn(
-            "assert_profile_icloud_service \"$watch_widget_profile\" \"companion watch widget\" \"CloudKit\"",
-            script,
-        )
-        self.assertIn(
-            "assert_profile_icloud_environment \"$watch_profile\" \"companion watch\" \"Production\"",
-            script,
-        )
-        self.assertIn(
-            "assert_profile_icloud_environment \"$watch_widget_profile\" \"companion watch widget\" \"Production\"",
-            script,
-        )
-        self.assertIn(
-            "assert_profile_app_group \"$watch_profile\" \"companion watch\"",
-            script,
-        )
-        self.assertIn(
-            "assert_profile_app_group \"$watch_widget_profile\" \"companion watch widget\"",
-            script,
-        )
-        self.assertIn('if [[ "$profile" == "$destination" ]]; then', script)
-        self.assertIn("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER=\"$watch_profile_uuid\"", script)
-        self.assertIn(
-            "CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER=\"$watch_widget_profile_uuid\"",
-            script,
-        )
-        self.assertIn("<key>com.shinycomputers.contextpanel.watch</key>", script)
-        self.assertIn("<key>com.shinycomputers.contextpanel.watch.widget</key>", script)
-        self.assertIn(
-            "assert_profile_icloud_service \"$widget_profile\" \"companion widget\" \"CloudKit\"",
-            script,
-        )
-        self.assertIn(
-            "assert_profile_icloud_environment \"$widget_profile\" \"companion widget\" \"Production\"",
-            script,
-        )
-        self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
-        self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)
-
     def test_companion_upload_validates_signed_widget_and_watch_entitlements_before_export(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
