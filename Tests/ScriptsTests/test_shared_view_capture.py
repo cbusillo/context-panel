@@ -14,6 +14,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import mock
@@ -58,26 +59,30 @@ RUNTIME_IDENTIFIERS = {
     "ipados": "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
     "visionos": "com.apple.CoreSimulator.SimRuntime.xrOS-26-0",
     "watchos": "com.apple.CoreSimulator.SimRuntime.watchOS-26-0",
+    "tvos": "com.apple.CoreSimulator.SimRuntime.tvOS-26-0",
 }
 DEVICE_TYPE_IDENTIFIERS = {
     "ios": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
     "ipados": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5",
     "visionos": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro",
     "watchos": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm",
+    "tvos": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K",
 }
 PROFILE_BUNDLE_IDENTIFIERS = {
     "ios": "com.shinycomputers.contextpanel",
     "ipados": "com.shinycomputers.contextpanel",
     "visionos": "com.shinycomputers.contextpanel",
     "watchos": "com.shinycomputers.contextpanel.watch",
+    "tvos": "com.shinycomputers.contextpanel",
 }
 PROFILE_BUNDLE_PLATFORMS = {
     "ios": "iPhoneSimulator",
     "ipados": "iPhoneSimulator",
     "visionos": "XRSimulator",
     "watchos": "WatchSimulator",
+    "tvos": "AppleTVSimulator",
 }
-PROFILE_DEVICE_FAMILIES = {"ios": 1, "ipados": 2, "visionos": 7, "watchos": 4}
+PROFILE_DEVICE_FAMILIES = {"ios": 1, "ipados": 2, "visionos": 7, "watchos": 4, "tvos": 3}
 
 
 def png_chunk(chunk_type: bytes, content: bytes) -> bytes:
@@ -151,6 +156,13 @@ def simulator_catalog() -> dict[str, Any]:
                 "isAvailable": True,
                 "bundlePath": "/private/catalog/watch-runtime",
             },
+            {
+                "identifier": RUNTIME_IDENTIFIERS["tvos"],
+                "name": "tvOS 26.0",
+                "platform": "tvOS",
+                "isAvailable": True,
+                "bundlePath": "/private/catalog/tv-runtime",
+            },
         ],
         "devicetypes": [
             {
@@ -176,6 +188,12 @@ def simulator_catalog() -> dict[str, Any]:
                 "name": "Apple Watch Series 11 (46mm)",
                 "productFamily": "Apple Watch",
                 "bundlePath": "/private/catalog/watch",
+            },
+            {
+                "identifier": DEVICE_TYPE_IDENTIFIERS["tvos"],
+                "name": "Apple TV 4K (3rd generation)",
+                "productFamily": "Apple TV",
+                "bundlePath": "/private/catalog/tv",
             },
         ],
         "devices": {"private": [{"udid": SECOND_SIMULATOR_ID}]},
@@ -481,20 +499,27 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.app.mkdir(parents=True)
         self.watch_app = self.root / "Context Panel Watch.app"
         self.watch_app.mkdir()
+        self.tv_app = self.root / "Context Panel TV.app"
+        self.tv_app.mkdir()
         self.current_manifest_path = self.root / "current-manifest.json"
         (self.app / "ContextPanel").write_bytes(b"signed companion executable")
         (self.watch_app / "ContextPanelWatch").write_bytes(b"signed watch executable")
+        (self.tv_app / "ContextPanelTV").write_bytes(
+            b"signed tv executable --context-panel-validation-presentation"
+        )
         self.write_info_plist("ContextPanel", app_bundle=self.app)
+        self.write_info_plist("ContextPanelTV", profile_names=("tvos",), app_bundle=self.tv_app)
         self.write_info_plist(
             "ContextPanelWatch",
             profile_names=("watchos",),
             app_bundle=self.watch_app,
         )
         self.write_surface_manifest()
-        shutil.copyfile(
-            self.app / "ContextPanelSurfaceManifest.json",
-            self.watch_app / "ContextPanelSurfaceManifest.json",
-        )
+        for companion_bundle in (self.watch_app, self.tv_app):
+            shutil.copyfile(
+                self.app / "ContextPanelSurfaceManifest.json",
+                companion_bundle / "ContextPanelSurfaceManifest.json",
+            )
         self.matrix = load_shared_view_matrix()
         self.policy = load_surface_policy()
         self.comparison_path = self.root / "comparison.json"
@@ -708,9 +733,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 "runtimeIdentifier": RUNTIME_IDENTIFIERS[name],
                 "deviceTypeIdentifier": DEVICE_TYPE_IDENTIFIERS[name],
                 "appBundle": str(
-                    self.watch_app
-                    if name == "watchos"
-                    else self.app
+                    {"watchos": self.watch_app, "tvos": self.tv_app}.get(name, self.app)
                 ),
                 **(
                     {"uiTestRun": str(self.companion_test_run)}
@@ -1161,6 +1184,93 @@ class SharedViewCaptureTests(unittest.TestCase):
             "captured-image-invalid",
         )
 
+    def test_tv_profile_launches_each_matrix_cell_and_settles_before_relaunching(self) -> None:
+        self.write_plan(["tvos.app", "tvos.top-shelf"])
+        self.write_config(("tvos",))
+        runner = FakeRunner()
+        calls_seen_at_each_sleep: list[int] = []
+
+        class SleepLog(list):
+            def append(log, seconds):  # noqa: N805
+                calls_seen_at_each_sleep.append(len(runner.calls))
+                super().append(seconds)
+
+        self.sleeps = SleepLog()
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        commands = [args for args, _ in runner.calls]
+        self.assertFalse(any(args[2] in {"erase", "ui"} for args in commands))
+        cells = [
+            (surface.id, cell)
+            for surface in self.matrix.surfaces
+            if surface.id in {"tvos.app", "tvos.top-shelf"}
+            for cell in surface.cells
+        ]
+        self.assertTrue(cells)
+        self.assertEqual(
+            [
+                [
+                    "xcrun", "simctl", "launch", "--terminate-running-process", SIMULATOR_ID,
+                    PROFILE_BUNDLE_IDENTIFIERS["tvos"], "--context-panel-validation-gallery",
+                    "--context-panel-validation-surface", surface_id,
+                    "--context-panel-validation-fixture", cell.fixture_id,
+                    "--context-panel-validation-family", cell.family,
+                    "--context-panel-validation-presentation", cell.presentation,
+                ]
+                for surface_id, cell in cells
+            ],
+            [args for args in commands if args[2] == "launch"],
+        )
+        # tvOS relaunches an app in the background when it is started right after
+        # termination, so every terminate must be followed by a settle before the
+        # next simctl command.
+        terminate_positions = [index for index, args in enumerate(commands) if args[2] == "terminate"]
+        self.assertEqual(len(cells) - 1, len(terminate_positions))
+        for position in terminate_positions:
+            self.assertIn(position + 1, calls_seen_at_each_sleep)
+        self.assertEqual(["captured"] * len(cells), [item["status"] for item in receipt["captures"]])
+        self.assertEqual(
+            {("simctl-gallery", None)},
+            {(item["hostMechanism"], item["appearanceMechanism"]) for item in receipt["captures"]},
+        )
+
+    def test_tv_app_without_the_validation_launch_route_is_blocked_before_any_simulator_work(self) -> None:
+        (self.tv_app / "ContextPanelTV").write_bytes(b"tv executable built from older product source")
+        self.write_plan(["tvos.app"])
+        self.write_config(("tvos",))
+        runner = FakeRunner()
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_BLOCKED, exit_code)
+        self.assertEqual(
+            {("blocked", "validation-launch-unsupported-by-app")},
+            {(item["status"], item["errorCode"]) for item in receipt["captures"]},
+        )
+        self.assertFalse(any(args[2] in {"create", "boot", "launch", "io"} for args, _ in runner.calls))
+
+    def test_tv_profile_rejects_a_family_that_does_not_belong_to_the_surface(self) -> None:
+        profile = SimpleNamespace(name="tvos", bundle_identifier=PROFILE_BUNDLE_IDENTIFIERS["tvos"])
+        mismatches = (
+            ("tvos.top-shelf", "runway", "fullDetail"),
+            ("tvos.app", "topShelf", "fullDetail"),
+            ("tvos.app", "runway", "not-applicable"),
+        )
+        for surface, family, presentation in mismatches:
+            with self.subTest(surface=surface, family=family, presentation=presentation):
+                requirement = SimpleNamespace(
+                    surface=surface,
+                    fixture_id="healthy",
+                    family=family,
+                    presentation=presentation,
+                )
+                with self.assertRaisesRegex(
+                    capture_module.SharedViewCaptureError, "capture TV selector is invalid"
+                ):
+                    capture_module._capture_route(profile, SIMULATOR_ID, requirement)
+
     def test_watch_profile_uses_direct_launch_without_appearance_mutation(self) -> None:
         payload = self.write_plan(["watchos.app", "watchos.complication"])
         self.write_config(("watchos",))
@@ -1272,7 +1382,11 @@ class SharedViewCaptureTests(unittest.TestCase):
                     **simulator_catalog(),
                     "runtimes": [
                         {
-                            **simulator_catalog()["runtimes"][-1],
+                            **next(
+                                item
+                                for item in simulator_catalog()["runtimes"]
+                                if item["identifier"] == RUNTIME_IDENTIFIERS["watchos"]
+                            ),
                             "platform": "iOS",
                         }
                     ],
@@ -1284,7 +1398,11 @@ class SharedViewCaptureTests(unittest.TestCase):
                     **simulator_catalog(),
                     "devicetypes": [
                         {
-                            **simulator_catalog()["devicetypes"][-1],
+                            **next(
+                                item
+                                for item in simulator_catalog()["devicetypes"]
+                                if item["identifier"] == DEVICE_TYPE_IDENTIFIERS["watchos"]
+                            ),
                             "productFamily": "iPhone",
                         }
                     ],
@@ -2686,8 +2804,8 @@ class SharedViewCaptureTests(unittest.TestCase):
         unsupported = "unsupported-host-mechanism"
         self.assertEqual(2, summary.count(("ios.app", "profile-not-configured", "unconfigured-profile")))
         self.assertEqual(2, summary.count(("watchos.app", "profile-not-configured", "unconfigured-profile")))
-        for surface in ("macos.app", "tvos.app"):
-            self.assertEqual(2, summary.count((surface, unsupported, unsupported)))
+        self.assertEqual(2, summary.count(("tvos.app", "profile-not-configured", "unconfigured-profile")))
+        self.assertEqual(2, summary.count(("macos.app", unsupported, unsupported)))
 
     def test_command_stderr_privacy_assertion_is_non_vacuous(self) -> None:
         self.write_plan(["ios.app"])

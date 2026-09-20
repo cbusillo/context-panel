@@ -203,6 +203,36 @@ identity, cleanup, artifact, and receipt checks. Termination between
 non-visionOS cells is best-effort so one failed route cannot poison the next
 cell; visionOS UI-test or attachment failures remain unknown evidence.
 
+The tvOS profile works the same way on a throwaway Apple TV simulator and needs
+no physical Apple TV. It routes `tvos.app` and `tvos.top-shelf` cells with
+`simctl launch --terminate-running-process <tv-simulator>
+com.shinycomputers.contextpanel --context-panel-validation-gallery
+--context-panel-validation-surface <surface> --context-panel-validation-fixture
+<fixture> --context-panel-validation-family <runway|provider|topShelf>
+--context-panel-validation-presentation <fullDetail|projectOnly|countsOnly>`.
+The app accepts only that bounded vocabulary; anything else exits with
+`EX_USAGE`, exactly like the Watch app, and there is still no UI entry point,
+feature flag, or persistent unlock. A validation launch shows one sample under
+the "SAMPLE DATA · READ ONLY" banner and never opens CloudKit, registers for
+notifications, or relays receipts. Three tvOS-specific rules apply:
+
+- tvOS relaunches an app in the background when it is started immediately
+  after termination, so the executor settles after each terminate.
+- The executor trusts the launch route only when the app's code contains
+  `--context-panel-validation-presentation`. Product source older than the
+  route is recorded as `blocked/validation-launch-unsupported-by-app` rather
+  than captured showing its normal UI. Because tvOS is now a supported capture
+  surface, that blocked record fails receipt qualification by design: a
+  comparison whose current source predates the tvOS launch route cannot qualify
+  tvOS shared-view requirements on the hosted lane.
+- Launching with only `--context-panel-validation-gallery` opens the gallery
+  index with live services off. The `contextpaneltv://validation-gallery` URL
+  route opens the same gallery inside the normally running app. Both show
+  synthetic fixtures only.
+- The Top Shelf cells render the production Top Shelf renderer in-app. They are
+  shared-view evidence only; real Top Shelf placement remains
+  `os-composited-placement` evidence from a physical Apple TV.
+
 The Watch profile does not create or repair a paired iPhone/Watch topology. A
 Watch app that cannot install independently on the selected Watch simulator, a
 container identity mismatch, malformed selector, or catalog topology mismatch
@@ -225,7 +255,7 @@ critical encodings or transparency chunks are reported as `captured-image-invali
 Cleanup removes only a run whose private ownership token still matches, and a
 failed emergency simulator cleanup is surfaced without exposing command output.
 
-Mac and Apple TV remain explicit `unsupported-host-mechanism` results; missing
+Mac remains an explicit `unsupported-host-mechanism` result; missing
 profiles are blocked and command, image, stability, identity, cleanup, or
 publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an
@@ -272,10 +302,10 @@ Before capture, the workflow derives a generic placement base from every fresh
 placement surface and merges the canonical shared-view plan into it. This is
 deliberately fail-closed: an uncovered placement surface blocks the lane rather
 than being omitted. It builds unsigned fresh Release simulator bundles only for
-iOS/iPadOS, visionOS, and standalone watchOS, embeds the current manifest, then
+iOS/iPadOS, visionOS, standalone watchOS, and tvOS, embeds the current manifest, then
 invokes `capture-shared-view-evidence` unchanged. The qualification boundary is
 strict: all supported requirements must be captured, and any uncaptured
-requirements must be macOS or tvOS records with exactly
+requirements must be macOS records with exactly
 `unsupported-host-mechanism`.
 
 Only a qualified run uploads public evidence. The public artifact contains the

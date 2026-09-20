@@ -39,13 +39,14 @@ EXPECTED_BUILD_ID = re.compile(r"^[0-9a-f]{64}$")
 MAX_ARTIFACT_FILES = 256
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
-SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos")
-UNSUPPORTED_CAPTURE_SURFACES = ("macos", "tvos")
+SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos", "tvos")
+UNSUPPORTED_CAPTURE_SURFACES = ("macos",)
 EXPECTED_CAPTURE_MECHANISMS = {
     "ios": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "ipados": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "visionos": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "watchos": ("simctl-gallery", None),
+    "tvos": ("simctl-gallery", None),
 }
 VALID_RELEASE_WORKFLOW_EVENTS = {"workflow_dispatch", "workflow_call"}
 SEALED_RELEASE_WORKFLOWS = {
@@ -473,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
     config.add_argument("--visionos-app", required=True)
     config.add_argument("--visionos-ui-test-run", required=True)
     config.add_argument("--watchos-app", required=True)
+    config.add_argument("--tvos-app", required=True)
     config.add_argument("--output", type=Path, required=True)
     qualify = commands.add_parser("qualify-receipt")
     qualify.add_argument("--receipt", type=Path, required=True)
@@ -525,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
                         "ipados": args.ios_app,
                         "visionos": args.visionos_app,
                         "watchos": args.watchos_app,
+                        "tvos": args.tvos_app,
                     },
                     args.ios_ui_test_run,
                     args.visionos_ui_test_run,

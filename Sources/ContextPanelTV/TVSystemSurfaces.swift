@@ -159,7 +159,11 @@ final class TVRuntimeReceiptRelayProvider {
 
 @MainActor
 final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
-    private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    // A validation launch shows synthetic samples only; it must not open CloudKit,
+    // register for notifications, or relay receipts.
+    private let isValidationLaunch =
+        TVValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments) != .normal
+    private lazy var remoteStore = CompanionCloudKitSyncStoreFactory.make()
     let runtimeReceiptRelayProvider = TVRuntimeReceiptRelayProvider()
     private let notificationCenter = UNUserNotificationCenter.current()
     private var subscriptionRegistrationTask: Task<Void, Never>?
@@ -169,6 +173,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !isValidationLaunch else { return true }
         clearRetiredProviderBadge()
         #if DEBUG
         if preparePreviewFixtureRuntime() {
@@ -182,6 +187,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        guard !isValidationLaunch else { return }
         clearRetiredProviderBadge()
         #if DEBUG
         if preparePreviewFixtureRuntime() {
@@ -218,7 +224,9 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        guard let notificationMetadata = Self.cloudKitNotificationMetadata(userInfo) else {
+        guard !isValidationLaunch,
+              let notificationMetadata = Self.cloudKitNotificationMetadata(userInfo)
+        else {
             completionHandler(.noData)
             return
         }

@@ -429,6 +429,15 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                         {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm"},
                     ],
                 },
+                {
+                    "identifier": "com.apple.CoreSimulator.SimRuntime.tvOS-26-0",
+                    "platform": "tvOS",
+                    "version": "26.0",
+                    "isAvailable": True,
+                    "supportedDeviceTypes": [
+                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K"},
+                    ],
+                },
             ],
             "devicetypes": [
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17", "productFamily": "iPhone"},
@@ -436,6 +445,8 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5", "productFamily": "iPad"},
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro", "productFamily": "Apple Vision"},
                 {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm", "productFamily": "Apple Watch"},
+                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-1080p", "productFamily": "Apple TV"},
+                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K", "productFamily": "Apple TV"},
             ],
         }
         config = workflow.capture_config(
@@ -445,11 +456,17 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 "ipados": "/tmp/i.app",
                 "visionos": "/tmp/v.app",
                 "watchos": "/tmp/w.app",
+                "tvos": "/tmp/t.app",
             },
             "/tmp/ios.xctestrun",
             "/tmp/visionos.xctestrun",
         )
-        self.assertEqual(set(config["profiles"]), {"ios", "ipados", "visionos", "watchos"})
+        self.assertEqual(set(config["profiles"]), set(workflow.SUPPORTED_CAPTURE_SURFACES))
+        self.assertEqual(
+            config["profiles"]["tvos"]["deviceTypeIdentifier"],
+            "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K",
+        )
+        self.assertNotIn("uiTestRun", config["profiles"]["tvos"])
         self.assertEqual(
             config["profiles"]["ios"]["runtimeIdentifier"],
             "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
@@ -523,10 +540,10 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 },
                 {
                     "requirementID": "shared-view.tvos-app.baseline",
-                    "status": "blocked",
-                    "hostMechanism": "unsupported-host-mechanism",
+                    "status": "captured",
+                    "hostMechanism": "simctl-gallery",
                     "appearanceMechanism": None,
-                    "errorCode": "unsupported-host-mechanism",
+                    "errorCode": None,
                 },
             ],
         }
