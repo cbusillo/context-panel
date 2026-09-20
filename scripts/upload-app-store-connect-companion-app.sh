@@ -604,7 +604,7 @@ run_xcodebuild() {
 assert_tvos_archive_ready() {
 	local app_path="$archive_path/Products/Applications/Context Panel.app"
 	local top_shelf_path="$app_path/PlugIns/ContextPanelTVTopShelfExtension.appex"
-	local entitlements_dir app_entitlements top_shelf_entitlements
+	local app_entitlements top_shelf_entitlements
 	local icon_name top_shelf_image top_shelf_image_wide
 	if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
 		echo "tvOS archive unexpectedly contains the iOS/visionOS companion widget" >&2
@@ -925,7 +925,6 @@ assert_ios_watch_archive_ready() {
 	local companion_app_path="$archive_path/Products/Applications/Context Panel.app"
 	local watch_app_path="$companion_app_path/Watch/Context Panel.app"
 	local watch_widget_path="$watch_app_path/PlugIns/ContextPanelWatchWidgetExtension.appex"
-	local entitlements_dir
 	local companion_app_entitlements
 	local watch_app_entitlements
 	local watch_widget_entitlements
@@ -987,7 +986,6 @@ assert_ios_watch_archive_ready() {
 
 assert_companion_widget_archive_ready() {
 	local widget_path="$archive_path/Products/Applications/Context Panel.app/PlugIns/ContextPanelCompanionWidgetExtension.appex"
-	local entitlements_dir
 	local widget_entitlements
 	if [[ ! -d "$widget_path" ]]; then
 		echo "companion archive is missing the embedded widget extension: $widget_path" >&2
@@ -1037,6 +1035,9 @@ if [[ "$platform" == "tvos" && ! -f "$tv_top_shelf_profile" ]]; then
 fi
 
 tmp_api_key=""
+# Not local to the archive checks: a failed check exits from inside one of them,
+# and the EXIT trap has to find the directory to remove it.
+entitlements_dir=""
 if [[ -z "$api_key_path" && -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" ]]; then
 	if [[ -z "$api_key_id" || -z "$api_issuer_id" ]]; then
 		echo "APP_STORE_CONNECT_API_KEY_P8_BASE64 also requires APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID" >&2
@@ -1047,7 +1048,15 @@ if [[ -z "$api_key_path" && -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" ]]; th
 	chmod 600 "$tmp_api_key"
 	api_key_path="$tmp_api_key"
 fi
-trap '[[ -n "${tmp_api_key:-}" ]] && rm -f "$tmp_api_key"' EXIT
+cleanup() {
+	if [[ -n "${tmp_api_key:-}" ]]; then
+		rm -f "$tmp_api_key"
+	fi
+	if [[ -n "${entitlements_dir:-}" ]]; then
+		rm -rf "$entitlements_dir"
+	fi
+}
+trap cleanup EXIT
 
 if [[ -z "$api_key_path" || -z "$api_key_id" || -z "$api_issuer_id" ]]; then
 	echo "App Store Connect API credentials are required" >&2

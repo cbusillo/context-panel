@@ -9,9 +9,11 @@ CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR seam swaps in fixture `xcodebuild`,
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -94,27 +96,39 @@ TOP_SHELF = f"{APP}/PlugIns/ContextPanelTVTopShelfExtension.appex"
 FAKE_XCODEBUILD = r"""#!/bin/bash
 printf '%s\x1f' "$@" >>"$FIXTURE_ROOT/xcodebuild.log"
 printf '\n' >>"$FIXTURE_ROOT/xcodebuild.log"
+printf '%s\n' "$PATH" >"$FIXTURE_ROOT/xcodebuild.path"
 arguments=("$@")
 for ((index = 0; index < ${#arguments[@]}; index++)); do
 	case "${arguments[index]}" in
 	-archivePath) archive_path="${arguments[index + 1]}" ;;
 	-exportPath) export_path="${arguments[index + 1]}" ;;
+	-exportOptionsPlist) export_options="${arguments[index + 1]}" ;;
 	esac
 done
 if [[ "${arguments[${#arguments[@]} - 1]}" == "archive" ]]; then
+	[[ ! -e "$archive_path" ]] || { echo "stale archive at $archive_path" >&2; exit 70; }
 	exec /bin/cp -R "$FIXTURE_ROOT/archive-template" "$archive_path"
 fi
+# Like the real tool, an export needs the archive and the options it was given.
+[[ -d "$archive_path/Products" && -f "$export_options" ]] || exit 70
 /bin/mkdir -p "$export_path"
 [[ -e "$FIXTURE_ROOT/no-ipa" ]] || : >"$export_path/Context Panel.ipa"
 """
 
+# Exits 64 unless called exactly as the script is meant to call the real tool, so
+# a dropped --strict or --xml fails a test. A bundle signed without entitlements
+# makes the real tool print nothing and succeed.
 FAKE_CODESIGN = r"""#!/bin/bash
 bundle="${@: -1}"
-case "$1" in
--d) exec /bin/cat "$bundle/.fixture-entitlements.plist" ;;
---verify) [[ ! -e "$bundle/.fixture-bad-signature" ]] ;;
-*) exit 64 ;;
-esac
+if [[ "$#" == 5 && "$1 $2 $3 $4" == "-d --entitlements - --xml" ]]; then
+	[[ ! -f "$bundle/.fixture-entitlements.plist" ]] || exec /bin/cat "$bundle/.fixture-entitlements.plist"
+	exit 0
+fi
+if [[ "$#" == 4 && "$1 $2 $3" == "--verify --strict --verbose=2" ]]; then
+	[[ ! -e "$bundle/.fixture-bad-signature" ]]
+	exit
+fi
+exit 64
 """
 
 FAKE_XCRUN = r"""#!/bin/bash
@@ -252,16 +266,41 @@ def install_archive_fixture(root: Path, working_directory: Path, archive: dict, 
         dsym.mkdir(parents=True)
         (dsym / ".fixture-uuids").write_text("".join(f"{uuid}\n" for uuid in uuids))
 
+    if archive.get("visionos_icon"):
+        stack = working_directory / "Resources/Assets.xcassets/AppIcon.solidimagestack"
+        layers = ["Back.solidimagestacklayer", "Front.solidimagestacklayer"]
+        stack.mkdir(parents=True)
+        (stack / "Contents.json").write_text(json.dumps({"layers": [{"filename": layer} for layer in layers]}))
+        for layer in layers:
+            image_set = stack / layer / "Content.imageset"
+            image_set.mkdir(parents=True)
+            (stack / layer / "Contents.json").write_text("{}")
+            (image_set / "Contents.json").write_text(json.dumps({"images": [{"filename": "layer.png"}]}))
+            (image_set / "layer.png").touch()
+    if archive.get("stale_outputs"):
+        # Left over from an earlier run at the same paths.
+        (root / "export").mkdir()
+        (root / "export" / "Stale.ipa").touch()
+        (root / "fixture.xcarchive").mkdir()
+        (root / "WatchArchiveReceipt-iOS.txt").write_text("stale=true\n")
+
     environment["FIXTURE_ROOT"] = str(root)
     environment["CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR"] = str(tools)
 
 
 class ArchiveRun:
-    def __init__(self, xcodebuild_calls, expected_build_arguments, receipt, ipa_exported):
+    def __init__(self, root, xcodebuild_calls, expected_build_arguments, receipt, ipa_names, xcodebuild_path):
+        self.root = root
         self.xcodebuild_calls = xcodebuild_calls
         self.expected_build_arguments = expected_build_arguments
         self.receipt = receipt
-        self.ipa_exported = ipa_exported
+        self.ipa_names = ipa_names
+        self.ipa_exported = bool(ipa_names)
+        self.xcodebuild_path = xcodebuild_path
+
+    @staticmethod
+    def option(call: list[str], name: str) -> str:
+        return call[call.index(name) + 1]
 
     @property
     def exported(self) -> bool:
@@ -276,11 +315,14 @@ def read_archive_run(root: Path) -> ArchiveRun:
     receipt = {}
     if receipt_path.exists():
         receipt = dict(line.split("=", 1) for line in receipt_path.read_text().splitlines())
+    path_log = root / "xcodebuild.path"
     return ArchiveRun(
+        str(root),
         calls,
         expected_build.read_text().splitlines() if expected_build.exists() else [],
         receipt,
-        any((root / "export").glob("*.ipa")),
+        sorted(path.name for path in (root / "export").glob("*.ipa")),
+        path_log.read_text().strip() if path_log.exists() else "",
     )
 
 
@@ -292,6 +334,7 @@ def run_preflight(
     missing: tuple[str, ...] = (),
     already_installed: tuple[str, ...] = (),
     archive: dict | None = None,
+    extra_path: str | None = None,
 ):
     """Returns the script result, the ExportOptions it wrote, and the installed profile names.
 
@@ -349,6 +392,8 @@ def run_preflight(
         }
         environment["HOME"] = str(home)
         environment["PATH"] = f"{bin_path}:{environment['PATH']}"
+        if extra_path is not None:
+            environment["PATH"] = f"{extra_path}:{environment['PATH']}"
         # The script resolves project.yml and the expected-build writer against its
         # working directory. An archive run gets a directory of its own, so the real
         # writer, which needs a clean checkout and a real archive, never runs.
@@ -562,10 +607,15 @@ class CompanionUploadArchiveTests(unittest.TestCase):
                 self.assertFalse(result.archive_run.ipa_exported)
 
     def test_a_valid_ios_archive_is_archived_with_every_profile_then_exported(self):
-        result, _, _ = run_preflight("ios", ios_profiles(), archive=ios_archive())
+        result, export_options, _ = run_preflight("ios", ios_profiles(), archive=ios_archive())
         run = result.archive_run
 
         self.assertEqual(result.returncode, 0, result.stdout)
+        # An export-only run skips the receipt gate and the version guard, which is
+        # only safe because Xcode is told to export and not to upload.
+        self.assertEqual(export_options["destination"], "export")
+        self.assertEqual(export_options["method"], "app-store-connect")
+        self.assertIs(export_options["uploadSymbols"], True)
         self.assertIn("this export is not a release artifact", result.stdout)
         archive_call, export_call = run.xcodebuild_calls
         self.assertEqual(archive_call[-1], "archive")
@@ -580,11 +630,30 @@ class CompanionUploadArchiveTests(unittest.TestCase):
         ):
             self.assertIn(setting, archive_call)
         self.assertFalse([setting for setting in archive_call if "_TV_" in setting])
+        self.assertIn("CODE_SIGN_STYLE=Manual", archive_call)
+        self.assertEqual(run.option(archive_call, "-scheme"), "ContextPanelCompanion")
+        self.assertEqual(run.option(archive_call, "-configuration"), "Release")
+        self.assertEqual(run.option(archive_call, "-destination"), "generic/platform=iOS")
         self.assertIn("-exportArchive", export_call)
+        self.assertEqual(run.option(export_call, "-archivePath"), run.option(archive_call, "-archivePath"))
+        self.assertEqual(run.option(export_call, "-exportOptionsPlist"), f"{run.root}/ExportOptions.plist")
+        for call in (archive_call, export_call):
+            self.assertIn("-allowProvisioningUpdates", call)
+            self.assertEqual(run.option(call, "-authenticationKeyPath"), f"{run.root}/AuthKey.p8")
+            self.assertEqual(run.option(call, "-authenticationKeyID"), "FIXTUREKEY")
+            self.assertEqual(run.option(call, "-authenticationKeyIssuerID"), "fixture-issuer")
+        # xcodebuild must find the system toolchain ahead of whatever the caller's PATH holds.
+        self.assertTrue(run.xcodebuild_path.startswith("/usr/bin:/bin:/usr/sbin:/sbin:"), run.xcodebuild_path)
         self.assertTrue(run.ipa_exported)
 
         expected_build = run.expected_build_arguments
         self.assertEqual(expected_build[expected_build.index("--layout") + 1], "ios")
+        self.assertEqual(run.option(expected_build, "--archive"), run.option(archive_call, "-archivePath"))
+        self.assertEqual(run.option(expected_build, "--version"), "9.9.9")
+        self.assertEqual(run.option(expected_build, "--build-number"), "999")
+        self.assertEqual(run.option(expected_build, "--configuration"), "Release")
+        self.assertIn(f"watchos.app={run.root}/watch.provisionprofile", expected_build)
+        self.assertIn(f"companion.ios.widget={run.root}/widget.provisionprofile", expected_build)
         self.assertEqual(
             sorted(value.split("=")[0] for flag, value in zip(expected_build, expected_build[1:]) if flag == "--profile"),
             ["companion.ios.app", "companion.ios.widget", "watchos.app", "watchos.widget"],
@@ -616,10 +685,74 @@ class CompanionUploadArchiveTests(unittest.TestCase):
         self.assertIn("CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER=UUID-TV", archive_call)
         self.assertIn("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER=UUID-TOP-SHELF", archive_call)
         self.assertFalse([setting for setting in archive_call if "COMPANION" in setting or "WATCH" in setting])
+        self.assertEqual(run.option(archive_call, "-scheme"), "ContextPanelTV")
+        self.assertEqual(run.option(archive_call, "-destination"), "generic/platform=tvOS")
         self.assertTrue(run.exported)
         self.assertEqual(run.receipt, {})
+        self.assertIn(f"tvos.top-shelf={run.root}/tv-top-shelf.provisionprofile", run.expected_build_arguments)
         expected_build = run.expected_build_arguments
         self.assertEqual(expected_build[expected_build.index("--layout") + 1], "tvos")
+
+    def test_a_valid_visionos_archive_skips_the_watch_checks(self):
+        profiles = {name: content for name, content in ios_profiles().items() if name in ("app", "widget")}
+        for content in profiles.values():
+            content["Platform"] = ["visionOS"]
+        archive = ios_archive()
+        for name in (WATCH_APP, WATCH_WIDGET):
+            archive["bundles"].pop(name)
+
+        result, export_options, _ = run_preflight("visionos", profiles, archive={**archive, "visionos_icon": True})
+        run = result.archive_run
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(run.option(run.xcodebuild_calls[0], "-destination"), "generic/platform=visionOS")
+        self.assertEqual(run.receipt, {})
+        self.assertEqual(sorted(export_options["provisioningProfiles"].values()), ["UUID-APP", "UUID-WIDGET"])
+        expected_build = run.expected_build_arguments
+        self.assertEqual(run.option(expected_build, "--layout"), "visionos")
+        self.assertIn(f"companion.visionos.app={run.root}/app.provisionprofile", expected_build)
+        self.assertIn(f"companion.visionos.widget={run.root}/widget.provisionprofile", expected_build)
+
+    def test_outputs_left_by_an_earlier_run_cannot_pass_for_this_one(self):
+        # The fixture xcodebuild refuses to archive over an existing archive, and a
+        # stale IPA would otherwise satisfy the export-only check on its own.
+        result, _, _ = run_preflight("ios", ios_profiles(), archive={**ios_archive(), "stale_outputs": True})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.archive_run.ipa_names, ["Context Panel.ipa"])
+        self.assertNotIn("stale", result.archive_run.receipt)
+
+    def test_a_dsym_must_cover_every_architecture_of_a_universal_executable(self):
+        covered = ios_archive()
+        covered["bundles"][APP]["uuids"] = ["UUID-BINARY-APP", "UUID-BINARY-APP-2"]
+        covered["dsyms"]["App.dSYM"] = ["UUID-BINARY-APP", "UUID-BINARY-APP-2"]
+        partial = ios_archive()
+        partial["bundles"][APP]["uuids"] = ["UUID-BINARY-APP", "UUID-BINARY-APP-2"]
+
+        result, _, _ = run_preflight("ios", ios_profiles(), archive=covered)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.archive_run.receipt["companion_executable_uuids"], "UUID-BINARY-APP,UUID-BINARY-APP-2")
+
+        result, _, _ = run_preflight("ios", ios_profiles(), archive=partial)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("iOS companion app archive dSYM does not cover every executable UUID", result.stdout)
+        self.assertFalse(result.archive_run.exported)
+
+    def test_a_refused_archive_leaves_no_scratch_directory_behind(self):
+        archive = tvos_archive()
+        archive["bundles"][APP]["entitlements"][APS_ENVIRONMENT] = "development"
+        with tempfile.TemporaryDirectory() as scratch:
+            real_mktemp = shutil.which("mktemp")
+            shim = Path(scratch) / "bin" / "mktemp"
+            shim.parent.mkdir()
+            # macOS mktemp ignores TMPDIR for -d without a template, so route it here.
+            shim.write_text(f'#!/bin/bash\nexec "{real_mktemp}" "$@" "{scratch}/made.XXXXXX"\n')
+            shim.chmod(0o755)
+            result, _, _ = run_preflight("tvos", tvos_profiles(), archive=archive, extra_path=str(shim.parent))
+
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn("aps-environment value 'development'", result.stdout)
+            self.assertEqual(sorted(path.name for path in Path(scratch).glob("made.*")), [])
 
     def test_an_export_that_produces_no_ipa_fails(self):
         result, _, _ = run_preflight("tvos", tvos_profiles(), archive={**tvos_archive(), "no_ipa": True})
@@ -651,7 +784,7 @@ class CompanionUploadArchiveTests(unittest.TestCase):
         services = ICLOUD_SERVICES
         cases = [
             case("companion archive is missing the embedded widget extension", drop(COMPANION_WIDGET)),
-            case("could not read signed entitlements from companion widget", field(COMPANION_WIDGET, "entitlements", None)),
+            case("companion widget signed entitlements are not a valid property list", field(COMPANION_WIDGET, "entitlements", None)),
             case("companion widget signed entitlements do not contain com.apple.security.application-groups", entitlement(COMPANION_WIDGET, APPLICATION_GROUPS, [])),
             case("companion widget signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(COMPANION_WIDGET, ICLOUD_CONTAINERS, ["iCloud.com.example.other"])),
             case("companion widget signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(COMPANION_WIDGET, services, [])),
