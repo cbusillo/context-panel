@@ -271,6 +271,7 @@ jobs:
           build_ui_tests 'generic/platform=iOS Simulator' "${GITHUB_WORKSPACE}/.build/ios-derived-data"
           build_ui_tests 'generic/platform=visionOS Simulator' "${GITHUB_WORKSPACE}/.build/visionos-derived-data"
           build_simulator ContextPanelWatch 'generic/platform=watchOS Simulator' "${GITHUB_WORKSPACE}/.build/watchos-derived-data"
+          build_simulator ContextPanelTV 'generic/platform=tvOS Simulator' "${GITHUB_WORKSPACE}/.build/tvos-derived-data"
 
       - name: Create Private Capture Config
         shell: bash
@@ -298,6 +299,7 @@ jobs:
             --visionos-app "${GITHUB_WORKSPACE}/.build/visionos-derived-data/Build/Products/Release-xrsimulator/Context Panel.app" \
             --visionos-ui-test-run "${visionos_ui_test_run}" \
             --watchos-app "${GITHUB_WORKSPACE}/.build/watchos-derived-data/Build/Products/Release-watchsimulator/Context Panel.app" \
+            --tvos-app "${GITHUB_WORKSPACE}/.build/tvos-derived-data/Build/Products/Release-appletvsimulator/Context Panel.app" \
             --output "${RUNNER_TEMP}/context-panel-capture-config.json"
 
       - name: Capture Shared-View Evidence

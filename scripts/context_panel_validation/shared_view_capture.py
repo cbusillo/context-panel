@@ -238,6 +238,10 @@ class SimulatorCaptureProfile:
     product_family: str
     route_kind: str
     applies_simulator_appearance: bool
+    relaunch_needs_settle: bool = False
+    # Bytes the app's code must contain before its launch route is trusted. Product
+    # source older than the route ignores the arguments and shows its normal UI.
+    required_launch_marker: bytes | None = None
 
 
 SIMULATOR_CAPTURE_PROFILES = {
@@ -280,6 +284,18 @@ SIMULATOR_CAPTURE_PROFILES = {
         product_family="Apple Watch",
         route_kind="launch",
         applies_simulator_appearance=False,
+    ),
+    "tvos": SimulatorCaptureProfile(
+        surface_prefix="tvos.",
+        bundle_identifier=APP_BUNDLE_IDENTIFIER,
+        bundle_platform="AppleTVSimulator",
+        device_family=3,
+        runtime_platforms=("tvOS",),
+        product_family="Apple TV",
+        route_kind="launch",
+        applies_simulator_appearance=False,
+        relaunch_needs_settle=True,
+        required_launch_marker=b"--context-panel-validation-presentation",
     ),
 }
 SUPPORTED_PROFILES = tuple(SIMULATOR_CAPTURE_PROFILES)
@@ -1367,8 +1383,18 @@ def _capture_route(
                 "--context-panel-validation-fixture", requirement.fixture_id,
                 "--context-panel-validation-family", requirement.family,
             ]
+        elif requirement.surface in {"tvos.app", "tvos.top-shelf"}:
+            families = {"topShelf"} if requirement.surface == "tvos.top-shelf" else {"runway", "provider"}
+            if requirement.family not in families or requirement.presentation == "not-applicable":
+                raise SharedViewCaptureError("capture TV selector is invalid")
+            selectors = [
+                "--context-panel-validation-surface", requirement.surface,
+                "--context-panel-validation-fixture", requirement.fixture_id,
+                "--context-panel-validation-family", requirement.family,
+                "--context-panel-validation-presentation", requirement.presentation,
+            ]
         else:
-            raise SharedViewCaptureError("capture Watch surface is invalid")
+            raise SharedViewCaptureError("capture launch surface is invalid")
         return (
             [
                 "xcrun",
@@ -1437,6 +1463,28 @@ def _unknown_results(
         )
         for requirement in requirements
     }
+
+
+def _app_code_contains(app_bundle: Path, marker: bytes) -> bool:
+    """Whether the bundle's executable, or a top-level dylib holding its code, contains marker."""
+    try:
+        with (app_bundle / "Info.plist").open("rb") as stream:
+            executable_name = plistlib.load(stream).get("CFBundleExecutable")
+        if not isinstance(executable_name, str) or Path(executable_name).name != executable_name:
+            return False
+        candidates = [app_bundle / executable_name, *sorted(app_bundle.glob("*.dylib"))]
+        for candidate in candidates:
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            overlap = b""
+            with candidate.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    if marker in overlap + chunk:
+                        return True
+                    overlap = chunk[-(len(marker) - 1) :]
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return False
+    return False
 
 
 def _blocked_results(
@@ -2439,6 +2487,10 @@ def _capture_profile(
                         ],
                         SIMCTL_TERMINATE_TIMEOUT,
                     )
+                    if capture_profile.relaunch_needs_settle:
+                        # tvOS relaunches an app in the background when it is
+                        # started immediately after termination.
+                        sleeper(CAPTURE_SETTLE_SECONDS)
             if profile.ui_test_run is not None:
                 (
                     route_baseline,
@@ -2854,6 +2906,19 @@ def execute_shared_view_capture(
                     )
                 else:
                     capture_results.update(_unknown_results(requirements, profile_error, now))
+                continue
+            launch_marker = _simulator_capture_profile(profile_name).required_launch_marker
+            if launch_marker is not None and not _app_code_contains(
+                profiles[profile_name].app_bundle, launch_marker
+            ):
+                capture_results.update(
+                    _blocked_results(
+                        requirements,
+                        "validation-launch-unsupported-by-app",
+                        now,
+                        host_mechanism="simctl-gallery",
+                    )
+                )
                 continue
             snapshot_profile, snapshot_path = _snapshot_profile(
                 profiles[profile_name], staging_directory

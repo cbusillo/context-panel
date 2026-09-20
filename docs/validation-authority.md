@@ -88,8 +88,8 @@ that the current risk-policy cutover is complete.
 
 ## Implemented capture limits
 
-The executor currently supports iOS, iPadOS, visionOS, and watchOS simulator
-capture. macOS and tvOS remain explicit `unsupported-host-mechanism` results;
+The executor currently supports iOS, iPadOS, visionOS, watchOS, and tvOS
+simulator capture. macOS remains an explicit `unsupported-host-mechanism` result;
 see [the capture contract](signed-validation-galleries.md#private-simulator-capture).
 There is no macOS simulator adapter hidden behind a missing config value.
 
