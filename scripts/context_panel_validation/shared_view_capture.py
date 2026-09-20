@@ -308,6 +308,7 @@ HOST_RENDERER_PRODUCT = "ContextPanelSharedViewRenderer"
 HOST_RENDERER_MECHANISM = "swiftpm-shared-view-renderer"
 HOST_RENDERER_APPEARANCE_MECHANISM = "renderer-argument"
 HOST_RENDERER_UNSUPPORTED_STATUS = 3
+HOST_RENDERER_BUILD_DIRECTORY = ".host-renderer-build"
 HOST_RENDERER_BUILD_TIMEOUT = 30 * 60
 HOST_RENDERER_RENDER_TIMEOUT = 120
 COMPANION_UI_TEST_PROFILES = frozenset({"ios", "ipados", "visionos"})
@@ -2790,7 +2791,8 @@ def _host_renderer_source_sha256(source_root: Path) -> str | None:
                 files.append(path)
             else:
                 return None
-        for path in sorted(files):
+        # One "<posix relative path>\0<sha256 hex>\0" record per file, ordered by that path.
+        for path in sorted(files, key=lambda item: item.relative_to(source_root).as_posix()):
             if path.is_symlink():
                 return None
             digest.update(path.relative_to(source_root).as_posix().encode() + b"\0")
@@ -2805,14 +2807,17 @@ def _host_renderer_source_error(
     current_manifest_path: Path,
     current_manifest_id: str,
     runner: Runner,
-    scratch_directory: Path,
 ) -> str | None:
     """Regenerate the manifest from the renderer's source root; it must be the plan's manifest.
 
     The source root's own generator is used, because that is the code that produced the
     plan's manifest.
     """
-    output = scratch_directory / ".host-renderer-manifest.json"
+    try:
+        scratch = tempfile.TemporaryDirectory(prefix="context-panel-renderer-manifest-")
+    except OSError:
+        return "host-renderer-source-invalid"
+    output = Path(scratch.name) / "manifest.json"
     try:
         source = _load_json_object(current_manifest_path, "current surface manifest").get("source")
         if not isinstance(source, dict):
@@ -2841,7 +2846,7 @@ def _host_renderer_source_error(
     except (OSError, ValueError, SharedViewEvidenceError):
         return "host-renderer-source-invalid"
     finally:
-        output.unlink(missing_ok=True)
+        scratch.cleanup()
     if regenerated_id != current_manifest_id:
         return "host-renderer-source-mismatch"
     return None
@@ -2892,13 +2897,13 @@ def _capture_host_renderer(
         "host-renderer-source-invalid"
         if renderer_source_sha256 is None
         else _host_renderer_source_error(
-            profile, current_manifest_path, current_manifest_id, runner, artifact_directory
+            profile, current_manifest_path, current_manifest_id, runner
         )
     )
     if source_error is not None:
         return outcome(all_results("blocked", source_error), False)
 
-    build_directory = artifact_directory / ".host-renderer-build"
+    build_directory = artifact_directory / HOST_RENDERER_BUILD_DIRECTORY
     try:
         build_command = [
             "swift", "build", "--configuration", "release", "--product", HOST_RENDERER_PRODUCT,

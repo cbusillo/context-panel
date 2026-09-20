@@ -413,9 +413,14 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
             or not all(
                 isinstance(renderer_profiles[0].get(key), str)
                 and re.fullmatch(r"[0-9a-f]{64}", renderer_profiles[0][key])
-                for key in ("rendererExecutableSHA256", "rendererSourceSHA256")
+                for key in (
+                    "rendererExecutableSHA256",
+                    "rendererSourceSHA256",
+                    "rendererSourceManifestID",
+                )
             )
-            or renderer_profiles[0].get("rendererSourceManifestID") != receipt.get("currentManifestID")
+            or renderer_profiles[0]["rendererSourceManifestID"] != receipt.get("currentManifestID")
+            or renderer_profiles[0]["rendererSourceManifestID"] != requirements.get("currentManifestID")
         ):
             raise WorkflowEvidenceError("macOS widget renderer identity is missing or does not match")
     for requirement_id, surface in expected.items():

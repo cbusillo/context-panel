@@ -213,6 +213,7 @@ jobs:
           git worktree add --detach .build/current-source-pristine "${CURRENT_SOURCE_COMMIT}"
           test -z "$(git -C .build/previous-source status --porcelain)"
           test -z "$(git -C .build/current-source status --porcelain)"
+          test -z "$(git -C .build/current-source-pristine status --porcelain)"
           python3 .build/previous-source/scripts/context-panel-surface-manifest.py generate --root .build/previous-source \
             --marketing-version "${PREVIOUS_VERSION}" --build-number "${PREVIOUS_BUILD_NUMBER}" \
             --commit "${PREVIOUS_SOURCE_COMMIT}" --configuration Release --xcode-build "${previous_xcode_build}" \

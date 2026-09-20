@@ -300,11 +300,15 @@ one such profile whose manifest ID equals the receipt's `currentManifestID`.
 
 What this does and does not prove: the surface manifest governs the shared
 views and fixtures the image is drawn from, so the manifest check binds the
-image to that source. It does not govern the renderer itself (`Package.swift`
-and `Tools/ContextPanelSharedViewRenderer`), which is why their digest is
-recorded separately as `rendererSourceSHA256`: an auditor can compare it with
-the same paths at the source commit. The binary hash identifies what ran but is
-not reproducible. Unlike the simulator profiles there is no app bundle with an
+image to that source. It does not fingerprint the renderer itself:
+`Package.swift` is an intentionally ignored input and
+`Tools/ContextPanelSharedViewRenderer` is outside the governed patterns. Their
+digest is therefore recorded separately as `rendererSourceSHA256`: SHA-256 over
+one `<posix relative path>\0<file sha256 hex>\0` record per file, ordered by
+that path, covering `Package.swift` and every file under the tool's directory.
+An auditor can recompute it from a clean checkout of the source commit; a
+working tree with untracked files there will not match. The binary hash
+identifies what ran but is not reproducible. Unlike the simulator profiles there is no app bundle with an
 embedded manifest; the link between binary and source is that the executor built
 it from the verified root. Product source older than the tool is
 `blocked/host-renderer-unavailable` and fails qualification by design.

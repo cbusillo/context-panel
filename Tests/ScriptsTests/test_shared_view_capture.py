@@ -543,7 +543,7 @@ class HostRendererRunner:
             binary_directory.mkdir(parents=True, exist_ok=True)
             binary = binary_directory / capture_module.HOST_RENDERER_PRODUCT
             if self.symlinked_binary:
-                outside = scratch.parent / "outside-renderer"
+                outside = Path(tempfile.mkdtemp(prefix="outside-renderer-")) / "renderer"
                 outside.write_bytes(b"renderer binary")
                 binary.symlink_to(outside)
             else:
@@ -1273,7 +1273,9 @@ class SharedViewCaptureTests(unittest.TestCase):
                 {
                     "schemaVersion": capture_module.CAPTURE_CONFIG_SCHEMA_VERSION,
                     "kind": capture_module.CAPTURE_CONFIG_KIND,
-                    "profiles": {"macos": {"sourceRoot": str(self.source_root)}},
+                    "profiles": {
+                        capture_module.HOST_RENDERER_PROFILE: {"sourceRoot": str(self.source_root)}
+                    },
                 }
             )
         )
@@ -1332,7 +1334,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         )
         self.assertFalse(any(call[0] == "xcrun" for call in runner.calls))
         [profile] = receipt["profiles"]
-        self.assertEqual("macos", profile["profile"])
+        self.assertEqual(capture_module.HOST_RENDERER_PROFILE, profile["profile"])
         self.assertEqual(hashlib.sha256(b"renderer binary").hexdigest(), profile["rendererExecutableSHA256"])
         self.assertEqual(receipt["currentManifestID"], profile["rendererSourceManifestID"])
         self.assertEqual(
@@ -1370,7 +1372,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         real_rmtree = shutil.rmtree
 
         def keep_build_directory(path, *args, **kwargs):
-            if Path(path).name == ".host-renderer-build":
+            if Path(path).name == capture_module.HOST_RENDERER_BUILD_DIRECTORY:
                 return None
             return real_rmtree(path, *args, **kwargs)
 
@@ -1470,7 +1472,7 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         def check(runner: HostRendererRunner) -> str | None:
             return capture_module._host_renderer_source_error(
-                profile, manifest_path, plan_manifest_id, runner, self.root
+                profile, manifest_path, plan_manifest_id, runner
             )
 
         matching = HostRendererRunner(manifest_id=plan_manifest_id)
@@ -1487,7 +1489,9 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(
             "host-renderer-source-invalid", check(HostRendererRunner(manifest_status=1))
         )
-        self.assertEqual([], sorted(self.root.glob(".host-renderer-manifest*")))
+        output = Path(generate[generate.index("--output") + 1])
+        self.assertNotIn(self.root.resolve(), output.resolve().parents)
+        self.assertFalse(output.parent.exists())
         (self.source_root / "scripts" / "context-panel-surface-manifest.py").unlink()
         self.assertEqual("host-renderer-source-invalid", check(HostRendererRunner()))
 

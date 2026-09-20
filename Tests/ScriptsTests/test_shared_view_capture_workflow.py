@@ -509,6 +509,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
     @staticmethod
     def capture_receipt_fixture() -> tuple[dict[str, Any], dict[str, Any]]:
         requirements = {
+            "currentManifestID": "a" * 64,
             "requirements": [
                 {"id": "shared-view.ios-app.baseline", "surface": "ios.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.watchos-app.baseline", "surface": "watchos.app", "evidenceClass": "shared-view"},
@@ -624,6 +625,14 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
             "another manifest": lambda receipt: renderer(receipt).update(rendererSourceManifestID="e" * 64),
             "wrong mechanism": lambda receipt: renderer(receipt).update(hostMechanism="simctl-gallery"),
             "profiles missing": lambda receipt: receipt.pop("profiles"),
+            "null manifest id on both sides": lambda receipt: (
+                renderer(receipt).update(rendererSourceManifestID=None),
+                receipt.pop("currentManifestID"),
+            ),
+            "receipt for another plan": lambda receipt: (
+                renderer(receipt).update(rendererSourceManifestID="e" * 64),
+                receipt.update(currentManifestID="e" * 64),
+            ),
         }
         for name, mutate in mutations.items():
             with self.subTest(name):
