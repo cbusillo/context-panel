@@ -633,7 +633,7 @@ sleep 30
         )
 
     def run_companion_validation_watchdog_fixture(
-        self, fake_xcodebuild_body: str
+        self, fake_xcodebuild_body: str, *, stall_seconds: int
     ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -650,7 +650,6 @@ sleep 30
             scripts_path = temp_path / "scripts"
             scripts_path.mkdir()
             fixture_script = self.read("scripts/validate-companion-builds.sh")
-            fixture_script = fixture_script.replace("5 * 60", "1")
             fixture_script = fixture_script.replace(
                 "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
             )
@@ -663,6 +662,7 @@ sleep 30
 
             environment = os.environ.copy()
             environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)
+            environment["CONTEXT_PANEL_XCODEBUILD_STALL_SECONDS"] = str(stall_seconds)
             environment["PATH"] = f"{bin_path}:{environment.get('PATH', '')}"
             environment["RUNNER_TEMP"] = str(temp_path)
             environment["TMPDIR"] = str(temp_path)
@@ -3263,7 +3263,8 @@ if ((count == 1)); then
     wait
 fi
 echo "** BUILD SUCCEEDED **"
-"""
+""",
+            stall_seconds=1,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stdout)
@@ -3285,7 +3286,8 @@ count=$((count + 1))
 printf '%s' "$count" > "$counter"
 echo "** BUILD FAILED **"
 exit 65
-"""
+""",
+            stall_seconds=60,
         )
 
         self.assertNotEqual(completed.returncode, 0)
