@@ -267,8 +267,35 @@ the gallery would otherwise fall back to the widget. It lives under `Tools/`,
 outside the governed shipping inputs. It renders one pixel per point at a fixed
 size and pins its own time zone and locale, so the same source gives the same
 PNG on any host with the same OS fonts; byte stability across macOS versions is
-not claimed. It is not yet wired into the capture executor, so in receipts
-Mac remains an explicit `unsupported-host-mechanism` result; missing
+not claimed.
+
+The executor uses it for `macos.widget` only, through a `macos` capture-config
+entry that names a source root (`{"sourceRoot": "<absolute path>"}`). For each
+run the executor:
+
+1. regenerates the surface manifest from that source root, using the source
+   fields of the current manifest, and requires its ID to equal the plan's
+   `currentManifestID`; otherwise every cell is
+   `blocked/host-renderer-source-mismatch` (or `-source-invalid`) and nothing
+   is built;
+2. builds the tool itself with `swift build --configuration release` into a
+   scratch directory inside the capture run, so a prebuilt binary cannot be
+   substituted, and rejects a binary located anywhere else;
+3. renders each cell, validates the PNG like any other capture, refuses
+   duplicate images, and removes the build directory.
+
+The receipt records this profile as `hostMechanism:
+swiftpm-shared-view-renderer` with `rendererExecutableSHA256` and
+`rendererSourceManifestID`; captures use `appearanceMechanism:
+renderer-argument`. Unlike the simulator profiles, this binds the image to a
+verified source tree and the tool built from it, not to an app bundle with an
+embedded manifest; the link between the binary and the source is that the
+executor built it there. Product source older than the tool is
+`blocked/host-renderer-unavailable` and fails qualification by design.
+
+`macos.app` remains an explicit `unsupported-host-mechanism` result: its
+presentations are drawn by views inside the Mac app target, and a Mac app is not
+built on the host for capture. Missing
 profiles are blocked and command, image, stability, identity, cleanup, or
 publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an
@@ -317,8 +344,9 @@ deliberately fail-closed: an uncovered placement surface blocks the lane rather
 than being omitted. It builds unsigned fresh Release simulator bundles only for
 iOS/iPadOS, visionOS, standalone watchOS, and tvOS, embeds the current manifest, then
 invokes `capture-shared-view-evidence` unchanged. The qualification boundary is
-strict: all supported requirements must be captured, and any uncaptured
-requirements must be macOS records with exactly
+strict: all supported requirements must be captured, `macos.widget`
+requirements must be captured by `swiftpm-shared-view-renderer`, and any
+uncaptured requirements must be `macos.app` records with exactly
 `unsupported-host-mechanism`.
 
 Only a qualified run uploads public evidence. The public artifact contains the

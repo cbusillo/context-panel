@@ -300,6 +300,7 @@ jobs:
             --visionos-ui-test-run "${visionos_ui_test_run}" \
             --watchos-app "${GITHUB_WORKSPACE}/.build/watchos-derived-data/Build/Products/Release-watchsimulator/Context Panel.app" \
             --tvos-app "${GITHUB_WORKSPACE}/.build/tvos-derived-data/Build/Products/Release-appletvsimulator/Context Panel.app" \
+            --macos-source-root "${GITHUB_WORKSPACE}/.build/current-source" \
             --output "${RUNNER_TEMP}/context-panel-capture-config.json"
 
       - name: Capture Shared-View Evidence

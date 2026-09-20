@@ -489,6 +489,52 @@ class FakeRunner:
         return png_bytes(color=color, bit_depth=self.png_bit_depth)
 
 
+class HostRendererRunner:
+    """Stands in for `swift build` and the built renderer; records every command."""
+
+    def __init__(
+        self,
+        *,
+        build_status: int = 0,
+        render_status: int = 0,
+        same_image: bool = False,
+        bin_directory: Path | None = None,
+    ) -> None:
+        self.calls: list[list[str]] = []
+        self.build_status = build_status
+        self.render_status = render_status
+        self.same_image = same_image
+        self.bin_directory = bin_directory
+        self.scratch_paths: list[Path] = []
+
+    def run(
+        self, args: list[str], *, timeout: int, environment: dict[str, str] | None = None
+    ) -> CommandResult:
+        del timeout, environment
+        self.calls.append(args)
+        if args[:2] == ["swift", "build"]:
+            scratch = Path(args[args.index("--scratch-path") + 1])
+            binary_directory = self.bin_directory or scratch / "release"
+            if "--show-bin-path" in args:
+                return CommandResult(0, f"{binary_directory}\n", "")
+            if self.build_status != 0:
+                return CommandResult(self.build_status, "", "error: no product")
+            self.scratch_paths.append(scratch)
+            binary_directory.mkdir(parents=True, exist_ok=True)
+            (binary_directory / capture_module.HOST_RENDERER_PRODUCT).write_bytes(b"renderer binary")
+            return CommandResult(0, "", "")
+        if Path(args[0]).name == capture_module.HOST_RENDERER_PRODUCT:
+            if self.render_status != 0:
+                return CommandResult(self.render_status, "", "renderer refused")
+            renders = sum(1 for call in self.calls if Path(call[0]).name == capture_module.HOST_RENDERER_PRODUCT)
+            shade = 0x10 if self.same_image else 0x10 * renders
+            Path(args[args.index("--output") + 1]).write_bytes(
+                png_bytes(1_024, 768, (shade, 0x40, 0x80, 0xFF))
+            )
+            return CommandResult(0, "rendered", "")
+        raise AssertionError(f"unexpected command: {args}")
+
+
 class SharedViewCaptureTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory(dir="/private/tmp")
@@ -1182,6 +1228,181 @@ class SharedViewCaptureTests(unittest.TestCase):
             receipt,
             "captured-image-invalid",
             "captured-image-invalid",
+        )
+
+    def write_host_renderer_config(self) -> None:
+        self.source_root = self.root / "current-source"
+        self.source_root.mkdir(exist_ok=True)
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": capture_module.CAPTURE_CONFIG_SCHEMA_VERSION,
+                    "kind": capture_module.CAPTURE_CONFIG_KIND,
+                    "profiles": {"macos": {"sourceRoot": str(self.source_root)}},
+                }
+            )
+        )
+
+    def execute_host_renderer(self, runner: HostRendererRunner, source_error: str | None = None):
+        with mock.patch.object(
+            capture_module, "_host_renderer_source_error", return_value=source_error
+        ):
+            return self.execute(runner)
+
+    def macos_captures(self, receipt: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {"macos.app": [], "macos.widget": []}
+        for item in receipt["captures"]:
+            grouped[item["surface"]].append(item)
+        return grouped
+
+    def test_mac_widget_cells_are_rendered_on_the_host_and_mac_app_cells_stay_unsupported(self) -> None:
+        self.write_plan(["macos.app", "macos.widget"])
+        self.write_host_renderer_config()
+        runner = HostRendererRunner()
+
+        exit_code, receipt = self.execute_host_renderer(runner)
+
+        captures = self.macos_captures(receipt)
+        widget_cells = next(
+            surface.cells for surface in self.matrix.surfaces if surface.id == "macos.widget"
+        )
+        self.assertEqual(EXIT_BLOCKED, exit_code)  # macos.app keeps the run from being complete
+        self.assertEqual(
+            [("captured", capture_module.HOST_RENDERER_MECHANISM, "renderer-argument", None)]
+            * len(widget_cells),
+            [
+                (item["status"], item["hostMechanism"], item["appearanceMechanism"], item["errorCode"])
+                for item in captures["macos.widget"]
+            ],
+        )
+        self.assertEqual(
+            {("blocked", "unsupported-host-mechanism")},
+            {(item["status"], item["errorCode"]) for item in captures["macos.app"]},
+        )
+        renders = [call for call in runner.calls if Path(call[0]).name == capture_module.HOST_RENDERER_PRODUCT]
+        self.assertEqual(
+            [
+                ["--fixture", cell.fixture_id, "--family", cell.family, "--appearance", cell.appearance,
+                 "--presentation", cell.presentation]
+                for cell in widget_cells
+            ],
+            [call[1:9] for call in renders],
+        )
+        self.assertFalse(any(call[0] == "xcrun" for call in runner.calls))
+        [profile] = receipt["profiles"]
+        self.assertEqual("macos", profile["profile"])
+        self.assertEqual(hashlib.sha256(b"renderer binary").hexdigest(), profile["rendererExecutableSHA256"])
+        self.assertEqual(receipt["currentManifestID"], profile["rendererSourceManifestID"])
+
+    def test_host_renderer_builds_inside_the_run_and_leaves_no_build_directory(self) -> None:
+        self.write_plan(["macos.widget"])
+        self.write_host_renderer_config()
+        runner = HostRendererRunner()
+
+        self.execute_host_renderer(runner)
+
+        [scratch] = runner.scratch_paths
+        self.assertIn(self.artifact_root.resolve(), scratch.resolve().parents)
+        self.assertFalse(scratch.exists())
+        build = next(call for call in runner.calls if call[:2] == ["swift", "build"])
+        self.assertEqual(str(self.source_root), build[build.index("--package-path") + 1])
+
+    def test_host_renderer_refuses_a_source_root_that_is_not_the_plans_source(self) -> None:
+        self.write_plan(["macos.widget"])
+        self.write_host_renderer_config()
+        runner = HostRendererRunner()
+
+        exit_code, receipt = self.execute_host_renderer(runner, "host-renderer-source-mismatch")
+
+        self.assertEqual(EXIT_BLOCKED, exit_code)
+        self.assertEqual([], runner.calls)
+        self.assertEqual(
+            {("blocked", "host-renderer-source-mismatch")},
+            {(item["status"], item["errorCode"]) for item in receipt["captures"]},
+        )
+        [profile] = receipt["profiles"]
+        self.assertIsNone(profile["rendererExecutableSHA256"])
+        self.assertIsNone(profile["rendererSourceManifestID"])
+
+    def test_host_renderer_failures_never_count_as_captures(self) -> None:
+        cases = (
+            (HostRendererRunner(build_status=1), "blocked", "host-renderer-unavailable"),
+            (
+                HostRendererRunner(render_status=capture_module.HOST_RENDERER_UNSUPPORTED_STATUS),
+                "blocked",
+                "host-renderer-presentation-unsupported",
+            ),
+            (HostRendererRunner(render_status=70), "unknown", "host-renderer-failed"),
+            (HostRendererRunner(same_image=True), "unknown", "duplicate-artifact-digest"),
+            (
+                HostRendererRunner(bin_directory=self.root / "elsewhere"),
+                "unknown",
+                "host-renderer-location-invalid",
+            ),
+        )
+        for index, (runner, status, error_code) in enumerate(cases):
+            with self.subTest(error_code=error_code):
+                self.write_plan(["macos.widget"])
+                self.write_host_renderer_config()
+                with mock.patch.object(
+                    capture_module, "_host_renderer_source_error", return_value=None
+                ):
+                    _, receipt = self.execute(
+                        runner,
+                        run_id=f"host-{index}",
+                        receipt_path=self.root / f"host-{index}.json",
+                    )
+
+                self.assertEqual(
+                    {(status, error_code)},
+                    {(item["status"], item["errorCode"]) for item in receipt["captures"]},
+                )
+                self.assertEqual({None}, {item["artifactDigest"] for item in receipt["captures"]})
+
+    def test_mac_widget_without_a_configured_renderer_is_blocked_not_unsupported(self) -> None:
+        self.write_plan(["macos.widget"])
+        self.write_config(())
+
+        exit_code, receipt = self.execute(FakeRunner())
+
+        self.assertEqual(EXIT_BLOCKED, exit_code)
+        self.assertEqual(
+            {("blocked", "profile-not-configured")},
+            {(item["status"], item["errorCode"]) for item in receipt["captures"]},
+        )
+
+    def test_host_renderer_source_check_accepts_only_the_tree_that_generated_the_manifest(self) -> None:
+        from context_panel_surface_manifest.core import generate_manifest, resolve_policy
+
+        manifest = generate_manifest(
+            resolve_policy(REPO_ROOT),
+            marketing_version="9.9.9",
+            build_number="1",
+            source_commit="a" * 40,
+            configuration="Release",
+            xcode_build="27A1",
+            tree_state="clean",
+        )
+        manifest_path = self.root / "real-manifest.json"
+        manifest_path.write_text(json.dumps(manifest))
+        profile = capture_module.HostRendererProfile(source_root=REPO_ROOT)
+        empty_root = self.root / "not-a-checkout"
+        empty_root.mkdir()
+
+        self.assertIsNone(
+            capture_module._host_renderer_source_error(profile, manifest_path, manifest["manifestId"])
+        )
+        self.assertEqual(
+            "host-renderer-source-mismatch",
+            capture_module._host_renderer_source_error(profile, manifest_path, "0" * 64),
+        )
+        self.assertEqual(
+            "host-renderer-source-invalid",
+            capture_module._host_renderer_source_error(
+                capture_module.HostRendererProfile(source_root=empty_root),
+                manifest_path,
+                manifest["manifestId"],
+            ),
         )
 
     def test_tv_profile_launches_each_matrix_cell_and_settles_before_relaunching(self) -> None:

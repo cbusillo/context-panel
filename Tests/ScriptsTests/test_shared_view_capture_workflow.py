@@ -460,8 +460,12 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
             },
             "/tmp/ios.xctestrun",
             "/tmp/visionos.xctestrun",
+            macos_source_root="/tmp/current-source",
         )
-        self.assertEqual(set(config["profiles"]), set(workflow.SUPPORTED_CAPTURE_SURFACES))
+        self.assertEqual(
+            set(config["profiles"]), {*workflow.SUPPORTED_CAPTURE_SURFACES, "macos"}
+        )
+        self.assertEqual(config["profiles"]["macos"], {"sourceRoot": "/tmp/current-source"})
         self.assertEqual(
             config["profiles"]["tvos"]["deviceTypeIdentifier"],
             "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K",
@@ -510,6 +514,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 {"id": "shared-view.watchos-app.baseline", "surface": "watchos.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.macos-app.baseline", "surface": "macos.app", "evidenceClass": "shared-view"},
                 {"id": "shared-view.tvos-app.baseline", "surface": "tvos.app", "evidenceClass": "shared-view"},
+                {"id": "shared-view.macos-widget.baseline", "surface": "macos.widget", "evidenceClass": "shared-view"},
             ]
         }
         receipt: dict[str, Any] = {
@@ -545,6 +550,13 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                     "appearanceMechanism": None,
                     "errorCode": None,
                 },
+                {
+                    "requirementID": "shared-view.macos-widget.baseline",
+                    "status": "captured",
+                    "hostMechanism": "swiftpm-shared-view-renderer",
+                    "appearanceMechanism": "renderer-argument",
+                    "errorCode": None,
+                },
             ],
         }
         return requirements, receipt
@@ -563,6 +575,26 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         receipt["evidenceClass"] = "actual-runtime"
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
+
+    def test_mac_widget_must_be_rendered_by_the_host_renderer_to_qualify(self) -> None:
+        requirements, valid = self.capture_receipt_fixture()
+        workflow.qualify_capture_receipt(valid, requirements)
+        substitutions = (
+            {"status": "blocked", "hostMechanism": "unsupported-host-mechanism",
+             "appearanceMechanism": None, "errorCode": "unsupported-host-mechanism"},
+            {"hostMechanism": "simctl-gallery", "appearanceMechanism": None},
+            {"status": "unknown", "errorCode": "host-renderer-failed"},
+        )
+        for substitution in substitutions:
+            with self.subTest(substitution=substitution):
+                _, receipt = self.capture_receipt_fixture()
+                widget = next(
+                    item for item in receipt["captures"]
+                    if item["requirementID"] == "shared-view.macos-widget.baseline"
+                )
+                widget.update(substitution)
+                with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "macOS widget"):
+                    workflow.qualify_capture_receipt(receipt, requirements)
 
     def run_capture_and_qualify(self, capture_status: int, receipt: dict[str, Any] | None) -> int:
         requirements, _ = self.capture_receipt_fixture()
