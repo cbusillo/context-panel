@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
@@ -26,13 +26,16 @@ PRODUCT_IRRELEVANT_SUFFIXES = (".md",)
 BUILD_INPUT_PREFIXES = ("Config/", "Sources/", "Tools/")
 
 # Python tooling is product-irrelevant except for the pieces the build or this
-# gate executes: the Xcode stamp phase runs the surface manifest, the commit
-# gate times `swift test` through the lane runner, and this script decides what
-# runs at all.
+# gate executes: the Xcode stamp phase runs the surface manifest and everything
+# it imports, the commit gate times `swift test` through the lane runner, and
+# this script decides what runs at all. A test checks this list against the
+# surface manifest's real import closure.
 PRODUCT_RELEVANT_PYTHON = (
     "scripts/ci-change-scope.py",
     "scripts/context-panel-surface-manifest.py",
     "scripts/context-panel-test-lanes.py",
+    "scripts/context_panel_comparison_schema.py",
+    "scripts/context_panel_expected_build.py",
     "scripts/context_panel_surface_manifest/",
 )
 
@@ -111,13 +114,14 @@ def classify(paths: list[str] | None) -> Scope:
     )
 
 
-def changed_paths(base: str, head: str) -> list[str] | None:
+def changed_paths(base: str, head: str, *, cwd: Path | None = None) -> list[str] | None:
     """Paths changed between the merge base of `base` and `head`, and `head`."""
     try:
         completed = subprocess.run(
             ["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}"],
             check=True,
             capture_output=True,
+            cwd=cwd,
         )
     except (OSError, subprocess.CalledProcessError) as error:
         print(f"ci-change-scope: git diff failed, running everything: {error}", file=sys.stderr)

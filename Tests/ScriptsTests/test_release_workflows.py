@@ -331,6 +331,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         invocation_root: Path | None = None,
         scratch_override: Path | None = None,
         include_standard_path: bool = True,
+        arguments: tuple[str, ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         scripts_path = checkout_root / "scripts"
         scripts_path.mkdir(parents=True, exist_ok=True)
@@ -344,7 +345,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         fake_swift.write_text('#!/bin/bash\nprintf \'swift %s\\n\' "$*"\n')
         fake_swift.chmod(0o755)
         fake_python = bin_path / "python3"
-        fake_python.write_text("#!/bin/bash\nexit 0\n")
+        fake_python.write_text('#!/bin/bash\nprintf \'python3 %s\\n\' "$*"\n')
         fake_python.chmod(0o755)
 
         path_entries = [str(bin_path)]
@@ -368,7 +369,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         invoked_root = invocation_root or checkout_root
         return subprocess.run(
-            ["/bin/bash", str(invoked_root / "scripts/commit-gate.sh")],
+            ["/bin/bash", str(invoked_root / "scripts/commit-gate.sh"), *arguments],
             cwd=invoked_root,
             env=environment,
             text=True,
@@ -2792,6 +2793,38 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     f"commit gate SwiftPM scratch path: {first_scratch}",
                     through_case_alias.stdout,
                 )
+
+    def test_commit_gate_skip_swift_keeps_python_validation_and_runs_no_swift(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+
+            full = self.run_commit_gate_cache_fixture(temp_path / "full", artifact_cache_root)
+            skipped = self.run_commit_gate_cache_fixture(
+                temp_path / "skipped", artifact_cache_root, arguments=("--skip-swift",)
+            )
+            unknown = self.run_commit_gate_cache_fixture(
+                temp_path / "unknown", artifact_cache_root, arguments=("--skip-swfit",)
+            )
+
+        def commands(result: subprocess.CompletedProcess[str], tool: str) -> list[str]:
+            return [line for line in result.stdout.splitlines() if line.startswith(f"{tool} ")]
+
+        self.assertEqual(full.returncode, 0, full.stdout)
+        self.assertTrue(any(line.startswith("swift build") for line in commands(full, "swift")))
+        self.assertTrue(any(" swift test" in line for line in commands(full, "python3")))
+
+        self.assertEqual(skipped.returncode, 0, skipped.stdout)
+        self.assertEqual(commands(skipped, "swift"), [])
+        self.assertFalse(any(" swift " in line for line in commands(skipped, "python3")))
+        python_validation = [line for line in commands(full, "python3") if " swift " not in line]
+        self.assertTrue(python_validation)
+        self.assertEqual(commands(skipped, "python3"), python_validation)
+
+        # A misspelled flag must not silently run, or silently skip, anything.
+        self.assertEqual(unknown.returncode, 64, unknown.stdout)
+        self.assertEqual(commands(unknown, "swift") + commands(unknown, "python3"), [])
 
     def test_commit_gate_preserves_override_and_falls_back_without_hash_tool(self):
         with tempfile.TemporaryDirectory() as temp_dir:

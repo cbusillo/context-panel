@@ -17,9 +17,26 @@ sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
 
 
+# Variables that would point Git at the enclosing repository instead of a fixture.
+GIT_LOCATION_VARIABLES = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+)
+
+
+def fixture_environment() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in GIT_LOCATION_VARIABLES}
+
+
 def git(root: Path, *args: str) -> str:
     environment = {
-        **os.environ,
+        **fixture_environment(),
         "GIT_AUTHOR_NAME": "Test",
         "GIT_AUTHOR_EMAIL": "test@example.invalid",
         "GIT_COMMITTER_NAME": "Test",
@@ -78,13 +95,47 @@ class ClassifyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(module.classify([path]).product)
 
-    def test_python_the_build_or_the_gate_executes_runs_the_product_lane(self):
-        for path in (
-            "scripts/ci-change-scope.py",
-            "scripts/context-panel-surface-manifest.py",
-            "scripts/context_panel_surface_manifest/core.py",
-            "scripts/context-panel-test-lanes.py",
-        ):
+    def test_everything_the_xcode_stamp_phase_imports_runs_the_product_lane(self):
+        # scripts/stamp-context-panel-build.sh runs the surface manifest in every
+        # Xcode target, so whatever that entry point really imports is a build input.
+        entry_point = "scripts/context-panel-surface-manifest.py"
+        listing = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import runpy, sys\n"
+                "sys.argv = [sys.argv[1], '--help']\n"
+                "sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])\n"
+                "try:\n"
+                "    runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                "except SystemExit:\n"
+                "    pass\n"
+                "for loaded in list(sys.modules.values()):\n"
+                "    print('loaded:' + (getattr(loaded, '__file__', None) or ''))\n",
+                str(REPO_ROOT / entry_point),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            env={**fixture_environment(), "PYTHONDONTWRITEBYTECODE": "1"},
+        ).stdout.splitlines()
+        scripts_root = (REPO_ROOT / "scripts").resolve()
+        imported = sorted(
+            {
+                Path(line).resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+                for line in (entry.removeprefix("loaded:") for entry in listing if entry.startswith("loaded:"))
+                if line and Path(line).resolve().is_relative_to(scripts_root)
+            }
+        )
+
+        self.assertIn("scripts/context_panel_surface_manifest/cli.py", imported)
+        for path in [entry_point, *imported]:
+            with self.subTest(path=path):
+                self.assertTrue(module.classify([path]).product)
+
+    def test_the_gate_and_the_lane_runner_run_the_product_lane(self):
+        for path in ("scripts/ci-change-scope.py", "scripts/context-panel-test-lanes.py"):
             with self.subTest(path=path):
                 self.assertTrue(module.classify([path]).product)
 
@@ -130,10 +181,8 @@ class ChangedPathsTests(unittest.TestCase):
         git(self.root, "commit", "--quiet", "--message", message)
 
     def changed(self, base: str, head: str = "HEAD"):
-        previous = Path.cwd()
-        os.chdir(self.root)
-        self.addCleanup(os.chdir, previous)
-        return module.changed_paths(base, head)
+        with mock.patch.dict(os.environ, fixture_environment(), clear=True):
+            return module.changed_paths(base, head, cwd=self.root)
 
     def test_reports_only_the_branch_side_of_a_diverged_base(self):
         git(self.root, "switch", "--quiet", "--create", "work")
