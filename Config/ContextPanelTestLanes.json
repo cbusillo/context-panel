@@ -56,7 +56,8 @@
       "Tests/ScriptsTests/test_shared_view_evidence.py",
       "Tests/ScriptsTests/test_surface_manifest.py",
       "Tests/ScriptsTests/test_test_lanes.py",
-      "Tests/ScriptsTests/test_validation_gallery_target_graph.py"
+      "Tests/ScriptsTests/test_validation_gallery_target_graph.py",
+      "Tests/ScriptsTests/test_ci_change_scope.py"
     ],
     "routine-ci-python": [
       "Tests/ScriptsTests/test_app_store_version_guard.py",

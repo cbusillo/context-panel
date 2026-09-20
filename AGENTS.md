@@ -307,6 +307,13 @@ Run the commit gate before publishing changes:
 scripts/commit-gate.sh
 ```
 
+In CI, `scripts/ci-change-scope.py` lets a pull request skip the Swift and
+companion builds when none of its changed paths can affect them. Unknown paths
+run everything, and every push to `main` runs the full set. CodeQL always runs,
+because the `main` ruleset requires its results on every pull request. When adding a build input outside `Sources/`, `Tools/`, and `Config/`
+that lives under `docs/`, `Tests/ScriptsTests/`, or a Python script, list it in
+that script rather than widening the skip rules.
+
 For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.
 

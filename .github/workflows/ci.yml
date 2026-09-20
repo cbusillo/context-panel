@@ -73,8 +73,24 @@ jobs:
       - name: Show Xcode
         run: xcodebuild -version
 
+      # Pull requests that touch only documentation or validation tooling skip
+      # the Swift and companion builds. Every push to main runs them all.
+      - name: Classify change scope
+        id: scope
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
+
       - name: Run commit gate
-        run: scripts/commit-gate.sh
+        env:
+          RUN_PRODUCT: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          if [[ "$RUN_PRODUCT" == "true" ]]; then
+            scripts/commit-gate.sh
+          else
+            scripts/commit-gate.sh --skip-swift
+          fi
 
       - name: Run routine Python test lane
         timeout-minutes: 5
@@ -83,21 +99,25 @@ jobs:
           --lane routine-ci-python
 
       - name: Install XcodeGen
+        if: ${{ steps.scope.outputs.product != 'false' }}
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then
             brew install xcodegen
           fi
 
       - name: Validate companion iOS build
+        if: ${{ steps.scope.outputs.product != 'false' }}
         run: >-
           scripts/validate-companion-builds.sh
           --configuration Release --archive ios
 
       - name: Validate companion watchOS build
+        if: ${{ steps.scope.outputs.product != 'false' }}
         run: >-
           scripts/validate-companion-builds.sh --configuration Release watchos
 
       - name: Validate companion tvOS archive
+        if: ${{ steps.scope.outputs.product != 'false' }}
         run: >-
           scripts/validate-companion-builds.sh --configuration Release --archive tvos
 

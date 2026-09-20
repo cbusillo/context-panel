@@ -4,6 +4,24 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 swiftpm_scratch_path="${CONTEXT_PANEL_SWIFTPM_SCRATCH_PATH:-}"
+run_swift=true
+
+usage() {
+	echo "usage: scripts/commit-gate.sh [--skip-swift]" >&2
+}
+
+while (($# > 0)); do
+	case "$1" in
+	# For pull requests whose changed paths cannot affect the Swift package;
+	# scripts/ci-change-scope.py makes that decision in CI.
+	--skip-swift) run_swift=false ;;
+	*)
+		usage
+		exit 64
+		;;
+	esac
+	shift
+done
 
 artifact_cache_root_is_available() {
 	local cache_parent cache_namespace
@@ -48,6 +66,11 @@ PYTHONDONTWRITEBYTECODE=1 \
 PYTHONDONTWRITEBYTECODE=1 \
 	python3 scripts/context-panel-test-lanes.py run \
 		--lane fast-local-python
+
+if [[ "$run_swift" != "true" ]]; then
+	echo "commit gate: skipping swift build and swift test (--skip-swift)"
+	exit 0
+fi
 
 swift build "${swift_args[@]}"
 python3 scripts/context-panel-test-lanes.py time-command \
