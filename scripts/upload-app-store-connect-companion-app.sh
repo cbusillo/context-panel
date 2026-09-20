@@ -138,6 +138,23 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+# Test seam. Fixture tests stand in for the Xcode tools so the archive checks
+# below run without building anything. Only a local export may use it: an upload
+# refuses to start when it is set, and always runs the system tools.
+xcodebuild_tool=/usr/bin/xcodebuild
+codesign_tool=/usr/bin/codesign
+xcrun_tool=/usr/bin/xcrun
+if [[ -n "${CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR:-}" ]]; then
+	if [[ "$upload" == "true" ]]; then
+		echo "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR cannot be used for an upload" >&2
+		exit 2
+	fi
+	echo "WARNING: using fixture Xcode tools from $CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR; this export is not a release artifact" >&2
+	xcodebuild_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/xcodebuild"
+	codesign_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/codesign"
+	xcrun_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/xcrun"
+fi
+
 # Uploading is a live App Store Connect mutation; export-only is not.
 if [[ "$upload" == "true" ]]; then
 	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
@@ -581,13 +598,13 @@ xcodebuild_system_path() {
 }
 
 run_xcodebuild() {
-	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
+	PATH="$(xcodebuild_system_path)" "$xcodebuild_tool" "$@"
 }
 
 assert_tvos_archive_ready() {
 	local app_path="$archive_path/Products/Applications/Context Panel.app"
 	local top_shelf_path="$app_path/PlugIns/ContextPanelTVTopShelfExtension.appex"
-	local entitlements_dir app_entitlements top_shelf_entitlements
+	local app_entitlements top_shelf_entitlements
 	local icon_name top_shelf_image top_shelf_image_wide
 	if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
 		echo "tvOS archive unexpectedly contains the iOS/visionOS companion widget" >&2
@@ -653,7 +670,7 @@ extract_signed_entitlements() {
 	local bundle="$1"
 	local label="$2"
 	local destination="$3"
-	if ! /usr/bin/codesign -d --entitlements - --xml "$bundle" >"$destination" 2>/dev/null; then
+	if ! "$codesign_tool" -d --entitlements - --xml "$bundle" >"$destination" 2>/dev/null; then
 		echo "could not read signed entitlements from $label: $bundle" >&2
 		exit 1
 	fi
@@ -746,7 +763,7 @@ assert_bundle_info_value() {
 assert_code_signature_valid() {
 	local bundle="$1"
 	local label="$2"
-	if ! /usr/bin/codesign --verify --strict --verbose=2 "$bundle"; then
+	if ! "$codesign_tool" --verify --strict --verbose=2 "$bundle"; then
 		echo "$label code signature verification failed: $bundle" >&2
 		exit 1
 	fi
@@ -775,7 +792,7 @@ bundle_executable_uuids() {
 	local executable_path
 	local uuid_lines
 	executable_path="$(bundle_executable_path "$bundle")" || return 1
-	uuid_lines="$(/usr/bin/xcrun dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
+	uuid_lines="$("$xcrun_tool" dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
 	if [[ -z "$uuid_lines" ]]; then
 		echo "bundle executable has no DWARF UUIDs: $executable_path" >&2
 		return 1
@@ -793,13 +810,13 @@ matching_dsym_relative_path() {
 	local uuid
 	local missing_uuid
 	executable_path="$(bundle_executable_path "$bundle")" || return 1
-	binary_uuids="$(/usr/bin/xcrun dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
+	binary_uuids="$("$xcrun_tool" dwarfdump --uuid "$executable_path" | /usr/bin/awk '/^UUID: / { print $2 }')"
 	if [[ -z "$binary_uuids" ]]; then
 		echo "$label executable has no DWARF UUIDs" >&2
 		return 1
 	fi
 	while IFS= read -r -d '' dsym; do
-		dsym_uuids="$(/usr/bin/xcrun dwarfdump --uuid "$dsym" 2>/dev/null | /usr/bin/awk '/^UUID: / { print $2 }' || true)"
+		dsym_uuids="$("$xcrun_tool" dwarfdump --uuid "$dsym" 2>/dev/null | /usr/bin/awk '/^UUID: / { print $2 }' || true)"
 		[[ -n "$dsym_uuids" ]] || continue
 		missing_uuid=0
 		for uuid in $binary_uuids; do
@@ -908,7 +925,6 @@ assert_ios_watch_archive_ready() {
 	local companion_app_path="$archive_path/Products/Applications/Context Panel.app"
 	local watch_app_path="$companion_app_path/Watch/Context Panel.app"
 	local watch_widget_path="$watch_app_path/PlugIns/ContextPanelWatchWidgetExtension.appex"
-	local entitlements_dir
 	local companion_app_entitlements
 	local watch_app_entitlements
 	local watch_widget_entitlements
@@ -970,7 +986,6 @@ assert_ios_watch_archive_ready() {
 
 assert_companion_widget_archive_ready() {
 	local widget_path="$archive_path/Products/Applications/Context Panel.app/PlugIns/ContextPanelCompanionWidgetExtension.appex"
-	local entitlements_dir
 	local widget_entitlements
 	if [[ ! -d "$widget_path" ]]; then
 		echo "companion archive is missing the embedded widget extension: $widget_path" >&2
@@ -1020,6 +1035,9 @@ if [[ "$platform" == "tvos" && ! -f "$tv_top_shelf_profile" ]]; then
 fi
 
 tmp_api_key=""
+# Not local to the archive checks: a failed check exits from inside one of them,
+# and the EXIT trap has to find the directory to remove it.
+entitlements_dir=""
 if [[ -z "$api_key_path" && -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" ]]; then
 	if [[ -z "$api_key_id" || -z "$api_issuer_id" ]]; then
 		echo "APP_STORE_CONNECT_API_KEY_P8_BASE64 also requires APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID" >&2
@@ -1030,7 +1048,15 @@ if [[ -z "$api_key_path" && -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" ]]; th
 	chmod 600 "$tmp_api_key"
 	api_key_path="$tmp_api_key"
 fi
-trap '[[ -n "${tmp_api_key:-}" ]] && rm -f "$tmp_api_key"' EXIT
+cleanup() {
+	if [[ -n "${tmp_api_key:-}" ]]; then
+		rm -f "$tmp_api_key"
+	fi
+	if [[ -n "${entitlements_dir:-}" ]]; then
+		rm -rf "$entitlements_dir"
+	fi
+}
+trap cleanup EXIT
 
 if [[ -z "$api_key_path" || -z "$api_key_id" || -z "$api_issuer_id" ]]; then
 	echo "App Store Connect API credentials are required" >&2
