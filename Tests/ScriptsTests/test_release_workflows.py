@@ -633,7 +633,7 @@ sleep 30
         )
 
     def run_companion_validation_watchdog_fixture(
-        self, fake_xcodebuild_body: str
+        self, fake_xcodebuild_body: str, *, stall_seconds: int
     ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -650,7 +650,6 @@ sleep 30
             scripts_path = temp_path / "scripts"
             scripts_path.mkdir()
             fixture_script = self.read("scripts/validate-companion-builds.sh")
-            fixture_script = fixture_script.replace("5 * 60", "1")
             fixture_script = fixture_script.replace(
                 "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
             )
@@ -663,6 +662,7 @@ sleep 30
 
             environment = os.environ.copy()
             environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)
+            environment["CONTEXT_PANEL_XCODEBUILD_STALL_SECONDS"] = str(stall_seconds)
             environment["PATH"] = f"{bin_path}:{environment.get('PATH', '')}"
             environment["RUNNER_TEMP"] = str(temp_path)
             environment["TMPDIR"] = str(temp_path)
@@ -787,6 +787,79 @@ sleep 30
                 stderr=subprocess.STDOUT,
                 check=False,
             )
+
+    def run_runtime_replacement_trace(
+        self,
+        entry_point: str,
+        *,
+        production_after: str | None,
+    ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        """Run install/reset with every non-guard function traced instead of executed.
+
+        The installed fixture runtime reports Production CloudKit from the start when
+        production_after is None, or only once the named step has run.
+        """
+        fixture_dir = REPO_ROOT / "Tests/ScriptsTests/fixtures/runtime-preflight"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app = root / "Applications/Context Panel.app"
+            (app / "Contents/Library/LoginItems/ContextPanelRefreshAgent.app").mkdir(parents=True)
+            built_app = root / "Build/Context Panel.app"
+            built_app.mkdir(parents=True)
+            trace = root / "trace"
+            trace.touch()
+            flipped = root / "flipped"
+            if production_after is None:
+                flipped.touch()
+            command = f"""
+            export HOME={shlex.quote(str(root / 'home'))}
+            mkdir -p "$HOME"
+            source {shlex.quote(str(REPO_ROOT / 'scripts/context-panel-runtime-baseline.sh'))} --source-only
+            app_path={shlex.quote(str(app))}
+            widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
+            refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+            built_app_path={shlex.quote(str(built_app))}
+            repo_root={shlex.quote(str(root / 'checkout'))}
+            lsregister=traced_lsregister
+            fixture_root={shlex.quote(str(root))}
+            for fixture_path in "$HOME" "$app_path" "$built_app_path" "$repo_root"; do
+              [[ "$fixture_path" == "$fixture_root"/* ]] || exit 99
+            done
+            trace={shlex.quote(str(trace))}
+            flipped={shlex.quote(str(flipped))}
+            production_after={shlex.quote(production_after or '')}
+            keep=" {entry_point} guard_installed_runtime_replacement bundle_cloudkit_environment \
+bundle_beta_reports_active bundle_store_receipt_status runtime_distribution_identity \
+signed_entitlement_value plist_scalar_value section ok note fail "
+            for name in $(declare -F | awk '{{print $3}}') \
+                traced_lsregister rsync ditto codesign open pluginkit launchctl pkill killall sleep; do
+              [[ "$keep" == *" $name "* ]] && continue
+              eval "$name() {{ trace_step $name; }}"
+            done
+            trace_step() {{
+              echo "$1" >>"$trace"
+              if [[ "$1" == "$production_after" ]]; then touch "$flipped"; fi
+            }}
+            signed_entitlements_plist() {{
+              if [[ -e "$flipped" ]]; then
+                cp {shlex.quote(str(fixture_dir / 'app-entitlements-production.plist'))} "$2"
+              else
+                cp {shlex.quote(str(fixture_dir / 'app-entitlements.plist'))} "$2"
+              fi
+            }}
+            set +e
+            ( set -e; {entry_point} )
+            exit $?
+            """
+            result = subprocess.run(
+                ["bash", "-c", command],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            return result, trace.read_text().split()
 
     def run_runtime_identity_fixture(
         self,
@@ -3793,7 +3866,6 @@ exit 0
         self.assertIn('marker="** BUILD SUCCEEDED **"', script)
         self.assertIn('marker="** ARCHIVE SUCCEEDED **"', script)
         self.assertIn("xcodebuild did not reach a terminal result within 30 minutes", script)
-        self.assertIn("xcodebuild produced no output for 5 minutes", script)
         self.assertIn("xcodebuild validation requires exactly one build or archive action", script)
         self.assertIn("Retrying $platform validation once with isolated DerivedData", script)
         self.assertIn("context-panel-companion-retry.XXXXXX", script)
@@ -3885,7 +3957,8 @@ if ((count == 1)); then
     wait
 fi
 echo "** BUILD SUCCEEDED **"
-"""
+""",
+            stall_seconds=1,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stdout)
@@ -3907,7 +3980,8 @@ count=$((count + 1))
 printf '%s' "$count" > "$counter"
 echo "** BUILD FAILED **"
 exit 65
-"""
+""",
+            stall_seconds=60,
         )
 
         self.assertNotEqual(completed.returncode, 0)
@@ -4864,30 +4938,40 @@ exit 65
         self.assertIn("-allowProvisioningUpdates", build_function.group("body"))
         self.assertNotIn("CODE_SIGNING_ALLOWED=NO", build_function.group("body"))
 
-    def test_runtime_baseline_preflights_profiles_before_install_mutates_applications(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-        install_runtime = re.search(r"install_runtime\(\) \{(?P<body>.*?)\n\}", script, re.S)
-        reset_runtime = re.search(r"reset_runtime\(\) \{(?P<body>.*?)\n\}", script, re.S)
+    def test_runtime_baseline_install_and_reset_do_nothing_when_production_is_installed(self):
+        for entry_point in ("install_runtime", "reset_runtime"):
+            with self.subTest(entry_point=entry_point):
+                result, steps = self.run_runtime_replacement_trace(entry_point, production_after=None)
 
-        self.assertIsNotNone(install_runtime)
-        self.assertIsNotNone(reset_runtime)
-        assert install_runtime is not None
-        assert reset_runtime is not None
-        for function in (install_runtime, reset_runtime):
-            body = function.group("body")
-            self.assertTrue(body.lstrip().startswith("guard_installed_runtime_replacement"))
-            guard_positions = [match.start() for match in re.finditer("guard_installed_runtime_replacement", body)]
-            self.assertGreaterEqual(len(guard_positions), 2)
-            self.assertLess(guard_positions[0], body.index("build_checkout_app"))
-            self.assertGreater(guard_positions[1], body.index("preflight_built_runtime_profiles"))
-            self.assertLess(guard_positions[1], body.index("stop_context_panel"))
-            self.assertLess(body.index("preflight_built_runtime_profiles"), body.index("install_checkout_app"))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("refusing to replace", result.stdout)
+                self.assertEqual(steps, [])
 
-        install_checkout_app = re.search(r"install_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
-        self.assertIsNotNone(install_checkout_app)
-        assert install_checkout_app is not None
-        install_body = install_checkout_app.group("body")
-        self.assertLess(install_body.index("guard_installed_runtime_replacement"), install_body.index("rsync"))
+    def test_runtime_baseline_install_and_reset_recheck_the_guard_after_building(self):
+        for entry_point in ("install_runtime", "reset_runtime"):
+            with self.subTest(entry_point=entry_point):
+                result, steps = self.run_runtime_replacement_trace(
+                    entry_point,
+                    production_after="preflight_built_runtime_profiles",
+                )
+
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("refusing to replace", result.stdout)
+                self.assertEqual(steps, ["build_checkout_app", "preflight_built_runtime_profiles"])
+
+    def test_runtime_baseline_install_copy_rechecks_the_guard_before_writing(self):
+        result, steps = self.run_runtime_replacement_trace("install_checkout_app", production_after=None)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("refusing to replace", result.stdout)
+        self.assertEqual(steps, [])
+
+    def test_runtime_baseline_install_proceeds_for_a_development_runtime(self):
+        result, steps = self.run_runtime_replacement_trace("install_runtime", production_after="never")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
+        self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
 
     def test_runtime_baseline_guard_allows_absent_or_development_runtime(self):
         absent = self.run_runtime_identity_fixture(None)

@@ -346,6 +346,29 @@ local-development fallback. The app-side copy path is the widget container under
 Application Support directory; keep that split in mind when debugging why the app
 and widget disagree.
 
+## Test Rules
+
+A test stays only if it fails when the product is broken and passes when
+someone makes an intended change.
+
+- No test may assert a literal defined elsewhere (versions, build numbers,
+  toolchain versions, identifiers, hashes). Compare against the single source
+  of truth, or do not test it.
+- No new test may assert workflow, config, script, doc, or Swift source text.
+  Enforce a rule where it executes: the workflow itself, a helper script with
+  its own behavioural test, or a linter. Existing text tests are being removed
+  under issue #695; the only ones kept on purpose are negative privacy and
+  security scans that still lack a linter or executable replacement.
+- Verification and loading code, and the tests for it, must not depend on
+  working-tree or Git state; check live state only on the path that acts on
+  it. Release and runtime receipts bound to an exact commit are that acting
+  path.
+- Generated inventories and snapshots must not need a regeneration commit for
+  unrelated changes.
+- Keep byte-exact and hash gates only on real artifacts and immutable evidence.
+- Tests must not wait on real time. Inject or patch sleeps, clocks, and retry
+  delays.
+
 ## Repo Workflow
 
 - Default branch: `main`.

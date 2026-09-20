@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+import ContextPanelCore
 
 @Test func appStoreEntitlementsSupportSandboxedProviderRefreshes() throws {
     try expectAppStoreProviderRefreshEntitlements("Config/ContextPanelAppStore.entitlements")
@@ -48,7 +49,7 @@ import Testing
 
     #expect(entitlements["com.apple.security.app-sandbox"] as? Bool == true)
     let appGroups = try #require(entitlements["com.apple.security.application-groups"] as? [String])
-    #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
+    #expect(appGroups == [ContextPanelLocations.appGroupID])
     #expect(entitlements["com.apple.security.network.client"] == nil)
     #expect(entitlements["keychain-access-groups"] == nil)
     #expect(entitlements["com.apple.security.files.user-selected.read-only"] == nil)
@@ -61,20 +62,20 @@ import Testing
     try expectICloudDocumentAndCloudKitEntitlements(appEntitlements)
     #expect(appEntitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
     let appGroups = try #require(appEntitlements["com.apple.security.application-groups"] as? [String])
-    #expect(appGroups == ["group.com.shinycomputers.contextpanel"])
+    #expect(appGroups == [ContextPanelLocations.companionAppGroupID])
     #expect(appEntitlements["com.apple.security.app-sandbox"] == nil)
     #expect(appEntitlements["com.apple.security.network.client"] == nil)
     #expect(appEntitlements["keychain-access-groups"] == nil)
 
     let widgetEntitlements = try loadEntitlements("Config/ContextPanelCompanionWidget.entitlements")
     let widgetAppGroups = try #require(widgetEntitlements["com.apple.security.application-groups"] as? [String])
-    #expect(widgetAppGroups == ["group.com.shinycomputers.contextpanel"])
+    #expect(widgetAppGroups == [ContextPanelLocations.companionAppGroupID])
     #expect(widgetEntitlements["com.apple.security.app-sandbox"] == nil)
     #expect(widgetEntitlements["com.apple.security.network.client"] == nil)
     #expect(widgetEntitlements["keychain-access-groups"] == nil)
     #expect(
         widgetEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
-            == ["iCloud.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.iCloudContainerID]
     )
     #expect(widgetEntitlements["com.apple.developer.icloud-services"] as? [String] == ["CloudKit"])
     #expect(
@@ -89,11 +90,11 @@ import Testing
     )
     #expect(
         appStoreWidgetEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
     #expect(
         appStoreWidgetEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
-            == ["iCloud.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.iCloudContainerID]
     )
     #expect(
         appStoreWidgetEntitlements["com.apple.developer.icloud-services"] as? [String]
@@ -112,13 +113,13 @@ import Testing
     let iCloudContainers = try #require(
         appEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
     )
-    #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    #expect(iCloudContainers == [ContextPanelLocations.iCloudContainerID])
     let services = try #require(appEntitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudKit"])
     #expect(appEntitlements["com.apple.developer.icloud-container-environment"] as? String == "Development")
     #expect(
         appEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
     #expect(appEntitlements["aps-environment"] == nil)
     #expect(appEntitlements["keychain-access-groups"] == nil)
@@ -127,11 +128,11 @@ import Testing
     let widgetEntitlements = try loadEntitlements("Config/ContextPanelWatchWidget.entitlements")
     #expect(
         widgetEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
     #expect(
         widgetEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
-            == ["iCloud.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.iCloudContainerID]
     )
     #expect(widgetEntitlements["com.apple.developer.icloud-services"] as? [String] == ["CloudKit"])
     #expect(widgetEntitlements["com.apple.developer.icloud-container-environment"] as? String == "Development")
@@ -146,7 +147,7 @@ import Testing
     )
     #expect(
         appStoreAppEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
 
     let appStoreWidgetEntitlements = try loadEntitlements(
@@ -158,7 +159,7 @@ import Testing
     )
     #expect(
         appStoreWidgetEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
 }
 
@@ -168,13 +169,13 @@ import Testing
     let iCloudContainers = try #require(
         entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
     )
-    #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    #expect(iCloudContainers == [ContextPanelLocations.iCloudContainerID])
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudKit"])
     #expect(entitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
     #expect(
         entitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
     #expect(
         entitlements["com.apple.developer.user-management"] as? [String]
@@ -422,7 +423,7 @@ import Testing
     #expect(appEntitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
     #expect(
         appEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
-            == ["iCloud.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.iCloudContainerID]
     )
     #expect(appEntitlements["com.apple.developer.icloud-services"] as? [String] == ["CloudKit"])
     #expect(
@@ -431,7 +432,7 @@ import Testing
     )
     #expect(
         appEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
     #expect(appEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
     #expect(appEntitlements["keychain-access-groups"] == nil)
@@ -493,7 +494,7 @@ import Testing
     let topShelfEntitlements = try loadEntitlements("Config/ContextPanelTVTopShelf.entitlements")
     #expect(
         topShelfEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == [ContextPanelLocations.companionAppGroupID]
     )
     #expect(
         topShelfEntitlements["com.apple.developer.user-management"] as? [String]
@@ -502,21 +503,6 @@ import Testing
     #expect(topShelfEntitlements["aps-environment"] == nil)
     #expect(topShelfEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
     #expect(topShelfEntitlements["com.apple.developer.icloud-services"] == nil)
-}
-
-@Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {
-    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
-    let source = try String(contentsOf: url, encoding: .utf8)
-
-    #expect(source.contains("--ingest-antigravity-status-line"))
-    #expect(source.contains("GoogleAntigravityStatusLineBridge.ingest"))
-    #expect(!source.contains("allowsExternalGoogleKeychain"))
-    #expect(!source.contains("GeminiQuotaProbe"))
-    #expect(!source.contains("allowsLegacyGeminiOAuth"))
-    #expect(!source.contains("antigravityCredentialSource"))
-    #expect(!source.contains("oauth_creds.json"))
-    #expect(!source.contains("daily-cloudcode-pa.googleapis.com"))
 }
 
 @Test func appAndRefreshAgentDoNotWriteRawErrorsToPublicLogs() throws {
@@ -535,27 +521,6 @@ import Testing
 
     #expect(!appSource.contains("error.localizedDescription, privacy: .public"))
     #expect(!refreshAgentSource.contains(#"\(error.localizedDescription)\n\", stderr"#))
-    #expect(appSource.contains("ConnectorRedactor.safeErrorDescription(error)"))
-    #expect(refreshAgentSource.contains("ConnectorRedactor.safeErrorDescription(error)"))
-}
-
-@Test func appRefreshRoutesWebhookWarningsAndProtectsActiveClaudeExchange() throws {
-    let source = try String(
-        contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appending(path: "Sources/ContextPanelApp/ContextPanelApp.swift"),
-        encoding: .utf8
-    )
-
-    #expect(source.contains("let webhookService: LimitWarningWebhookDeliveryService"))
-    #expect(source.contains("webhookService: .appDefault()"))
-    #expect(source.contains("await webhookService.deliverIfNeeded(decision: decision)"))
-    #expect(source.contains("recordWebhookDiagnostics(webhookResults"))
-    #expect(source.contains(".interactiveDismissDisabled(model.isCompletingClaudeOAuth)"))
-    #expect(source.contains("claudeOAuthCompletionTask?.cancel()"))
-    #expect(source.contains("exchangeService.exchangeAndCommit("))
-    #expect(source.contains("commitClaudeOAuthCredentials("))
-    #expect(source.contains("deleteOAuthCredentials("))
-    #expect(source.contains("service.updateConfiguration"))
 }
 
 @Test func appAndRefreshAgentTargetsDoNotCarryGoogleOAuthBuildSettings() throws {
@@ -591,11 +556,11 @@ private func expectICloudDocumentEntitlements(_ entitlements: [String: Any]) thr
     let iCloudContainers = try #require(
         entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
     )
-    #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    #expect(iCloudContainers == [ContextPanelLocations.iCloudContainerID])
     let ubiquityContainers = try #require(
         entitlements["com.apple.developer.ubiquity-container-identifiers"] as? [String]
     )
-    #expect(ubiquityContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    #expect(ubiquityContainers == [ContextPanelLocations.iCloudContainerID])
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudDocuments"])
     #expect(entitlements["com.apple.developer.ubiquity-kvstore-identifier"] == nil)
@@ -610,7 +575,7 @@ private func expectAppStoreProviderRefreshEntitlements(_ path: String) throws {
     #expect(entitlements["com.apple.security.files.bookmarks.app-scope"] as? Bool == true)
     #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
     let appGroups = try #require(entitlements["com.apple.security.application-groups"] as? [String])
-    #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
+    #expect(appGroups == [ContextPanelLocations.appGroupID])
     let keychainGroups = try #require(entitlements["keychain-access-groups"] as? [String])
     #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
     try expectICloudDocumentAndCloudKitEntitlements(entitlements)
@@ -621,11 +586,11 @@ private func expectICloudDocumentAndCloudKitEntitlements(_ entitlements: [String
     let iCloudContainers = try #require(
         entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
     )
-    #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    #expect(iCloudContainers == [ContextPanelLocations.iCloudContainerID])
     let ubiquityContainers = try #require(
         entitlements["com.apple.developer.ubiquity-container-identifiers"] as? [String]
     )
-    #expect(ubiquityContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    #expect(ubiquityContainers == [ContextPanelLocations.iCloudContainerID])
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudDocuments", "CloudKit"])
     #expect(entitlements["com.apple.developer.ubiquity-kvstore-identifier"] == nil)
