@@ -134,41 +134,37 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_policy_covers_all_shipping_surfaces_and_governed_inputs(self):
         resolved = resolve_policy(REPO_ROOT)
         summary = validation_summary(resolved)
-        self.assertEqual(summary["surfaceCount"], 13)
-        self.assertEqual(summary["artifactCount"], 11)
-        self.assertEqual(summary["governedInputCount"], summary["mappedInputCount"] + 6)
-        self.assertEqual(
-            summary["surfaceIds"],
-            [
-                "ios.app",
-                "ios.widget",
-                "ipados.app",
-                "ipados.widget",
-                "macos.app",
-                "macos.refresh-agent",
-                "macos.widget",
-                "tvos.app",
-                "tvos.top-shelf",
-                "visionos.app",
-                "visionos.widget",
-                "watchos.app",
-                "watchos.complication",
-            ],
-        )
-        ignored_patterns = {
-            entry["pattern"] for entry in resolved.policy["inventory"]["ignoredInputs"]
+        targets = resolved.project_payload["project"]["targets"]
+        shipping_targets = {
+            name
+            for name, target in targets.items()
+            if target["type"] in {"application", "app-extension"}
         }
+        policy_surfaces = json.loads(resolved.policy_path.read_text())["surfaces"]
+
+        self.assertEqual({surface["projectTarget"] for surface in policy_surfaces}, shipping_targets)
+        self.assertEqual(summary["surfaceIds"], sorted(surface["id"] for surface in policy_surfaces))
+        self.assertEqual(summary["surfaceCount"], len(policy_surfaces))
         self.assertEqual(
-            ignored_patterns,
-            {
-                "Sources/CodexRateLimitProbe/**/*.swift",
-                "Sources/OpenAILimitProbe/**/*.swift",
-                "Sources/PromptCacheTelemetryMirror/**/*.swift",
-                "Sources/PromptCacheTelemetryProbe/**/*.swift",
-                "Sources/SnapshotStoreProbe/**/*.swift",
-                "Package.swift",
-            },
+            set(resolved.governed_files),
+            set(resolved.file_hashes) | set(resolved.ignored_files),
         )
+
+    def test_ignored_inputs_are_never_compiled_into_a_project_target(self):
+        resolved = resolve_policy(REPO_ROOT)
+        compiled_roots = {
+            source["path"] if isinstance(source, dict) else source
+            for target in resolved.project_payload["project"]["targets"].values()
+            for source in target.get("sources", [])
+        }
+
+        self.assertTrue(resolved.ignored_files)
+        for ignored in resolved.ignored_files:
+            for compiled_root in compiled_roots:
+                self.assertFalse(
+                    ignored == compiled_root or ignored.startswith(compiled_root.rstrip("/") + "/"),
+                    f"{ignored} is ignored by the surface policy but compiled from {compiled_root}",
+                )
 
     def test_manifest_is_deterministic_and_contains_no_checkout_path(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -653,7 +649,10 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_comparison_v4_rejects_hand_trimmed_or_noncanonical_payloads(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(comparison["kind"], "context-panel-surface-comparison")
-        self.assertEqual(comparison["schemaVersion"], 5)
+        self.assertEqual(
+            comparison["schemaVersion"],
+            comparison_schema_module.CURRENT_COMPARISON_SCHEMA_VERSION,
+        )
         mutations = (
             lambda value: value.__setitem__("unexpected", True),
             lambda value: value["surfaces"][0].pop("artifactId"),
@@ -991,7 +990,10 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_v4_roots_record_only_active_risks_and_observations(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(set(comparison), comparison_schema_module.ROOT_KEYS)
-        self.assertEqual(comparison["schemaVersion"], 5)
+        self.assertEqual(
+            comparison["schemaVersion"],
+            comparison_schema_module.CURRENT_COMPARISON_SCHEMA_VERSION,
+        )
         self.assertEqual(comparison["riskCodes"], [])
         self.assertEqual(comparison["riskSurfaces"], {})
         self.assertEqual(comparison["observationRiskCodes"], [])
@@ -1311,8 +1313,14 @@ class SurfaceManifestTests(unittest.TestCase):
         sealed = seal_expected_build(self.baseline, template)
         self.assertEqual(sealed["schemaVersion"], 2)
         self.assertEqual(sealed["kind"], "context-panel-expected-signed-build")
-        self.assertEqual(len(sealed["artifacts"]), 11)
-        self.assertEqual(len(sealed["surfaces"]), 13)
+        self.assertEqual(
+            {artifact["artifactId"] for artifact in sealed["artifacts"]},
+            {surface["artifactId"] for surface in self.baseline["surfaces"]},
+        )
+        self.assertEqual(
+            [surface["id"] for surface in sealed["surfaces"]],
+            [surface["id"] for surface in self.baseline["surfaces"]],
+        )
         self.assertEqual(len(sealed["expectedBuildId"]), 64)
         self.assertIn("bundleContractSha256", sealed["artifacts"][0])
         self.assertIn("architectures", sealed["artifacts"][0])

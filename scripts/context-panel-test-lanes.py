@@ -71,7 +71,11 @@ def discovered_test_files(root: Path = REPO_ROOT / "Tests") -> set[str]:
     }
 
 
-def validate_manifest(payload: dict[str, Any]) -> dict[str, list[str]]:
+def validate_manifest(
+    payload: dict[str, Any],
+    *,
+    discovered: set[str] | None = None,
+) -> dict[str, list[str]]:
     if payload.get("schemaVersion") != 1:
         raise TestLaneError("test lane manifest schemaVersion must be 1")
     lanes = payload.get("lanes")
@@ -135,18 +139,44 @@ def validate_manifest(payload: dict[str, Any]) -> dict[str, list[str]]:
             + ", ".join(unknown_justifications)
         )
 
-    discovered = discovered_test_files()
+    if discovered is None:
+        discovered = discovered_test_files()
     missing = sorted(discovered - seen_paths)
     stale = sorted(seen_paths - discovered)
     if missing:
         raise TestLaneError("unmapped files under Tests/: " + ", ".join(missing))
     if stale:
         raise TestLaneError("manifest paths do not exist: " + ", ".join(stale))
+
+    routinely_run = {
+        path
+        for lane_name, lane in lanes.items()
+        if lane["runner"] == "python-unittest" and lane["ciPolicy"] == "safe"
+        for path in normalized[lane_name]
+    }
+    never_run = sorted(
+        path
+        for path in seen_paths - routinely_run
+        if Path(path).name.startswith("test_")
+        and Path(path).suffix == ".py"
+        and path not in manual_justifications
+    )
+    if never_run:
+        raise TestLaneError(
+            "Python test files must run in a safe python-unittest lane or carry a manual justification: "
+            + ", ".join(never_run)
+        )
     return normalized
 
 
-def files_for_lane(payload: dict[str, Any], lane_name: str, *, require_safe: bool = False) -> list[str]:
-    normalized = validate_manifest(payload)
+def files_for_lane(
+    payload: dict[str, Any],
+    lane_name: str,
+    *,
+    require_safe: bool = False,
+    discovered: set[str] | None = None,
+) -> list[str]:
+    normalized = validate_manifest(payload, discovered=discovered)
     lane = payload["lanes"].get(lane_name)
     if lane is None:
         raise TestLaneError(f"unknown test lane: {lane_name}")

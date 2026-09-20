@@ -14,42 +14,97 @@ module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
 
 
+FIXTURE_FILES = {
+    "Tests/ScriptsTests/test_fast.py",
+    "Tests/ScriptsTests/test_routine.py",
+    "Tests/CoreTests/FirstTests.swift",
+    "Tests/CoreTests/SecondTests.swift",
+    "Tests/CoreTests/TestFixtures.swift",
+    "Tests/ScriptsTests/fixtures/profile.plist",
+}
+
+
+def lane(runner: str, ci_policy: str, role: str = "test") -> dict[str, str]:
+    return {"runner": runner, "ciPolicy": ci_policy, "role": role}
+
+
 class TestLaneTests(unittest.TestCase):
     def manifest(self):
-        return module.load_manifest()
-
-    def test_safe_python_lanes_select_every_python_test_once(self):
-        fast = set(module.files_for_lane(self.manifest(), "fast-local-python", require_safe=True))
-        routine = set(module.files_for_lane(self.manifest(), "routine-ci-python", require_safe=True))
-        expected = {
-            path.relative_to(REPO_ROOT).as_posix()
-            for path in (REPO_ROOT / "Tests" / "ScriptsTests").glob("test_*.py")
+        return {
+            "schemaVersion": 1,
+            "lanes": {
+                "fast-local-python": lane("python-unittest", "safe"),
+                "routine-ci-python": lane("python-unittest", "safe"),
+                "routine-ci-swift": lane("swiftpm", "safe"),
+                "release-only": lane("manual", "trusted-only"),
+                "support-only": lane("none", "never", "support"),
+            },
+            "filesByLane": {
+                "fast-local-python": ["Tests/ScriptsTests/test_fast.py"],
+                "routine-ci-python": ["Tests/ScriptsTests/test_routine.py"],
+                "routine-ci-swift": [
+                    "Tests/CoreTests/FirstTests.swift",
+                    "Tests/CoreTests/SecondTests.swift",
+                ],
+                "release-only": [],
+                "support-only": [
+                    "Tests/CoreTests/TestFixtures.swift",
+                    "Tests/ScriptsTests/fixtures/profile.plist",
+                ],
+            },
+            "manualLaneJustifications": {},
         }
 
-        self.assertFalse(fast & routine)
-        self.assertEqual(fast | routine, expected)
+    def validate(self, payload):
+        return module.validate_manifest(payload, discovered=set(FIXTURE_FILES))
+
+    def test_fixture_manifest_is_valid(self):
+        normalized = self.validate(self.manifest())
+
+        self.assertEqual(
+            normalized["routine-ci-swift"],
+            ["Tests/CoreTests/FirstTests.swift", "Tests/CoreTests/SecondTests.swift"],
+        )
+
+    def test_unmapped_discovered_file_fails_closed(self):
+        with self.assertRaisesRegex(module.TestLaneError, "unmapped files under Tests/: Tests/new_test.py"):
+            module.validate_manifest(
+                self.manifest(),
+                discovered=FIXTURE_FILES | {"Tests/new_test.py"},
+            )
+
+    def test_python_test_parked_in_the_support_lane_fails_closed(self):
+        payload = self.manifest()
+        path = payload["filesByLane"]["routine-ci-python"].pop()
+        payload["filesByLane"]["support-only"].append(path)
+
+        with self.assertRaisesRegex(module.TestLaneError, "must run in a safe python-unittest lane"):
+            self.validate(payload)
+
+    def test_python_test_in_the_swift_lane_fails_closed(self):
+        payload = self.manifest()
+        path = payload["filesByLane"]["fast-local-python"].pop()
+        payload["filesByLane"]["routine-ci-swift"].append(path)
+
+        with self.assertRaisesRegex(module.TestLaneError, "must run in a safe python-unittest lane"):
+            self.validate(payload)
 
     def test_support_files_are_not_selected_for_execution(self):
         payload = self.manifest()
         executable = {
             path
-            for lane_name, lane in payload["lanes"].items()
-            if lane["role"] == "test"
-            for path in module.files_for_lane(payload, lane_name)
+            for lane_name in payload["lanes"]
+            for path in module.files_for_lane(payload, lane_name, discovered=set(FIXTURE_FILES))
         }
 
-        self.assertNotIn(
-            "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift",
-            executable,
-        )
-        self.assertFalse(any("/fixtures/" in path for path in executable))
+        self.assertEqual(executable, FIXTURE_FILES - set(payload["filesByLane"]["support-only"]))
 
     def test_missing_file_mapping_fails_closed(self):
         payload = self.manifest()
         payload["filesByLane"]["routine-ci-swift"] = payload["filesByLane"]["routine-ci-swift"][1:]
 
         with self.assertRaisesRegex(module.TestLaneError, "unmapped files"):
-            module.validate_manifest(payload)
+            self.validate(payload)
 
     def test_duplicate_file_mapping_fails_closed(self):
         payload = self.manifest()
@@ -58,28 +113,28 @@ class TestLaneTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(module.TestLaneError, "duplicate test lane path"):
-            module.validate_manifest(payload)
+            self.validate(payload)
 
     def test_missing_manifest_path_fails_closed(self):
         payload = self.manifest()
         payload["filesByLane"]["fast-local-python"].append("Tests/missing.py")
 
         with self.assertRaisesRegex(module.TestLaneError, "manifest paths do not exist"):
-            module.validate_manifest(payload)
+            self.validate(payload)
 
     def test_unknown_lane_list_fails_closed(self):
         payload = self.manifest()
         payload["filesByLane"]["unknown"] = []
 
         with self.assertRaisesRegex(module.TestLaneError, "unknown lane lists"):
-            module.validate_manifest(payload)
+            self.validate(payload)
 
     def test_path_outside_tests_fails_closed(self):
         payload = self.manifest()
         payload["filesByLane"]["fast-local-python"].append("../secret.txt")
 
         with self.assertRaisesRegex(module.TestLaneError, "remain under Tests"):
-            module.validate_manifest(payload)
+            self.validate(payload)
 
     def test_manual_lane_requires_justification(self):
         payload = self.manifest()
@@ -87,7 +142,7 @@ class TestLaneTests(unittest.TestCase):
         payload["filesByLane"]["release-only"].append(path)
 
         with self.assertRaisesRegex(module.TestLaneError, "requires a justification"):
-            module.validate_manifest(payload)
+            self.validate(payload)
 
     def test_manual_lane_accepts_documented_special_requirement(self):
         payload = self.manifest()
@@ -95,14 +150,22 @@ class TestLaneTests(unittest.TestCase):
         payload["filesByLane"]["release-only"].append(path)
         payload["manualLaneJustifications"][path] = "Requires a signed release artifact."
 
-        module.validate_manifest(payload)
+        self.validate(payload)
 
     def test_protected_lane_cannot_be_selected_as_safe(self):
         with self.assertRaisesRegex(module.TestLaneError, "not safe for routine CI"):
-            module.files_for_lane(self.manifest(), "release-only", require_safe=True)
+            module.files_for_lane(
+                self.manifest(),
+                "release-only",
+                require_safe=True,
+                discovered=set(FIXTURE_FILES),
+            )
 
     def test_time_command_requires_a_swiftpm_lane(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "discovered_test_files", return_value=set(FIXTURE_FILES)),
+        ):
             with self.assertRaisesRegex(module.TestLaneError, "does not use the SwiftPM runner"):
                 module.time_command(
                     self.manifest(),
