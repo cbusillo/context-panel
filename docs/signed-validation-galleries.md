@@ -264,8 +264,10 @@ builds no app or extension bundle, registers nothing, needs no screen-recording
 permission, refuses to overwrite its output, and refuses application
 presentations, because those are drawn by views inside the Mac app target and
 the gallery would otherwise fall back to the widget. It lives under `Tools/`,
-outside the governed shipping inputs. It is not yet wired into the capture
-executor, so in receipts
+outside the governed shipping inputs. It renders one pixel per point at a fixed
+size and pins its own time zone and locale, so the same source gives the same
+PNG on any host with the same OS fonts; byte stability across macOS versions is
+not claimed. It is not yet wired into the capture executor, so in receipts
 Mac remains an explicit `unsupported-host-mechanism` result; missing
 profiles are blocked and command, image, stability, identity, cleanup, or
 publication faults are unknown. A zero exit means every requested capture was

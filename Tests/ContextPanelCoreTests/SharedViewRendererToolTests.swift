@@ -20,10 +20,14 @@ private func builtProductsDirectory() throws -> URL {
     return url.deletingLastPathComponent()
 }
 
-private func runRenderer(_ arguments: [String]) throws -> RendererRun {
+private func runRenderer(
+    _ arguments: [String],
+    environment: [String: String] = [:]
+) throws -> RendererRun {
     let process = Process()
     process.executableURL = try builtProductsDirectory().appending(path: "ContextPanelSharedViewRenderer")
     process.arguments = arguments
+    process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
@@ -71,8 +75,8 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         #expect(run.status == 0, "\(entry.surface): \(run.output)")
         let png = try Data(contentsOf: output)
         let bitmap = try #require(NSBitmapImageRep(data: png))
-        #expect(bitmap.pixelsWide >= 1_024)
-        #expect(bitmap.pixelsHigh >= 768)
+        #expect(bitmap.pixelsWide == 1_024)
+        #expect(bitmap.pixelsHigh == 768)
         images.insert(png)
     }
     #expect(images.count == widgetCells.count, "different cells must not render to the same image")
@@ -88,7 +92,9 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         let output = directory.appending(path: "app-\(index).png")
         let run = try runRenderer(try rendererArguments(cell: entry.cell, output: output))
 
-        #expect(run.status != 0, "\(entry.surface)")
+        // 3 is the tool's dedicated "needs the Mac app's views" status, so a crash or an
+        // argument error cannot satisfy this test.
+        #expect(run.status == 3, "\(entry.surface): \(run.output)")
         #expect(!FileManager.default.fileExists(atPath: output.path))
     }
 }
@@ -118,4 +124,25 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     let first = try Data(contentsOf: output)
     #expect(try runRenderer(valid).status != 0)
     #expect(try Data(contentsOf: output) == first)
+}
+
+@Test func rendererOutputDoesNotDependOnTheHostTimeZoneOrLocale() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cell = try #require(try macOSMatrixCells().first { $0.cell["presentation"] == "widget" }).cell
+    let hosts: [[String: String]] = [
+        ["TZ": "UTC", "LANG": "en_US.UTF-8"],
+        ["TZ": "Asia/Tokyo", "LANG": "ja_JP.UTF-8"],
+        ["TZ": "America/Los_Angeles", "LANG": "de_DE.UTF-8"],
+    ]
+
+    var images: Set<Data> = []
+    for (index, host) in hosts.enumerated() {
+        let output = directory.appending(path: "host-\(index).png")
+        let run = try runRenderer(try rendererArguments(cell: cell, output: output), environment: host)
+        #expect(run.status == 0, "\(host): \(run.output)")
+        images.insert(try Data(contentsOf: output))
+    }
+    #expect(images.count == 1)
 }

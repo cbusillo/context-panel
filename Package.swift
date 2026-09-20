@@ -138,6 +138,7 @@ let package = Package(
             dependencies: [
                 "ContextPanelApp",
                 "ContextPanelCore",
+                "ContextPanelSharedViewRenderer",
                 "ContextPanelCloudKitSync",
                 "ContextPanelCompanionSupport",
                 "ContextPanelSettingsUI",
