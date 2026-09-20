@@ -146,3 +146,97 @@ public struct TVValidationFixtureAdapter: Sendable {
     }
 
 }
+
+public enum TVValidationLaunchFamily: String, CaseIterable, Sendable {
+    case runway
+    case provider
+    case topShelf
+}
+
+public enum TVValidationLaunchPresentation: String, CaseIterable, Sendable {
+    case fullDetail
+    case projectOnly
+    case countsOnly
+}
+
+public struct TVValidationLaunchSample: Equatable, Sendable {
+    public let state: TVValidationState
+    public let family: TVValidationLaunchFamily
+    public let presentation: TVValidationLaunchPresentation
+}
+
+/// Operator-only launch arguments that open one Validation Gallery sample for
+/// host-side capture. Anything outside the bounded vocabulary is `.invalid`, and
+/// the app then shows its normal UI.
+public enum TVValidationLaunchRequest: Equatable, Sendable {
+    case normal
+    case galleryIndex
+    case sample(TVValidationLaunchSample)
+    case invalid
+
+    public static let galleryArgument = "--context-panel-validation-gallery"
+    public static let surfaceArgument = "--context-panel-validation-surface"
+    public static let fixtureArgument = "--context-panel-validation-fixture"
+    public static let familyArgument = "--context-panel-validation-family"
+    public static let presentationArgument = "--context-panel-validation-presentation"
+
+    public static let appSurface = "tvos.app"
+    public static let topShelfSurface = "tvos.top-shelf"
+
+    public init(arguments: [String]) {
+        self = Self.parse(arguments: arguments)
+    }
+
+    public static func parse(arguments: [String]) -> Self {
+        let tokens = Array(arguments.dropFirst(arguments.first.map { !$0.hasPrefix("-") } == true ? 1 : 0))
+        guard tokens.contains(where: { $0.hasPrefix("--context-panel-validation-") }) else { return .normal }
+        guard tokens.filter({ $0 == galleryArgument }).count == 1 else { return .invalid }
+
+        let valueArguments = [surfaceArgument, fixtureArgument, familyArgument, presentationArgument]
+        var values: [String: String] = [:]
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            guard token != galleryArgument, token.hasPrefix("--context-panel-validation-") else {
+                index += 1
+                continue
+            }
+            guard valueArguments.contains(token), index + 1 < tokens.count else { return .invalid }
+            let value = tokens[index + 1]
+            guard !value.isEmpty, !value.hasPrefix("-"), values[token] == nil else { return .invalid }
+            values[token] = value
+            index += 2
+        }
+
+        guard !values.isEmpty else { return .galleryIndex }
+        guard let surface = values[surfaceArgument],
+              let fixture = values[fixtureArgument].flatMap(ValidationFixtureID.init(rawValue:)),
+              let state = validationState(for: fixture),
+              let family = values[familyArgument].flatMap(TVValidationLaunchFamily.init(rawValue:)),
+              let presentation = values[presentationArgument].flatMap(TVValidationLaunchPresentation.init(rawValue:))
+        else {
+            return .invalid
+        }
+
+        switch (surface, family) {
+        case (appSurface, .runway), (appSurface, .provider), (topShelfSurface, .topShelf):
+            return .sample(TVValidationLaunchSample(state: state, family: family, presentation: presentation))
+        default:
+            return .invalid
+        }
+    }
+
+    private static func validationState(for fixture: ValidationFixtureID) -> TVValidationState? {
+        switch fixture {
+        case .healthy: .healthy
+        case .resetVisible: .resetVisible
+        case .stale: .stale
+        case .loading: .loading
+        case .missing: .setupNeeded
+        case .failed: .failure
+        case .denseAccounts: .denseAccounts
+        case .fitFallback: .fitFallback
+        case .cacheVisible: nil
+        }
+    }
+}

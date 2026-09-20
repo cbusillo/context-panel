@@ -461,3 +461,100 @@ private func renderGallery(
     let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
     return (bitmap, pngData)
 }
+
+private func tvLaunchArguments(
+    surface: String,
+    fixture: String,
+    family: String,
+    presentation: String
+) -> [String] {
+    [
+        "Context Panel",
+        TVValidationLaunchRequest.galleryArgument,
+        TVValidationLaunchRequest.surfaceArgument, surface,
+        TVValidationLaunchRequest.fixtureArgument, fixture,
+        TVValidationLaunchRequest.familyArgument, family,
+        TVValidationLaunchRequest.presentationArgument, presentation,
+    ]
+}
+
+@Test func tvValidationLaunchRequestIsNormalWithoutValidationArgumentsAndIndexWithOnlyTheGalleryFlag() {
+    #expect(TVValidationLaunchRequest(arguments: ["Context Panel"]) == .normal)
+    #expect(TVValidationLaunchRequest(arguments: ["Context Panel", "-NSDocumentRevisionsDebugMode", "YES"]) == .normal)
+    #expect(
+        TVValidationLaunchRequest(arguments: ["Context Panel", TVValidationLaunchRequest.galleryArgument])
+            == .galleryIndex
+    )
+}
+
+@Test func tvValidationLaunchRequestSelectsExactAppAndTopShelfSamples() {
+    #expect(
+        TVValidationLaunchRequest(arguments: tvLaunchArguments(
+            surface: "tvos.app", fixture: "dense-accounts", family: "provider", presentation: "countsOnly"
+        )) == .sample(TVValidationLaunchSample(state: .denseAccounts, family: .provider, presentation: .countsOnly))
+    )
+    #expect(
+        TVValidationLaunchRequest(arguments: tvLaunchArguments(
+            surface: "tvos.top-shelf", fixture: "missing", family: "topShelf", presentation: "fullDetail"
+        )) == .sample(TVValidationLaunchSample(state: .setupNeeded, family: .topShelf, presentation: .fullDetail))
+    )
+}
+
+@Test func tvValidationLaunchRequestFailsClosedForMalformedOrUnknownArguments() {
+    let valid = tvLaunchArguments(
+        surface: "tvos.app", fixture: "healthy", family: "runway", presentation: "fullDetail"
+    )
+    let invalidArguments: [[String]] = [
+        tvLaunchArguments(surface: "watchos.app", fixture: "healthy", family: "runway", presentation: "fullDetail"),
+        tvLaunchArguments(surface: "tvos.app", fixture: "unknown", family: "runway", presentation: "fullDetail"),
+        tvLaunchArguments(surface: "tvos.app", fixture: "cache-visible", family: "runway", presentation: "fullDetail"),
+        tvLaunchArguments(surface: "tvos.app", fixture: "healthy", family: "topShelf", presentation: "fullDetail"),
+        tvLaunchArguments(surface: "tvos.top-shelf", fixture: "healthy", family: "runway", presentation: "fullDetail"),
+        tvLaunchArguments(surface: "tvos.app", fixture: "healthy", family: "runway", presentation: "everything"),
+        Array(valid.dropLast(2)),
+        Array(valid.dropLast(1)),
+        valid + [TVValidationLaunchRequest.galleryArgument],
+        valid + [TVValidationLaunchRequest.fixtureArgument, "stale"],
+        valid + ["--context-panel-validation-unlock", "1"],
+        Array(valid.dropFirst(2)),
+    ]
+
+    for arguments in invalidArguments {
+        #expect(TVValidationLaunchRequest(arguments: arguments) == .invalid, "\(arguments)")
+    }
+}
+
+@Test func tvValidationLaunchRequestAcceptsEveryTVCellInTheSharedViewMatrix() throws {
+    let matrixURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appending(path: "Config/ContextPanelSharedViewMatrix.json")
+    let matrix = try #require(
+        JSONSerialization.jsonObject(with: Data(contentsOf: matrixURL)) as? [String: Any]
+    )
+    let surfaces = try #require(matrix["surfaces"] as? [[String: Any]])
+    let tvSurfaces = surfaces.filter { ($0["id"] as? String)?.hasPrefix("tvos.") == true }
+    #expect(!tvSurfaces.isEmpty)
+
+    for surface in tvSurfaces {
+        let surfaceID = try #require(surface["id"] as? String)
+        for cell in try #require(surface["cells"] as? [[String: String]]) {
+            let request = TVValidationLaunchRequest(arguments: tvLaunchArguments(
+                surface: surfaceID,
+                fixture: try #require(cell["fixtureID"]),
+                family: try #require(cell["family"]),
+                presentation: try #require(cell["presentation"])
+            ))
+            guard case let .sample(sample) = request else {
+                Issue.record("matrix cell \(surfaceID)/\(cell["id"] ?? "?") is not launchable: \(request)")
+                continue
+            }
+            #expect(TVPresentationMode(rawValue: sample.presentation.rawValue) != nil)
+        }
+    }
+}
+
+@Test func tvValidationLaunchPresentationsAreAllRealPresentationModes() {
+    #expect(
+        Set(TVValidationLaunchPresentation.allCases.map(\.rawValue))
+            == Set(TVPresentationMode.allCases.map(\.rawValue))
+    )
+}
