@@ -8,10 +8,30 @@ private let tvValidationGalleryNavigationValue = "validation-gallery"
 @main
 struct ContextPanelTVApp: App {
     @UIApplicationDelegateAdaptor(ContextPanelTVAppDelegate.self) private var appDelegate
+    private let launchRequest: TVValidationLaunchRequest
+
+    init() {
+        let request = TVValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments)
+        guard request != .invalid else {
+            exit(EX_USAGE)
+        }
+        launchRequest = request
+    }
 
     var body: some Scene {
         WindowGroup {
-            TVRootView(runtimeReceiptRelayProvider: appDelegate.runtimeReceiptRelayProvider)
+            switch launchRequest {
+            case let .sample(sample):
+                TVValidationGalleryView(sample: sample)
+                    .preferredColorScheme(.dark)
+            case .galleryIndex:
+                NavigationStack {
+                    TVValidationGalleryView()
+                }
+                .preferredColorScheme(.dark)
+            case .normal, .invalid:
+                TVRootView(runtimeReceiptRelayProvider: appDelegate.runtimeReceiptRelayProvider)
+            }
         }
     }
 }
