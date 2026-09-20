@@ -213,8 +213,8 @@ acceptable.
   `context-panel-runtime-session.py sync` verify that receipt themselves before
   mutation and refuse without it, in Actions and on an operator machine alike;
   use `scripts/with-cloudkit-schema-receipt.sh -- <command>` for a local live
-  run. Do not add an override. The local operator machine should have a CloudKit management token
-  saved by `xcrun cktool save-token` with
+  run. Do not add an override. The local operator machine should have a
+  CloudKit management token saved by `xcrun cktool save-token` with
   `--type management --method keychain --force`, or a
   `CLOUDKIT_MANAGEMENT_TOKEN` provided only to
   the command process. Keep the separate

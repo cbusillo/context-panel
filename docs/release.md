@@ -687,6 +687,9 @@ scripts/with-cloudkit-schema-receipt.sh -- \
 The wrapper reads the receipt key from the Keychain, reuses
 `.build/cloudkit-production-schema-receipt.json` while it is still valid for
 `HEAD`, and otherwise runs the live schema gate above to issue a fresh one.
+It runs the command from the repository root. The receipt is bound to the
+checkout's `HEAD`, so check out the commit being released first; for GitHub
+Release publication that is the same commit passed as `--source-commit`.
 
 The local signed runtime-receipt relay verifies the receipt before invoking the
 canonical refresh agent:
@@ -1672,10 +1675,12 @@ App Store version, then continue creating the target version and submitting the
 new build after the dry-run path has validated that transition.
 
 For local operator use, the same script accepts an API key path or the existing
-App Store Connect environment variables:
+App Store Connect environment variables. This example is a live run, so it goes
+through the receipt wrapper:
 
 ```sh
-scripts/submit-app-store-review.py \
+scripts/with-cloudkit-schema-receipt.sh -- \
+  scripts/submit-app-store-review.py \
   --platform MAC_OS \
   --version 1.0.12 \
   --build-number 202605290049 \

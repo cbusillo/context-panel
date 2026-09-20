@@ -1216,14 +1216,21 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 workflow = self.read(f".github/workflows/{workflow_name}")
                 step = workflow[workflow.index(f"      - name: {step_name}\n") :]
                 step = step.split("\n      - name:", 1)[0]
-                provided = set(re.findall(r"^          ([A-Z][A-Z0-9_]*):", step, re.MULTILINE))
+                environment = re.sub(r"\s+", " ", step.split("\n        run:", 1)[0])
 
-                self.assertLessEqual(
-                    {
-                        "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64",
-                        "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY",
-                    },
-                    provided,
+                self.assertIn(
+                    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >- "
+                    "${{ inputs.cloudkit_schema_receipt_base64 }}",
+                    environment,
+                )
+                self.assertIn(
+                    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >- "
+                    "${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}",
+                    environment,
+                )
+                self.assertNotIn(
+                    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY",
+                    workflow_job(workflow, "guard"),
                 )
 
     RECEIPT_KEY = "fixture-cloudkit-schema-receipt-key-0123456789"
@@ -1283,6 +1290,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             from_github_sha = self.run_release_command(
                 gate[:1],
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64=encoded,
+                GITHUB_ACTIONS="true",
                 GITHUB_SHA=self.RECEIPT_COMMIT,
                 **key,
             )
@@ -1332,7 +1340,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 ["scripts/upload-app-store-connect-companion-app.sh", "--platform", "ios", *version],
                 [
                     "scripts/upload-app-store-connect-companion-app.sh", "--platform", "ios", *version,
-                    *missing_profile, "--export-only",
+                    *missing_profile, "--archive-path", str(directory / "Companion.xcarchive"), "--export-only",
                 ],
             ),
             "testflight distribution": (
@@ -1373,6 +1381,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                  "--build-number", "202601010000", "--platform", "IOS"],
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH=str(receipt),
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=self.RECEIPT_KEY,
+                GITHUB_ACTIONS="true",
                 GITHUB_SHA=self.RECEIPT_COMMIT,
             )
 
@@ -1390,6 +1399,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 ],
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH=str(receipt),
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=self.RECEIPT_KEY,
+                GITHUB_ACTIONS="true",
                 GITHUB_SHA=self.RECEIPT_COMMIT,
             )
 

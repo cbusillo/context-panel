@@ -7,7 +7,7 @@
 # Receipt: CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64, or a file named by
 #          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH.
 # Key:     CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY.
-# Commit:  --source-commit, else GITHUB_SHA, else the checkout's HEAD.
+# Commit:  --source-commit, else GITHUB_SHA inside GitHub Actions, else the checkout's HEAD.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [[ -z "$source_commit" ]]; then
+if [[ -z "$source_commit" && "${GITHUB_ACTIONS:-}" == "true" ]]; then
 	source_commit="${GITHUB_SHA:-}"
 fi
 if [[ -z "$source_commit" ]]; then

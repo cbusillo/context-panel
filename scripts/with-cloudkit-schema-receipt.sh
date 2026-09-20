@@ -20,7 +20,11 @@ if [[ "${1:-}" != "--" || $# -lt 2 ]]; then
 fi
 shift
 
-source_commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
+if [[ "${GITHUB_ACTIONS:-}" == "true" && -n "${GITHUB_SHA:-}" ]]; then
+	source_commit="$GITHUB_SHA"
+else
+	source_commit="$(git -C "$repo_root" rev-parse HEAD)"
+fi
 
 if [[ -z "${CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY:-}" ]]; then
 	CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY="$(security find-generic-password -a "$USER" -s "$keychain_service" -w 2>/dev/null || true)"
@@ -44,4 +48,5 @@ if [[ ! -f "$receipt_path" ]] || ! "${gate[@]}" >/dev/null 2>&1; then
 		--receipt-output "$receipt_path"
 fi
 
+cd "$repo_root"
 exec "$@"

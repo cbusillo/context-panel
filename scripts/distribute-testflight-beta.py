@@ -459,11 +459,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def require_cloudkit_schema_receipt(source_commit: str | None = None) -> None:
+def require_cloudkit_schema_receipt() -> None:
     """Fail closed unless the Production CloudKit schema receipt is valid for this release."""
     command = [str(Path(__file__).resolve().parent / "require-cloudkit-schema-receipt.sh")]
-    if source_commit:
-        command += ["--source-commit", source_commit]
     if subprocess.run(command, check=False).returncode != 0:
         raise SystemExit("Refusing live release mutation without a valid Production CloudKit schema receipt")
 
