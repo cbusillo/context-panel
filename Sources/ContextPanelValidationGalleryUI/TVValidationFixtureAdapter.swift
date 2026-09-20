@@ -167,7 +167,7 @@ public struct TVValidationLaunchSample: Equatable, Sendable {
 
 /// Operator-only launch arguments that open one Validation Gallery sample for
 /// host-side capture. Anything outside the bounded vocabulary is `.invalid`, and
-/// the app then shows its normal UI.
+/// the app then exits with `EX_USAGE`, like the Watch app.
 public enum TVValidationLaunchRequest: Equatable, Sendable {
     case normal
     case galleryIndex

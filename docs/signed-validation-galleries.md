@@ -221,7 +221,14 @@ notifications, or relays receipts. Three tvOS-specific rules apply:
 - The executor trusts the launch route only when the app's code contains
   `--context-panel-validation-presentation`. Product source older than the
   route is recorded as `blocked/validation-launch-unsupported-by-app` rather
-  than captured showing its normal UI.
+  than captured showing its normal UI. Because tvOS is now a supported capture
+  surface, that blocked record fails receipt qualification by design: a
+  comparison whose current source predates the tvOS launch route cannot qualify
+  tvOS shared-view requirements on the hosted lane.
+- Launching with only `--context-panel-validation-gallery` opens the gallery
+  index with live services off. The `contextpaneltv://validation-gallery` URL
+  route opens the same gallery inside the normally running app. Both show
+  synthetic fixtures only.
 - The Top Shelf cells render the production Top Shelf renderer in-app. They are
   shared-view evidence only; real Top Shelf placement remains
   `os-composited-placement` evidence from a physical Apple TV.

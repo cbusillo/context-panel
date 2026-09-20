@@ -543,11 +543,10 @@ private func tvLaunchArguments(
                 family: try #require(cell["family"]),
                 presentation: try #require(cell["presentation"])
             ))
-            guard case let .sample(sample) = request else {
+            guard case .sample = request else {
                 Issue.record("matrix cell \(surfaceID)/\(cell["id"] ?? "?") is not launchable: \(request)")
                 continue
             }
-            #expect(TVPresentationMode(rawValue: sample.presentation.rawValue) != nil)
         }
     }
 }

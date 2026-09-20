@@ -2907,10 +2907,15 @@ def execute_shared_view_capture(
                 else:
                     capture_results.update(_unknown_results(requirements, profile_error, now))
                 continue
+            snapshot_profile, snapshot_path = _snapshot_profile(
+                profiles[profile_name], staging_directory
+            )
+            # Check the snapshot, which is the bundle that gets installed.
             launch_marker = _simulator_capture_profile(profile_name).required_launch_marker
             if launch_marker is not None and not _app_code_contains(
-                profiles[profile_name].app_bundle, launch_marker
+                snapshot_profile.app_bundle, launch_marker
             ):
+                shutil.rmtree(snapshot_path, ignore_errors=True)
                 capture_results.update(
                     _blocked_results(
                         requirements,
@@ -2920,9 +2925,6 @@ def execute_shared_view_capture(
                     )
                 )
                 continue
-            snapshot_profile, snapshot_path = _snapshot_profile(
-                profiles[profile_name], staging_directory
-            )
             emergency_cleanup_targets: list[str] = []
             profile_capture_completed = False
             try:

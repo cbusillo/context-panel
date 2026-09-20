@@ -224,7 +224,9 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        guard let notificationMetadata = Self.cloudKitNotificationMetadata(userInfo) else {
+        guard !isValidationLaunch,
+              let notificationMetadata = Self.cloudKitNotificationMetadata(userInfo)
+        else {
             completionHandler(.noData)
             return
         }

@@ -1,6 +1,7 @@
 import ContextPanelCloudKitSync
 import ContextPanelCore
 import ContextPanelTVSupport
+import Darwin
 import SwiftUI
 
 private let tvValidationGalleryNavigationValue = "validation-gallery"
