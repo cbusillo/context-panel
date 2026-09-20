@@ -208,8 +208,12 @@ jobs:
           [[ "${runner_xcode_build}" == "${current_xcode_build}" ]]
           git worktree add --detach .build/previous-source "${PREVIOUS_SOURCE_COMMIT}"
           git worktree add --detach .build/current-source "${CURRENT_SOURCE_COMMIT}"
+          # xcodegen later rewrites governed Info.plists inside current-source. The macOS
+          # renderer must be verified and built from a tree nothing has touched.
+          git worktree add --detach .build/current-source-pristine "${CURRENT_SOURCE_COMMIT}"
           test -z "$(git -C .build/previous-source status --porcelain)"
           test -z "$(git -C .build/current-source status --porcelain)"
+          test -z "$(git -C .build/current-source-pristine status --porcelain)"
           python3 .build/previous-source/scripts/context-panel-surface-manifest.py generate --root .build/previous-source \
             --marketing-version "${PREVIOUS_VERSION}" --build-number "${PREVIOUS_BUILD_NUMBER}" \
             --commit "${PREVIOUS_SOURCE_COMMIT}" --configuration Release --xcode-build "${previous_xcode_build}" \
@@ -300,6 +304,7 @@ jobs:
             --visionos-ui-test-run "${visionos_ui_test_run}" \
             --watchos-app "${GITHUB_WORKSPACE}/.build/watchos-derived-data/Build/Products/Release-watchsimulator/Context Panel.app" \
             --tvos-app "${GITHUB_WORKSPACE}/.build/tvos-derived-data/Build/Products/Release-appletvsimulator/Context Panel.app" \
+            --macos-source-root "${GITHUB_WORKSPACE}/.build/current-source-pristine" \
             --output "${RUNNER_TEMP}/context-panel-capture-config.json"
 
       - name: Capture Shared-View Evidence

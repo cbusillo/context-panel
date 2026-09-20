@@ -299,7 +299,30 @@ SIMULATOR_CAPTURE_PROFILES = {
     ),
 }
 SUPPORTED_PROFILES = tuple(SIMULATOR_CAPTURE_PROFILES)
+# macOS has no simulator, and building the Mac app or widget on a host registers
+# competing LaunchServices and PlugInKit bundles. macOS widget cells are rendered by
+# a SwiftPM tool that the executor builds itself from the verified source root.
+HOST_RENDERER_PROFILE = "macos"
+HOST_RENDERER_SURFACES = frozenset({"macos.widget"})
+HOST_RENDERER_PRODUCT = "ContextPanelSharedViewRenderer"
+HOST_RENDERER_MECHANISM = "swiftpm-shared-view-renderer"
+HOST_RENDERER_APPEARANCE_MECHANISM = "renderer-argument"
+HOST_RENDERER_UNSUPPORTED_STATUS = 3
+HOST_RENDERER_BUILD_DIRECTORY = ".host-renderer-build"
+HOST_RENDERER_BUILD_TIMEOUT = 30 * 60
+HOST_RENDERER_RENDER_TIMEOUT = 120
 COMPANION_UI_TEST_PROFILES = frozenset({"ios", "ipados", "visionos"})
+
+
+@dataclass(frozen=True)
+class HostRendererProfile:
+    source_root: Path
+
+
+@dataclass(frozen=True)
+class HostRendererOutcome:
+    results: dict[str, dict[str, object]]
+    public_profile: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -793,7 +816,9 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
     ):
         raise SharedViewCaptureError("shared-view capture config identity is invalid")
     raw_profiles = payload["profiles"]
-    if not isinstance(raw_profiles, dict) or not set(raw_profiles).issubset(SUPPORTED_PROFILES):
+    if not isinstance(raw_profiles, dict) or not set(raw_profiles).issubset(
+        {*SUPPORTED_PROFILES, HOST_RENDERER_PROFILE}
+    ):
         raise SharedViewCaptureError("shared-view capture config profiles are invalid")
     profiles: dict[str, CaptureProfile] = {}
     for name in SUPPORTED_PROFILES:
@@ -873,6 +898,22 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
             ui_test_products_sha256=ui_test_products_sha256,
         )
     return profiles
+
+
+def load_host_renderer_profile(path: Path) -> HostRendererProfile | None:
+    """The optional macOS entry of a capture config that load_capture_config accepted."""
+    raw_profile = _load_json_object(path, "shared-view capture config")["profiles"].get(
+        HOST_RENDERER_PROFILE
+    )
+    if raw_profile is None:
+        return None
+    if not isinstance(raw_profile, dict) or set(raw_profile) != {"sourceRoot"}:
+        raise SharedViewCaptureError("shared-view capture profile keys are invalid")
+    source_root = _absolute_existing_directory(
+        Path(_require_string(raw_profile["sourceRoot"], "capture renderer source root")),
+        "capture renderer source root",
+    )
+    return HostRendererProfile(source_root=source_root)
 
 
 def _matrix_cells(
@@ -998,9 +1039,15 @@ def _reject_capture_path_overlap(
     output_path: Path,
     profiles: dict[str, CaptureProfile],
     input_paths: tuple[Path, ...],
+    host_renderer_profile: HostRendererProfile | None = None,
 ) -> None:
     if _paths_overlap(artifact_root, output_path):
         raise SharedViewCaptureError("capture artifact and output paths overlap")
+    if host_renderer_profile is not None and (
+        _paths_overlap(artifact_root, host_renderer_profile.source_root)
+        or _paths_overlap(output_path, host_renderer_profile.source_root)
+    ):
+        raise SharedViewCaptureError("capture paths overlap the renderer source root")
     for profile in profiles.values():
         if _paths_overlap(artifact_root, profile.app_bundle) or _paths_overlap(
             output_path, profile.app_bundle
@@ -2725,6 +2772,247 @@ def _capture_profile(
     return ProfileCaptureOutcome(results=results, cleanup_status=cleanup_status)
 
 
+HOST_RENDERER_SOURCE_PATHS = ("Package.swift", "Tools/ContextPanelSharedViewRenderer")
+HOST_RENDERER_MANIFEST_TIMEOUT = 300
+
+
+def _host_renderer_source_sha256(source_root: Path) -> str | None:
+    """Digest of the renderer's own sources, which the surface manifest does not govern."""
+    digest = hashlib.sha256()
+    try:
+        files: list[Path] = []
+        for relative in HOST_RENDERER_SOURCE_PATHS:
+            path = source_root / relative
+            if path.is_symlink():
+                return None
+            if path.is_dir():
+                files.extend(item for item in path.rglob("*") if item.is_file() or item.is_symlink())
+            elif path.is_file():
+                files.append(path)
+            else:
+                return None
+        # One "<posix relative path>\0<sha256 hex>\0" record per file, ordered by that path.
+        for path in sorted(files, key=lambda item: item.relative_to(source_root).as_posix()):
+            if path.is_symlink():
+                return None
+            digest.update(path.relative_to(source_root).as_posix().encode() + b"\0")
+            digest.update(_stream_sha256(path, "capture renderer source").encode() + b"\0")
+    except (OSError, SharedViewCaptureError):
+        return None
+    return digest.hexdigest()
+
+
+def _host_renderer_source_error(
+    profile: HostRendererProfile,
+    current_manifest_path: Path,
+    current_manifest_id: str,
+    runner: Runner,
+) -> str | None:
+    """Regenerate the manifest from the renderer's source root; it must be the plan's manifest.
+
+    The source root's own generator is used, because that is the code that produced the
+    plan's manifest.
+    """
+    try:
+        scratch = tempfile.TemporaryDirectory(prefix="context-panel-renderer-manifest-")
+    except OSError:
+        return "host-renderer-source-invalid"
+    output = Path(scratch.name) / "manifest.json"
+    try:
+        source = _load_json_object(current_manifest_path, "current surface manifest").get("source")
+        if not isinstance(source, dict):
+            return "host-renderer-source-invalid"
+        generator = profile.source_root / "scripts" / "context-panel-surface-manifest.py"
+        if generator.is_symlink() or not generator.is_file():
+            return "host-renderer-source-invalid"
+        generated = _run(
+            runner,
+            [
+                sys.executable, str(generator), "generate",
+                "--root", str(profile.source_root),
+                "--marketing-version", _require_string(source.get("marketingVersion"), "marketing version"),
+                "--build-number", _require_string(source.get("buildNumber"), "build number"),
+                "--commit", _require_string(source.get("commit"), "source commit"),
+                "--configuration", _require_string(source.get("configuration"), "configuration"),
+                "--xcode-build", _require_string(source.get("xcodeBuild"), "Xcode build"),
+                "--tree-state", _require_string(source.get("treeState"), "tree state"),
+                "--output", str(output),
+            ],
+            HOST_RENDERER_MANIFEST_TIMEOUT,
+        )
+        if generated.timed_out or generated.returncode != 0:
+            return "host-renderer-source-invalid"
+        regenerated_id = _load_json_object(output, "regenerated surface manifest").get("manifestId")
+    except (OSError, ValueError, SharedViewEvidenceError):
+        return "host-renderer-source-invalid"
+    finally:
+        scratch.cleanup()
+    if regenerated_id != current_manifest_id:
+        return "host-renderer-source-mismatch"
+    return None
+
+
+def _capture_host_renderer(
+    profile: HostRendererProfile,
+    requirements: tuple[CaptureRequirement, ...],
+    artifact_directory: Path,
+    current_manifest_path: Path,
+    current_manifest_id: str,
+    runner: Runner,
+    now: Callable[[], datetime],
+    seen_digests: dict[str, str | None],
+    prior_results: dict[str, dict[str, object]],
+    published_artifact_paths: dict[str, Path],
+) -> HostRendererOutcome:
+    """Build the renderer from the verified source root and draw each macOS widget cell."""
+    renderer_sha256: str | None = None
+    renderer_source_sha256 = _host_renderer_source_sha256(profile.source_root)
+
+    def outcome(results: dict[str, dict[str, object]], source_verified: bool) -> HostRendererOutcome:
+        return HostRendererOutcome(
+            results,
+            {
+                "profile": HOST_RENDERER_PROFILE,
+                "hostMechanism": HOST_RENDERER_MECHANISM,
+                "rendererExecutableSHA256": renderer_sha256,
+                "rendererSourceSHA256": renderer_source_sha256 if source_verified else None,
+                "rendererSourceManifestID": current_manifest_id if source_verified else None,
+            },
+        )
+
+    def all_results(status: str, error_code: str) -> dict[str, dict[str, object]]:
+        return {
+            requirement.requirement_id: _result(
+                requirement,
+                status=status,
+                captured_at=now(),
+                host_mechanism=HOST_RENDERER_MECHANISM,
+                appearance_mechanism=None,
+                error_code=error_code,
+            )
+            for requirement in requirements
+        }
+
+    source_error = (
+        "host-renderer-source-invalid"
+        if renderer_source_sha256 is None
+        else _host_renderer_source_error(
+            profile, current_manifest_path, current_manifest_id, runner
+        )
+    )
+    if source_error is not None:
+        return outcome(all_results("blocked", source_error), False)
+
+    build_directory = artifact_directory / HOST_RENDERER_BUILD_DIRECTORY
+    try:
+        build_command = [
+            "swift", "build", "--configuration", "release", "--product", HOST_RENDERER_PRODUCT,
+            "--package-path", str(profile.source_root), "--scratch-path", str(build_directory),
+        ]
+        build = _run(runner, build_command, HOST_RENDERER_BUILD_TIMEOUT)
+        if build.timed_out:
+            return outcome(all_results("unknown", "host-renderer-build-timeout"), True)
+        if build.returncode != 0:
+            # Product source older than the tool has nothing to build.
+            return outcome(all_results("blocked", "host-renderer-unavailable"), True)
+        located = _run(runner, [*build_command, "--show-bin-path"], HOST_RENDERER_RENDER_TIMEOUT)
+        try:
+            if located.timed_out or located.returncode != 0:
+                raise ValueError("renderer location is unavailable")
+            renderer = Path(located.stdout.strip()) / HOST_RENDERER_PRODUCT
+            # The binary must be a regular file that really lives in this run's build
+            # directory: no symlink out of it, and no path the build did not produce.
+            if (
+                not renderer.is_absolute()
+                or renderer.is_symlink()
+                or not renderer.is_file()
+                or build_directory.resolve(strict=True) not in renderer.resolve(strict=True).parents
+            ):
+                raise ValueError("renderer location is outside the build directory")
+            renderer_sha256 = _stream_sha256(renderer, "capture renderer executable")
+        except (OSError, RuntimeError, ValueError, SharedViewCaptureError):
+            renderer_sha256 = None
+            return outcome(all_results("unknown", "host-renderer-location-invalid"), True)
+
+        results: dict[str, dict[str, object]] = {}
+        for requirement in requirements:
+            def result(status: str, error_code: str | None, snapshot: PNGSnapshot | None = None):
+                return _result(
+                    requirement,
+                    status=status,
+                    captured_at=now(),
+                    host_mechanism=HOST_RENDERER_MECHANISM,
+                    appearance_mechanism=HOST_RENDERER_APPEARANCE_MECHANISM if snapshot else None,
+                    error_code=error_code,
+                    snapshot=snapshot,
+                )
+
+            rendered_path = _temporary_absent_path(artifact_directory, ".host-render-", ".png")
+            try:
+                render = _run(
+                    runner,
+                    [
+                        str(renderer),
+                        "--fixture", requirement.fixture_id,
+                        "--family", requirement.family,
+                        "--appearance", requirement.appearance,
+                        "--presentation", requirement.presentation,
+                        "--output", str(rendered_path),
+                    ],
+                    HOST_RENDERER_RENDER_TIMEOUT,
+                )
+                if render.timed_out:
+                    results[requirement.requirement_id] = result("unknown", "host-renderer-timeout")
+                    continue
+                if render.returncode == HOST_RENDERER_UNSUPPORTED_STATUS:
+                    results[requirement.requirement_id] = result(
+                        "blocked", "host-renderer-presentation-unsupported"
+                    )
+                    continue
+                if render.returncode != 0:
+                    results[requirement.requirement_id] = result("unknown", "host-renderer-failed")
+                    continue
+                try:
+                    snapshot = _png_snapshot(rendered_path)
+                except SharedViewCaptureError:
+                    results[requirement.requirement_id] = result("unknown", "host-renderer-image-invalid")
+                    continue
+                if snapshot.pixel_digest in seen_digests:
+                    # Two requirements must never share an image; neither can be trusted.
+                    duplicate_owner = seen_digests[snapshot.pixel_digest]
+                    if duplicate_owner is not None:
+                        prior_path = published_artifact_paths.pop(duplicate_owner, None)
+                        if prior_path is not None:
+                            prior_path.unlink(missing_ok=True)
+                        prior_result = results.get(duplicate_owner) or prior_results.get(duplicate_owner)
+                        if prior_result is not None:
+                            _mark_result_unknown(prior_result, "duplicate-artifact-digest", now())
+                    seen_digests[snapshot.pixel_digest] = None
+                    results[requirement.requirement_id] = result("unknown", "duplicate-artifact-digest")
+                    continue
+                final_path = artifact_directory / f"{requirement.requirement_id}.png"
+                try:
+                    os.chmod(rendered_path, 0o600)
+                    _fsync_file(rendered_path)
+                    os.replace(rendered_path, final_path)
+                except OSError:
+                    final_path.unlink(missing_ok=True)
+                    seen_digests[snapshot.pixel_digest] = None
+                    results[requirement.requirement_id] = result("unknown", "artifact-publish-failed")
+                    continue
+                seen_digests[snapshot.pixel_digest] = requirement.requirement_id
+                published_artifact_paths[requirement.requirement_id] = final_path
+                results[requirement.requirement_id] = result("captured", None, snapshot)
+            finally:
+                rendered_path.unlink(missing_ok=True)
+        return outcome(results, True)
+    finally:
+        shutil.rmtree(build_directory, ignore_errors=True)
+        if os.path.lexists(build_directory):
+            # The staging directory becomes the published run; a build tree must never ride along.
+            raise SharedViewCaptureError("host renderer build cleanup failed")
+
+
 def execute_shared_view_capture(
     surface_comparison_path: Path,
     current_manifest_path: Path,
@@ -2783,6 +3071,7 @@ def execute_shared_view_capture(
     if expected_manifest_id != plan.current_manifest_id:
         raise SharedViewCaptureError("current surface manifest does not match comparison")
     profiles = load_capture_config(config_path)
+    host_renderer_profile = load_host_renderer_profile(config_path)
     private_root = _validate_artifact_root(artifact_root)
     public_output = _validate_output_path(output_path)
     _reject_capture_path_overlap(
@@ -2797,11 +3086,26 @@ def execute_shared_view_capture(
             matrix_path,
             resolved_policy_path,
         ),
+        host_renderer_profile,
     )
     active_runner = runner or SubprocessRunner()
     configured_groups: dict[str, list[CaptureRequirement]] = {profile: [] for profile in SUPPORTED_PROFILES}
     capture_results: dict[str, dict[str, object]] = {}
+    host_renderer_requirements: list[CaptureRequirement] = []
     for requirement in plan.requirements:
+        if requirement.surface in HOST_RENDERER_SURFACES:
+            if host_renderer_profile is not None:
+                host_renderer_requirements.append(requirement)
+            else:
+                capture_results[requirement.requirement_id] = _result(
+                    requirement,
+                    status="blocked",
+                    captured_at=now(),
+                    host_mechanism="unconfigured-profile",
+                    appearance_mechanism=None,
+                    error_code="profile-not-configured",
+                )
+            continue
         profile_name = _profile_for_surface(requirement.surface)
         if profile_name is None:
             capture_results[requirement.requirement_id] = _result(
@@ -2962,6 +3266,22 @@ def execute_shared_view_capture(
                     raise SharedViewCaptureError("capture input snapshot cleanup failed")
             cleanup_statuses[profile_name] = outcome.cleanup_status
             capture_results.update(outcome.results)
+        host_renderer_public_profiles: list[dict[str, object]] = []
+        if host_renderer_profile is not None and host_renderer_requirements:
+            host_outcome = _capture_host_renderer(
+                host_renderer_profile,
+                tuple(host_renderer_requirements),
+                staging_directory,
+                current_manifest_path,
+                plan.current_manifest_id,
+                active_runner,
+                now,
+                seen_digests,
+                capture_results,
+                published_artifact_paths,
+            )
+            capture_results.update(host_outcome.results)
+            host_renderer_public_profiles.append(host_outcome.public_profile)
         captures = [capture_results[requirement.requirement_id] for requirement in plan.requirements]
         receipt = {
             "schemaVersion": CAPTURE_RECEIPT_SCHEMA_VERSION,
@@ -2976,7 +3296,8 @@ def execute_shared_view_capture(
                     catalog_metadata[profile_name], cleanup_statuses[profile_name]
                 )
                 for profile_name in active_profile_names
-            ],
+            ]
+            + host_renderer_public_profiles,
             "captures": captures,
         }
         _atomic_write_json(staging_directory / "index.json", receipt, 0o600)
