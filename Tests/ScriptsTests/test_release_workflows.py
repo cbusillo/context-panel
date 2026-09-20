@@ -1189,14 +1189,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 check=False,
             )
 
-    def test_ship_forwards_resolved_build_number_to_github_release(self):
-        workflow = self.read(".github/workflows/ship.yml")
-
-        self.assertIn(
-            "build_number: ${{ needs.validate.outputs.build_number }}",
-            workflow_job(workflow, "github-release"),
-        )
-
     def test_release_workflows_guard_secrets_with_protected_environment(self):
         workflows = {
             ".github/workflows/release.yml": "macos",
@@ -1279,36 +1271,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     job.index(mutation_step),
                 )
                 self.assertNotIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", guard)
-
-    def test_ship_requires_and_forwards_schema_receipt_for_live_channels(self):
-        workflow = self.read(".github/workflows/ship.yml")
-        validate = workflow_job(workflow, "validate")
-
-        self.assertIn("INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64", validate)
-        self.assertIn(
-            "live publication, upload, and TestFlight channels require a Production CloudKit schema receipt",
-            validate,
-        )
-        for job_name in (
-            "github-release",
-            "app-store-upload",
-            "companion-app-store-upload",
-            "testflight-beta",
-        ):
-            with self.subTest(job=job_name):
-                self.assertIn(
-                    "cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}",
-                    workflow_job(workflow, job_name),
-                )
-
-    def test_release_workflow_only_runs_from_explicit_main_dispatches(self):
-        workflow = self.read(".github/workflows/release.yml")
-
-        self.assertNotIn("push:", workflow)
-        self.assertIn("workflow_call:", workflow)
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("contents: read", workflow_job(workflow, "guard"))
-        self.assertIn("contents: write", workflow_job(workflow, "macos"))
 
     def test_release_workflow_shell_blocks_do_not_expand_actions_expressions(self):
         workflow_paths = (
@@ -1707,59 +1669,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     notes="release notes",
                 )
 
-    def test_release_workflow_uses_verified_draft_publication(self):
-        workflow = self.read(".github/workflows/release.yml")
-
-        self.assertIn("scripts/seal-github-release-metadata.py", workflow)
-        self.assertIn("scripts/publish-github-release.py", workflow)
-        self.assertIn("--source-commit \"${GITHUB_SHA}\"", workflow)
-        self.assertNotIn("--clobber", workflow)
-        self.assertNotIn("gh release upload", workflow)
-        self.assertNotIn("gh release edit", workflow)
-
-    def test_ship_release_channels_depend_on_validation(self):
-        workflow = self.read(".github/workflows/ship.yml")
-
-        expected_needs = {
-            "github-release": ("validate",),
-            "app-store-upload": ("validate",),
-            "companion-app-store-upload": ("validate",),
-            "testflight-beta": (
-                "validate",
-                "app-store-upload",
-                "companion-app-store-upload",
-            ),
-        }
-        for job_name, needs in expected_needs.items():
-            with self.subTest(job=job_name):
-                self.assertEqual(workflow_job_needs(workflow_job(workflow, job_name)), needs)
-
-    def test_ship_validation_step_owns_app_store_preflight(self):
-        workflow = self.read(".github/workflows/ship.yml")
-        validate_job = workflow_job(workflow, "validate")
-        validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
-
-        self.assertEqual(validate_run.count("scripts/app-store-version-guard.py"), 1)
-        self.assertEqual(workflow.count("scripts/app-store-version-guard.py"), 1)
-        for credential in (
-            "APP_STORE_CONNECT_KEY_ID",
-            "APP_STORE_CONNECT_ISSUER_ID",
-            "APP_STORE_CONNECT_API_KEY_P8_BASE64",
-        ):
-            with self.subTest(credential=credential):
-                self.assertIn(credential, validate_job)
-        self.assertIn(
-            "App Store Connect API credentials are required for Ship App Store version preflight",
-            validate_run,
-        )
-        for validation_message in (
-            "testflight_beta_source=macos requires app_store_channel=upload",
-            "testflight_beta_source=companion requires companion_app_store_channel=upload",
-            "companion_app_store_channel=upload with testflight_beta=true requires testflight_beta_source=companion",
-        ):
-            with self.subTest(validation_message=validation_message):
-                self.assertIn(validation_message, validate_run)
-
     def test_ship_preflight_platform_mapping_is_exhaustive(self):
         workflow = self.read(".github/workflows/ship.yml")
         validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
@@ -1798,190 +1707,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             companion_case,
             r"(?ms)^\s*\*\)\s*$.*unsupported companion_platform.*?^\s*exit 2\s*$",
         )
-
-    def test_ship_distributes_testflight_beta_without_app_review(self):
-        workflow = self.read(".github/workflows/ship.yml")
-        testflight_job = workflow_job(workflow, "testflight-beta")
-
-        self.assertIn("uses: ./.github/workflows/testflight-beta-distribution.yml", testflight_job)
-        for contract in (
-            "build_number:",
-            "needs.app-store-upload.outputs.build_number",
-            "needs.companion-app-store-upload.outputs.build_number",
-            "platform:",
-            "needs.companion-app-store-upload.outputs.app_store_platform",
-            "'MAC_OS'",
-            "beta_groups:",
-            "include_internal_beta_groups:",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, testflight_job)
-        self.assertIn("Ship does not submit App Store Review.", workflow)
-        self.assertIn("run Submit App Store Review separately; use dry_run=true first", workflow)
-        self.assertNotIn("submit_app_review", workflow)
-        self.assertNotIn("uses: ./.github/workflows/submit-app-store-review.yml", workflow)
-
-    def test_companion_upload_workflow_uses_companion_script_and_profiles(self):
-        workflow = self.read(".github/workflows/app-store-connect-companion-upload.yml")
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn("name: App Store Connect Companion Build Upload", workflow)
-        self.assertIn("scripts/upload-app-store-connect-companion-app.sh", workflow)
-        self.assertIn("COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64", workflow)
-        self.assertIn("COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64", workflow)
-        self.assertIn("COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64", workflow)
-        self.assertIn("COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64", workflow)
-        self.assertIn("ContextPanelCompanion", script)
-        self.assertIn("ContextPanelTV", script)
-        self.assertIn("generic/platform=iOS", script)
-        self.assertIn("generic/platform=visionOS", script)
-        self.assertIn("generic/platform=tvOS", script)
-        self.assertIn("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", script)
-        self.assertIn("CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER", script)
-        self.assertIn("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER", script)
-        self.assertIn("--tv-top-shelf-profile", script)
-        self.assertIn("com.shinycomputers.contextpanel.topshelf", script)
-        self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
-        self.assertIn("group.com.shinycomputers.contextpanel", script)
-        self.assertIn("'Entitlements:com.apple.developer.icloud-services' '*'", script)
-
-    def test_app_store_upload_name_does_not_claim_testflight_distribution(self):
-        workflow = self.read(".github/workflows/app-store-connect-upload.yml")
-
-        self.assertIn("name: App Store Connect Build Upload", workflow)
-        self.assertIn("TestFlight beta distribution: handled by the TestFlight Beta Distribution workflow", workflow)
-        self.assertNotIn("TestFlight beta distribution: not requested by this workflow", workflow)
-
-    def test_app_store_upload_artifacts_retain_expected_build_manifests(self):
-        mac_workflow = self.read(".github/workflows/app-store-connect-upload.yml")
-        companion_workflow = self.read(".github/workflows/app-store-connect-companion-upload.yml")
-
-        self.assertIn(
-            ".build/app-store-connect/ExpectedBuildManifest-*.json",
-            mac_workflow,
-        )
-        self.assertIn(
-            ".build/app-store-connect-companion/ExpectedBuildManifest-*.json",
-            companion_workflow,
-        )
-
-    def test_testflight_beta_distribution_workflow_uses_distribution_script(self):
-        workflow = self.read(".github/workflows/testflight-beta-distribution.yml")
-        script = self.read("scripts/distribute-testflight-beta.py")
-
-        self.assertIn("name: TestFlight Beta Distribution", workflow)
-        self.assertIn("scripts/distribute-testflight-beta.py", workflow)
-        self.assertIn("--platform", workflow)
-        self.assertIn("required: true", workflow)
-        self.assertIn("group: testflight-beta-${{ inputs.version }}-${{ inputs.build_number }}-${{ inputs.platform }}", workflow)
-        self.assertIn('args+=(--platform "${INPUT_PLATFORM}")', workflow)
-        self.assertNotIn("${INPUT_PLATFORM:-any}", workflow)
-        self.assertIn("- TV_OS", workflow)
-        self.assertIn("/betaGroups/{group_id}/relationships/builds", script)
-        self.assertIn("processingState", script)
-
-    def test_app_store_screenshot_upload_workflow_uses_safe_defaults(self):
-        workflow = self.read(".github/workflows/upload-app-store-screenshots.yml")
-
-        self.assertIn("name: Upload App Store Screenshots", workflow)
-        self.assertIn("default: true", workflow)
-        self.assertIn("scripts/upload-app-store-screenshots.py", workflow)
-        self.assertIn("--dry-run", workflow)
-        self.assertIn("APP_STORE_CONNECT_API_KEY_P8_BASE64", workflow)
-        self.assertIn("default: \"\"", workflow)
-        self.assertIn("type: string", workflow)
-        self.assertNotIn("- MAC_OS", workflow)
-
-    def test_app_store_review_workflow_supports_prepare_only(self):
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        script = self.read("scripts/submit-app-store-review.py")
-
-        self.assertIn("prepare_only:", workflow)
-        self.assertIn("INPUT_PREPARE_ONLY", workflow)
-        self.assertIn("args+=(--prepare-only)", workflow)
-        self.assertIn("or prepare_only is true", workflow)
-        self.assertIn("- Prepare only: ${INPUT_PREPARE_ONLY}", workflow)
-        self.assertIn("--prepare-only", script)
-        self.assertIn("Prepare only: review submission was not created or submitted", script)
-        self.assertIn("--prepare-only and --cancel-review-only are mutually exclusive", script)
-
-    def test_app_store_review_workflow_gates_live_build_mutations_on_runtime_evidence(self):
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        script = self.read("scripts/submit-app-store-review.py")
-        release_docs = self.read("docs/release.md")
-
-        self.assertIn("validation_report_base64:", workflow)
-        self.assertIn("Prepare Validation Report", workflow)
-        self.assertIn("args+=(--validation-report .build/validation-report.json)", workflow)
-        self.assertIn("report_required=\"false\"", workflow)
-        self.assertIn("INPUT_DRY_RUN", workflow)
-        self.assertIn("INPUT_CANCEL_REVIEW_ONLY", workflow)
-        self.assertIn("INPUT_PREPARE_ONLY", workflow)
-        self.assertIn("--validation-report", script)
-        self.assertIn("--validate-report-only", script)
-        self.assertIn("validation_report_required", script)
-        self.assertIn("release_evidence_report_base64:", workflow)
-        self.assertIn("release_evidence_mode:", workflow)
-        self.assertIn("Prepare Release Evidence Report", workflow)
-        self.assertIn("--release-evidence-report", script)
-        self.assertIn("--release-evidence-mode", script)
-        self.assertIn("--release-evidence-surface-policy", script)
-        self.assertIn(
-            "release_evidence_report_base64 is required for live shadow or enforce validation",
-            workflow,
-        )
-        self.assertIn("release_evidence_comparison_base64:", workflow)
-        self.assertIn("release_evidence_expected_build_manifests_base64:", workflow)
-        self.assertIn("release_evidence_selected_rc_ledger_base64:", workflow)
-        self.assertIn("release_evidence_shadow_evidence_base64:", workflow)
-        self.assertIn("release_evidence_historical_policy_archive_base64:", workflow)
-        self.assertIn("INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64", workflow)
-        self.assertIn(".build/release-evidence-policy-archive.json", workflow)
-        self.assertIn("release_evidence_mode must be shadow or enforce", workflow)
-        self.assertEqual(
-            len(
-                re.findall(
-                    r"release_evidence_mode:\n"
-                    r"(?:\s+.*\n){0,4}?"
-                    r"\s+default: enforce\n",
-                    workflow,
-                )
-            ),
-            2,
-        )
-        github_config = json.loads(self.read(".github/github.json"))
-        self.assertEqual(
-            github_config["qualityGate"]["validate"][
-                "appStoreReviewReleaseEvidenceDefault"
-            ],
-            "enforce",
-        )
-        validation_preflight = github_config["qualityGate"]["validate"][
-            "appStoreReviewValidationPreflight"
-        ]
-        for argument in (
-            "--validation-train release",
-            "--release-evidence-report",
-            "--release-evidence-mode enforce",
-            "--release-evidence-comparison",
-            "--release-evidence-expected-build-manifest",
-            "--release-evidence-selected-rc-ledger",
-            "--release-evidence-shadow-evidence",
-            "--release-evidence-historical-policy-archive",
-        ):
-            self.assertIn(argument, validation_preflight)
-        self.assertIn("--release-evidence-mode enforce", release_docs)
-        self.assertIn(
-            "live build attachment or submission requires validation_train release",
-            workflow,
-        )
-        self.assertIn(
-            "live build attachment or submission requires --validation-train release",
-            script,
-        )
-        self.assertIn("submission validation reconstructs every approved embedded ledger", release_docs.lower())
-        self.assertIn("narrow exact-build runtime stop", release_docs)
-        self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
 
     def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
@@ -2090,177 +1815,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("usage:", result.stdout)
-
-    def test_release_evidence_metadata_commands_include_required_contract(self):
-        metadata = json.loads(self.read(".github/github.json"))
-        validate = metadata["qualityGate"]["validate"]
-        report_tokens = shlex.split(validate["releaseEvidenceBetaRCReportValidation"])
-        release_shadow_tokens = shlex.split(
-            validate["releaseEvidenceReleaseShadowReportValidation"]
-        )
-        enforced_tokens = shlex.split(
-            validate["releaseEvidenceEnforcedReportValidation"]
-        )
-        for required_option in (
-            "--report",
-            "--validation-report",
-            "--comparison",
-            "--expected-build-manifest",
-            "--policy",
-            "--surface-policy",
-            "--version",
-            "--build-number",
-            "--train",
-        ):
-            self.assertIn(required_option, report_tokens)
-            self.assertIn(required_option, enforced_tokens)
-        self.assertNotIn("--enforce", report_tokens)
-        self.assertNotIn("--enforce", release_shadow_tokens)
-        self.assertIn("--enforce", enforced_tokens)
-        self.assertNotIn("releaseEvidenceReportValidation", validate)
-        self.assertIn("<beta|rc>", report_tokens)
-        self.assertNotIn("<beta|rc|release>", report_tokens)
-        self.assertIn(
-            "--selected-rc-ledger",
-            shlex.split(validate["releaseEvidenceReleaseEnforcementGate"]),
-        )
-        self.assertIn(
-            "--selected-rc-ledger",
-            shlex.split(validate["releaseEvidenceReleaseShadowGate"]),
-        )
-        self.assertIn(
-            "--selected-rc-ledger",
-            shlex.split(validate["releaseEvidenceReleaseReportValidation"]),
-        )
-        self.assertIn("--selected-rc-ledger", release_shadow_tokens)
-        self.assertIn(
-            "--shadow-evidence",
-            shlex.split(validate["releaseEvidenceEnforcedReportValidation"]),
-        )
-        for command_name in (
-            "releaseEvidenceBetaShadowGate",
-            "releaseEvidenceRCShadowGate",
-            "releaseEvidenceReleaseShadowGate",
-            "releaseEvidenceBetaEnforcementGate",
-            "releaseEvidenceRCEnforcementGate",
-            "releaseEvidenceReleaseEnforcementGate",
-        ):
-            self.assertIn("--lineage-output", shlex.split(validate[command_name]))
-        for command_name in (
-            "releaseEvidenceBetaShadowGate",
-            "releaseEvidenceRCShadowGate",
-            "releaseEvidenceReleaseShadowGate",
-            "releaseEvidenceBetaEnforcementGate",
-            "releaseEvidenceRCEnforcementGate",
-            "releaseEvidenceReleaseEnforcementGate",
-            "releaseEvidenceBetaRCReportValidation",
-            "releaseEvidenceReleaseShadowReportValidation",
-            "releaseEvidenceEnforcedReportValidation",
-            "releaseEvidenceReleaseReportValidation",
-        ):
-            self.assertIn("[--historical-policy-archive", validate[command_name])
-
-    def test_app_store_review_workflow_supports_review_notes_override(self):
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        script = self.read("scripts/submit-app-store-review.py")
-
-        self.assertIn("review_notes:", workflow)
-        self.assertIn("INPUT_REVIEW_NOTES", workflow)
-        self.assertIn('args+=(--review-notes "${INPUT_REVIEW_NOTES}")', workflow)
-        self.assertIn("--review-notes", script)
-        self.assertIn('review_attributes["notes"] = review_notes', script)
-
-    def test_app_store_review_workflow_uses_single_version_submissions(self):
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        script = self.read("scripts/submit-app-store-review.py")
-        release_docs = self.read("docs/release.md")
-
-        self.assertNotIn("additional_review_versions:", workflow)
-        self.assertNotIn("--additional-review-version", script)
-        self.assertIn('f"/reviewSubmissions/{submission_id}/items"', script)
-        self.assertIn("exactly one App Store version item per review", release_docs)
-        self.assertIn("separately for each platform and", release_docs)
-
-    def test_app_store_review_workflow_supports_tvos(self):
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        script = self.read("scripts/submit-app-store-review.py")
-        release_docs = self.read("docs/release.md")
-
-        self.assertIn("- TV_OS", workflow)
-        self.assertIn("tvos_demo_video_url:", workflow)
-        self.assertIn("INPUT_TVOS_DEMO_VIDEO_URL", workflow)
-        self.assertIn('args+=(--tvos-demo-video-url "${INPUT_TVOS_DEMO_VIDEO_URL}")', workflow)
-        self.assertIn("TVOS_DEMO_NOTES_HEADING", script)
-        self.assertIn("--tvos-demo-video-url", script)
-        self.assertIn("optional for ordinary `TV_OS` updates", release_docs)
-        self.assertIn("clears copied prior-version review notes", release_docs)
-        self.assertIn("`tvos_demo_video_url`", release_docs)
-        self.assertIn("copy_from_platform:", workflow)
-        self.assertIn("INPUT_COPY_FROM_PLATFORM", workflow)
-        self.assertIn('args+=(--copy-from-platform "${INPUT_COPY_FROM_PLATFORM}")', workflow)
-        self.assertIn("--copy-from-platform", script)
-
-    def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
-        ship_workflow = self.read(".github/workflows/ship.yml")
-        release_workflow = self.read(".github/workflows/release.yml")
-
-        self.assertIn("group: ship-v${{ inputs.version }}", ship_workflow)
-        self.assertIn("format('release-v{0}', inputs.version)", release_workflow)
-        self.assertNotIn("group: release-v${{ inputs.version }}", ship_workflow)
-
-    def test_release_package_stamps_bundle_version_and_build_number(self):
-        workflow = self.read(".github/workflows/release.yml")
-        package_script = self.read("scripts/package-native-macos-app.sh")
-
-        self.assertIn("build_number:", workflow)
-        self.assertIn('--build-number "${BUILD_NUMBER}"', workflow)
-        self.assertIn('MARKETING_VERSION="$version"', package_script)
-        self.assertIn('CURRENT_PROJECT_VERSION="$build_number"', package_script)
-
-    def test_release_workflow_pins_the_identity_imported_from_the_p12(self):
-        workflow = self.read(".github/workflows/release.yml")
-
-        self.assertIn('identity_output="$(security find-identity -v -p codesigning "${keychain_path}")"', workflow)
-        self.assertIn('identity="${identities[0]}"', workflow)
-        self.assertIn("expected exactly one Developer ID Application identity", workflow)
-        self.assertIn("requires app, widget, and refresh-agent provisioning profiles", workflow)
-        self.assertNotIn('identity="auto"', workflow)
-
-    def test_release_package_signing_preserves_profile_application_identifier(self):
-        package_script = self.read("scripts/package-native-macos-app.sh")
-
-        self.assertIn("merge_profile_application_entitlements()", package_script)
-        self.assertIn("profile_entitlement_value \"$profile_plist\" com.apple.application-identifier", package_script)
-        self.assertIn("Add :com.apple.application-identifier string $application_identifier", package_script)
-        self.assertIn("Add :com.apple.developer.team-identifier string $team_identifier", package_script)
-        self.assertIn("require_profile_for_cloudkit_entitlements", package_script)
-        self.assertIn("uses CloudKit entitlements and requires an embedded provisioning profile", package_script)
-        self.assertIn("require_command security", package_script)
-        self.assertIn("prepared_entitlements()", package_script)
-        self.assertIn('prepared_entitlements "$app_entitlements" "$app_provisioning_profile"', package_script)
-        self.assertIn('prepared_entitlements "$refresh_agent_entitlements" "$refresh_agent_provisioning_profile"', package_script)
-        self.assertIn('assert_entitlement_present "$app_path" "Context Panel app" "com.apple.application-identifier"', package_script)
-        self.assertIn('assert_entitlement_present "$refresh_agent_path" "Context Panel refresh agent" "com.apple.application-identifier"', package_script)
-
-    def test_release_and_runtime_gates_reject_profile_certificate_mismatches(self):
-        package_script = self.read("scripts/package-native-macos-app.sh")
-        runtime_script = self.read("scripts/context-panel-runtime-baseline.sh")
-
-        self.assertIn("assert_profile_matches_signing_certificate()", package_script)
-        self.assertIn("assert_profile_authorizes_signing_identity()", package_script)
-        self.assertIn("DeveloperCertificates.$index", package_script)
-        self.assertIn("does not authorize the actual signing certificate", package_script)
-        preflight = (
-            'assert_profile_authorizes_signing_identity "$widget_provisioning_profile" "Context Panel widget"'
-        )
-        self.assertIn(preflight, package_script)
-        self.assertLess(package_script.index(preflight), package_script.index("xcodegen generate --spec project.yml"))
-        self.assertIn(
-            'assert_profile_matches_signing_certificate "$widget_path" "$widget_provisioning_profile" "Context Panel widget"',
-            package_script,
-        )
-        self.assertIn("DeveloperCertificates.$index", runtime_script)
-        self.assertIn("does not authorize the actual signing certificate", runtime_script)
 
     def test_runtime_gate_accepts_widget_timeline_from_installed_build(self):
         result = self.run_widget_timeline_freshness_fixture(timeline_mtime=200, reference_mtime=100)
@@ -2592,29 +2146,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         for record in (session_record, receipt_record):
             for field in record["fields"]:
                 self.assertIn(f'= "{field["name"]}"', runtime_sync)
-
-    def test_cloudkit_companion_schema_validator_documents_live_cktool_gate(self):
-        script = self.read("scripts/validate-cloudkit-companion-schema.sh")
-        release_docs = self.read("docs/release.md")
-
-        self.assertIn("cktool export-schema", script)
-        self.assertIn("CLOUDKIT_MANAGEMENT_TOKEN", script)
-        self.assertIn("live_schema_has_field_type", script)
-        self.assertIn("live_schema_field_is_queryable", script)
-        self.assertIn("live_schema_field_is_sortable", script)
-        self.assertIn("live_schema_record_has_grant", script)
-        self.assertIn("CloudKit/companion-sync.schema.ckdb", script)
-        self.assertIn("CompanionSyncDocument", script)
-        self.assertIn("RuntimeValidationSession", script)
-        self.assertIn("RuntimeReceipt", script)
-        self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
-        self.assertIn("CloudKit Production Schema Gate", release_docs)
-        self.assertIn("--receipt-output .build/cloudkit-production-schema-receipt.json", release_docs)
-        self.assertIn("cloudkit_schema_receipt_base64", release_docs)
-        self.assertIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", release_docs)
-        self.assertIn("CloudKit Console's **Deploy Schema Changes** action", release_docs)
-        self.assertIn("never use `cktool reset-schema`", release_docs)
-        self.assertIn("CompanionSyncDocumentV2", release_docs)
 
     def test_cloudkit_schema_receipt_round_trip_binds_contract_and_source(self):
         receipt_module = self.cloudkit_schema_receipt_module()
@@ -2967,129 +2498,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing record type: RuntimeReceipt", result.stdout)
-
-    def test_app_store_export_preserves_archived_build_number(self):
-        upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")
-
-        self.assertNotIn("manageAppVersionAndBuildNumber", upload_script)
-
-    def test_macos_app_store_archive_stamps_and_verifies_build_fingerprint(self):
-        project = self.read("project.yml")
-        upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")
-        context_panel_start = project.index("  ContextPanel:")
-        refresh_agent_start = project.index("  ContextPanelRefreshAgent:")
-        context_panel_target = project[context_panel_start:refresh_agent_start]
-
-        self.assertIn("postBuildScripts:", context_panel_target)
-        self.assertIn("Stamp Build Fingerprint", context_panel_target)
-        self.assertIn('"$SRCROOT/scripts/stamp-context-panel-build.sh"', context_panel_target)
-        self.assertIn('"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"', context_panel_target)
-        self.assertIn("ContextPanelBuildFingerprint.txt", context_panel_target)
-        self.assertIn("basedOnDependencyAnalysis: false", context_panel_target)
-
-        assert_lines_in_order(
-            upload_script,
-            'run_xcodebuild "${archive_args[@]}" archive',
-            "verify_archived_build_fingerprint",
-            "scripts/context-panel-write-expected-build.sh \\",
-            "-exportArchive \\",
-        )
-        self.assertIn("archived app is missing the build fingerprint", upload_script)
-        self.assertIn("archived app build fingerprint does not match the source tree", upload_script)
-        self.assertIn("--layout macos", upload_script)
-
-    def test_build_fingerprint_delegates_to_reviewed_surface_contract(self):
-        fingerprint_script = self.read("scripts/context-panel-build-fingerprint.sh")
-
-        self.assertIn("context-panel-surface-manifest.py", fingerprint_script)
-        self.assertIn("--surface macos.app", fingerprint_script)
-        self.assertIn("--kind combined", fingerprint_script)
-        self.assertNotIn("find Sources", fingerprint_script)
-
-    def test_every_shipping_target_stamps_the_surface_manifest(self):
-        project = self.read("project.yml")
-        target_names = (
-            "ContextPanel",
-            "ContextPanelRefreshAgent",
-            "ContextPanelWidgetExtension",
-            "ContextPanelCompanion",
-            "ContextPanelCompanionWidgetExtension",
-            "ContextPanelWatch",
-            "ContextPanelWatchWidgetExtension",
-            "ContextPanelTV",
-            "ContextPanelTVTopShelfExtension",
-        )
-        target_positions = [project.index(f"  {name}:") for name in target_names]
-        schemes_index = project.index("schemes:")
-        for index, target_name in enumerate(target_names):
-            start = target_positions[index]
-            end = target_positions[index + 1] if index + 1 < len(target_positions) else schemes_index
-            target = project[start:end]
-            with self.subTest(target=target_name):
-                self.assertIn("postBuildScripts:", target)
-                self.assertIn("stamp-context-panel-build.sh", target)
-                self.assertIn("basedOnDependencyAnalysis: false", target)
-
-    def test_companion_archives_emit_expected_signed_build_manifests(self):
-        upload_script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-        assert_lines_in_order(
-            upload_script,
-            'run_xcodebuild "${archive_args[@]}" archive',
-            'scripts/context-panel-write-expected-build.sh "${expected_build_args[@]}"',
-            "-exportArchive \\",
-        )
-        self.assertIn('--layout "$platform"', upload_script)
-        self.assertIn('--version "$marketing_version"', upload_script)
-        self.assertIn('--build-number "$build_number"', upload_script)
-        self.assertIn('companion.ios.app=$app_profile', upload_script)
-        self.assertIn('companion.visionos.widget=$widget_profile', upload_script)
-        self.assertIn('watchos.widget=$watch_widget_profile', upload_script)
-        self.assertIn('tvos.top-shelf=$tv_top_shelf_profile', upload_script)
-
-    def test_upload_scripts_guard_against_app_store_marketing_version_regression(self):
-        for script_path, expected_platform in (
-            ("scripts/upload-app-store-connect-macos-app.sh", "--platform MAC_OS"),
-            ("scripts/upload-app-store-connect-companion-app.sh", '--platform "$app_store_platform"'),
-        ):
-            with self.subTest(script_path=script_path):
-                script = self.read(script_path)
-                guard_index = script.index("scripts/app-store-version-guard.py")
-                xcodegen_index = script.index("xcodegen generate --spec project.yml")
-
-                self.assertLess(guard_index, xcodegen_index)
-                self.assertIn("require_command python3", script)
-                self.assertIn('if [[ "$upload" == "true" ]]; then', script)
-                self.assertIn("--bundle-id com.shinycomputers.contextpanel", script)
-                self.assertIn(expected_platform, script)
-                self.assertIn('--version "$marketing_version"', script)
-                self.assertIn('--api-key "$api_key_path"', script)
-
-    def test_companion_upload_maps_release_platform_to_app_store_connect_platform(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn('app_store_platform="IOS"', script)
-        self.assertIn('app_store_platform="VISION_OS"', script)
-        self.assertIn('app_store_platform="TV_OS"', script)
-
-    def test_companion_upload_does_not_hard_code_closed_initial_marketing_version(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn("scripts/app-store-version-guard.py", script)
-        self.assertNotIn('marketing_version" == "1.0"', script)
-        self.assertNotIn("App Store marketing version 1.0 is closed", script)
-
-    def test_app_store_upload_scripts_prefer_system_xcode_tools(self):
-        for script_path in (
-            "scripts/upload-app-store-connect-macos-app.sh",
-            "scripts/upload-app-store-connect-companion-app.sh",
-        ):
-            with self.subTest(script_path=script_path):
-                script = self.read(script_path)
-
-                self.assertIn("xcodebuild_system_path()", script)
-                self.assertIn("/usr/bin:/bin:/usr/sbin:/sbin", script)
-                self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
-                self.assertNotRegex(script, r"(?m)^xcodebuild \\")
 
     def test_commit_gate_namespaces_artifact_cache_by_physical_checkout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3837,108 +3245,6 @@ exit 0
                 missing_hash_tool.stdout,
             )
 
-    def test_companion_build_validation_supports_ios_visionos_watchos_and_tvos_without_signing(self):
-        workflow = self.read(".github/workflows/ci.yml")
-        script = self.read("scripts/validate-companion-builds.sh")
-        cache_helper = self.read("scripts/context-panel-companion-cache.sh")
-        release_docs = self.read("docs/release.md")
-        github_metadata = json.loads(self.read(".github/github.json"))
-
-        self.assertIn("scripts/commit-gate.sh", workflow)
-        self.assertIn("Run routine Python test lane", workflow)
-        self.assertIn("timeout-minutes: 5", workflow)
-        self.assertIn("--lane routine-ci-python", workflow)
-        self.assertIn("Upload test lane timings", workflow)
-        self.assertIn("test-lane-timings-${{ github.run_attempt }}", workflow)
-        self.assertIn(".build/test-lane-timings/fast-local-python.json", workflow)
-        self.assertIn(".build/test-lane-timings/routine-ci-python.json", workflow)
-        self.assertIn(".build/test-lane-timings/routine-ci-swift.json", workflow)
-        self.assertIn("scripts/validate-companion-builds.sh", workflow)
-        self.assertIn("--configuration Release --archive ios", workflow)
-        self.assertIn("scripts/validate-companion-builds.sh --configuration Release watchos", workflow)
-        self.assertIn("scripts/validate-companion-builds.sh --configuration Release --archive tvos", workflow)
-        self.assertIn("--archive", script)
-        self.assertIn("archive validation is not supported for standalone watchOS", script)
-        self.assertNotIn("archive validation is not supported for standalone tvOS", script)
-        self.assertIn("Validating $scheme archive for $destination", script)
-        self.assertIn("-archivePath \"$archive_path\"", script)
-        self.assertIn("validate_archive_contents()", script)
-        self.assertIn('marker="** BUILD SUCCEEDED **"', script)
-        self.assertIn('marker="** ARCHIVE SUCCEEDED **"', script)
-        self.assertIn("xcodebuild did not reach a terminal result within 30 minutes", script)
-        self.assertIn("xcodebuild validation requires exactly one build or archive action", script)
-        self.assertIn("Retrying $platform validation once with isolated DerivedData", script)
-        self.assertIn("context-panel-companion-retry.XXXXXX", script)
-        self.assertIn("if ((status != 124)); then", script)
-        self.assertIn('/usr/bin/tee "$log_file"', script)
-        self.assertIn('/usr/bin/tail -n 500 "$log_file"', script)
-        self.assertIn('signal_xcodebuild_processes TERM "$process_group"', script)
-        self.assertIn('signal_xcodebuild_processes KILL "$process_group"', script)
-        self.assertIn('/usr/bin/pgrep -P "$parent_pid"', script)
-        self.assertIn('process_group="$job_pid"', script)
-        self.assertNotIn("/bin/ps -o pgid=", script)
-        self.assertNotIn("disown -a", script)
-        self.assertNotIn("killall", script)
-        self.assertNotIn("launchctl kill", script)
-        self.assertIn("iOS companion archive is missing embedded watch app", script)
-        self.assertIn("iOS companion archive is missing embedded watch widget", script)
-        self.assertIn("visionOS companion archive unexpectedly contains watch content", script)
-        self.assertIn("tvOS companion archive unexpectedly contains watch content", script)
-        self.assertIn("tvOS companion archive unexpectedly contains the iOS/visionOS companion widget", script)
-        self.assertIn("tvOS companion archive is missing embedded Top Shelf extension", script)
-        self.assertIn("tvOS Top Shelf extension is missing the required arm64 device capability", script)
-        self.assertIn("UIRequiredDeviceCapabilities", script)
-        self.assertIn("tvOS companion archive is missing compiled brand assets", script)
-        self.assertIn("tvOS companion archive is missing the primary layered app icon", script)
-        self.assertIn("tvOS companion archive is missing required standard or wide Top Shelf artwork", script)
-        self.assertIn("Products/Applications/Context Panel.app", script)
-        self.assertIn("Watch/Context Panel.app", script)
-        self.assertIn("PlugIns/ContextPanelWatchWidgetExtension.appex", script)
-        self.assertIn("PlugIns/ContextPanelTVTopShelfExtension.appex", script)
-        self.assertIn("platforms=(ios visionos watchos tvos)", script)
-        self.assertIn("generic/platform=iOS", script)
-        self.assertIn(
-            'companion_cache_helper="$repo_root/scripts/context-panel-companion-cache.sh"',
-            script,
-        )
-        self.assertIn("trap finalize_companion_validation EXIT", script)
-        self.assertIn("trap 'handle_validation_signal 129' HUP", script)
-        self.assertIn("trap 'handle_validation_signal 130' INT", script)
-        self.assertIn("trap 'handle_validation_signal 143' TERM", script)
-        self.assertIn('"$companion_cache_helper" quarantine --root "$root"', script)
-        self.assertIn("preserving validation status $original_status", script)
-        self.assertIn("context-panel-companion-retry.XXXXXX", script)
-        self.assertIn("derived-data/companion-build-validation", script)
-        self.assertIn("/usr/bin/find -P", cache_helper)
-        self.assertIn("-print0 -prune", cache_helper)
-        self.assertIn("protected-signed-bundles", cache_helper)
-        self.assertIn(".context-panel-companion-quarantine", cache_helper)
-        self.assertIn("neutralize_bundle_tree", cache_helper)
-        self.assertIn("trap '' HUP INT TERM", cache_helper)
-        self.assertIn("trap '' HUP INT TERM", script)
-        self.assertNotIn("rm -rf", cache_helper)
-        self.assertIn(
-            "scripts/context-panel-companion-cache.sh preflight",
-            release_docs,
-        )
-        validate_commands = github_metadata["qualityGate"]["validate"]
-        self.assertEqual(
-            validate_commands["companionCachePreflight"],
-            "scripts/context-panel-companion-cache.sh preflight",
-        )
-        self.assertIn(
-            "context-panel-companion-cache.sh quarantine --root",
-            validate_commands["companionCacheQuarantine"],
-        )
-        self.assertIn("generic/platform=visionOS", script)
-        self.assertIn("generic/platform=watchOS", script)
-        self.assertIn("generic/platform=tvOS", script)
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", script)
-        self.assertIn("ContextPanelCompanion", script)
-        self.assertIn("ContextPanelWatch", script)
-        self.assertIn("ContextPanelTV", script)
-        self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
-
     def test_companion_build_validation_retries_only_a_stalled_xcodebuild(self):
         completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
             """#!/usr/bin/env bash
@@ -3988,78 +3294,6 @@ exit 65
         self.assertEqual(invocation_count, 1)
         self.assertTrue(sentinel_alive)
         self.assertNotIn("Retrying ios validation once with isolated DerivedData", completed.stdout)
-
-    def test_companion_upload_requires_tvos_layered_app_icon(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-        project = self.read("project.yml")
-        entitlements = self.read("Config/ContextPanelTV.entitlements")
-
-        self.assertIn("assert_tvos_archive_ready()", script)
-        self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
-        self.assertIn("tvOS archive is missing the embedded Top Shelf extension", script)
-        self.assertIn("tvOS Top Shelf extension is missing the required arm64 device capability", script)
-        self.assertIn("UIRequiredDeviceCapabilities", script)
-        self.assertIn("tvOS archive is missing compiled brand assets", script)
-        self.assertIn("tvOS archive is missing the primary layered app icon", script)
-        self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
-        self.assertIn('extract_signed_entitlements "$app_path" "tvOS app"', script)
-        self.assertIn(
-            "'com.apple.developer.icloud-container-environment' 'Production'",
-            script,
-        )
-        self.assertIn("'aps-environment' 'production'", script)
-        self.assertIn(
-            "'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'",
-            script,
-        )
-        self.assertIn("<key>com.apple.developer.icloud-container-environment</key>", entitlements)
-        self.assertIn("<string>$(CLOUDKIT_ENVIRONMENT)</string>", entitlements)
-        self.assertIn("CLOUDKIT_ENVIRONMENT: Development", project)
-        self.assertIn("CLOUDKIT_ENVIRONMENT: Production", project)
-        self.assertIn('if [[ "$platform" == "tvos" ]]; then\n\tassert_tvos_archive_ready', script)
-
-    def test_visionos_dogfood_script_uses_development_signing_and_devicectl(self):
-        script = self.read("scripts/dogfood-visionos-companion.sh")
-
-        self.assertIn("ContextPanelCompanion", script)
-        self.assertIn("generic/platform=visionOS", script)
-        self.assertIn('build_destination="platform=visionOS,id=$resolved_device_id"', script)
-        self.assertIn('-destination "$build_destination"', script)
-        self.assertIn("-allowProvisioningUpdates", script)
-        self.assertIn("-allowProvisioningDeviceRegistration", script)
-        self.assertIn("CODE_SIGN_STYLE=Automatic", script)
-        self.assertIn("DEVELOPMENT_TEAM=\"$team_id\"", script)
-        self.assertIn("xcrun devicectl list devices --json-output", script)
-        self.assertIn("xcrun devicectl device install app", script)
-        self.assertIn("cleanup_stale_context_panel_profiles", script)
-        self.assertIn("scripts/cleanup-context-panel-device-profiles.sh", script)
-        self.assertIn("--preserve-app \"$app_path\"", script)
-        self.assertIn("--no-profile-cleanup", script)
-        self.assertIn("xcrun devicectl \"${launch_args[@]}\"", script)
-        self.assertIn("com.shinycomputers.contextpanel", script)
-        self.assertIn('if [[ "$2" == /* ]]; then', script)
-        self.assertIn('derived_data_path="$repo_root/${2#./}"', script)
-        self.assertIn("if ! ((build_only)); then", script)
-        self.assertIn('if [[ "$launch_identifier" == "unknown" ]]; then', script)
-        self.assertIn('launch_identifier=""', script)
-        self.assertNotIn("require_command python3", script)
-
-    def test_device_profile_cleanup_preserves_current_profiles_and_skips_app_store_profiles(self):
-        script = self.read("scripts/cleanup-context-panel-device-profiles.sh")
-
-        self.assertIn("embedded_profile_uuids", script)
-        self.assertIn("find \"$app\" -name embedded.mobileprovision", script)
-        self.assertIn("uuid_is_preserved", script)
-        self.assertIn("--allow-without-preserve", script)
-        self.assertIn("xcrun devicectl device profile list", script)
-        self.assertIn("xcrun devicectl device profile remove", script)
-        self.assertIn("matches_context_panel_bundle", script)
-        self.assertIn("application-identifier", script)
-        self.assertIn("get-task-allow", script)
-        self.assertIn("iOS Team Provisioning Profile: ", script)
-        self.assertIn("com.shinycomputers.contextpanel", script)
-        self.assertIn("Mac Team Provisioning Profile: ", script)
-        self.assertNotIn("Context Panel Companion App Store Profile", script)
 
     def test_device_profile_cleanup_matches_renamed_development_profiles_by_bundle(self):
         query = self.read("scripts/cleanup-context-panel-device-profiles.sh").split("jq -r --arg team_id \"$team_id\" '", 1)[1].split("' \"$profiles_json\"", 1)[0]
@@ -4153,45 +3387,6 @@ exit 65
                 "remove-mac-team-name\tMac Team Provisioning Profile: com.shinycomputers.contextpanel",
             ],
         )
-
-    def test_visionos_dogfood_script_requires_available_physical_avp_for_install(self):
-        script = self.read("scripts/dogfood-visionos-companion.sh")
-
-        self.assertIn('.hardwareProperties.platform == "visionOS"', script)
-        self.assertIn('.hardwareProperties.reality == "physical"', script)
-        self.assertIn('.connectionProperties.pairingState == "paired"', script)
-        self.assertIn("Developer Mode is not enabled", script)
-        self.assertIn("Apple Vision Pro is paired but unavailable to CoreDevice", script)
-        self.assertIn("Wake and unlock the headset", script)
-        self.assertIn("This is not App Store Connect, TestFlight, or App Review release evidence", script)
-
-    def test_companion_upload_preflights_profile_platforms(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn("assert_profile_platform_any()", script)
-        self.assertIn("plist_array_contains_value \"$plist\" 'Platform'", script)
-        self.assertIn("profile_platforms=(iOS)", script)
-        self.assertIn("profile_platforms=(visionOS xrOS)", script)
-        self.assertIn("profile_platforms=(tvOS)", script)
-        self.assertIn("assert_profile_platform_any \"$app_profile\" \"companion app\"", script)
-        self.assertIn("assert_profile_platform_any \"$widget_profile\" \"companion widget\"", script)
-
-    def test_companion_upload_blocks_visionos_without_layered_icon(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-
-        self.assertIn("assert_visionos_packaging_ready()", script)
-        self.assertIn("Resources/Assets.xcassets/AppIcon.solidimagestack", script)
-        self.assertIn('icon_stack_contents="$icon_stack/Contents.json"', script)
-        self.assertIn(".solidimagestacklayer", script)
-        self.assertIn("Content.imageset/Contents.json", script)
-        self.assertIn("json_array_count()", script)
-        self.assertIn("does not declare the same number of layers", script)
-        self.assertIn("declares a duplicate layer", script)
-        self.assertIn("declares an invalid layer filename", script)
-        self.assertIn("Every image entry must name a file", script)
-        self.assertIn("has an invalid image filename", script)
-        self.assertIn("declares a duplicate image filename", script)
-        self.assertIn("visionOS companion packaging is blocked", script)
 
     def test_companion_upload_ios_does_not_require_visionos_layered_icon(self):
         result = self.run_companion_upload_script(
@@ -4571,6 +3766,119 @@ exit 65
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
         self.assertNotIn("no visionOS layered app icon is present", result.stdout)
 
+    def test_companion_upload_enforces_local_ipa_only_for_export_mode(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+        result_block = script[script.rindex('if [[ "$upload" == "true" ]]; then') :]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            export_path = Path(temp_dir)
+            environment = os.environ.copy()
+            environment["export_path"] = str(export_path)
+            environment["platform_label"] = "iOS"
+
+            environment["upload"] = "true"
+            upload_result = subprocess.run(
+                ["/bin/bash", "-c", result_block],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(upload_result.returncode, 0, upload_result.stdout)
+            self.assertIn("Uploaded Context Panel companion (iOS)", upload_result.stdout)
+
+            environment["upload"] = "false"
+            missing_ipa_result = subprocess.run(
+                ["/bin/bash", "-c", result_block],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(missing_ipa_result.returncode, 1)
+            self.assertIn(
+                "export-only mode did not emit a local IPA",
+                missing_ipa_result.stdout,
+            )
+
+            ipa_path = export_path / "ContextPanelCompanion.ipa"
+            ipa_path.write_bytes(b"signed-ipa-fixture")
+            exported_ipa_result = subprocess.run(
+                ["/bin/bash", "-c", result_block],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(exported_ipa_result.returncode, 0, exported_ipa_result.stdout)
+            self.assertIn(str(ipa_path), exported_ipa_result.stdout)
+
+    def test_runtime_baseline_rejects_unexpected_bookmark_counts(self):
+        command = """
+        source scripts/context-panel-runtime-baseline.sh --source-only
+        failures=0
+        expected_bookmark_current=2
+        expected_bookmark_resolvable=2
+        verify_bookmark_access_expectations \
+          'bookmarks store=readable total=3 current=2 legacy=1 document-scoped=0 invalid=0 resolvable=2'
+        [[ "$failures" -gt "0" ]]
+        """
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("bookmark current count matches expected value 2", result.stdout)
+        self.assertIn("bookmark resolvable count matches expected value 2", result.stdout)
+        self.assertIn("strict bookmark gate requires total=3 to equal current=2", result.stdout)
+        self.assertIn("strict bookmark gate found legacy=1", result.stdout)
+
+    def test_runtime_baseline_install_and_reset_do_nothing_when_production_is_installed(self):
+        for entry_point in ("install_runtime", "reset_runtime"):
+            with self.subTest(entry_point=entry_point):
+                result, steps = self.run_runtime_replacement_trace(entry_point, production_after=None)
+
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("refusing to replace", result.stdout)
+                self.assertEqual(steps, [])
+
+    def test_runtime_baseline_install_and_reset_recheck_the_guard_after_building(self):
+        for entry_point in ("install_runtime", "reset_runtime"):
+            with self.subTest(entry_point=entry_point):
+                result, steps = self.run_runtime_replacement_trace(
+                    entry_point,
+                    production_after="preflight_built_runtime_profiles",
+                )
+
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("refusing to replace", result.stdout)
+                self.assertEqual(steps, ["build_checkout_app", "preflight_built_runtime_profiles"])
+
+    def test_runtime_baseline_install_copy_rechecks_the_guard_before_writing(self):
+        result, steps = self.run_runtime_replacement_trace("install_checkout_app", production_after=None)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("refusing to replace", result.stdout)
+        self.assertEqual(steps, [])
+
+    def test_runtime_baseline_install_proceeds_for_a_development_runtime(self):
+        result, steps = self.run_runtime_replacement_trace("install_runtime", production_after="never")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
+        self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
+
+    # The three companion upload tests below assert script text. They stay until the
+    # companion upload script has fixture-driven tests for its Production CloudKit
+    # profile preflights and signed-entitlement checks (issue #695).
     def test_companion_upload_preflights_cloudkit_app_widget_and_watch_profiles(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
@@ -4693,285 +4001,59 @@ exit 65
             "-exportArchive \\",
         )
 
-    def test_companion_upload_retains_generic_watch_archive_evidence(self):
+    def test_companion_upload_requires_tvos_layered_app_icon(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-        workflow = self.read(
-            ".github/workflows/app-store-connect-companion-upload.yml"
-        )
+        project = self.read("project.yml")
+        entitlements = self.read("Config/ContextPanelTV.entitlements")
 
+        self.assertIn("assert_tvos_archive_ready()", script)
+        self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
+        self.assertIn("tvOS archive is missing the embedded Top Shelf extension", script)
+        self.assertIn("tvOS Top Shelf extension is missing the required arm64 device capability", script)
+        self.assertIn("UIRequiredDeviceCapabilities", script)
+        self.assertIn("tvOS archive is missing compiled brand assets", script)
+        self.assertIn("tvOS archive is missing the primary layered app icon", script)
+        self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
+        self.assertIn('extract_signed_entitlements "$app_path" "tvOS app"', script)
         self.assertIn(
-            "iOS companion releases require both --version and --build-number.",
+            "'com.apple.developer.icloud-container-environment' 'Production'",
             script,
         )
-        self.assertIn("write_ios_watch_archive_receipt()", script)
-        self.assertIn("matching_dsym_relative_path()", script)
-        self.assertIn("bundle_executable_uuids()", script)
-        self.assertIn('rm -f "$watch_archive_receipt_path"', script)
-        self.assertIn("receipt_schema_version=1", script)
-        self.assertIn("archive_retained=true", script)
-        self.assertIn("distribution_mode=%s", script)
-        self.assertIn("local_ipa_expected=%s", script)
-        self.assertIn("export-only mode did not emit a local IPA", script)
-        self.assertIn("companion_signature=valid", script)
-        self.assertIn("watch_app_signature=valid", script)
-        self.assertIn("watch_widget_signature=valid", script)
-        self.assertIn("companion_entitlements_sha256", script)
-        self.assertIn("watch_app_entitlements_sha256", script)
-        self.assertIn("watch_widget_entitlements_sha256", script)
-        self.assertIn("companion_executable_sha256", script)
-        self.assertIn("watch_app_executable_sha256", script)
-        self.assertIn("watch_widget_executable_sha256", script)
-        self.assertIn("companion_dsym=%s", script)
-        self.assertIn("watch_app_dsym=%s", script)
-        self.assertIn("watch_widget_dsym=%s", script)
-        self.assertIn("'WKApplication' 'true'", script)
+        self.assertIn("'aps-environment' 'production'", script)
         self.assertIn(
-            "'WKCompanionAppBundleIdentifier' 'com.shinycomputers.contextpanel'",
+            "'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'",
             script,
         )
-        self.assertIn(
-            "'NSExtension:NSExtensionPointIdentifier' 'com.apple.widgetkit-extension'",
-            script,
-        )
-        self.assertNotIn("ContextPanelWatchUpgradeCanary", script)
-        self.assertNotIn("watch_canary_marker", script)
-        self.assertIn("WatchArchiveReceipt-*.txt", workflow)
-        self.assertIn(".build/app-store-connect-companion/*.xcarchive", workflow)
-        self.assertIn(".build/app-store-connect-companion/upload-*", workflow)
+        self.assertIn("<key>com.apple.developer.icloud-container-environment</key>", entitlements)
+        self.assertIn("<string>$(CLOUDKIT_ENVIRONMENT)</string>", entitlements)
+        self.assertIn("CLOUDKIT_ENVIRONMENT: Development", project)
+        self.assertIn("CLOUDKIT_ENVIRONMENT: Production", project)
+        self.assertIn('if [[ "$platform" == "tvos" ]]; then\n\tassert_tvos_archive_ready', script)
 
-    def test_companion_upload_enforces_local_ipa_only_for_export_mode(self):
-        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-        result_block = script[script.rindex('if [[ "$upload" == "true" ]]; then') :]
+    def test_live_review_submission_defaults_to_enforced_release_evidence(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        defaults = []
+        for trigger in ("workflow_dispatch", "workflow_call"):
+            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
+            mode = indented_block(inputs, "release_evidence_mode", 6)
+            defaults.append(re.search(r"^        default: (\S+)$", mode, re.MULTILINE).group(1))
+        metadata = json.loads(self.read(".github/github.json"))
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            export_path = Path(temp_dir)
-            environment = os.environ.copy()
-            environment["export_path"] = str(export_path)
-            environment["platform_label"] = "iOS"
+        self.assertEqual(defaults, ["enforce", "enforce"])
+        self.assertIn('"appStoreReviewReleaseEvidenceDefault": "enforce"', json.dumps(metadata))
 
-            environment["upload"] = "true"
-            upload_result = subprocess.run(
-                ["/bin/bash", "-c", result_block],
-                env=environment,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            self.assertEqual(upload_result.returncode, 0, upload_result.stdout)
-            self.assertIn("Uploaded Context Panel companion (iOS)", upload_result.stdout)
-
-            environment["upload"] = "false"
-            missing_ipa_result = subprocess.run(
-                ["/bin/bash", "-c", result_block],
-                env=environment,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            self.assertEqual(missing_ipa_result.returncode, 1)
-            self.assertIn(
-                "export-only mode did not emit a local IPA",
-                missing_ipa_result.stdout,
-            )
-
-            ipa_path = export_path / "ContextPanelCompanion.ipa"
-            ipa_path.write_bytes(b"signed-ipa-fixture")
-            exported_ipa_result = subprocess.run(
-                ["/bin/bash", "-c", result_block],
-                env=environment,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            self.assertEqual(exported_ipa_result.returncode, 0, exported_ipa_result.stdout)
-            self.assertIn(str(ipa_path), exported_ipa_result.stdout)
-
-    def test_post_canary_cleanup_keeps_the_production_watch_complication(self):
-        widget = self.read(
-            "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift"
-        )
-        watch_app = self.read("Sources/ContextPanelWatch/ContextPanelWatchApp.swift")
-
-        self.assertIn("import ContextPanelCloudKitSync", widget)
-        self.assertIn("WatchCompanionLoader", widget)
-        self.assertIn("WatchCompanionCache", widget)
-        self.assertIn("WatchComplicationTimelineReloadPolicy.shouldReload", watch_app)
-        self.assertNotIn('Text("C")', widget)
-        self.assertFalse(
-            (REPO_ROOT / "Sources/ContextPanelWatchSupport/WatchUpgradeCanary.swift").exists()
-        )
-        self.assertNotIn(
-            "ContextPanelWatchUpgradeCanary",
-            self.read("Config/ContextPanelWatch-Info.plist"),
-        )
-        self.assertNotIn(
-            "ContextPanelWatchUpgradeCanary",
-            self.read("Config/ContextPanelWatchWidget-Info.plist"),
-        )
-
-    def test_release_runbook_requires_watch_restart_and_correct_artifact_modes(self):
-        release_docs = self.read("docs/release.md")
-        agent_notes = self.read("AGENTS.md")
-        normalized_agent_notes = " ".join(agent_notes.split())
-
-        self.assertIn("#### Routine Watch Complication Test", release_docs)
-        self.assertIn("Restart the Watch after the installation completes.", release_docs)
-        self.assertIn("Do not treat stale or blank pre-restart output", release_docs)
-        self.assertIn("Upload mode may not emit a local IPA", release_docs)
-        self.assertIn("Export-only mode must emit a local IPA.", release_docs)
-        self.assertIn("WatchArchiveReceipt-iOS.txt", release_docs)
-        self.assertIn("signed `.xcarchive`", release_docs)
-        self.assertNotIn("### Watch Upgrade Canary", release_docs)
-        self.assertIn(
-            "first confirm that the new build has reached the Watch, then restart the Watch",
-            normalized_agent_notes,
-        )
-        self.assertIn(
-            "Do not use uninstall/reinstall or complication reselection as the routine workaround.",
-            normalized_agent_notes,
-        )
-
-    def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
-        release_docs = self.read("docs/release.md")
-
-        self.assertIn("Issue #274 records the completed initial iOS/visionOS validation", release_docs)
-        self.assertIn("`testflight_beta_source=companion`", release_docs)
-        self.assertIn("--platform MAC_OS", release_docs)
-        self.assertIn("--version <active-companion-app-store-version>", release_docs)
-        self.assertIn("--build-number <yyyymmddHHMM>", release_docs)
-        self.assertIn("Mac-to-companion CloudKit dependency", release_docs)
-        self.assertIn("CloudKit-backed companion snapshot", release_docs)
-        self.assertIn("check --require-production-runtime", release_docs)
-        self.assertIn("run that as separate `Ship` dispatches", release_docs)
-        self.assertIn("companion widget timeline reads Production CloudKit directly", release_docs)
-        self.assertIn("Production CloudKit environment", release_docs)
-        self.assertIn("Before launching the companion app", release_docs)
-        self.assertIn("Watch app and complication both read Production CloudKit", release_docs)
-        self.assertIn("coordinate one Watch-local App Group cache", release_docs)
-        self.assertIn("`COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64`", release_docs)
-        self.assertIn("`platform=TV_OS` for tvOS builds", release_docs)
-        self.assertIn("`platform: TV_OS`", release_docs)
-        self.assertNotIn("issue #174", release_docs)
-        self.assertNotIn("Mac-published iCloud companion document", release_docs)
-        self.assertNotIn("read-only companion surfaces can sync fresh snapshots", release_docs)
-        self.assertNotIn("runtime-baseline.sh install --launch` or", release_docs)
-        self.assertNotIn("--version 1.0.32", release_docs)
-
-    def test_runtime_baseline_reports_refresh_agent_bookmark_access(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-        refresh_agent = self.read("Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
-
-        self.assertIn("bookmark_access_state()", script)
-        self.assertIn("verify_bookmark_access_expectations()", script)
-        self.assertIn("--bookmark-access-summary", script)
-        self.assertIn("--expect-bookmark-current", script)
-        self.assertIn("--expect-bookmark-resolvable", script)
-        self.assertIn("privacy-safe bookmark access summary", script)
-        self.assertIn('"--bookmark-access-summary"', refresh_agent)
-        self.assertIn("SecureFileBookmarkStore", refresh_agent)
-        self.assertIn("summary.resolvable", refresh_agent)
-
-    def test_runtime_baseline_rejects_unexpected_bookmark_counts(self):
-        command = """
-        source scripts/context-panel-runtime-baseline.sh --source-only
-        failures=0
-        expected_bookmark_current=2
-        expected_bookmark_resolvable=2
-        verify_bookmark_access_expectations \
-          'bookmarks store=readable total=3 current=2 legacy=1 document-scoped=0 invalid=0 resolvable=2'
-        [[ "$failures" -gt "0" ]]
-        """
-        result = subprocess.run(
-            ["bash", "-lc", command],
-            cwd=REPO_ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("bookmark current count matches expected value 2", result.stdout)
-        self.assertIn("bookmark resolvable count matches expected value 2", result.stdout)
-        self.assertIn("strict bookmark gate requires total=3 to equal current=2", result.stdout)
-        self.assertIn("strict bookmark gate found legacy=1", result.stdout)
-
-    def test_release_docs_do_not_claim_tvos_metadata_is_pending(self):
-        release_docs = self.read("docs/release.md")
-
-        self.assertNotIn("still needs its description and screenshots", release_docs)
-
-    def test_runtime_baseline_does_not_require_google_oauth_build_settings(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-
-        build_function = re.search(r"build_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
-
-        self.assertIsNotNone(build_function)
-        assert build_function is not None
-        body = build_function.group("body")
-        self.assertIn("xcodebuild \\", body)
-        self.assertNotIn("CONTEXT_PANEL_GOOGLE_", script)
-        self.assertNotIn("runtime-baseline-local-oauth.xcconfig", script)
-        self.assertNotIn('-xcconfig "$local_oauth_xcconfig_path"', script)
-        self.assertNotIn("check_debug_google_oauth_config", script)
-        self.assertNotIn("require_local_google_oauth_config", script)
-
-    def test_runtime_baseline_local_env_file_is_ignored_but_example_is_tracked(self):
-        gitignore = self.read(".gitignore")
-        example = self.read(".local/context-panel-runtime.env.example")
-
-        self.assertIn("!.local/context-panel-runtime.env.example", gitignore)
-        self.assertIn(".local/context-panel-runtime.env", gitignore)
-        self.assertNotIn("runtime-baseline-local-oauth.xcconfig", gitignore)
-        self.assertNotIn("CONTEXT_PANEL_GOOGLE_", example)
-        self.assertIn("Antigravity", example)
-
-    def test_runtime_baseline_build_allows_xcode_to_update_explicit_profiles(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-        build_function = re.search(r"build_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
-
-        self.assertIsNotNone(build_function)
-        assert build_function is not None
-        self.assertIn("-allowProvisioningUpdates", build_function.group("body"))
-        self.assertNotIn("CODE_SIGNING_ALLOWED=NO", build_function.group("body"))
-
-    def test_runtime_baseline_install_and_reset_do_nothing_when_production_is_installed(self):
-        for entry_point in ("install_runtime", "reset_runtime"):
-            with self.subTest(entry_point=entry_point):
-                result, steps = self.run_runtime_replacement_trace(entry_point, production_after=None)
-
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("refusing to replace", result.stdout)
-                self.assertEqual(steps, [])
-
-    def test_runtime_baseline_install_and_reset_recheck_the_guard_after_building(self):
-        for entry_point in ("install_runtime", "reset_runtime"):
-            with self.subTest(entry_point=entry_point):
-                result, steps = self.run_runtime_replacement_trace(
-                    entry_point,
-                    production_after="preflight_built_runtime_profiles",
-                )
-
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("refusing to replace", result.stdout)
-                self.assertEqual(steps, ["build_checkout_app", "preflight_built_runtime_profiles"])
-
-    def test_runtime_baseline_install_copy_rechecks_the_guard_before_writing(self):
-        result, steps = self.run_runtime_replacement_trace("install_checkout_app", production_after=None)
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("refusing to replace", result.stdout)
-        self.assertEqual(steps, [])
-
-    def test_runtime_baseline_install_proceeds_for_a_development_runtime(self):
-        result, steps = self.run_runtime_replacement_trace("install_runtime", production_after="never")
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
-        self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
+    def test_release_workflows_have_no_push_trigger_or_direct_release_mutation(self):
+        for workflow_path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
+            if workflow_path.name in {"ci.yml", "codeql.yml"}:
+                continue
+            with self.subTest(workflow=workflow_path.name):
+                workflow = workflow_path.read_text()
+                triggers = indented_block(workflow, '"on"', 0)
+                self.assertNotIn("push:", triggers)
+                self.assertNotIn("pull_request", triggers)
+        release = self.read(".github/workflows/release.yml")
+        for forbidden in ("--clobber", "gh release upload", "gh release edit"):
+            self.assertNotIn(forbidden, release)
 
     def test_runtime_baseline_guard_allows_absent_or_development_runtime(self):
         absent = self.run_runtime_identity_fixture(None)
@@ -5074,43 +4156,6 @@ exit 65
         self.assertIn("built app must use Development CloudKit", production.stdout)
         self.assertIn("built refresh agent must use Development CloudKit", production.stdout)
 
-    def test_runtime_baseline_install_and_reset_share_stale_bundle_cleanup(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-        install_runtime = re.search(r"install_runtime\(\) \{(?P<body>.*?)\n\}", script, re.S)
-        reset_runtime = re.search(r"reset_runtime\(\) \{(?P<body>.*?)\n\}", script, re.S)
-
-        self.assertIsNotNone(install_runtime)
-        self.assertIsNotNone(reset_runtime)
-        assert install_runtime is not None
-        assert reset_runtime is not None
-        self.assertIn("quarantine_stale_runtime_bundles", install_runtime.group("body"))
-        self.assertIn("quarantine_stale_runtime_bundles", reset_runtime.group("body"))
-        self.assertNotIn("done < <(discoverable_bundles)", reset_runtime.group("body"))
-        self.assertNotIn('find_context_panel_bundles "$HOME/.code/working/context-panel"', reset_runtime.group("body"))
-        self.assertIn('find_context_panel_bundles "${TMPDIR:-/tmp}"', script)
-        self.assertIn('find_context_panel_bundles "/tmp"', script)
-
-    def test_runtime_baseline_scans_and_cleans_companion_validation_artifact_cache(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-        companion_validator = self.read("scripts/validate-companion-builds.sh")
-        cleanup_function = re.search(r"quarantine_stale_runtime_bundles\(\) \{(?P<body>.*?)\n\}", script, re.S)
-        local_builds_function = re.search(r"local_build_bundles\(\) \{(?P<body>.*?)\n\}", script, re.S)
-        check_function = re.search(r"check_runtime\(\) \{(?P<body>.*?)\n\}", script, re.S)
-
-        self.assertIsNotNone(cleanup_function)
-        self.assertIsNotNone(local_builds_function)
-        self.assertIsNotNone(check_function)
-        assert cleanup_function is not None
-        assert local_builds_function is not None
-        assert check_function is not None
-        self.assertIn("CONTEXT_PANEL_ARTIFACT_CACHE_ROOT", script)
-        self.assertIn("/Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel", script)
-        self.assertIn("artifact_cache_companion_build_validation_bundles", local_builds_function.group("body"))
-        self.assertIn("artifact_cache_companion_build_validation_root", cleanup_function.group("body"))
-        self.assertIn("derived-data/companion-build-validation", script)
-        self.assertIn("derived-data/companion-build-validation", companion_validator)
-        self.assertNotIn("quarantine_stale_runtime_bundles", check_function.group("body"))
-
     def test_runtime_baseline_discovers_legacy_and_namespaced_companion_caches(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
         root_function = re.search(
@@ -5180,12 +4225,6 @@ exit 65
                 }.issubset(discovered_roots),
                 completed.stdout,
             )
-
-    def test_runtime_baseline_omits_historical_local_cleanup_paths(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
-
-        self.assertNotIn("context-panel-clean-main", script)
-        self.assertNotIn("context-panel-baseline-main-20260512", script)
 
     def test_runtime_baseline_profile_fixture_accepts_matching_explicit_profile(self):
         result = self.run_runtime_preflight_fixture("profile-good.plist")

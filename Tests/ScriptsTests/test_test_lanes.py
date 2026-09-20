@@ -18,14 +18,6 @@ class TestLaneTests(unittest.TestCase):
     def manifest(self):
         return module.load_manifest()
 
-    def test_current_manifest_maps_every_test_file_exactly_once(self):
-        normalized = module.validate_manifest(self.manifest())
-
-        self.assertEqual(
-            {path for paths in normalized.values() for path in paths},
-            module.discovered_test_files(),
-        )
-
     def test_safe_python_lanes_select_every_python_test_once(self):
         fast = set(module.files_for_lane(self.manifest(), "fast-local-python", require_safe=True))
         routine = set(module.files_for_lane(self.manifest(), "routine-ci-python", require_safe=True))

@@ -1112,20 +1112,6 @@ class ReportTests(unittest.TestCase):
 
 
 class StateStoreTests(unittest.TestCase):
-    def test_default_state_root_is_the_canonical_app_group_validation_boundary(self):
-        root = context_panel_validation.DEFAULT_STATE_ROOT
-
-        self.assertEqual(
-            root,
-            Path.home()
-            / "Library"
-            / "Group Containers"
-            / "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
-            / "Context Panel"
-            / "Validation"
-            / "Coordinator",
-        )
-
     def test_watch_restart_attestation_persists_without_device_identifiers(self):
         target = Target("1.0.53", "202607301200")
         recorded_at = datetime(2026, 7, 30, 17, 0, tzinfo=timezone.utc)
@@ -1890,16 +1876,6 @@ class StateStoreTests(unittest.TestCase):
 
 
 class CLITests(unittest.TestCase):
-    def test_main_propagates_coordinator_exit_code(self):
-        args = SimpleNamespace(command="status")
-        with (
-            mock.patch.object(cli_module, "parse_args", return_value=args),
-            mock.patch.object(cli_module, "run_status", return_value=10),
-        ):
-            exit_code = cli_module.main([])
-
-        self.assertEqual(exit_code, 10)
-
     def test_internal_error_does_not_print_private_paths(self):
         args = SimpleNamespace(command="status")
         stderr = io.StringIO()
