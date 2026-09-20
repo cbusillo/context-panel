@@ -68,6 +68,7 @@ class ClassifyTests(unittest.TestCase):
                 "Tests/ScriptsTests/fixtures/runtime-preflight/app-entitlements.plist",
                 "scripts/context_panel_validation/shared_view_capture.py",
                 "scripts/publish-github-release.py",
+                "Config/ContextPanelTestLanes.json",
             ]
         )
         self.assertFalse(scope.product)

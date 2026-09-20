@@ -25,6 +25,9 @@ PRODUCT_IRRELEVANT_PREFIXES = (
     "Tests/ScriptsTests/",
 )
 PRODUCT_IRRELEVANT_SUFFIXES = (".md",)
+# Read only by scripts/context-panel-test-lanes.py, whose validation and Python
+# lanes always run. Every new Python test edits it.
+PRODUCT_IRRELEVANT_PATHS = ("Config/ContextPanelTestLanes.json",)
 # Markdown inside a build input directory could be a bundled resource.
 BUILD_INPUT_PREFIXES = ("Config/", "Sources/", "Tools/")
 
@@ -56,6 +59,8 @@ def _is_product_relevant_python(path: str) -> bool:
 
 
 def is_product_irrelevant(path: str) -> bool:
+    if path in PRODUCT_IRRELEVANT_PATHS:
+        return True
     if path.startswith(BUILD_INPUT_PREFIXES):
         return False
     if path.startswith(PRODUCT_IRRELEVANT_PREFIXES):
