@@ -15,6 +15,13 @@ permissions:
   contents: read
   security-events: write
 
+# One self-hosted runner serves CI and CodeQL. Cancel a pull request's superseded
+# analysis instead of queueing behind it; pushes, schedules, and manual runs are
+# never cancelled.
+concurrency:
+  group: codeql-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze Swift
@@ -39,6 +46,12 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
         run: |
           trusted_codeql_root="/tmp/context-panel-codeql/$GITHUB_RUN_ID"
+          # A cancelled run never reaches the cleanup job, so drop databases that
+          # earlier runs left behind. Analyses take minutes; two hours is stale.
+          if [[ -d /tmp/context-panel-codeql ]]; then
+            find /tmp/context-panel-codeql -mindepth 1 -maxdepth 1 -type d -mmin +120 \
+              -exec rm -rf {} +
+          fi
           rm -rf "$trusted_codeql_root"
           mkdir -p "$trusted_codeql_root/db"
           printf 'CONTEXT_PANEL_CODEQL_DB_LOCATION=%s\n' \
