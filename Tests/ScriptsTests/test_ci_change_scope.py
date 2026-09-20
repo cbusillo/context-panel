@@ -58,9 +58,8 @@ class ClassifyTests(unittest.TestCase):
         for paths in (None, []):
             scope = module.classify(paths)
             self.assertTrue(scope.product)
-            self.assertTrue(scope.codeql)
 
-    def test_documentation_and_validation_tooling_skip_both(self):
+    def test_documentation_and_validation_tooling_skip_the_product_lane(self):
         scope = module.classify(
             [
                 "docs/release.md",
@@ -72,13 +71,11 @@ class ClassifyTests(unittest.TestCase):
             ]
         )
         self.assertFalse(scope.product)
-        self.assertFalse(scope.codeql)
 
     def test_one_product_path_among_documentation_runs_the_product_lane(self):
         scope = module.classify(["docs/release.md", "Config/ContextPanel.entitlements"])
         self.assertTrue(scope.product)
-        self.assertIn("Config/ContextPanel.entitlements", scope.product_reason)
-        self.assertFalse(scope.codeql)
+        self.assertIn("Config/ContextPanel.entitlements", scope.reason)
 
     def test_product_inputs_run_the_product_lane(self):
         for path in (
@@ -139,28 +136,9 @@ class ClassifyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(module.classify([path]).product)
 
-    def test_swift_and_analysis_configuration_run_codeql(self):
-        for path in (
-            "Sources/ContextPanelCore/Usage.swift",
-            "Tools/ContextPanelSharedViewRenderer/main.swift",
-            "Tests/ContextPanelCoreTests/UsageTests.swift",
-            "Package.swift",
-            "Package.resolved",
-            ".github/workflows/codeql.yml",
-            "scripts/ci-change-scope.py",
-        ):
-            with self.subTest(path=path):
-                self.assertTrue(module.classify([path]).codeql)
-
-    def test_product_changes_without_swift_skip_only_codeql(self):
-        scope = module.classify(["project.yml", "scripts/validate-companion-builds.sh"])
-        self.assertTrue(scope.product)
-        self.assertFalse(scope.codeql)
-
-    def test_markdown_inside_a_build_input_directory_runs_everything(self):
+    def test_markdown_inside_a_build_input_directory_runs_the_product_lane(self):
         scope = module.classify(["Sources/ContextPanelCore/README.md"])
         self.assertTrue(scope.product)
-        self.assertTrue(scope.codeql)
 
 
 class ChangedPathsTests(unittest.TestCase):
@@ -216,10 +194,10 @@ class MainTests(unittest.TestCase):
                 self.assertEqual(module.main(["--base", "abc"]), 0)
             return output.read_text(encoding="utf-8").splitlines()
 
-    def test_writes_both_decisions_as_step_outputs(self):
-        self.assertEqual(self.run_main(["docs/a.md"]), ["product=false", "codeql=false"])
-        self.assertEqual(self.run_main(["project.yml"]), ["product=true", "codeql=false"])
-        self.assertEqual(self.run_main(None), ["product=true", "codeql=true"])
+    def test_writes_the_decision_as_a_step_output(self):
+        self.assertEqual(self.run_main(["docs/a.md"]), ["product=false"])
+        self.assertEqual(self.run_main(["project.yml"]), ["product=true"])
+        self.assertEqual(self.run_main(None), ["product=true"])
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Decide which expensive CI work a pull request's changed paths require.
+"""Decide whether a pull request's changed paths require the product builds.
 
-Both decisions fail open: an unknown path, an empty diff, or a Git error runs
-everything. Pushes to main, schedules, and manual runs never consult this
-script, so every commit on main is still built, tested, and analysed in full.
+The decision fails open: an unknown path, an empty diff, or a Git error runs
+everything. Pushes to main and manual runs never consult this script, so every
+commit on main is still built and tested in full.
+
+CodeQL is deliberately not gated here. The ruleset on main requires CodeQL
+results for every pull request, so a skipped analysis would block the merge.
 """
 
 from __future__ import annotations
@@ -39,28 +42,10 @@ PRODUCT_RELEVANT_PYTHON = (
     "scripts/context_panel_surface_manifest/",
 )
 
-# CodeQL extracts the Swift it sees compiled by `swift build`, so only Swift
-# sources, the package definition, and the analysis configuration matter.
-CODEQL_RELEVANT_PREFIXES = (
-    ".github/codeql/",
-    "Sources/",
-    "Tools/",
-)
-CODEQL_RELEVANT_PATHS = (
-    ".github/workflows/codeql.yml",
-    "Package.resolved",
-    "Package.swift",
-    "scripts/ci-change-scope.py",
-)
-CODEQL_RELEVANT_SUFFIXES = (".swift",)
-
-
 @dataclass(frozen=True)
 class Scope:
     product: bool
-    codeql: bool
-    product_reason: str
-    codeql_reason: str
+    reason: str
 
 
 def _is_product_relevant_python(path: str) -> bool:
@@ -82,36 +67,15 @@ def is_product_irrelevant(path: str) -> bool:
     return False
 
 
-def is_codeql_relevant(path: str) -> bool:
-    return (
-        path in CODEQL_RELEVANT_PATHS
-        or path.startswith(CODEQL_RELEVANT_PREFIXES)
-        or path.endswith(CODEQL_RELEVANT_SUFFIXES)
-    )
-
-
 def classify(paths: list[str] | None) -> Scope:
     """Classify changed paths; `None` or an empty list means "unknown"."""
     if not paths:
-        reason = "changed paths are unknown"
-        return Scope(True, True, reason, reason)
+        return Scope(True, "changed paths are unknown")
 
     product_path = next((p for p in paths if not is_product_irrelevant(p)), None)
-    codeql_path = next((p for p in paths if is_codeql_relevant(p)), None)
-    return Scope(
-        product=product_path is not None,
-        codeql=codeql_path is not None,
-        product_reason=(
-            f"{product_path} can affect the product build"
-            if product_path is not None
-            else "every changed path is documentation or validation tooling"
-        ),
-        codeql_reason=(
-            f"{codeql_path} can affect the Swift analysis"
-            if codeql_path is not None
-            else "no changed path is compiled Swift or analysis configuration"
-        ),
-    )
+    if product_path is not None:
+        return Scope(True, f"{product_path} can affect the product build")
+    return Scope(False, "every changed path is documentation or validation tooling")
 
 
 def changed_paths(base: str, head: str, *, cwd: Path | None = None) -> list[str] | None:
@@ -136,12 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     scope = classify(changed_paths(args.base, args.head))
-    lines = [
-        f"product={'true' if scope.product else 'false'}",
-        f"codeql={'true' if scope.codeql else 'false'}",
-    ]
-    print(f"product build and Swift tests: {'run' if scope.product else 'skip'} ({scope.product_reason})")
-    print(f"CodeQL Swift analysis: {'run' if scope.codeql else 'skip'} ({scope.codeql_reason})")
+    lines = [f"product={'true' if scope.product else 'false'}"]
+    print(f"product build and Swift tests: {'run' if scope.product else 'skip'} ({scope.reason})")
 
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:

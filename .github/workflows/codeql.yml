@@ -33,32 +33,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      # A pull request that changes no compiled Swift and no analysis
-      # configuration would reproduce its base's results, so it skips the
-      # analysis. Pushes to main and the weekly schedule always analyse.
-      - name: Classify change scope
-        id: scope
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
 
       - name: Select Xcode
-        if: ${{ steps.scope.outputs.codeql != 'false' }}
         run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Show Xcode
-        if: ${{ steps.scope.outputs.codeql != 'false' }}
         run: xcodebuild -version
 
       - name: Prepare trusted CodeQL database path
         if: >-
-          steps.scope.outputs.codeql != 'false' &&
-          (github.event_name != 'pull_request' ||
-          github.event.pull_request.head.repo.full_name == github.repository)
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         run: |
           trusted_codeql_root="/tmp/context-panel-codeql/$GITHUB_RUN_ID"
           # A cancelled run never reaches the cleanup job, so drop databases that
@@ -73,14 +58,12 @@ jobs:
             "$trusted_codeql_root/db" >> "$GITHUB_ENV"
 
       - name: Initialize CodeQL
-        if: ${{ steps.scope.outputs.codeql != 'false' }}
         uses: github/codeql-action/init@v4
         with:
           languages: swift
           db-location: ${{ env.CONTEXT_PANEL_CODEQL_DB_LOCATION }}
 
       - name: Build
-        if: ${{ steps.scope.outputs.codeql != 'false' }}
         env:
           TRUSTED_RUN: >-
             ${{
@@ -141,7 +124,6 @@ jobs:
           swift build --target ContextPanelCore "${swift_args[@]}"
 
       - name: Perform CodeQL Analysis
-        if: ${{ steps.scope.outputs.codeql != 'false' }}
         uses: github/codeql-action/analyze@v4
 
   cleanup-trusted-codeql:
