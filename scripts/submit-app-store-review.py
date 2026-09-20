@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -2025,9 +2026,18 @@ def validate_args(args: argparse.Namespace) -> None:
             )
 
 
+def require_cloudkit_schema_receipt() -> None:
+    """Fail closed unless the Production CloudKit schema receipt is valid for this release."""
+    command = [str(Path(__file__).resolve().parent / "require-cloudkit-schema-receipt.sh")]
+    if subprocess.run(command, check=False).returncode != 0:
+        raise SystemExit("Refusing live release mutation without a valid Production CloudKit schema receipt")
+
+
 def main() -> int:
     args = parse_args()
     temporary_key_path: Path | None = None
+    if not (args.dry_run or args.cancel_review_only or args.validate_report_only):
+        require_cloudkit_schema_receipt()
     try:
         validate_args(args)
         if validation_report_required(args):

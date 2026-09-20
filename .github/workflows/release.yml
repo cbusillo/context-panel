@@ -368,6 +368,10 @@ jobs:
       - name: Publish GitHub Release
         if: ${{ inputs.create_github_release }}
         env:
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
+            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}

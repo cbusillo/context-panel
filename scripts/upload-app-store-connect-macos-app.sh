@@ -119,6 +119,11 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+# Uploading is a live App Store Connect mutation; export-only is not.
+if [[ "$upload" == "true" ]]; then
+	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
+fi
+
 require_command() {
 	if ! command -v "$1" >/dev/null 2>&1; then
 		echo "required command not found: $1" >&2

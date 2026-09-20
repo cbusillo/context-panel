@@ -538,11 +538,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def require_cloudkit_schema_receipt(source_commit: str | None = None) -> None:
+    """Fail closed unless the Production CloudKit schema receipt is valid for this release."""
+    command = [str(Path(__file__).resolve().parent / "require-cloudkit-schema-receipt.sh")]
+    if source_commit:
+        command += ["--source-commit", source_commit]
+    if subprocess.run(command, check=False).returncode != 0:
+        raise SystemExit("Refusing live release mutation without a valid Production CloudKit schema receipt")
+
+
 def main() -> int:
     args = parse_args()
     if not args.repository:
         print("GitHub repository is required", file=sys.stderr)
         return 2
+    require_cloudkit_schema_receipt(args.source_commit)
     try:
         identity = build_release_identity(
             tag=args.tag,

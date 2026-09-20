@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -458,9 +459,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def require_cloudkit_schema_receipt() -> None:
+    """Fail closed unless the Production CloudKit schema receipt is valid for this release."""
+    command = [str(Path(__file__).resolve().parent / "require-cloudkit-schema-receipt.sh")]
+    if subprocess.run(command, check=False).returncode != 0:
+        raise SystemExit("Refusing live release mutation without a valid Production CloudKit schema receipt")
+
+
 def main() -> int:
     args = parse_args()
     temporary_key_path: Path | None = None
+    if not args.dry_run:
+        require_cloudkit_schema_receipt()
     try:
         if not args.api_key_id or not args.api_issuer_id:
             raise AppStoreConnectError("APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID are required")
