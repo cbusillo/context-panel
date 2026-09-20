@@ -152,6 +152,14 @@ class TestLaneTests(unittest.TestCase):
 
         self.validate(payload)
 
+    def test_a_manifest_the_commit_gate_would_refuse_fails_validation(self):
+        for field, value in (("ciPolicy", "trusted-only"), ("runner", "python-unittest")):
+            with self.subTest(field=field):
+                manifest = self.manifest()
+                manifest["lanes"]["routine-ci-swift"][field] = value
+                with self.assertRaisesRegex(module.TestLaneError, "commit gate's routine-ci-swift lane"):
+                    self.validate(manifest)
+
     def test_protected_lane_cannot_be_selected_as_safe(self):
         with self.assertRaisesRegex(module.TestLaneError, "not safe for routine CI"):
             module.files_for_lane(

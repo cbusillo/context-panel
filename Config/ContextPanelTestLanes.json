@@ -70,7 +70,8 @@
       "Tests/ScriptsTests/test_validation_coordinator.py",
       "Tests/ScriptsTests/test_validation_automation.py",
       "Tests/ScriptsTests/test_validation_operator_flow.py",
-      "Tests/ScriptsTests/test_visual_approvals.py"
+      "Tests/ScriptsTests/test_visual_approvals.py",
+      "Tests/ScriptsTests/test_companion_upload_profile_preflight.py"
     ],
     "routine-ci-swift": [
       "Tests/ContextPanelCoreTests/AccountConfigurationStoreTests.swift",

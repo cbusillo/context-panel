@@ -18,6 +18,10 @@ DEFAULT_REPORT_DIRECTORY = REPO_ROOT / ".build" / "test-lane-timings"
 ALLOWED_RUNNERS = {"manual", "none", "python-unittest", "swiftpm"}
 ALLOWED_CI_POLICIES = {"safe", "local-only", "trusted-only", "device-only", "never"}
 ALLOWED_ROLES = {"test", "support"}
+# scripts/commit-gate.sh times `swift test` through this lane. Pull requests that
+# change only the lane manifest skip that step, so validation has to catch a
+# manifest the step would refuse.
+COMMIT_GATE_SWIFT_LANE = "routine-ci-swift"
 
 
 class TestLaneError(RuntimeError):
@@ -96,6 +100,16 @@ def validate_manifest(
         if unknown:
             details.append("unknown lane lists: " + ", ".join(unknown))
         raise TestLaneError("; ".join(details))
+
+    gate_lane = lanes.get(COMMIT_GATE_SWIFT_LANE)
+    if (
+        not isinstance(gate_lane, dict)
+        or gate_lane.get("runner") != "swiftpm"
+        or gate_lane.get("ciPolicy") != "safe"
+    ):
+        raise TestLaneError(
+            f"the commit gate's {COMMIT_GATE_SWIFT_LANE} lane must use the swiftpm runner and the safe CI policy"
+        )
 
     normalized: dict[str, list[str]] = {}
     seen_paths: set[str] = set()
