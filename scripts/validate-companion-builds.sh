@@ -489,6 +489,8 @@ validate_platform() {
 			CODE_SIGNING_ALLOWED=NO \
 			archive || return $?
 		validate_archive_contents "$platform" "$archive_path"
+		"$repo_root/scripts/check-validation-gallery-isolation.sh" \
+			"$archive_path/Products/Applications/Context Panel.app" || return $?
 	else
 		echo "Validating $scheme build for $destination"
 		run_xcodebuild \
@@ -499,6 +501,8 @@ validate_platform() {
 			-derivedDataPath "$derived_data_path" \
 			CODE_SIGNING_ALLOWED=NO \
 			build || return $?
+		"$repo_root/scripts/check-validation-gallery-isolation.sh" \
+			--products-root "$derived_data_path/Build/Products" || return $?
 	fi
 }
 

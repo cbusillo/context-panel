@@ -143,34 +143,18 @@ def workflow_job(workflow: str, job_name: str) -> str:
     return indented_block(workflow, job_name, 2)
 
 
-def workflow_step_run(workflow: str, job_name: str, step_name: str) -> str:
-    job = workflow_job(workflow, job_name)
-    lines = job.splitlines()
-    target = f"      - name: {step_name}"
-    matches = [index for index, line in enumerate(lines) if line == target]
-    if len(matches) != 1:
-        raise AssertionError(f"expected one {target!r} step, found {len(matches)}")
-
-    start = matches[0]
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        line = lines[index]
-        if line.startswith("      - "):
-            end = index
-            break
-    lines = lines[start:end]
-    target = "        run: |"
-    matches = [index for index, line in enumerate(lines) if line == target]
-    if len(matches) != 1:
-        raise AssertionError(f"expected one run block, found {len(matches)}")
-    return textwrap.dedent("\n".join(lines[matches[0] + 1 :]))
-
-
 def workflow_run_blocks(workflow: str) -> tuple[str, ...]:
     lines = workflow.splitlines()
     blocks: list[str] = []
     for index, line in enumerate(lines):
-        if line.strip() not in {"run: |", "run: |-", "run: >", "run: >-"}:
+        stripped = line.strip().removeprefix("- ")
+        if not stripped.startswith("run:"):
+            continue
+        inline = stripped.removeprefix("run:").strip()
+        if inline not in {"|", "|-", ">", ">-"}:
+            if inline[:1] in {"|", ">"}:
+                raise AssertionError(f"unsupported run block scalar header: {inline!r}")
+            blocks.append(inline)
             continue
         indent = len(line) - len(line.lstrip())
         block_lines: list[str] = []
@@ -430,6 +414,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cache_helper = scripts_path / "context-panel-companion-cache.sh"
         cache_helper.write_text(self.read("scripts/context-panel-companion-cache.sh"))
         cache_helper.chmod(0o755)
+        isolation_check = scripts_path / "check-validation-gallery-isolation.sh"
+        isolation_check.write_text("#!/bin/bash\nexit 0\n")
+        isolation_check.chmod(0o755)
 
         temp_path = checkout_root / ".runner-temp"
         temp_path.mkdir(exist_ok=True)
@@ -659,6 +646,9 @@ sleep 30
             cache_helper = scripts_path / "context-panel-companion-cache.sh"
             cache_helper.write_text(self.read("scripts/context-panel-companion-cache.sh"))
             cache_helper.chmod(0o755)
+            isolation_check = scripts_path / "check-validation-gallery-isolation.sh"
+            isolation_check.write_text("#!/bin/bash\nexit 0\n")
+            isolation_check.chmod(0o755)
 
             environment = os.environ.copy()
             environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)
@@ -1272,20 +1262,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 )
                 self.assertNotIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", guard)
 
-    def test_release_workflow_shell_blocks_do_not_expand_actions_expressions(self):
-        workflow_paths = (
-            ".github/workflows/release.yml",
-            ".github/workflows/ship.yml",
-            ".github/workflows/app-store-connect-upload.yml",
-            ".github/workflows/app-store-connect-companion-upload.yml",
-            ".github/workflows/testflight-beta-distribution.yml",
-            ".github/workflows/submit-app-store-review.yml",
-            ".github/workflows/upload-app-store-screenshots.yml",
-        )
+    def test_workflow_shell_blocks_do_not_expand_actions_expressions(self):
+        workflow_paths = sorted((REPO_ROOT / ".github/workflows").glob("*.yml"))
+        self.assertTrue(workflow_paths)
 
         for workflow_path in workflow_paths:
-            with self.subTest(workflow=workflow_path):
-                for run_block in workflow_run_blocks(self.read(workflow_path)):
+            with self.subTest(workflow=workflow_path.name):
+                for run_block in workflow_run_blocks(workflow_path.read_text()):
                     self.assertNotIn("${{", run_block)
 
     def test_release_workflow_guard_rejects_untrusted_inputs_and_refs(self):
@@ -1669,44 +1652,145 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     notes="release notes",
                 )
 
-    def test_ship_preflight_platform_mapping_is_exhaustive(self):
-        workflow = self.read(".github/workflows/ship.yml")
-        validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
-        companion_case_match = re.search(
-            r'case\s+"\$\{INPUT_COMPANION_PLATFORM\}"\s+in(?P<body>.*?)\besac\b',
-            validate_run,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(companion_case_match)
-        assert companion_case_match is not None
-        companion_case = companion_case_match.group("body")
-
-        self.assertRegex(
-            re.sub(r"\s+", " ", validate_run),
-            r'if \[\[ "\$\{app_store_channel\}" == "upload" \]\]; then '
-            r'preflight_app_store_version MAC_OS fi',
-        )
-        self.assertRegex(
-            re.sub(r"\s+", " ", validate_run),
-            r'if \[\[ "\$\{companion_app_store_channel\}" == "upload" \]\]; then '
-            r'case "\$\{INPUT_COMPANION_PLATFORM\}" in',
-        )
-        mappings = dict(
-            re.findall(
-                r"^\s*(ios|visionos|tvos)\)\s*$\n\s*preflight_app_store_version ([A-Z_]+)\s*$",
-                companion_case,
-                re.MULTILINE,
+    def run_ship_validate_inputs(
+        self,
+        guard_exit: int = 0,
+        **overrides: str,
+    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], str]:
+        """Run scripts/ship-validate-inputs.sh with a recording python3 stub as the version guard."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            stub_dir = root / "bin"
+            stub_dir.mkdir()
+            guard_log = root / "guard.log"
+            stub = stub_dir / "python3"
+            stub.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$*\" >>{shlex.quote(str(guard_log))}\n"
+                f"exit {guard_exit}\n"
             )
+            stub.chmod(0o755)
+            output = root / "output"
+            environment = {
+                "PATH": f"{stub_dir}:/usr/bin:/bin",
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                "GITHUB_SHA": "0" * 40,
+                "INPUT_VERSION": "9.9.9",
+                "INPUT_BUILD_NUMBER": "202601010000",
+                "INPUT_GITHUB_RELEASE": "false",
+                "INPUT_NOTARIZE_GITHUB_RELEASE": "false",
+                "INPUT_APP_STORE_CHANNEL": "skip",
+                "INPUT_COMPANION_APP_STORE_CHANNEL": "skip",
+                "INPUT_COMPANION_PLATFORM": "ios",
+                "INPUT_TESTFLIGHT_BETA": "false",
+                "INPUT_TESTFLIGHT_BETA_SOURCE": "companion",
+                "INPUT_TESTFLIGHT_BETA_GROUPS": "",
+                "INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS": "false",
+                "INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64": "cmVjZWlwdA==",
+                "APP_STORE_CONNECT_KEY_ID": "key",
+                "APP_STORE_CONNECT_ISSUER_ID": "issuer",
+                "APP_STORE_CONNECT_API_KEY_P8_BASE64": "cDg=",
+            }
+            environment.update(overrides)
+            result = subprocess.run(
+                [str(REPO_ROOT / "scripts/ship-validate-inputs.sh")],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            guard_calls = [line.split() for line in guard_log.read_text().splitlines()] if guard_log.exists() else []
+            return result, guard_calls, output.read_text() if output.exists() else ""
+
+    @staticmethod
+    def guard_platform(call: list[str]) -> str:
+        return call[call.index("--platform") + 1]
+
+    def test_ship_preflights_every_companion_platform_the_workflow_offers(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        platforms = {}
+        for option in workflow_choice_options(workflow, "companion_platform"):
+            with self.subTest(companion_platform=option):
+                result, guard_calls, output = self.run_ship_validate_inputs(
+                    INPUT_COMPANION_APP_STORE_CHANNEL="upload",
+                    INPUT_COMPANION_PLATFORM=option,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(len(guard_calls), 1)
+                self.assertIn("9.9.9", guard_calls[0])
+                platforms[option] = self.guard_platform(guard_calls[0])
+                self.assertIn("build_number=202601010000", output)
+
+        self.assertEqual(platforms, {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"})
+
+    def test_ship_validate_step_supplies_every_variable_the_script_reads(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        job = workflow_job(workflow, "validate")
+        step = job[job.index("      - name: Validate Inputs\n") :]
+        step = step.split("\n      - name:", 1)[0]
+        provided = set(re.findall(r"^          ([A-Z][A-Z0-9_]*):", step, re.MULTILINE))
+        script = self.read("scripts/ship-validate-inputs.sh")
+        required = set(re.findall(r"\$\{((?:INPUT|APP_STORE_CONNECT)_[A-Z0-9_]+)", script))
+
+        self.assertIn("        run: scripts/ship-validate-inputs.sh", step)
+        self.assertTrue(required)
+        self.assertEqual(required - provided, set())
+
+    def test_ship_rejects_an_unknown_companion_platform_without_preflight(self):
+        result, guard_calls, output = self.run_ship_validate_inputs(
+            INPUT_COMPANION_APP_STORE_CHANNEL="upload",
+            INPUT_COMPANION_PLATFORM="watchos",
         )
-        self.assertEqual(
-            mappings,
-            {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"},
+
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("unsupported companion_platform", result.stdout)
+        self.assertEqual(guard_calls, [])
+        self.assertEqual(output, "")
+
+    def test_ship_preflights_the_mac_app_store_channel(self):
+        result, guard_calls, _ = self.run_ship_validate_inputs(INPUT_APP_STORE_CHANNEL="upload")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([self.guard_platform(call) for call in guard_calls], ["MAC_OS"])
+
+    def test_ship_stops_when_the_version_guard_rejects_the_version(self):
+        result, guard_calls, output = self.run_ship_validate_inputs(
+            guard_exit=3,
+            INPUT_APP_STORE_CHANNEL="upload",
         )
-        self.assertEqual(set(mappings), set(workflow_choice_options(workflow, "companion_platform")))
-        self.assertRegex(
-            companion_case,
-            r"(?ms)^\s*\*\)\s*$.*unsupported companion_platform.*?^\s*exit 2\s*$",
-        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(guard_calls), 1)
+        self.assertEqual(output, "")
+
+    def test_ship_refuses_live_channels_without_required_inputs(self):
+        cases = {
+            "no channel": {},
+            "no schema receipt": {
+                "INPUT_GITHUB_RELEASE": "true",
+                "INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64": "",
+            },
+            "no App Store Connect credentials": {
+                "INPUT_APP_STORE_CHANNEL": "upload",
+                "APP_STORE_CONNECT_API_KEY_P8_BASE64": "",
+            },
+            "TestFlight source without its upload": {
+                "INPUT_GITHUB_RELEASE": "true",
+                "INPUT_TESTFLIGHT_BETA": "true",
+                "INPUT_TESTFLIGHT_BETA_SOURCE": "macos",
+            },
+            "closed version": {"INPUT_GITHUB_RELEASE": "true", "INPUT_VERSION": "1.0"},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                result, guard_calls, output = self.run_ship_validate_inputs(**overrides)
+
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(guard_calls, [])
+                self.assertEqual(output, "")
 
     def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")

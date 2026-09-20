@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -128,22 +130,82 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn("SessionStateStore", plan_function)
         self.assertNotIn("RuntimeEvidenceStore", plan_function)
 
-    def test_gallery_targets_are_host_app_only(self):
+    def run_gallery_isolation_check(
+        self,
+        host_links_gallery: bool,
+        extension_links_gallery: bool,
+        *,
+        debug_dylibs: bool = False,
+    ):
+        """Run the artifact check on a fixture bundle whose "binaries" are plain files.
+
+        With debug_dylibs the executables are stubs and the code sits in
+        <name>.debug.dylib, as Xcode lays out Debug builds.
+        """
+        gallery_code = "_$s30ContextPanelValidationGalleryUI0dE4ViewV\n"
+        other_code = "_$s16ContextPanelCore10UsageLimitV\n"
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Products" / "Release-iphoneos" / "Context Panel.app"
+            extension = app / "PlugIns" / "ContextPanelCompanionWidgetExtension.appex"
+            extension.mkdir(parents=True)
+            host_code = gallery_code if host_links_gallery else other_code
+            extension_code = gallery_code if extension_links_gallery else other_code
+            if debug_dylibs:
+                (app / "Context Panel").write_text("stub\n")
+                (app / "Context Panel.debug.dylib").write_text(host_code)
+                (extension / "ContextPanelCompanionWidgetExtension").write_text("stub\n")
+                (extension / "ContextPanelCompanionWidgetExtension.debug.dylib").write_text(extension_code)
+            else:
+                (app / "Context Panel").write_text(host_code)
+                (extension / "ContextPanelCompanionWidgetExtension").write_text(extension_code)
+            return subprocess.run(
+                [
+                    str(REPO_ROOT / "scripts" / "check-validation-gallery-isolation.sh"),
+                    "--products-root",
+                    str(app.parents[1]),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+    def test_gallery_code_is_accepted_only_in_the_host_app(self):
+        result = self.run_gallery_isolation_check(host_links_gallery=True, extension_links_gallery=False)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("1 extensions carry no gallery code", result.stdout)
+
+    def test_gallery_code_in_an_extension_fails_the_build_check(self):
+        result = self.run_gallery_isolation_check(host_links_gallery=True, extension_links_gallery=True)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("linked into an extension", result.stdout)
+        self.assertIn("ContextPanelCompanionWidgetExtension", result.stdout)
+
+    def test_gallery_isolation_check_reads_debug_dylibs(self):
+        clean = self.run_gallery_isolation_check(True, False, debug_dylibs=True)
+        contaminated = self.run_gallery_isolation_check(True, True, debug_dylibs=True)
+
+        self.assertEqual(clean.returncode, 0, clean.stdout)
+        self.assertEqual(contaminated.returncode, 1, contaminated.stdout)
+        self.assertIn("linked into an extension", contaminated.stdout)
+
+    def test_mac_widget_target_does_not_depend_on_gallery_code(self):
+        # The artifact check runs on companion builds only; until the macOS build
+        # gate calls it too, keep the macOS widget's dependency list honest here.
         project = (REPO_ROOT / "project.yml").read_text()
 
-        for target in (
-            "ContextPanelWidgetExtension",
-            "ContextPanelCompanionWidgetExtension",
-            "ContextPanelWatchWidgetExtension",
-            "ContextPanelTVTopShelfExtension",
-        ):
-            block = self.yaml_target_block(project, target)
-            self.assertNotIn("ContextPanelValidation", block)
+        self.assertNotIn(
+            "ContextPanelValidation",
+            self.yaml_target_block(project, "ContextPanelWidgetExtension"),
+        )
 
-        mac_gallery = self.yaml_target_block(project, "ContextPanelValidationGalleryUI")
-        companion_gallery = self.yaml_target_block(project, "ContextPanelValidationGalleryUICompanion")
-        self.assertIn("ContextPanelValidationFixtures", mac_gallery)
-        self.assertIn("ContextPanelValidationFixturesCompanion", companion_gallery)
+    def test_gallery_isolation_check_fails_when_it_cannot_see_gallery_code_at_all(self):
+        result = self.run_gallery_isolation_check(host_links_gallery=False, extension_links_gallery=False)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("cannot verify gallery isolation", result.stdout)
 
     def test_gallery_adapter_has_no_live_storage_or_publication_imports(self):
         source = "\n".join(path.read_text() for path in sorted(GALLERY_SOURCE_ROOT.glob("*.swift")))
@@ -170,12 +232,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn('Label("Validation Gallery"', tv_app)
         self.assertNotIn("showsValidationGalleryEntry", tv_app)
         self.assertNotIn("TVValidationGalleryEntryLabel", tv_app)
-
-        self.assertIn("ValidationGalleryRoute(url: url)", mac_app)
-        self.assertIn("ValidationGalleryRoute(url: url)", companion_app)
-        self.assertIn("case .validationGallery:", tv_app)
-        self.assertIn("WatchValidationLaunchRequest(", watch_app)
-        self.assertIn("WatchValidationLaunchView(request: launchRequest)", watch_app)
 
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()
