@@ -66,6 +66,139 @@ class TestLaneTests(unittest.TestCase):
             ["Tests/CoreTests/FirstTests.swift", "Tests/CoreTests/SecondTests.swift"],
         )
 
+    def pattern_manifest(self):
+        manifest = self.manifest()
+        manifest["filesByLane"]["routine-ci-swift"] = []
+        manifest["filesByLane"]["support-only"] = ["Tests/CoreTests/TestFixtures.swift"]
+        manifest["patternsByLane"] = {
+            "routine-ci-swift": ["Tests/CoreTests/*.swift"],
+            "support-only": ["Tests/ScriptsTests/fixtures/**"],
+        }
+        return manifest
+
+    def test_patterns_claim_unlisted_files_and_an_explicit_listing_wins(self):
+        normalized = self.validate(self.pattern_manifest())
+
+        self.assertEqual(
+            normalized["routine-ci-swift"],
+            ["Tests/CoreTests/FirstTests.swift", "Tests/CoreTests/SecondTests.swift"],
+        )
+        self.assertEqual(
+            normalized["support-only"],
+            ["Tests/CoreTests/TestFixtures.swift", "Tests/ScriptsTests/fixtures/profile.plist"],
+        )
+
+    def test_a_new_swift_test_or_nested_fixture_needs_no_manifest_edit(self):
+        added = {"Tests/CoreTests/ThirdTests.swift", "Tests/ScriptsTests/fixtures/nested/deep/profile.plist"}
+
+        normalized = module.validate_manifest(self.pattern_manifest(), discovered=FIXTURE_FILES | added)
+
+        self.assertIn("Tests/CoreTests/ThirdTests.swift", normalized["routine-ci-swift"])
+        self.assertIn("Tests/ScriptsTests/fixtures/nested/deep/profile.plist", normalized["support-only"])
+
+    def test_a_new_python_test_still_fails_closed_under_patterns(self):
+        for path in ("Tests/ScriptsTests/test_new.py", "Tests/ScriptsTests/fixtures/test_hidden.py"):
+            with self.subTest(path=path), self.assertRaises(module.TestLaneError) as raised:
+                module.validate_manifest(self.pattern_manifest(), discovered=FIXTURE_FILES | {path})
+            self.assertIn(path, str(raised.exception))
+
+    def test_a_star_does_not_cross_directories(self):
+        manifest = self.pattern_manifest()
+        manifest["patternsByLane"]["routine-ci-swift"] = ["Tests/*.swift"]
+
+        with self.assertRaisesRegex(module.TestLaneError, "matches no unlisted file: Tests/\\*.swift"):
+            self.validate(manifest)
+
+    def claimed(self, pattern: str, candidates: set[str]) -> list[str]:
+        manifest = self.pattern_manifest()
+        manifest["patternsByLane"] = {"support-only": [pattern]}
+        manifest["filesByLane"]["routine-ci-swift"] = [
+            "Tests/CoreTests/FirstTests.swift",
+            "Tests/CoreTests/SecondTests.swift",
+        ]
+        manifest["filesByLane"]["support-only"] = [
+            "Tests/CoreTests/TestFixtures.swift",
+            "Tests/ScriptsTests/fixtures/profile.plist",
+        ]
+        try:
+            normalized = module.validate_manifest(manifest, discovered=FIXTURE_FILES | candidates)
+        except module.TestLaneError:
+            # Nothing claimed the candidate: the pattern matched no file, and the
+            # candidate is left unmapped.
+            return []
+        return sorted(set(normalized["support-only"]) & candidates)
+
+    def test_a_pattern_matches_whole_paths_literally(self):
+        for pattern, matching, near_miss in (
+            ("Tests/data/*.plist", "Tests/data/a.plist", "Tests/data/aXplist"),
+            ("Tests/data/*.plist", "Tests/data/a.plist", "Tests/data/a.plist.orig"),
+            ("Tests/data/**", "Tests/data/deep/er/a.plist", "Tests/database/a.plist"),
+            ("Tests/data/a?.plist", "Tests/data/ab.plist", "Tests/data/a/.plist"),
+            ("Tests/data/a[1].plist", "Tests/data/a[1].plist", "Tests/data/a1.plist"),
+            ("Tests/data/a+.plist", "Tests/data/a+.plist", "Tests/data/aa.plist"),
+        ):
+            with self.subTest(pattern=pattern, near_miss=near_miss):
+                self.assertEqual(self.claimed(pattern, {matching}), [matching])
+                self.assertEqual(self.claimed(pattern, {near_miss}), [])
+
+    def test_two_patterns_of_one_lane_may_match_the_same_file(self):
+        manifest = self.pattern_manifest()
+        manifest["patternsByLane"]["routine-ci-swift"].append("Tests/CoreTests/First*.swift")
+
+        normalized = self.validate(manifest)
+
+        self.assertEqual(normalized["routine-ci-swift"].count("Tests/CoreTests/FirstTests.swift"), 1)
+
+    def test_a_swift_lane_pattern_must_name_swift_files(self):
+        manifest = self.pattern_manifest()
+        manifest["patternsByLane"]["routine-ci-swift"] = ["Tests/CoreTests/*"]
+
+        with self.assertRaisesRegex(module.TestLaneError, "must end in .swift"):
+            self.validate(manifest)
+
+    def test_no_pattern_may_claim_a_python_file_whatever_it_is_called(self):
+        for name in ("helper.py", "x_test.py", "Test_x.py", "tests.py", "nested/test_x.py"):
+            path = f"Tests/ScriptsTests/fixtures/{name}"
+            with self.subTest(path=path), self.assertRaises(module.TestLaneError) as raised:
+                module.validate_manifest(self.pattern_manifest(), discovered=FIXTURE_FILES | {path})
+            self.assertIn(path, str(raised.exception))
+
+    def test_a_justification_cannot_excuse_a_python_test_outside_a_manual_lane(self):
+        path = "Tests/ScriptsTests/test_parked.py"
+        manifest = self.manifest()
+        manifest["filesByLane"]["support-only"].append(path)
+        manifest["manualLaneJustifications"][path] = "Needs a device."
+
+        with self.assertRaisesRegex(module.TestLaneError, "apply only to files in a manual lane: " + path):
+            module.validate_manifest(manifest, discovered=FIXTURE_FILES | {path})
+
+    def test_python_and_manual_lanes_cannot_use_patterns(self):
+        for lane_name in ("routine-ci-python", "release-only"):
+            with self.subTest(lane=lane_name):
+                manifest = self.pattern_manifest()
+                manifest["patternsByLane"][lane_name] = ["Tests/ScriptsTests/test_*.py"]
+                with self.assertRaisesRegex(module.TestLaneError, f"must list its files explicitly: {lane_name}"):
+                    self.validate(manifest)
+
+    def test_a_file_claimed_by_two_lanes_fails_closed(self):
+        manifest = self.pattern_manifest()
+        manifest["patternsByLane"]["support-only"].append("Tests/CoreTests/First*.swift")
+
+        with self.assertRaisesRegex(module.TestLaneError, "more than one lane: Tests/CoreTests/FirstTests.swift"):
+            self.validate(manifest)
+
+    def test_a_pattern_outside_tests_or_for_an_unknown_lane_fails_closed(self):
+        for lane_name, pattern, message in (
+            ("routine-ci-swift", "Sources/**", "must remain under Tests/"),
+            ("routine-ci-swift", "Tests/../Sources/**", "must remain under Tests/"),
+            ("no-such-lane", "Tests/**", "unknown lane"),
+        ):
+            with self.subTest(pattern=pattern):
+                manifest = self.pattern_manifest()
+                manifest["patternsByLane"][lane_name] = [pattern]
+                with self.assertRaisesRegex(module.TestLaneError, message):
+                    self.validate(manifest)
+
     def test_unmapped_discovered_file_fails_closed(self):
         with self.assertRaisesRegex(module.TestLaneError, "unmapped files under Tests/: Tests/new_test.py"):
             module.validate_manifest(
