@@ -177,6 +177,17 @@ def validate_manifest(
         discovered = discovered_test_files()
     claim_by_pattern(payload, lanes, normalized, seen_paths, discovered)
 
+    manual_paths = {
+        path for lane_name, lane in lanes.items() if lane["runner"] == "manual" for path in normalized[lane_name]
+    }
+    misplaced_justifications = sorted((set(manual_justifications) & seen_paths) - manual_paths)
+    if misplaced_justifications:
+        # A justification excuses a Python test from running, so it must not apply
+        # to a file that is merely parked in a lane nobody reviews as manual.
+        raise TestLaneError(
+            "manual lane justifications apply only to files in a manual lane: "
+            + ", ".join(misplaced_justifications)
+        )
     unknown_justifications = sorted(set(manual_justifications) - seen_paths)
     if unknown_justifications:
         raise TestLaneError(
@@ -234,10 +245,17 @@ def claim_by_pattern(
         for pattern in patterns:
             if not pattern.startswith("Tests/") or ".." in Path(pattern).parts:
                 raise TestLaneError(f"test lane pattern must remain under Tests/: {pattern}")
+            if lanes[lane_name]["runner"] == "swiftpm" and not pattern.endswith(".swift"):
+                # Anything else would be recorded as run by `swift test` without being compiled.
+                raise TestLaneError(f"swiftpm lane pattern must end in .swift: {pattern}")
             regex = pattern_regex(pattern)
             matched = [path for path in discovered - seen_paths if regex.fullmatch(path)]
             if not matched:
                 raise TestLaneError(f"test lane pattern matches no unlisted file: {pattern}")
+            python_files = sorted(path for path in matched if Path(path).suffix == ".py")
+            if python_files:
+                # A Python file may be a test whatever it is called; a person places it.
+                raise TestLaneError("Python files must be listed explicitly: " + ", ".join(python_files))
             for path in matched:
                 claims.setdefault(path, []).append(lane_name)
     contested = sorted(path for path, owners in claims.items() if len(set(owners)) > 1)

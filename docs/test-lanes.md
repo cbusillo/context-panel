@@ -29,7 +29,9 @@ and the support lane claim their files with globs in `patternsByLane` instead:
 SwiftPM runs every file in the test target whatever the manifest says, and
 support files never run, so a new Swift test or fixture needs no manifest edit.
 In a pattern, `*` and `?` stay within one directory and `**` crosses
-directories. A file listed in `filesByLane` is never claimed by a pattern, which
+directories; `**/` needs at least one directory, unlike a shell glob. A Swift
+lane pattern must end in `.swift`, and no pattern may claim a Python file. A
+file listed in `filesByLane` is never claimed by a pattern, which
 is how a Swift helper stays in `support-only`. A file that two lanes' patterns
 both match, and a pattern that matches nothing, fail validation.
 
