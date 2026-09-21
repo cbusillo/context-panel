@@ -2,8 +2,9 @@
 
 Context Panel maps every tracked file under `Tests/` to an intentional lane in
 `Config/ContextPanelTestLanes.json`. The manifest is a fail-closed ownership
-record: adding a test or fixture without classifying it causes the commit gate to
-fail.
+record: a file under `Tests/` that no lane lists and no lane pattern claims
+causes the commit gate to fail, and so does every new Python test until someone
+places it in a lane.
 
 ## Lane Boundaries
 
@@ -21,6 +22,18 @@ fail.
   devices under the runtime rules in `AGENTS.md`.
 - `support-only`: fixtures and helpers that are consumed by tests but are never
   executed independently.
+
+Python and manual lanes list their files one by one in `filesByLane`, because
+placing a file there is a judgement about whether it is hermetic. The Swift lane
+and the support lane claim their files with globs in `patternsByLane` instead:
+SwiftPM runs every file in the test target whatever the manifest says, and
+support files never run, so a new Swift test or fixture needs no manifest edit.
+In a pattern, `*` and `?` stay within one directory and `**` crosses
+directories; `**/` needs at least one directory, unlike a shell glob. A Swift
+lane pattern must end in `.swift`, and no pattern may claim a Python file. A
+file listed in `filesByLane` is never claimed by a pattern, which
+is how a Swift helper stays in `support-only`. A file that two lanes' patterns
+both match, and a pattern that matches nothing, fail validation.
 
 Do not move a test into a routine CI lane merely because its filename starts
 with `test_`. Verify that it is hermetic first. Credentialed, signed-artifact,

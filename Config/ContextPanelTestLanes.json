@@ -41,6 +41,14 @@
       "role": "support"
     }
   },
+  "patternsByLane": {
+    "routine-ci-swift": [
+      "Tests/ContextPanelCoreTests/*.swift"
+    ],
+    "support-only": [
+      "Tests/ScriptsTests/fixtures/**"
+    ]
+  },
   "manualLaneJustifications": {
     "Tests/ContextPanelCompanionSharedViewCaptureUITests/ContextPanelCompanionSharedViewCaptureUITests.swift": "Requires an app-associated iOS or visionOS Simulator XCUITest build and the trusted shared-view evidence workflow."
   },
@@ -73,66 +81,14 @@
       "Tests/ScriptsTests/test_visual_approvals.py",
       "Tests/ScriptsTests/test_companion_upload_script.py"
     ],
-    "routine-ci-swift": [
-      "Tests/ContextPanelCoreTests/AccountConfigurationStoreTests.swift",
-      "Tests/ContextPanelCoreTests/CodexClientTests.swift",
-      "Tests/ContextPanelCoreTests/CodexRateLimitsTests.swift",
-      "Tests/ContextPanelCoreTests/CodexSessionTelemetryReaderTests.swift",
-      "Tests/ContextPanelCoreTests/CodexTelemetryMirrorTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionAppearanceSettingsTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionCloudKitSubscriptionTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionCloudKitUserScopeTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionLayoutPolicyTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionRefreshSettingsTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionRemoteMergeTests.swift",
-      "Tests/ContextPanelCoreTests/CompanionSnapshotTests.swift",
-      "Tests/ContextPanelCoreTests/ContextPanelAppPresentationTests.swift",
-      "Tests/ContextPanelCoreTests/FastModeForecastTests.swift",
-      "Tests/ContextPanelCoreTests/KeepWorkingForecastTests.swift",
-      "Tests/ContextPanelCoreTests/LimitProbeTests.swift",
-      "Tests/ContextPanelCoreTests/LimitWarningTests.swift",
-      "Tests/ContextPanelCoreTests/MainLimitAnswerSelectionTests.swift",
-      "Tests/ContextPanelCoreTests/MetricProgressTests.swift",
-      "Tests/ContextPanelCoreTests/PortableSettingsUITests.swift",
-      "Tests/ContextPanelCoreTests/PromptCacheDirectorySelectionTests.swift",
-      "Tests/ContextPanelCoreTests/PromptCacheTelemetryTests.swift",
-      "Tests/ContextPanelCoreTests/ProviderConnectorTests.swift",
-      "Tests/ContextPanelCoreTests/RefreshAgentRegistrationTests.swift",
-      "Tests/ContextPanelCoreTests/RefreshDiagnosticsStateTests.swift",
-      "Tests/ContextPanelCoreTests/ReleaseEntitlementsTests.swift",
-      "Tests/ContextPanelCoreTests/ResetCreditGuidanceTests.swift",
-      "Tests/ContextPanelCoreTests/RuntimeReceiptRemoteSyncTests.swift",
-      "Tests/ContextPanelCoreTests/RuntimeReceiptTests.swift",
-      "Tests/ContextPanelCoreTests/SecureFileBookmarkTests.swift",
-      "Tests/ContextPanelCoreTests/SharedViewRendererToolTests.swift",
-      "Tests/ContextPanelCoreTests/SnapshotFreshnessTests.swift",
-      "Tests/ContextPanelCoreTests/SnapshotStoreTests.swift",
-      "Tests/ContextPanelCoreTests/TVRunwayPresentationTests.swift",
-      "Tests/ContextPanelCoreTests/TVTopShelfTests.swift",
-      "Tests/ContextPanelCoreTests/UsageLimitTests.swift",
-      "Tests/ContextPanelCoreTests/ValidationGalleryTests.swift",
-      "Tests/ContextPanelCoreTests/WatchCompanionCacheTests.swift",
-      "Tests/ContextPanelCoreTests/WatchLimitDisplayTests.swift",
-      "Tests/ContextPanelCoreTests/WatchSyncPresentationTests.swift",
-      "Tests/ContextPanelCoreTests/WidgetRenderTests.swift",
-      "Tests/ContextPanelCoreTests/WidgetSnapshotTests.swift"
-    ],
+    "routine-ci-swift": [],
     "release-only": [],
     "visual-evidence": [
       "Tests/ContextPanelCompanionSharedViewCaptureUITests/ContextPanelCompanionSharedViewCaptureUITests.swift"
     ],
     "actual-runtime": [],
     "support-only": [
-      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/app-entitlements-production.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/app-entitlements.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-development-wildcard-grants.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-environment-array-production-only.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-environment-array.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-good.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-wildcard.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/runtime-testflight-entitlements.plist",
-      "Tests/ScriptsTests/fixtures/runtime-preflight/runtime-unknown-entitlements.plist"
+      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift"
     ]
   }
 }
