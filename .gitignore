@@ -25,8 +25,8 @@ CLAUDE.local.md
 DerivedData/
 *.xcuserdata/
 *.xcuserstate
-*.xcodeproj/project.xcworkspace/xcuserdata/
-*.xcodeproj/xcuserdata/
+# Generated from project.yml by `xcodegen generate`; every build script regenerates it.
+ContextPanel.xcodeproj/
 *.xcworkspace/xcuserdata/
 .swiftpm/
 __pycache__/
