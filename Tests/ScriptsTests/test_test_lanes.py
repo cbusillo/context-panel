@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+from typing import Any
 import unittest
 from unittest import mock
 
@@ -29,7 +30,7 @@ def lane(runner: str, ci_policy: str, role: str = "test") -> dict[str, str]:
 
 
 class TestLaneTests(unittest.TestCase):
-    def manifest(self):
+    def manifest(self) -> dict[str, Any]:
         return {
             "schemaVersion": 1,
             "lanes": {
@@ -66,7 +67,7 @@ class TestLaneTests(unittest.TestCase):
             ["Tests/CoreTests/FirstTests.swift", "Tests/CoreTests/SecondTests.swift"],
         )
 
-    def pattern_manifest(self):
+    def pattern_manifest(self) -> dict[str, Any]:
         manifest = self.manifest()
         manifest["filesByLane"]["routine-ci-swift"] = []
         manifest["filesByLane"]["support-only"] = ["Tests/CoreTests/TestFixtures.swift"]

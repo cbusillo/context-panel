@@ -288,6 +288,15 @@ def install_archive_fixture(root: Path, working_directory: Path, archive: dict, 
     environment["CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR"] = str(tools)
 
 
+class ScriptResult:
+    """What a test needs from one script run: exit status, combined output, and archive evidence."""
+
+    def __init__(self, returncode: int, stdout: str, archive_run: "ArchiveRun | None"):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.archive_run = archive_run
+
+
 class ArchiveRun:
     def __init__(self, root, xcodebuild_calls, expected_build_arguments, receipt, ipa_names, xcodebuild_path):
         self.root = root
@@ -410,10 +419,8 @@ def run_preflight(
             stderr=subprocess.STDOUT,
             check=False,
         )
-        if archive is not None:
-            result.archive_run = read_archive_run(root)
         return (
-            result,
+            ScriptResult(result.returncode, result.stdout, read_archive_run(root) if archive is not None else None),
             plistlib.loads(export_options.read_bytes()) if export_options.exists() else {},
             sorted(path.name for path in installed.glob("*")),
         )
@@ -479,22 +486,22 @@ class CompanionUploadProfilePreflightTests(unittest.TestCase):
 
     def test_each_ios_profile_defect_is_refused(self):
         def without(name: str, key: str):
-            def mutate(profiles):
-                del profiles[name]["Entitlements"][key]
+            def apply(candidate):
+                del candidate[name]["Entitlements"][key]
 
-            return mutate
+            return apply
 
         def with_value(name: str, key: str, value):
-            def mutate(profiles):
-                profiles[name]["Entitlements"][key] = value
+            def apply(candidate):
+                candidate[name]["Entitlements"][key] = value
 
-            return mutate
+            return apply
 
         def with_platform(name: str, platforms: list[str]):
-            def mutate(profiles):
-                profiles[name]["Platform"] = platforms
+            def apply(candidate):
+                candidate[name]["Platform"] = platforms
 
-            return mutate
+            return apply
 
         other_app = f"{TEAM_ID}.com.example.other"
         cases = [
