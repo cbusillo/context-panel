@@ -531,3 +531,42 @@ Preferred v1 connector scope:
 - [Google Service Usage consumer quota metrics](https://cloud.google.com/service-usage/docs/reference/rest/v1beta1/services.consumerQuotaMetrics/list)
 - [Google Cloud quota usage metrics](https://docs.cloud.google.com/monitoring/alerts/using-quota-metrics)
 - [Cloud Billing export to BigQuery](https://cloud.google.com/billing/docs/how-to/export-data-bigquery)
+
+## Multiple local account entries
+
+The Mac Settings pane can add OpenAI and Claude accounts and edit their local
+names. The overview's **All Accounts** card includes configured entries even
+before their first successful read, independently of widget window selection.
+Off, unavailable, stale, and unknown entries remain visible. Usage and next
+reset dates are shown for every reported window. Burn estimates filter both
+current and historical observations to the same logical account; a window
+average is labeled separately from measured history. Missing evidence stays
+unknown. A source-level failure applies to its last-known members without
+creating an extra account lane.
+
+| Account          | Read route                                                                     | What still needs local setup                         |
+| ---------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| OpenAI account 1 | Existing Codex auth file → read-only Codex usage endpoint                      | Choose its file and local name                       |
+| OpenAI account 2 | Separate existing Codex auth file, or a readable member of an existing catalog | Choose its source; no active-login switching         |
+| OpenAI account 3 | Separate existing Codex auth file, or a readable member of an existing catalog | Choose its source; no active-login switching         |
+| Claude account 1 | Context Panel-owned OAuth credential → OAuth usage endpoint                    | Existing Context Panel connection                    |
+| Claude account 2 | Independent Context Panel-owned OAuth credential → OAuth usage endpoint        | Add an entry; connect it if no credential exists yet |
+
+These are supported routes, not proof that five live accounts are connected on
+a particular machine. Context Panel does not discover private router homes,
+change CLI logins, or read Claude Code credentials. OAuth setup is an explicit
+user action. Disconnecting an additional Claude account touches only its own
+credential key; the legacy default key belongs only to the default account.
+
+Codex labels come from local configuration, never token email/name claims or
+catalog labels. Catalog members receive stable opaque suffixes until named in
+Settings. Per-member aliases are keyed by the existing hashed logical account
+ID. Account identity and cross-source deduplication are unchanged.
+
+The overview also shows numeric usage-credit balances (when reported) and all
+known reset-credit expiry dates. Missing dates are counted explicitly. The
+usage endpoint does not establish usage-credit expiry dates, so those say
+`expiry not reported`. No recurring weekly reset or future plan entitlement is
+invented. Older stored reset summaries containing only an earliest expiry remain
+readable. Failed refreshes retain a reset count without presenting old dates as
+current timing advice. All credit operations remain read-only.

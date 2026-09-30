@@ -405,8 +405,12 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             ProviderBadge(provider: account.provider)
-                            Text(account.displayName)
-                                .font(.system(size: 13, weight: .medium))
+                            TextField("Local account name", text: Binding(
+                                get: { account.displayName },
+                                set: { model.renameAccount(account.id, name: $0) }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 180)
                             Spacer()
                             Toggle("", isOn: Binding(
                                 get: { account.isEnabled },
@@ -494,6 +498,21 @@ struct SettingsPane: View {
                                     .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
                             }
                         }
+                        if account.connectorKind == .codexRateLimits {
+                            TextField("Existing auth file path", text: Binding(
+                                get: { account.authPath ?? "" },
+                                set: { model.setAuthPath(account.id, path: $0) }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            ForEach(Array(Set((appModel.storedSnapshot?.reports ?? [])
+                                .filter { account.matchesProviderReport($0) }.map(\.accountID))).sorted(), id: \.self) { id in
+                                TextField("Local name for account \(id.suffix(6))", text: Binding(
+                                    get: { account.accountAliases?[id] ?? "" },
+                                    set: { model.renameAccount(account.id, name: $0, logicalID: id) }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                            }
+                        }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
@@ -528,6 +547,13 @@ struct SettingsPane: View {
                     }
                     .padding(.vertical, 4)
                 }
+                HStack {
+                    Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
+                    Button("Add Claude Account") { model.addAccount(provider: .anthropic) }
+                }
+                Text("Use a local nickname. Each OpenAI entry reads an existing auth file; each Claude entry has its own Context Panel connection. Turn off entries you no longer use.")
+                    .font(.caption)
+                    .foregroundStyle(CPTheme.secondaryText)
             }
 
             Section("Diagnostics") {
@@ -1737,6 +1763,43 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    func addAccount(provider: Provider) {
+        guard provider == .openAI || provider == .anthropic else { return }
+        accounts.append(LocalProviderAccountConfiguration(
+            id: "local-" + UUID().uuidString.lowercased(), provider: provider,
+            connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
+            displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
+            authPath: provider == .openAI ? "" : nil,
+            codexClient: provider == .openAI ? .codex : nil
+        ))
+        saveAccounts()
+    }
+
+    func renameAccount(_ accountID: String, name: String, logicalID: String? = nil) {
+        guard !name.contains("@"), name.count <= 80,
+              let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        if let logicalID {
+            var aliases = accounts[index].accountAliases ?? [:]
+            aliases[logicalID] = name.isEmpty ? nil : name
+            accounts[index].accountAliases = aliases
+        } else {
+            accounts[index].displayName = name
+        }
+        saveAccounts()
+    }
+
+    func setAuthPath(_ accountID: String, path: String) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        // A new source must not continue polling the old imported credential.
+        do {
+            try credentialStore.delete(accountID: accountID)
+            accounts[index].authPath = path
+            saveAccounts()
+        } catch {
+            errorMessage = "The previous source could not be disconnected."
+        }
+    }
+
     func setAccount(_ accountID: String, isEnabled: Bool) {
         guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
         accounts[index].isEnabled = isEnabled
@@ -1964,14 +2027,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func oauthCredentialAccountIDs(for account: LocalProviderAccountConfiguration) -> [String] {
-        switch account.connectorKind {
-        case .claudeOAuthUsage:
-            return Array(Set([account.id, "claude-local-default", "claude-oauth-default"]))
-        case .googleAntigravityQuota:
-            return [account.id]
-        case .codexRateLimits:
-            return [account.id]
-        }
+        account.oauthCredentialAccountIDs
     }
 
     func refreshSummary(for account: LocalProviderAccountConfiguration, storedSnapshot: StoredUsageSnapshot?) -> SettingsAccountRefreshSummary? {
@@ -2546,6 +2602,11 @@ struct OverviewDashboard: View {
                 if keepWorkingForecast.remainingPercent != nil && !keepWorkingForecast.isLimited {
                     UsagePaceCard(keepWorkingForecast: keepWorkingForecast)
                 }
+                AccountCapacityCard(
+                    rows: AccountCapacity.rows(configuration: model.configuredAccounts,
+                        snapshot: snapshot, reports: model.storedSnapshot?.reports ?? [], now: presentationDate),
+                    burnRates: model.accountBurnRates, now: presentationDate
+                )
                 SetupStatusStrip(model: model)
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
                 PromptCacheOverviewCard(summary: model.promptCacheSummary)
@@ -4708,6 +4769,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
+    @Published private(set) var accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
@@ -5080,10 +5142,12 @@ final class ContextPanelAppModel: ObservableObject {
                 history: history,
                 now: now
             )
+            let accountRates = AccountBurnRateEstimator.observedBurnRates(current: currentSnapshot, history: history, now: now)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self?.observedSnapshot.generatedAt == generatedAt else { return }
                 self?.observedBurnRates = rates
+                self?.accountBurnRates = accountRates
             }
         }
     }
@@ -6645,5 +6709,108 @@ extension Date {
 extension [UsageStatus] {
     var worstStatus: UsageStatus {
         contextPanelWorstStatus
+    }
+}
+
+struct AccountCapacityCard: View {
+    let rows: [AccountCapacity]
+    let burnRates: [String: [String: ObservedBurnRate]]
+    let now: Date
+
+    var body: some View {
+        DetailCard(title: "All Accounts") {
+            VStack(alignment: .leading, spacing: 16) {
+                if rows.isEmpty {
+                    Text("Add your OpenAI and Claude accounts in Settings.")
+                }
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            ProviderBadge(provider: row.provider)
+                            Text(row.name).font(.headline)
+                            Spacer()
+                            Text(stateText(row)).font(.caption)
+                                .foregroundStyle(CPTheme.statusColor(row.status))
+                        }
+                        if row.limits.isEmpty {
+                            Text("Usage unknown · burn unknown · next reset unknown")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        }
+                        ForEach(row.limits) { limit in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(limit.label).frame(width: 150, alignment: .leading)
+                                Text(usageText(limit)).monospacedDigit()
+                                Spacer()
+                                Text(burnText(row: row, limit: limit)).monospacedDigit()
+                                Text(limit.resetsAt.map { "Resets \(dateText($0))" } ?? "Reset unknown")
+                                    .frame(minWidth: 180, alignment: .trailing)
+                            }
+                            .font(.caption)
+                            .foregroundStyle(CPTheme.secondaryText)
+                        }
+                        if let credits = row.report?.usageCredits {
+                            Text(creditText(credits) + " · expiry not reported")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        }
+                        if let resets = row.report?.resetCredits {
+                            Text("\(resets.availableCount) reset credits · observed \(dateText(resets.observedAt))")
+                                .font(.caption)
+                            let dates = resets.knownExpiries.isEmpty
+                                ? resets.earliestKnownExpiry.map { [$0] } ?? [] : resets.knownExpiries
+                            ForEach(Array(dates.enumerated()), id: \.offset) { _, date in
+                                Text("Reset credit \(date <= now ? "expired" : "expires") \(dateText(date))")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            }
+                            if dates.count < resets.availableCount {
+                                Text("\(resets.availableCount - dates.count) reset credit expiry dates unknown")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            }
+                        } else if row.provider == .openAI {
+                            Text("Reset credits unknown").font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        }
+                    }
+                    if row.id != rows.last?.id { Divider() }
+                }
+            }
+        }
+    }
+
+    private func dateText(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func stateText(_ row: AccountCapacity) -> String {
+        guard row.isEnabled else { return "Off" }
+        switch row.status {
+        case .failure: return "Unavailable · check Settings"
+        case .unknown: return "Unknown · check Settings"
+        case .stale: return "Stale · refresh needed"
+        case .loading: return "Refreshing"
+        case .limited: return "Limited"
+        case .close: return "Close to limit"
+        case .healthy: return "Available"
+        }
+    }
+
+    private func usageText(_ limit: UsageLimit) -> String {
+        guard let used = limit.used, let total = limit.limit else { return "Usage unknown" }
+        return limit.unit == .percent ? "\(used)% used" : "\(used) / \(total) used"
+    }
+
+    private func burnText(row: AccountCapacity, limit: UsageLimit) -> String {
+        guard row.isEnabled, [.healthy, .close, .limited].contains(row.status),
+              let summary = UsageSnapshot(generatedAt: now, limits: row.limits).mainLimitSummaries
+                .first(where: { $0.limits.contains(where: { $0.id == limit.id }) }),
+              let rate = burnRates[row.id]?[summary.id] else { return "Burn unknown" }
+        let unit = limit.unit == .percent ? "%/h" : "units/h"
+        return String(format: "%.1f", rate.unitsPerHour) + unit + (rate.sampleCount == 0 ? " window average" : " observed")
+    }
+
+    private func creditText(_ credits: ProviderUsageCreditSummary) -> String {
+        if credits.unlimited { return "Unlimited usage credits" }
+        if let balance = credits.balance {
+            return "\(balance.formatted()) usage credits"
+        }
+        return credits.hasCredits ? "Usage credits available · balance unknown" : "No usage credits"
     }
 }

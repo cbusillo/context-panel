@@ -89,6 +89,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let accountName: String
     public let generatedAt: Date
     public let resetCredits: ProviderResetCreditSummary?
+    public let usageCredits: ProviderUsageCreditSummary?
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
@@ -100,6 +101,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         case accountName
         case generatedAt
         case resetCredits
+        case usageCredits
         case status
         case accessState
         case errorMessage
@@ -112,6 +114,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         accountName: String,
         generatedAt: Date,
         resetCredits: ProviderResetCreditSummary? = nil,
+        usageCredits: ProviderUsageCreditSummary? = nil,
         status: UsageStatus,
         accessState: ProviderAccessState = .unknown,
         errorMessage: String?
@@ -122,6 +125,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.resetCredits = resetCredits
+        self.usageCredits = usageCredits
         self.status = status
         self.accessState = accessState.retainingCurrentProviderObservation(for: status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
@@ -135,6 +139,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         accountName = try container.decode(String.self, forKey: .accountName)
         generatedAt = try container.decode(Date.self, forKey: .generatedAt)
         resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
+        usageCredits = try container.decodeIfPresent(ProviderUsageCreditSummary.self, forKey: .usageCredits)
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
@@ -150,6 +155,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: report.accountName,
             generatedAt: report.generatedAt,
             resetCredits: report.resetCredits,
+            usageCredits: report.usageCredits,
             status: report.status,
             accessState: report.accessState,
             errorMessage: report.errorMessage
@@ -164,6 +170,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             resetCredits: resetCredits,
+            usageCredits: usageCredits,
             status: replacementStatus,
             accessState: accessState,
             errorMessage: errorMessage
@@ -178,6 +185,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             resetCredits: resetCredits,
+            usageCredits: usageCredits,
             status: status,
             accessState: replacementAccessState,
             errorMessage: errorMessage
@@ -192,6 +200,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             resetCredits: replacementResetCredits,
+            usageCredits: usageCredits,
             status: status,
             accessState: accessState,
             errorMessage: errorMessage

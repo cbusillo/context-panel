@@ -225,14 +225,13 @@ public enum CodexAuthFileParser {
                     && !account.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && account.tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             }
-            let records = chatGPTAccounts.enumerated().compactMap { index, account -> CodexAuthRecord? in
+            let records = chatGPTAccounts.compactMap { account -> CodexAuthRecord? in
                 guard let tokens = account.tokens else { return nil }
                 let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: tokens.idToken)
                 let name = Self.accountDisplayName(
                     configuredName: accountName,
-                    accountLabel: account.label,
                     tokenIdentity: tokenIdentity,
-                    fallbackSuffix: chatGPTAccounts.count == 1 ? nil : "\(index + 1)"
+                    fallbackSuffix: chatGPTAccounts.count == 1 ? nil : String(ConnectorRedactor.localAccountID(provider: .openAI, stableID: account.id).suffix(6))
                 )
                 return CodexAuthRecord(
                     tokens: CodexAuthTokens(
@@ -258,7 +257,6 @@ public enum CodexAuthFileParser {
             tokens: authTokens,
             accountName: Self.accountDisplayName(
                 configuredName: accountName,
-                accountLabel: nil,
                 tokenIdentity: tokenIdentity,
                 fallbackSuffix: nil
             ),
@@ -269,16 +267,10 @@ public enum CodexAuthFileParser {
 
     private static func accountDisplayName(
         configuredName: String,
-        accountLabel: String?,
         tokenIdentity: CodexTokenIdentity,
         fallbackSuffix: String?
     ) -> String {
-        let baseName = [accountLabel, tokenIdentity.email, tokenIdentity.name]
-            .compactMap { value -> String? in
-                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-                return value
-            }
-            .first ?? fallbackSuffix.map { "\(configuredName) \($0)" } ?? configuredName
+        let baseName = fallbackSuffix.map { "\(configuredName) \($0)" } ?? configuredName
         guard let planType = tokenIdentity.planType?.trimmingCharacters(in: .whitespacesAndNewlines), !planType.isEmpty else {
             return baseName
         }
@@ -333,6 +325,7 @@ public struct CodexTokenIdentity: Equatable, Sendable {
 public struct CodexAccountConfiguration: Equatable, Sendable {
     public let configuredAccountID: String?
     public let authPath: String
+    public let accountAliases: [String: String]
     public let accountName: String
     public let endpoint: URL
     public let modelAvailabilityEndpoint: URL?
@@ -342,10 +335,12 @@ public struct CodexAccountConfiguration: Equatable, Sendable {
         authPath: String,
         accountName: String? = nil,
         endpoint: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
-        modelAvailabilityEndpoint: URL? = nil
+        modelAvailabilityEndpoint: URL? = nil,
+        accountAliases: [String: String] = [:]
     ) {
         self.configuredAccountID = configuredAccountID
         self.authPath = authPath
+        self.accountAliases = accountAliases
         self.accountName = accountName ?? ConnectorRedactor.redactedPath(authPath)
         self.endpoint = endpoint
         self.modelAvailabilityEndpoint = modelAvailabilityEndpoint ?? Self.defaultModelAvailabilityEndpoint(for: endpoint)
@@ -425,6 +420,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             ConnectorRedactor.localAccountID(provider: provider, stableID: "local:\($0)")
         } ?? ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
+        let localName = account.accountAliases[localAccountID] ?? authRecord.accountName
         var observedResetCredits: ProviderResetCreditSummary?
         do {
             let data = try await fetchUsage(endpoint: account.endpoint, auth: auth)
@@ -441,7 +437,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                     from: snapshot,
                     accountID: localAccountID,
                     configuredAccountID: account.configuredAccountID,
-                    accountName: authRecord.accountName,
+                    accountName: localName,
                     observedAt: now
                 )
             }
@@ -449,17 +445,20 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 provider: provider,
                 accountID: localAccountID,
                 configuredAccountID: account.configuredAccountID,
-                accountName: authRecord.accountName,
+                accountName: localName,
                 generatedAt: now,
                 limits: limits,
-                resetCredits: observedResetCredits
+                resetCredits: observedResetCredits,
+                usageCredits: snapshots.first?.credits.map {
+                    ProviderUsageCreditSummary(hasCredits: $0.hasCredits, unlimited: $0.unlimited, balance: $0.balance.flatMap(Double.init))
+                }
             )
         } catch {
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
                 configuredAccountID: account.configuredAccountID,
-                accountName: authRecord.accountName,
+                accountName: localName,
                 generatedAt: now,
                 limits: [],
                 resetCredits: observedResetCredits?.preservingCountAfterRefreshFailure,
@@ -695,7 +694,8 @@ enum CodexResetCreditDetailsParser {
             availableCount: availableCount,
             observedAt: observedAt,
             coverage: coverage,
-            earliestKnownExpiry: coverage == .countOnly ? nil : expiries.min()
+            earliestKnownExpiry: coverage == .countOnly ? nil : expiries.min(),
+            knownExpiries: coverage == .countOnly ? [] : expiries
         )
     }
 }

@@ -38,6 +38,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var authPath: String?
     public var commandPath: String?
     public var codexClient: CodexClient?
+    public var accountAliases: [String: String]?
 
     public init(
         id: String,
@@ -47,7 +48,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         isEnabled: Bool = true,
         authPath: String? = nil,
         commandPath: String? = nil,
-        codexClient: CodexClient? = nil
+        codexClient: CodexClient? = nil,
+        accountAliases: [String: String]? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -57,6 +59,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.authPath = authPath
         self.commandPath = commandPath
         self.codexClient = codexClient
+        self.accountAliases = accountAliases
     }
 
     public var effectiveAuthPath: String? {
@@ -291,7 +294,8 @@ public enum AccountConnectorFactory {
                         authPath: authPath,
                         accountName: account.displayName.isEmpty
                             ? (account.effectiveCodexClient?.displayName ?? "OpenAI")
-                            : account.displayName
+                            : account.displayName,
+                        accountAliases: account.accountAliases ?? [:]
                     )],
                     fileLoader: authFileLoader
                 )

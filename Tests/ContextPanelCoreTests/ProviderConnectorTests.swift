@@ -52,6 +52,7 @@ import Testing
     let summary = try #require(result.reports.first?.resetCredits)
 
     #expect((summary.availableCount, summary.coverage) == (2, .complete))
+    #expect(summary.knownExpiries == ["2027-02-01T00:00:00Z", "2027-02-02T00:00:00Z"].compactMap(ContextPanelDateFormatting.date(from:)))
     #expect(http.requests.map(\.method) == ["GET", "GET"])
     #expect(http.requests.allSatisfy { $0.body == nil })
     #expect(http.requests.map(\.url.absoluteString) == [
@@ -689,14 +690,13 @@ import Testing
 
     #expect(result.reports.count == 2)
     #expect(result.snapshot.limits.count == 4)
-    #expect(result.reports.map(\.accountName) == ["first@example.com · pro", "second@example.com · pro"])
+    let expectedNames = ["local-account-a", "local-account-b"].map {
+        "OpenAI Code \(ConnectorRedactor.localAccountID(provider: .openAI, stableID: $0).suffix(6)) · pro"
+    }
+    #expect(result.reports.map(\.accountName) == expectedNames)
     #expect(result.reports.allSatisfy { $0.configuredAccountID == nil })
-    #expect(result.snapshot.limits.map(\.accountName) == [
-        "first@example.com · pro",
-        "first@example.com · pro",
-        "second@example.com · pro",
-        "second@example.com · pro",
-    ])
+    #expect(result.snapshot.limits.map(\.accountName) == expectedNames.flatMap { [$0, $0] })
+    #expect(result.reports.allSatisfy { !$0.accountName.contains("@") })
     #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == nil })
     #expect(result.reports.map { $0.resetCredits?.availableCount } == [2, 3])
     #expect(result.reports.map { $0.resetCredits?.coverage } == [.complete, .countOnly])
@@ -759,7 +759,10 @@ private func selectedCodexCatalog(selector: String, extraRows: String = "") -> D
         #expect(Set(snapshot.reports.map(\.accountID)) == expectedIDs)
         #expect(Set(snapshot.snapshot.limits.map(\.accountID)) == expectedIDs)
         #expect(snapshot.reports.count == 3)
-        #expect(snapshot.reports.filter { $0.configuredAccountID == "lab" }.map(\.accountName) == ["Lab 1", "Lab 2"])
+        let expectedNames = ["a", "b"].map {
+            "Lab \(ConnectorRedactor.localAccountID(provider: .openAI, stableID: $0).suffix(6))"
+        }
+        #expect(snapshot.reports.filter { $0.configuredAccountID == "lab" }.map(\.accountName) == expectedNames)
     }
     #expect(http.requests.map { $0.headers["Authorization"] } == Array(repeating: ["Bearer token-a", "Bearer token-b", "Bearer token-c"], count: 3).flatMap { $0 })
 }

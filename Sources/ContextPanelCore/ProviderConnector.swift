@@ -59,22 +59,27 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
     public let observedAt: Date
     public let coverage: ProviderResetCreditCoverage
     public let earliestKnownExpiry: Date?
+    public let knownExpiries: [Date]
 
     public init(
         availableCount: Int,
         observedAt: Date,
         coverage: ProviderResetCreditCoverage,
-        earliestKnownExpiry: Date? = nil
+        earliestKnownExpiry: Date? = nil,
+        knownExpiries: [Date] = []
     ) {
         let normalizedCount = max(0, availableCount)
         self.availableCount = normalizedCount
         self.observedAt = observedAt
-        if normalizedCount == 0 || earliestKnownExpiry == nil {
+        let dates = Array(knownExpiries.sorted().prefix(normalizedCount))
+        let earliest = dates.first ?? earliestKnownExpiry
+        self.knownExpiries = coverage == .countOnly || normalizedCount == 0 ? [] : dates
+        if normalizedCount == 0 || earliest == nil {
             self.coverage = .countOnly
             self.earliestKnownExpiry = nil
         } else {
             self.coverage = coverage
-            self.earliestKnownExpiry = coverage == .countOnly ? nil : earliestKnownExpiry
+            self.earliestKnownExpiry = coverage == .countOnly ? nil : earliest
         }
     }
 
@@ -84,7 +89,8 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
             availableCount: try container.decode(Int.self, forKey: .availableCount),
             observedAt: try container.decode(Date.self, forKey: .observedAt),
             coverage: try container.decode(ProviderResetCreditCoverage.self, forKey: .coverage),
-            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry)
+            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry),
+            knownExpiries: try container.decodeIfPresent([Date].self, forKey: .knownExpiries) ?? []
         )
     }
 
@@ -112,6 +118,19 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
     }
 }
 
+/// Only normalized credit quantities cross the adapter boundary.
+public struct ProviderUsageCreditSummary: Codable, Equatable, Sendable {
+    public let hasCredits: Bool
+    public let unlimited: Bool
+    public let balance: Double?
+
+    public init(hasCredits: Bool, unlimited: Bool, balance: Double?) {
+        self.hasCredits = hasCredits
+        self.unlimited = unlimited
+        self.balance = balance.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+    }
+}
+
 public struct ProviderConnectorReport: Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
@@ -120,6 +139,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public let generatedAt: Date
     public let limits: [UsageLimit]
     public let resetCredits: ProviderResetCreditSummary?
+    public let usageCredits: ProviderUsageCreditSummary?
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
@@ -132,6 +152,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         generatedAt: Date,
         limits: [UsageLimit],
         resetCredits: ProviderResetCreditSummary? = nil,
+        usageCredits: ProviderUsageCreditSummary? = nil,
         status: UsageStatus? = nil,
         accessState: ProviderAccessState = .unknown,
         errorMessage: String? = nil
@@ -143,6 +164,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.generatedAt = generatedAt
         self.limits = limits
         self.resetCredits = resetCredits
+        self.usageCredits = usageCredits
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
         self.accessState = accessState.retainingCurrentProviderObservation(for: self.status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
@@ -310,6 +332,7 @@ private extension ProviderConnectorReport {
             generatedAt: generatedAt,
             limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback, accountName: replacementAccountName) },
             resetCredits: resetCredits,
+            usageCredits: usageCredits,
             status: status,
             accessState: accessState,
             errorMessage: errorMessage
@@ -326,6 +349,7 @@ private extension ProviderConnectorReport {
             generatedAt: generatedAt,
             limits: limits,
             resetCredits: replacement,
+            usageCredits: usageCredits,
             status: status,
             accessState: accessState,
             errorMessage: errorMessage
