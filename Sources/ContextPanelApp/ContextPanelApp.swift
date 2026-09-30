@@ -501,6 +501,22 @@ struct SettingsPane: View {
                         }
                         if account.connectorKind == .codexRateLimits {
                             HStack {
+                                Button(account.codexQuotaPath == nil ? "Select Codex Sessions" : "Change Sessions Folder") {
+                                    model.authorizeCodexQuota(for: account) {
+                                        refreshAfterAuthorization()
+                                    }
+                                }
+                                if account.codexQuotaPath != nil {
+                                    Button("Use auth file") { model.useCodexAuthFile(account.id) }
+                                }
+                            }
+                            if account.codexQuotaPath != nil {
+                                Text("Session quota · " + ConnectorRedactor.redactedPath(account.codexQuotaPath ?? ""))
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                                Text("Use a folder belonging only to this account. Shared or switched-login history cannot identify whose quota was recorded.")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            } else {
+                            HStack {
                                 TextField("Existing auth file path", text: Binding(
                                     get: { authPathDrafts[account.id] ?? account.authPath ?? "" },
                                     set: { authPathDrafts[account.id] = $0 }
@@ -514,6 +530,7 @@ struct SettingsPane: View {
                             }
                             Text("Applying a different path disconnects the imported login. Select File to authorize the new source.")
                                 .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            }
                             ForEach(Array(Set((appModel.storedSnapshot?.reports ?? [])
                                 .filter { account.matchesProviderReport($0) }.map(\.accountID))).sorted(), id: \.self) { id in
                                 TextField("Local name for account \(id.suffix(6))", text: Binding(
@@ -561,7 +578,7 @@ struct SettingsPane: View {
                     Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
                     Button("Add Claude Account") { model.addAccount(provider: .anthropic) }
                 }
-                Text("Use a local nickname. Each OpenAI entry reads an existing auth file; each Claude entry has its own Context Panel connection. Turn off entries you no longer use.")
+                Text("Use a local nickname. Each OpenAI entry reads its selected sessions folder or existing auth file; each Claude entry has its own Context Panel connection. Turn off entries you no longer use.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
             }
@@ -1887,6 +1904,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
+        if let path = account.codexQuotaPath {
+            let expanded = NSString(string: path).expandingTildeInPath
+            return !bookmarkStore.hasCurrentBookmark(for: expanded) || !bookmarkStore.canResolveBookmark(for: expanded)
+        }
         if account.connectorKind == .claudeOAuthUsage {
             return !hasImportedCredential(for: account)
         }
@@ -1900,6 +1921,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        if let path = account.codexQuotaPath {
+            let expanded = NSString(string: path).expandingTildeInPath
+            return bookmarkStore.hasCurrentBookmark(for: expanded) && bookmarkStore.canResolveBookmark(for: expanded)
+        }
         if account.connectorKind == .claudeOAuthUsage {
             return hasImportedCredential(for: account)
         }
@@ -1932,7 +1957,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func canAuthorizeAuthFile(for account: LocalProviderAccountConfiguration) -> Bool {
-        account.connectorKind.requiresSecurityScopedAuthFile
+        account.connectorKind.requiresSecurityScopedAuthFile && account.codexQuotaPath == nil
     }
 
     func canAuthorizePromptCacheUsage(for account: LocalProviderAccountConfiguration) -> Bool {
@@ -2249,6 +2274,47 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    func useCodexAuthFile(_ accountID: String) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].codexQuotaPath = nil
+        saveAccounts()
+    }
+
+    func authorizeCodexQuota(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
+        let panel = NSOpenPanel()
+        panel.message = "Select this account's sessions folder. Quota events do not identify the login; choose a folder used only by this account. No login files are read or copied."
+        panel.prompt = "Select Sessions"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        if let path = account.codexQuotaPath {
+            panel.directoryURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+        } else if let path = account.authPath {
+            panel.directoryURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+                .deletingLastPathComponent()
+        }
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url,
+                  let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                try bookmarkStore.createAndStoreBookmark(for: url, path: url.path)
+                guard bookmarkStore.canResolveBookmark(for: url.path) else {
+                    errorMessage = "Session folder access could not be verified. Select it again."
+                    return
+                }
+                accounts[index].codexQuotaPath = url.path
+                saveAccounts()
+                errorMessage = nil
+                onVerified()
+            } catch {
+                errorMessage = "Session folder access could not be saved. Select it again."
+            }
+        }
+    }
+
     func authorizePromptCacheUsage(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
         guard let usageDirectory = account.promptCacheDirectory else { return }
 
@@ -2315,6 +2381,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
+        if account.codexQuotaPath != nil { return "Quota from the selected account's token_count events; run Codex on that account for a fresh observation" }
         switch account.connectorKind {
         case .codexRateLimits:
             if account.effectiveCodexClient == .codexLab {
@@ -6732,7 +6799,7 @@ struct AccountCapacityCard: View {
         DetailCard(title: "All Accounts") {
             VStack(alignment: .leading, spacing: 16) {
                 if rows.isEmpty {
-                    Text("Add your OpenAI and Claude accounts in Settings.")
+                    Text("Add your provider accounts in Settings.")
                 }
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 8) {

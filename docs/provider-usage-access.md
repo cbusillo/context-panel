@@ -535,7 +535,7 @@ Preferred v1 connector scope:
 ## Multiple local account entries
 
 The Mac Settings pane can add OpenAI and Claude accounts and edit their local
-names. The overview's **All Accounts** card includes configured entries even
+names. The overview's **All Accounts** card includes OpenAI, Claude, and Antigravity entries even
 before their first successful read, independently of widget window selection.
 Off, unavailable, stale, and unknown entries remain visible. Usage and next
 reset dates are shown for every reported window. Burn estimates filter both
@@ -571,7 +571,9 @@ credential key; the legacy default key belongs only to the default account.
 Codex labels come from local configuration, never token email/name claims or
 catalog labels. Catalog members receive stable opaque suffixes until named in
 Settings. Per-member aliases are keyed by the existing hashed logical account
-ID. Account identity and cross-source deduplication are unchanged.
+ID. Session-source entries use a stable local configured-account identity. A successful
+source switch replaces the previous logical lanes for that entry, including
+during partial refreshes; unrelated accounts remain intact.
 
 The overview also shows numeric usage-credit balances (when reported) and all
 known reset-credit expiry dates. Missing dates are counted explicitly. The
@@ -580,3 +582,40 @@ usage endpoint does not establish usage-credit expiry dates, so those say
 invented. Older stored reset summaries containing only an earliest expiry remain
 readable. Failed refreshes retain a reset count without presenting old dates as
 current timing advice. All credit operations remain read-only.
+
+### Per-account Codex session quota
+
+For each OpenAI entry, choose **Select Codex Sessions** and pick that account's
+`sessions` directory in the native folder picker. The current main home has
+`~/.codex/sessions`; additional homes currently have their own `sessions`
+directory. The mapping is saved as `codexQuotaPath` in local account configuration,
+not hard-coded into discovery. **Change Sessions Folder** can repoint the entry
+when the home layout changes. **Use auth file** returns to the existing adapter.
+Neither action changes a CLI login. Session mode never reads or imports auth files.
+
+The App Store app and refresh agent use the existing read-only user-selected
+folder and app-scoped bookmark entitlements. Selection saves a security-scoped
+bookmark; the adapter resolves it and holds access for the complete read.
+Sandboxed refresh refuses an absent/currently unusable bookmark rather than
+falling back to unrestricted file access. Re-select the folder if access fails.
+No entitlements were added or widened.
+
+Only bounded JSONL tails are decoded, reusing the native session discovery and
+read budgets. Completed `event_msg` / `token_count` records supply primary and
+weekly windows, reset timestamps, and numeric credit balance. Invalid, future,
+and incomplete records are ignored. The newest valid event timestamp is kept;
+repeated polling cannot make old observations fresh. Expired windows stay stale
+until a new event arrives. This is observed session quota, not an active provider
+poll: run Codex on that account to produce fresh data. Reset-credit expiry dates
+are not established by these events and remain unknown.
+
+Quota events have no account identity. Choose a folder used exclusively by the
+named account. Shared histories or histories spanning login switches cannot
+establish attribution. A directory assigned to several enabled entries is refused
+for all of them, including resolved aliases, instead of showing one account's
+quota in every row. Symlinked session files and directories are skipped. If
+codex-skills#886 shares session history, retain separate account-attributed quota
+sources or use the auth-file adapter; this reader cannot infer an account from
+shared token-count events. Independent copied histories also require the user's
+correct source binding. No private account-home paths or session bodies are
+written to reports, logs, or repository fixtures.

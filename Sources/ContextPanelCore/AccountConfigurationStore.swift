@@ -39,6 +39,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var commandPath: String?
     public var codexClient: CodexClient?
     public var accountAliases: [String: String]?
+    /// User-selected, account-specific session folder. Nil retains the auth-file adapter.
+    public var codexQuotaPath: String?
 
     public init(
         id: String,
@@ -49,7 +51,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         authPath: String? = nil,
         commandPath: String? = nil,
         codexClient: CodexClient? = nil,
-        accountAliases: [String: String]? = nil
+        accountAliases: [String: String]? = nil,
+        codexQuotaPath: String? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -60,11 +63,13 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.commandPath = commandPath
         self.codexClient = codexClient
         self.accountAliases = accountAliases
+        self.codexQuotaPath = codexQuotaPath
     }
 
     public var effectiveAuthPath: String? {
         switch connectorKind {
         case .codexRateLimits:
+            if codexQuotaPath != nil { return nil }
             return authPath
         case .googleAntigravityQuota:
             return nil
@@ -78,6 +83,9 @@ public extension LocalProviderAccountConfiguration {
     var providerReportAccountIDs: [String] {
         switch connectorKind {
         case .codexRateLimits:
+            if codexQuotaPath != nil {
+                return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
+            }
             guard let authPath else { return [] }
             return Self.localAccountIDs(provider: provider, path: authPath)
         case .googleAntigravityQuota:
@@ -281,6 +289,10 @@ public enum AccountConnectorFactory {
             guard account.isEnabled, !account.isRetiredSource else { return nil }
             switch account.connectorKind {
             case .codexRateLimits:
+                if account.codexQuotaPath != nil {
+                    return makeSessionQuotaConnector(account: account, document: document,
+                        bookmarkStore: bookmarkStore, requiresBookmark: requiresBookmarkedAuthFiles)
+                }
                 guard let authPath = account.authPath else { return nil }
                 let authFileLoader = makeAuthFileLoader(
                     accountID: account.id,
@@ -327,6 +339,42 @@ public enum AccountConnectorFactory {
                     credentialStore: effectiveCredentialStore
                 )
             }
+        }
+    }
+
+    private static func makeSessionQuotaConnector(
+        account: LocalProviderAccountConfiguration,
+        document: AccountConfigurationDocument,
+        bookmarkStore: SecureFileBookmarkStore?,
+        requiresBookmark: Bool
+    ) -> CodexSessionQuotaConnector {
+        CodexSessionQuotaConnector(account: account) { now in
+            let path = NSString(string: account.codexQuotaPath ?? "").expandingTildeInPath
+            let read: (URL) throws -> CodexSessionQuotaObservation? = { root in
+                let canonical = root.resolvingSymlinksInPath().standardizedFileURL
+                for sibling in document.accounts where sibling.isEnabled && sibling.id != account.id {
+                    guard let siblingPath = sibling.codexQuotaPath else { continue }
+                    let expanded = NSString(string: siblingPath).expandingTildeInPath
+                    let resolved: URL? = try? bookmarkStore?.withResolvedURL(for: expanded) { $0 }
+                    let siblingRoot = resolved ?? URL(fileURLWithPath: expanded)
+                    if siblingRoot.resolvingSymlinksInPath().standardizedFileURL == canonical {
+                        throw CodexSessionQuotaError.sharedDirectory
+                    }
+                }
+                return try CodexSessionQuotaReader.read(rootDirectory: root, now: now)
+            }
+            if let bookmarkStore, bookmarkStore.hasCurrentBookmark(for: path) {
+                // Preserve a nil observation separately from a missing bookmark.
+                var observation: CodexSessionQuotaObservation?
+                let accessed: Bool? = try bookmarkStore.withResolvedURL(for: path) { root in
+                    observation = try read(root)
+                    return true
+                }
+                guard accessed == true else { throw CocoaError(.fileReadNoPermission) }
+                return observation
+            }
+            guard !requiresBookmark else { throw CocoaError(.fileReadNoPermission) }
+            return try read(URL(fileURLWithPath: path))
         }
     }
 

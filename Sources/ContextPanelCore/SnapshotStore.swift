@@ -795,10 +795,16 @@ public struct JSONSnapshotStore: Sendable {
         let legacyGoogleDefaultAccountIDs = Self.legacyGoogleDefaultAccountIDs(in: current)
         let preservedLimits: [UsageLimit]
         let preservedReports: [StoredProviderReport]
+        // A configured source can change logical identity (auth API -> session
+        // quota). An authoritative refresh replaces its old lanes as a group.
+        let replacedConfigurations = Set(refreshResult.reports.compactMap { report in
+            report.status != .failure ? report.configuredAccountID : nil
+        })
         if preservesUnreportedAccounts {
             preservedLimits = current?.snapshot.limits.filter { limit in
                 let key = ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)
-                return !authoritativeEmptyAccounts.contains(key)
+                return !(limit.configuredAccountID.map(replacedConfigurations.contains) ?? false)
+                    && !authoritativeEmptyAccounts.contains(key)
                     && !replacementAccounts.contains(key)
                     && !refreshResult.reports.contains { report in
                         report.provider == .google
@@ -814,7 +820,8 @@ public struct JSONSnapshotStore: Sendable {
             } ?? []
             preservedReports = current?.reports.filter { report in
                 let key = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
-                return !authoritativeEmptyAccounts.contains(key)
+                return !(report.configuredAccountID.map(replacedConfigurations.contains) ?? false)
+                    && !authoritativeEmptyAccounts.contains(key)
                     && !reportedAccounts.contains(key)
                     && !refreshResult.reports.contains { refreshed in
                         refreshed.provider == .google

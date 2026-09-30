@@ -18,6 +18,7 @@
     "localLimitProbe": "docs/local-limit-probe.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
     "multiAccountSetup": "docs/provider-usage-access.md#multiple-local-account-entries",
+    "codexSessionQuota": "docs/provider-usage-access.md#per-account-codex-session-quota",
     "repoSettings": "docs/repo-settings.md"
   },
   "qualityGate": {

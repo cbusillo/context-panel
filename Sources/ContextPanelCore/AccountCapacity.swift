@@ -22,7 +22,7 @@ public struct AccountCapacity: Identifiable, Sendable {
         now: Date
     ) -> [Self] {
         var seen = Set<String>()
-        return configuration.filter { !$0.isRetiredSource && $0.provider != .google }.flatMap { account -> [Self] in
+        return configuration.filter { !$0.isRetiredSource }.flatMap { account -> [Self] in
             let matchingReports = reports.filter { account.matchesProviderReport($0) }
             let matchingLimits = snapshot.limits.filter {
                 $0.provider == account.provider && ($0.configuredAccountID == account.id || account.providerReportAccountIDs.contains($0.accountID))
@@ -37,7 +37,8 @@ public struct AccountCapacity: Identifiable, Sendable {
                 let limits = matchingLimits.filter { $0.accountID == id }
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
                 let expired = limits.contains { ($0.resetsAt ?? .distantFuture) <= now }
-                let stale = report.map { now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false
+                let stale = (report.map { now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false)
+                    || limits.contains { limit in limit.lastUpdatedAt.map { now.timeIntervalSince($0) > SnapshotFreshness.appMaximumAge } ?? false }
                 let status: UsageStatus = !account.isEnabled ? .unknown
                     : report?.status == .failure ? .failure
                     : stale || expired ? .stale

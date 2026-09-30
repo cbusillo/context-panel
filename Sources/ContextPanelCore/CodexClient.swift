@@ -61,6 +61,9 @@ public extension LocalProviderAccountConfiguration {
     }
 
     var promptCacheDirectory: URL? {
+        if connectorKind == .codexRateLimits, let path = codexQuotaPath {
+            return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true)
+        }
         guard let client = effectiveCodexClient, client != .everyCode, let path = effectiveAuthPath else { return nil }
         return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .deletingLastPathComponent()

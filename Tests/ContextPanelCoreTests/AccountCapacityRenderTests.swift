@@ -6,12 +6,12 @@ import Testing
 
 @MainActor
 @Test(arguments: [760, 960])
-func allAccountsCardRendersFiveAccountsWithPartialData(width: Int) throws {
+func allAccountsCardRendersAllProvidersWithPartialData(width: Int) throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let configs = (0..<5).map { index in
-        LocalProviderAccountConfiguration(id: "fixture-\(index)", provider: index < 3 ? .openAI : .anthropic,
-            connectorKind: index < 3 ? .codexRateLimits : .claudeOAuthUsage,
-            displayName: ["Personal", "Projects", "Research", "Writing", "Secondary"][index])
+    let configs = (0..<6).map { index in
+        LocalProviderAccountConfiguration(id: "fixture-\(index)", provider: index < 3 ? .openAI : index < 5 ? .anthropic : .google,
+            connectorKind: index < 3 ? .codexRateLimits : index < 5 ? .claudeOAuthUsage : .googleAntigravityQuota,
+            displayName: ["Personal", "Projects", "Research", "Writing", "Secondary", "Antigravity"][index])
     }
     let limits = configs.prefix(4).flatMap { config in
         ["5-hour", "Weekly"].map { window in
