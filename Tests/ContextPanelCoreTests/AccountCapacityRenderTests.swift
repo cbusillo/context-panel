@@ -32,7 +32,9 @@ func allAccountsCardRendersFiveAccountsWithPartialData(width: Int) throws {
     }
     let rows = AccountCapacity.rows(configuration: configs, snapshot: UsageSnapshot(generatedAt: now, limits: limits), reports: reports, now: now)
     let rates = Dictionary(uniqueKeysWithValues: configs.prefix(4).map { config in
-        (config.id, ["\(config.provider.rawValue):weekly": ObservedBurnRate(limitID: "weekly", unitsPerHour: 1.5, observedDurationHours: 2, sampleCount: 3)])
+        (config.id, Dictionary(uniqueKeysWithValues: limits.filter { $0.accountID == config.id }.map {
+            ($0.id, ObservedBurnRate(limitID: $0.id, unitsPerHour: 1.5, observedDurationHours: 2, sampleCount: 3))
+        }))
     })
     let renderer = ImageRenderer(content: AccountCapacityCard(rows: rows, burnRates: rates, now: now).padding(20).frame(width: CGFloat(width)))
     renderer.scale = 1

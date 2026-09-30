@@ -54,22 +54,25 @@ public enum AccountBurnRateEstimator {
         current: UsageSnapshot, history: [StoredUsageSnapshot], now: Date
     ) -> [String: [String: ObservedBurnRate]] {
         var result: [String: [String: ObservedBurnRate]] = [:]
-        for accountID in Set(current.limits.map(\.accountID)) {
-            let limits = current.limits.filter { $0.accountID == accountID }
+        for limit in current.limits {
+            let accountID = limit.accountID
             let accountHistory = history.compactMap { stored -> StoredUsageSnapshot? in
-                let reports = stored.reports.filter { $0.accountID == accountID }
+                let reports = stored.reports.filter { $0.accountID == accountID && $0.provider == limit.provider }
                 guard !reports.contains(where: { [.failure, .stale, .unknown].contains($0.status) }) else { return nil }
                 return StoredUsageSnapshot(
                     savedAt: stored.savedAt,
                     snapshot: UsageSnapshot(generatedAt: stored.snapshot.generatedAt,
-                        limits: stored.snapshot.limits.filter { $0.accountID == accountID }),
-                    reports: stored.reports.filter { $0.accountID == accountID }
+                        limits: stored.snapshot.limits.filter { $0.id == limit.id && $0.accountID == accountID && $0.provider == limit.provider }),
+                    reports: reports
                 )
             }
-            result[accountID] = MainLimitBurnRateEstimator.observedBurnRates(
-                current: UsageSnapshot(generatedAt: current.generatedAt, limits: limits),
+            let rates = MainLimitBurnRateEstimator.observedBurnRates(
+                current: UsageSnapshot(generatedAt: current.generatedAt, limits: [limit]),
                 history: accountHistory, now: now
             )
+            if let rate = rates.values.first {
+                result[accountID, default: [:]][limit.id] = rate
+            }
         }
         return result
     }

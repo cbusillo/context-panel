@@ -6799,9 +6799,7 @@ struct AccountCapacityCard: View {
 
     private func burnText(row: AccountCapacity, limit: UsageLimit) -> String {
         guard row.isEnabled, [.healthy, .close, .limited].contains(row.status),
-              let summary = UsageSnapshot(generatedAt: now, limits: row.limits).mainLimitSummaries
-                .first(where: { $0.limits.contains(where: { $0.id == limit.id }) }),
-              let rate = burnRates[row.id]?[summary.id] else { return "Burn unknown" }
+              let rate = burnRates[row.id]?[limit.id] else { return "Burn unknown" }
         let unit = limit.unit == .percent ? "%/h" : "units/h"
         return String(format: "%.1f", rate.unitsPerHour) + unit + (rate.sampleCount == 0 ? " window average" : " observed")
     }

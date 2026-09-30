@@ -57,8 +57,8 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
     }
     let current = try #require(history.last).snapshot
     let rates = AccountBurnRateEstimator.observedBurnRates(current: current, history: history, now: capacityNow)
-    #expect(rates["a"]?["openai:weekly"]?.unitsPerHour == 4)
-    #expect(rates["b"]?["openai:weekly"]?.unitsPerHour == 40)
+    #expect(rates["a"]?[capacityLimit("a", used: 0).id]?.unitsPerHour == 4)
+    #expect(rates["b"]?[capacityLimit("b", used: 0).id]?.unitsPerHour == 40)
     #expect(rates["missing"] == nil)
 }
 
@@ -70,7 +70,7 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
         ]))
     }
     let rates = AccountBurnRateEstimator.observedBurnRates(current: history[2].snapshot, history: history, now: capacityNow)
-    #expect(rates["a"]?.isEmpty == true)
+    #expect(rates["a"]?.isEmpty != false)
 }
 
 @Test func secondClaudeAccountCannotDisconnectDefaultCredentials() {
@@ -106,4 +106,23 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
     #expect(rows.count == 1)
     #expect(rows.first?.id == limit.accountID)
     #expect(rows.first?.status == .failure)
+}
+
+@Test func accountBurnRateKeepsOverlappingClaudeWindowsSeparate() {
+    func windows(_ index: Int, at: Date) -> [UsageLimit] {
+        ["Weekly", "Opus Weekly"].enumerated().map { offset, label in
+            UsageLimit(provider: .anthropic, accountID: "claude", accountName: "Writing",
+                label: label, windowLabel: "Weekly", unit: .percent,
+                used: 10 + index * (offset == 0 ? 2 : 20), limit: 100,
+                resetsAt: capacityNow.addingTimeInterval(86_400), lastUpdatedAt: at)
+        }
+    }
+    let history = (0...2).map { index in
+        let at = capacityNow.addingTimeInterval(Double(index - 2) * 1_800)
+        return StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: windows(index, at: at)))
+    }
+    let current = history[2].snapshot
+    let rates = AccountBurnRateEstimator.observedBurnRates(current: current, history: history, now: capacityNow)
+    #expect(rates["claude"]?[current.limits[0].id]?.unitsPerHour == 4)
+    #expect(rates["claude"]?[current.limits[1].id]?.unitsPerHour == 40)
 }
