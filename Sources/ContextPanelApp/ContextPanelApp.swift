@@ -405,7 +405,10 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             ProviderBadge(provider: account.provider)
-                            Text(account.displayName)
+                            TextField("Local account name", text: Binding(
+                                get: { account.displayName },
+                                set: { model.renameAccount(account.id, name: $0) }
+                            ))
                                 .font(.system(size: 13, weight: .medium))
                             Spacer()
                             Toggle("", isOn: Binding(
@@ -494,6 +497,14 @@ struct SettingsPane: View {
                                     .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
                             }
                         }
+                        if account.sessionQuotaPath != nil {
+                            Button("Change Session Folder") {
+                                model.selectSessionQuotaFolder(for: account.id) { refreshAfterAuthorization() }
+                            }
+                            Text("Use a folder dedicated to this account. A shared or switched login history cannot identify accounts.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(CPTheme.secondaryText)
+                        }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
@@ -528,6 +539,19 @@ struct SettingsPane: View {
                     }
                     .padding(.vertical, 4)
                 }
+            }
+
+            Section("Add Account") {
+                Button("Add OpenAI Session Account") {
+                    model.addAccount(provider: .openAI)
+                    appModel.loadSnapshot(reloadWidgetTimelines: false)
+                }
+                Button("Add Claude Account") {
+                    model.addAccount(provider: .anthropic)
+                    appModel.loadSnapshot(reloadWidgetTimelines: false)
+                }
+                Text("Name each account locally. OpenAI reads a selected single-account sessions folder; Claude uses separate Context Panel OAuth credentials. Adding a row does not change a harness login.")
+                    .font(.caption)
             }
 
             Section("Diagnostics") {
@@ -1737,6 +1761,54 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    func renameAccount(_ accountID: String, name: String) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        guard !name.contains("@") else {
+            errorMessage = "Use a local label rather than an email address."
+            return
+        }
+        accounts[index].displayName = String(name.prefix(80))
+        saveAccounts()
+    }
+
+    func addAccount(provider: Provider) {
+        guard provider == .openAI || provider == .anthropic else { return }
+        let id = "local-\(UUID().uuidString)"
+        let number = accounts.filter { $0.provider == provider && !$0.isRetiredSource }.count + 1
+        accounts.append(LocalProviderAccountConfiguration(
+            id: id, provider: provider,
+            connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
+            displayName: "\(provider.displayName) \(number)",
+            codexClient: provider == .openAI ? .codex : nil,
+            sessionQuotaPath: provider == .openAI ? "" : nil
+        ))
+        saveAccounts()
+    }
+
+    func selectSessionQuotaFolder(for accountID: String, onVerified: @escaping () -> Void) {
+        let panel = NSOpenPanel()
+        panel.message = "Select the sessions folder dedicated to this OpenAI account. Do not select a shared login history."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url,
+                  let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+            guard !accounts.contains(where: { $0.id != accountID && $0.sessionQuotaPath == url.path }) else {
+                errorMessage = "This folder is already assigned to an account."
+                return
+            }
+            do {
+                try bookmarkStore.createAndStoreBookmark(for: url, path: url.path)
+                accounts[index].sessionQuotaPath = url.path
+                saveAccounts()
+                onVerified()
+            } catch {
+                errorMessage = "Session folder access could not be saved."
+            }
+        }
+    }
+
     func setAccount(_ accountID: String, isEnabled: Bool) {
         guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
         accounts[index].isEnabled = isEnabled
@@ -2222,6 +2294,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
+        if let path = account.sessionQuotaPath {
+            return path.isEmpty ? "Select a dedicated account sessions folder; quota data is unavailable until selected."
+                : "Read-only session quota observations; freshness follows the original event timestamp."
+        }
         let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
     }
@@ -2547,6 +2623,7 @@ struct OverviewDashboard: View {
                     UsagePaceCard(keepWorkingForecast: keepWorkingForecast)
                 }
                 SetupStatusStrip(model: model)
+                ProviderAccountsQuotaSection(model: model, snapshot: snapshot, now: presentationDate)
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
                 PromptCacheOverviewCard(summary: model.promptCacheSummary)
                 SectionHeader(
@@ -3376,6 +3453,98 @@ struct ProviderDashboard: View {
     }
 }
 
+struct ProviderAccountsQuotaSection: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    let now: Date
+
+    private var accounts: [ProviderAccountQuota] {
+        ProviderAccountQuota.accounts(configurations: model.configuredAccounts, snapshot: snapshot,
+                                      reports: model.storedSnapshot?.reports ?? [])
+    }
+
+    var body: some View {
+        DetailCard(title: "All Provider Accounts") {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(accounts) { account in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            ProviderBadge(provider: account.provider)
+                            Text(account.displayName.isEmpty ? "Unnamed account" : account.displayName)
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Text(account.isEnabled ? account.status.previewStatusText : "Off")
+                                .font(.system(size: 11))
+                                .foregroundStyle(CPTheme.statusColor(account.status))
+                        }
+                        if account.limits.isEmpty {
+                            Text(account.isEnabled ? "Usage unavailable · Burn unknown · Reset unknown" : "Account disabled")
+                                .font(.system(size: 11))
+                                .foregroundStyle(CPTheme.secondaryText)
+                        }
+                        ForEach(account.limits) { limit in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(limit.label).font(.system(size: 11, weight: .medium))
+                                    Spacer()
+                                    Text(limit.unit == .credits && limit.label == "Credit balance"
+                                         ? "\(limit.used ?? 0) credits" : limit.previewUsageText).monospacedDigit()
+                                }
+                                HStack {
+                                    Text(burnText(for: limit, account: account))
+                                    Spacer()
+                                    Text(limit.resetsAt.map { "Reset \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Reset unknown")
+                                }
+                                .font(.system(size: 10))
+                                .foregroundStyle(CPTheme.secondaryText)
+                            }
+                        }
+                        if let credits = account.report?.resetCredits {
+                            Text("\(credits.availableCount) reset credits · " + (credits.earliestKnownExpiry.map {
+                                "Earliest expiry \($0.formatted(date: .abbreviated, time: .shortened))"
+                            } ?? "Expiry dates unknown"))
+                                .font(.system(size: 11))
+                            ForEach(Array(credits.knownExpiryDates.enumerated()), id: \.offset) { _, date in
+                                Text("Credit expires \(date.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.system(size: 10))
+                            }
+                            if credits.coverage != .complete {
+                                Text("Some expiry dates unavailable").font(.system(size: 10))
+                            }
+                        } else {
+                            Text("Expiring resets / credits unknown")
+                                .font(.system(size: 10))
+                                .foregroundStyle(CPTheme.tertiaryText)
+                        }
+                        if let observed = account.limits.compactMap(\.lastUpdatedAt).min() {
+                            Text("Observed \(observed.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.system(size: 10))
+                                .foregroundStyle(CPTheme.tertiaryText)
+                        }
+                        if account.status == .failure || account.status == .unknown {
+                            Text("Check this account's source in Settings or Diagnostics.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(CPTheme.secondaryText)
+                        }
+                    }
+                    .padding(10)
+                    .background(CPTheme.surface2)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                Text("Burn uses account observations, in percentage points per hour. Unknown means calibration or fresh data is needed.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(CPTheme.tertiaryText)
+            }
+        }
+    }
+
+    private func burnText(for limit: UsageLimit, account: ProviderAccountQuota) -> String {
+        guard account.isEnabled, account.status != .failure, account.status != .stale,
+              limit.unit == .percent, let rate = model.accountBurnRates[limit.id] else { return "Burn unknown" }
+        return String(format: "Burn ~%.1f pp/h", rate.unitsPerHour)
+    }
+}
+
 struct ProviderAccountLimitsSection: View {
     let summaries: [MainLimitSummary]
 
@@ -3680,10 +3849,8 @@ struct OpenAIAccountLimitSummary: Identifiable {
             .filter { $0.provider == .openAI }
             .flatMap(\.limits)
             .filter { $0.isMainLimit }
-        let positiveResetReports = reports.filter {
-            $0.provider == .openAI && ($0.resetCredits?.availableCount ?? 0) > 0
-        }
-        let reportsByAccountID = Dictionary(grouping: positiveResetReports, by: \.accountID)
+        let accountReports = reports.filter { $0.provider == .openAI }
+        let reportsByAccountID = Dictionary(grouping: accountReports, by: \.accountID)
             .compactMapValues(preferredReport)
         let accountIDs = Set(limits.map(\.accountID)).union(reportsByAccountID.keys)
         return accountIDs
@@ -4708,6 +4875,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
+    @Published private(set) var accountBurnRates: [String: ObservedBurnRate] = [:]
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
@@ -5080,10 +5248,12 @@ final class ContextPanelAppModel: ObservableObject {
                 history: history,
                 now: now
             )
+            let accountRates = AccountQuotaBurnRateEstimator.rates(current: currentSnapshot, history: history, now: now)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self?.observedSnapshot.generatedAt == generatedAt else { return }
                 self?.observedBurnRates = rates
+                self?.accountBurnRates = accountRates
             }
         }
     }

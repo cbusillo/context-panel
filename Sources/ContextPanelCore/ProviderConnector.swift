@@ -59,16 +59,19 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
     public let observedAt: Date
     public let coverage: ProviderResetCreditCoverage
     public let earliestKnownExpiry: Date?
+    public let knownExpiryDates: [Date]
 
     public init(
         availableCount: Int,
         observedAt: Date,
         coverage: ProviderResetCreditCoverage,
-        earliestKnownExpiry: Date? = nil
+        earliestKnownExpiry: Date? = nil,
+        knownExpiryDates: [Date] = []
     ) {
         let normalizedCount = max(0, availableCount)
         self.availableCount = normalizedCount
         self.observedAt = observedAt
+        self.knownExpiryDates = coverage == .countOnly ? [] : Array(knownExpiryDates.sorted().prefix(normalizedCount))
         if normalizedCount == 0 || earliestKnownExpiry == nil {
             self.coverage = .countOnly
             self.earliestKnownExpiry = nil
@@ -84,7 +87,8 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
             availableCount: try container.decode(Int.self, forKey: .availableCount),
             observedAt: try container.decode(Date.self, forKey: .observedAt),
             coverage: try container.decode(ProviderResetCreditCoverage.self, forKey: .coverage),
-            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry)
+            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry),
+            knownExpiryDates: try container.decodeIfPresent([Date].self, forKey: .knownExpiryDates) ?? []
         )
     }
 

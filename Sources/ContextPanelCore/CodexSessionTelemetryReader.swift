@@ -118,7 +118,7 @@ public enum CodexSessionTelemetryReader {
         return Counters(inputTokens: 0, cachedInputTokens: current.cachedInputTokens == nil ? nil : 0)
     }
 
-    private static func sessionFiles(rootDirectory: URL, now: Date, fileManager: FileManager) -> [URL] {
+    static func sessionFiles(rootDirectory: URL, now: Date, fileManager: FileManager) -> [URL] {
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey]
         guard let rootValues = try? rootDirectory.resourceValues(forKeys: keys),
               rootValues.isDirectory == true, rootValues.isSymbolicLink != true else { return [] }
@@ -177,7 +177,7 @@ public enum CodexSessionTelemetryReader {
         }.prefix(maximumFiles).map(\.url)
     }
 
-    private static func readTail(_ url: URL, byteLimit: Int) -> (data: Data, truncated: Bool, bytesRead: Int)? {
+    static func readTail(_ url: URL, byteLimit: Int) -> (data: Data, truncated: Bool, bytesRead: Int)? {
         let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { return nil }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)

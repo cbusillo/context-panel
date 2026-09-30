@@ -38,6 +38,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var authPath: String?
     public var commandPath: String?
     public var codexClient: CodexClient?
+    /// An explicitly selected, single-account session directory. Never inferred from a login.
+    public var sessionQuotaPath: String?
 
     public init(
         id: String,
@@ -47,7 +49,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         isEnabled: Bool = true,
         authPath: String? = nil,
         commandPath: String? = nil,
-        codexClient: CodexClient? = nil
+        codexClient: CodexClient? = nil,
+        sessionQuotaPath: String? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -57,11 +60,13 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.authPath = authPath
         self.commandPath = commandPath
         self.codexClient = codexClient
+        self.sessionQuotaPath = sessionQuotaPath
     }
 
     public var effectiveAuthPath: String? {
         switch connectorKind {
         case .codexRateLimits:
+            if sessionQuotaPath != nil { return nil }
             return authPath
         case .googleAntigravityQuota:
             return nil
@@ -75,6 +80,9 @@ public extension LocalProviderAccountConfiguration {
     var providerReportAccountIDs: [String] {
         switch connectorKind {
         case .codexRateLimits:
+            if sessionQuotaPath != nil {
+                return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
+            }
             guard let authPath else { return [] }
             return Self.localAccountIDs(provider: provider, path: authPath)
         case .googleAntigravityQuota:
@@ -278,6 +286,17 @@ public enum AccountConnectorFactory {
             guard account.isEnabled, !account.isRetiredSource else { return nil }
             switch account.connectorKind {
             case .codexRateLimits:
+                if let path = account.sessionQuotaPath {
+                    return CodexSessionQuotaConnector(account: account) { now in
+                        if let bookmarkStore, bookmarkStore.hasBookmark(for: path) {
+                            return try bookmarkStore.withResolvedURL(for: path) {
+                                CodexSessionQuotaReader.latest(rootDirectory: $0, now: now)
+                            } ?? nil
+                        }
+                        guard !requiresBookmarkedAuthFiles else { throw CocoaError(.fileReadNoPermission) }
+                        return CodexSessionQuotaReader.latest(rootDirectory: URL(fileURLWithPath: path), now: now)
+                    }
+                }
                 guard let authPath = account.authPath else { return nil }
                 let authFileLoader = makeAuthFileLoader(
                     accountID: account.id,

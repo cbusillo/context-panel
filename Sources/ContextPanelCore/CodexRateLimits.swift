@@ -190,7 +190,7 @@ public struct CodexAuthTokens: Codable, Equatable, Sendable {
 }
 
 private struct CodexAuthRecord: Equatable, Sendable {
-    let tokens: CodexAuthTokens
+    let tokens: CodexAuthTokens?
     let accountName: String
     let stableID: String?
     let planType: String?
@@ -223,24 +223,24 @@ public enum CodexAuthFileParser {
             let chatGPTAccounts = accountList.accounts.filter { account in
                 (account.mode == nil || account.mode == "chatgpt")
                     && !account.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    && account.tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             }
             let records = chatGPTAccounts.enumerated().compactMap { index, account -> CodexAuthRecord? in
-                guard let tokens = account.tokens else { return nil }
-                let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: tokens.idToken)
+                let tokens = account.tokens
+                if tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+                   chatGPTAccounts.contains(where: { $0.id == account.id && $0.tokens?.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }) {
+                    return nil
+                }
+                let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: tokens?.idToken)
                 let name = Self.accountDisplayName(
                     configuredName: accountName,
-                    accountLabel: account.label,
                     tokenIdentity: tokenIdentity,
                     fallbackSuffix: chatGPTAccounts.count == 1 ? nil : "\(index + 1)"
                 )
                 return CodexAuthRecord(
-                    tokens: CodexAuthTokens(
-                        accessToken: tokens.accessToken,
-                        accountID: tokens.accountID,
-                        idToken: tokens.idToken,
-                        refreshToken: tokens.refreshToken
-                    ),
+                    tokens: tokens.map {
+                        CodexAuthTokens(accessToken: $0.accessToken, accountID: $0.accountID,
+                                        idToken: $0.idToken, refreshToken: $0.refreshToken)
+                    },
                     accountName: name,
                     stableID: account.id,
                     planType: tokenIdentity.planType
@@ -258,7 +258,6 @@ public enum CodexAuthFileParser {
             tokens: authTokens,
             accountName: Self.accountDisplayName(
                 configuredName: accountName,
-                accountLabel: nil,
                 tokenIdentity: tokenIdentity,
                 fallbackSuffix: nil
             ),
@@ -269,16 +268,12 @@ public enum CodexAuthFileParser {
 
     private static func accountDisplayName(
         configuredName: String,
-        accountLabel: String?,
         tokenIdentity: CodexTokenIdentity,
         fallbackSuffix: String?
     ) -> String {
-        let baseName = [accountLabel, tokenIdentity.email, tokenIdentity.name]
-            .compactMap { value -> String? in
-                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-                return value
-            }
-            .first ?? fallbackSuffix.map { "\(configuredName) \($0)" } ?? configuredName
+        // Provider identity and catalog labels can contain personal information.
+        // Only the local configured label is presentation data.
+        let baseName = fallbackSuffix.map { "\(configuredName) \($0)" } ?? configuredName
         guard let planType = tokenIdentity.planType?.trimmingCharacters(in: .whitespacesAndNewlines), !planType.isEmpty else {
             return baseName
         }
@@ -346,7 +341,7 @@ public struct CodexAccountConfiguration: Equatable, Sendable {
     ) {
         self.configuredAccountID = configuredAccountID
         self.authPath = authPath
-        self.accountName = accountName ?? ConnectorRedactor.redactedPath(authPath)
+        self.accountName = accountName ?? "OpenAI"
         self.endpoint = endpoint
         self.modelAvailabilityEndpoint = modelAvailabilityEndpoint ?? Self.defaultModelAvailabilityEndpoint(for: endpoint)
     }
@@ -417,7 +412,15 @@ public struct CodexRateLimitConnector: ProviderConnector {
         account: CodexAccountConfiguration,
         now: Date
     ) async throws -> ProviderConnectorReport {
-        let auth = authRecord.tokens
+        guard let auth = authRecord.tokens, !auth.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ProviderConnectorReport(
+                provider: provider,
+                accountID: ConnectorRedactor.localAccountID(provider: provider, stableID: "local:\(authRecord.stableID ?? account.configuredAccountID ?? "unknown")"),
+                configuredAccountID: account.configuredAccountID, accountName: authRecord.accountName,
+                generatedAt: now, limits: [], status: .failure,
+                errorMessage: "This configured account has no readable credential. Reconnect it in its owning client."
+            )
+        }
         let providerAccountID = canonicalProviderAccountID(from: auth)
         let localAccountID = providerAccountID.map {
             ConnectorRedactor.localAccountID(provider: provider, stableID: "chatgpt:\($0)")
@@ -605,6 +608,15 @@ public func codexUsageLimits(
             observedAt: observedAt
         ))
     }
+    if let balance = snapshot.credits?.balance.flatMap(Double.init), balance.isFinite,
+       balance > 0, balance < Double(Int.max) {
+        limits.append(UsageLimit(
+            provider: .openAI, accountID: accountID, configuredAccountID: configuredAccountID,
+            accountName: accountName, label: "Credit balance", unit: .credits,
+            used: Int(balance), limit: nil, lastUpdatedAt: observedAt, confidence: .observed,
+            note: "Credit balance; expiry unknown"
+        ))
+    }
     return limits
 }
 
@@ -695,7 +707,8 @@ enum CodexResetCreditDetailsParser {
             availableCount: availableCount,
             observedAt: observedAt,
             coverage: coverage,
-            earliestKnownExpiry: coverage == .countOnly ? nil : expiries.min()
+            earliestKnownExpiry: coverage == .countOnly ? nil : expiries.min(),
+            knownExpiryDates: coverage == .countOnly ? [] : expiries
         )
     }
 }
@@ -825,8 +838,15 @@ private struct CodexAuthAccountsFilePayload: Decodable {
 private struct CodexAuthListedAccountPayload: Decodable {
     let id: String
     let mode: String?
-    let label: String?
     let tokens: CodexAuthTokenPayload?
+
+    enum CodingKeys: String, CodingKey { case id, mode, tokens }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        mode = try container.decodeIfPresent(String.self, forKey: .mode)
+        tokens = try? container.decode(CodexAuthTokenPayload.self, forKey: .tokens)
+    }
 }
 
 private struct CodexAuthTokenPayload: Decodable {

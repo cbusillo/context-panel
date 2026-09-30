@@ -17,6 +17,7 @@
     "testLanes": "docs/test-lanes.md",
     "localLimitProbe": "docs/local-limit-probe.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
+    "providerAccountQuotas": "docs/provider-account-quotas.md",
     "repoSettings": "docs/repo-settings.md"
   },
   "qualityGate": {

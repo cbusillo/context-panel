@@ -689,13 +689,13 @@ import Testing
 
     #expect(result.reports.count == 2)
     #expect(result.snapshot.limits.count == 4)
-    #expect(result.reports.map(\.accountName) == ["first@example.com · pro", "second@example.com · pro"])
+    #expect(result.reports.map(\.accountName) == ["OpenAI Code 1 · pro", "OpenAI Code 2 · pro"])
     #expect(result.reports.allSatisfy { $0.configuredAccountID == nil })
     #expect(result.snapshot.limits.map(\.accountName) == [
-        "first@example.com · pro",
-        "first@example.com · pro",
-        "second@example.com · pro",
-        "second@example.com · pro",
+        "OpenAI Code 1 · pro",
+        "OpenAI Code 1 · pro",
+        "OpenAI Code 2 · pro",
+        "OpenAI Code 2 · pro",
     ])
     #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == nil })
     #expect(result.reports.map { $0.resetCredits?.availableCount } == [2, 3])
@@ -794,8 +794,10 @@ func codexConnectorSkipsUnusableSelectedRowWithoutHidingHealthySiblings(extraRow
         fileLoader: { _ in selectedCodexCatalog(selector: selector, extraRows: extraRow) }
     )
     let result = await connector.refresh(now: Date())
-    #expect(result.reports.count == 2)
-    #expect(result.reports.allSatisfy { $0.status == .healthy })
+    let expectedFailures = extraRow.contains("\"id\":\"selected\"") && !extraRow.contains("\"mode\"") ? 1 : 0
+    #expect(result.reports.count == 2 + expectedFailures)
+    #expect(result.reports.filter { $0.status == .healthy }.count == 2)
+    #expect(result.reports.filter { $0.status == .failure }.count == expectedFailures)
     #expect(http.requests.map { $0.headers["Authorization"] } == ["Bearer token-a", "Bearer token-b"])
 }
 
@@ -935,11 +937,12 @@ func codexCatalogDuplicateIdentityKeepsHealthyCredentialsRegardlessOfOrder(expir
     )
 
     let result = await connector.refresh(now: Date())
-    let report = try #require(result.reports.first)
+    let report = try #require(result.reports.first { $0.status == .healthy })
 
-    #expect(result.reports.count == 1)
+    #expect(result.reports.count == 5)
+    #expect(result.reports.filter { $0.status == .failure }.count == 4)
     #expect(report.status == .healthy)
-    #expect(report.accountName == "Codex Lab")
+    #expect(report.accountName == "Codex Lab 5")
     #expect(report.accountID == ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:account-a"))
     #expect(http.requests.count == 1)
     #expect(http.requests.first?.headers["Authorization"] == "Bearer valid-token")
@@ -965,9 +968,11 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
 
     #expect(result.reports.count == 1)
     #expect(report.status == .failure)
-    let expectedError = authJSON.contains("\"accounts\"")
+    let expectedError = authJSON.contains("\"mode\":\"apikey\"")
         ? "The configured Codex client's account catalog has no readable ChatGPT accounts."
-        : "auth file does not contain ChatGPT token auth"
+        : authJSON.contains("\"accounts\"")
+            ? "This configured account has no readable credential."
+            : "auth file does not contain ChatGPT token auth"
     #expect(report.errorMessage?.contains(expectedError) == true)
     #expect(result.snapshot.limits.isEmpty)
     #expect(http.requests.isEmpty)
