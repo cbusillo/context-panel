@@ -1907,6 +1907,27 @@ import Testing
     #expect(try credentialStore.load(accountID: "openai-code") == currentCredential)
 }
 
+@Test func snapshotRefreshServiceDoesNotImportAuthForSessionQuotaSource() throws {
+    let root = try temporaryDirectory()
+    let authURL = root.appending(path: "auth.json")
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    let cached = Data("synthetic cached credential".utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["session-account": cached])
+    try Data("synthetic changed credential".utf8).write(to: authURL)
+    try bookmarkStore.createAndStoreBookmark(for: authURL, path: authURL.path)
+    try accountStore.save(AccountConfigurationDocument(updatedAt: .distantPast, accounts: [
+        LocalProviderAccountConfiguration(id: "session-account", provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Personal", authPath: authURL.path, codexQuotaPath: root.appending(path: "sessions").path),
+    ]))
+    let service = SnapshotRefreshService(accountStore: accountStore,
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))),
+        bookmarkStore: bookmarkStore, credentialStore: credentialStore,
+        promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+    service.importConfiguredAuthFiles()
+    #expect(try credentialStore.load(accountID: "session-account") == cached)
+}
+
 @Test func snapshotRefreshServiceMirrorsPromptCacheFromConfiguredCodexUsageDirectories() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())

@@ -581,7 +581,8 @@ public func codexUsageLimits(
     accountID: String,
     configuredAccountID: String? = nil,
     accountName: String,
-    observedAt: Date
+    observedAt: Date,
+    statusOverride: UsageStatus? = nil
 ) -> [UsageLimit] {
     var limits: [UsageLimit] = []
     if let primary = snapshot.primary {
@@ -591,7 +592,8 @@ public func codexUsageLimits(
             accountID: accountID,
             configuredAccountID: configuredAccountID,
             accountName: accountName,
-            observedAt: observedAt
+            observedAt: observedAt,
+            statusOverride: statusOverride
         ))
     }
     if let secondary = snapshot.secondary {
@@ -601,7 +603,8 @@ public func codexUsageLimits(
             accountID: accountID,
             configuredAccountID: configuredAccountID,
             accountName: accountName,
-            observedAt: observedAt
+            observedAt: observedAt,
+            statusOverride: statusOverride
         ))
     }
     return limits
@@ -963,7 +966,8 @@ private func codexUsageLimit(
     accountID: String,
     configuredAccountID: String?,
     accountName: String,
-    observedAt: Date
+    observedAt: Date,
+    statusOverride: UsageStatus?
 ) -> UsageLimit {
     let windowLabel = window.windowMinutes.map(codexWindowLabel(minutes:)) ?? "Rolling"
     return UsageLimit(
@@ -980,6 +984,7 @@ private func codexUsageLimit(
         resetsAt: window.resetsAt,
         lastUpdatedAt: observedAt,
         confidence: .observed,
+        statusOverride: statusOverride,
         note: "plan: \(snapshot.planType)"
     )
 }

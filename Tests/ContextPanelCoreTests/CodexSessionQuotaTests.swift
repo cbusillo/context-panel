@@ -53,6 +53,7 @@ private struct QuotaFixture {
     let connector = try fixture.connector()
     let report = try #require(await connector.refresh(now: fixture.now).reports.first)
     #expect(report.status == .stale)
+    #expect(report.limits.allSatisfy { !$0.isLiveCapacityBucket(at: fixture.now) })
     #expect(report.limits.first?.lastUpdatedAt == fixture.now.addingTimeInterval(-age))
     let rows = AccountCapacity.rows(configuration: [fixture.account()],
         snapshot: UsageSnapshot(generatedAt: fixture.now, limits: report.limits),
@@ -136,4 +137,20 @@ private struct QuotaFixture {
     let rows = AccountCapacity.rows(configuration: configs, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [], now: now)
     #expect(rows.map(\.provider) == [.google, .anthropic])
     #expect(rows.last?.isNotConnected == true)
+}
+
+@Test func blankOpenAISourcesRemainDistinctBeforeFolderSelection() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let configs = ["projects", "research"].map {
+        LocalProviderAccountConfiguration(id: $0, provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: $0, authPath: "")
+    }
+    #expect(AccountConnectorFactory.connectors(from: AccountConfigurationDocument(updatedAt: now, accounts: configs)).isEmpty)
+    let oldReports = configs.map { config in
+        StoredProviderReport(provider: .openAI, accountID: ConnectorRedactor.localAccountID(provider: .openAI, path: ""),
+            configuredAccountID: config.id, accountName: config.displayName, generatedAt: now,
+            status: .failure, errorMessage: "No source")
+    }
+    let rows = AccountCapacity.rows(configuration: configs, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: oldReports, now: now)
+    #expect(rows.map(\.id) == configs.map(\.id))
 }

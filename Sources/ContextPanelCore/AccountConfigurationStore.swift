@@ -70,6 +70,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         switch connectorKind {
         case .codexRateLimits:
             if codexQuotaPath != nil { return nil }
+            guard let authPath, !authPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return authPath
         case .googleAntigravityQuota:
             return nil
@@ -86,7 +87,7 @@ public extension LocalProviderAccountConfiguration {
             if codexQuotaPath != nil {
                 return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
             }
-            guard let authPath else { return [] }
+            guard let authPath = effectiveAuthPath else { return [] }
             return Self.localAccountIDs(provider: provider, path: authPath)
         case .googleAntigravityQuota:
             return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
@@ -293,7 +294,7 @@ public enum AccountConnectorFactory {
                     return makeSessionQuotaConnector(account: account, document: document,
                         bookmarkStore: bookmarkStore, requiresBookmark: requiresBookmarkedAuthFiles)
                 }
-                guard let authPath = account.authPath else { return nil }
+                guard let authPath = account.effectiveAuthPath else { return nil }
                 let authFileLoader = makeAuthFileLoader(
                     accountID: account.id,
                     bookmarkStore: bookmarkStore,

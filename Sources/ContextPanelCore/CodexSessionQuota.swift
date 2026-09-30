@@ -137,16 +137,17 @@ public struct CodexSessionQuotaConnector: ProviderConnector {
         var message: String? = "No quota observation in the selected account's session directory."
         do {
             if let observation = try loader(now) {
+                let expired = [observation.snapshot.primary, observation.snapshot.secondary]
+                    .compactMap { $0?.resetsAt }.contains { $0 <= now }
+                let stale = now.timeIntervalSince(observation.observedAt) > SnapshotFreshness.appMaximumAge || expired
                 limits = codexUsageLimits(from: observation.snapshot, accountID: accountID,
                                           configuredAccountID: account.id, accountName: account.displayName,
-                                          observedAt: observation.observedAt)
+                                          observedAt: observation.observedAt, statusOverride: stale ? .stale : nil)
                 usageCredits = observation.snapshot.credits.map {
                     ProviderUsageCreditSummary(hasCredits: $0.hasCredits, unlimited: $0.unlimited,
                                                balance: $0.balance.flatMap(Double.init))
                 }
-                let expired = limits.contains { ($0.resetsAt ?? .distantFuture) <= now }
-                status = now.timeIntervalSince(observation.observedAt) > SnapshotFreshness.appMaximumAge || expired
-                    ? .stale : UsageSnapshot(generatedAt: now, limits: limits).aggregateStatus
+                status = stale ? .stale : UsageSnapshot(generatedAt: now, limits: limits).aggregateStatus
                 message = status == .stale ? "Session quota is stale. Run this account in its own harness, then refresh." : nil
             }
         } catch CodexSessionQuotaError.sharedDirectory {

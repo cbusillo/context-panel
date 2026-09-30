@@ -23,8 +23,10 @@ public struct AccountCapacity: Identifiable, Sendable {
     ) -> [Self] {
         var seen = Set<String>()
         return configuration.filter { !$0.isRetiredSource }.flatMap { account -> [Self] in
-            let matchingReports = reports.filter { account.matchesProviderReport($0) }
-            let matchingLimits = snapshot.limits.filter {
+            let unbound = account.connectorKind == .codexRateLimits
+                && account.codexQuotaPath == nil && account.effectiveAuthPath == nil
+            let matchingReports = unbound ? [] : reports.filter { account.matchesProviderReport($0) }
+            let matchingLimits = unbound ? [] : snapshot.limits.filter {
                 $0.provider == account.provider && ($0.configuredAccountID == account.id || account.providerReportAccountIDs.contains($0.accountID))
             }
             let sourceFailure = matchingReports.first { $0.status == .failure && account.providerReportAccountIDs.contains($0.accountID) }

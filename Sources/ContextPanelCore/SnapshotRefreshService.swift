@@ -631,7 +631,7 @@ public struct SnapshotRefreshService: Sendable {
         let accountDocument = accountStore.load(now: now).document
         for account in accountDocument.accounts where account.isEnabled && !account.isRetiredSource {
             guard account.connectorKind.importsAuthFileCredential,
-                  let authPath = account.authPath
+                  let authPath = account.effectiveAuthPath
             else { continue }
             let expanded = NSString(string: authPath).expandingTildeInPath
             guard let data = try? bookmarkStore.readData(for: expanded) else { continue }

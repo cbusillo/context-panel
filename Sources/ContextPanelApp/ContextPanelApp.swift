@@ -1796,7 +1796,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             id: "local-" + UUID().uuidString.lowercased(), provider: provider,
             connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
             displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
-            authPath: provider == .openAI ? "" : nil,
+            authPath: nil,
             codexClient: provider == .openAI ? .codex : nil
         ))
         saveAccounts()

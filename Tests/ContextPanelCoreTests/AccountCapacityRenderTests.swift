@@ -11,7 +11,8 @@ func allAccountsCardRendersAllProvidersWithPartialData(width: Int) throws {
     let configs = (0..<6).map { index in
         LocalProviderAccountConfiguration(id: "fixture-\(index)", provider: index < 3 ? .openAI : index < 5 ? .anthropic : .google,
             connectorKind: index < 3 ? .codexRateLimits : index < 5 ? .claudeOAuthUsage : .googleAntigravityQuota,
-            displayName: ["Personal", "Projects", "Research", "Writing", "Secondary", "Antigravity"][index])
+            displayName: ["Personal", "Projects", "Research", "Writing", "Secondary", "Antigravity"][index],
+            codexQuotaPath: index < 3 ? "/fixture/account-\(index)/sessions" : nil)
     }
     let limits = configs.prefix(4).flatMap { config in
         ["5-hour", "Weekly"].map { window in
@@ -31,6 +32,7 @@ func allAccountsCardRendersAllProvidersWithPartialData(width: Int) throws {
             status: .healthy, errorMessage: nil)
     }
     let rows = AccountCapacity.rows(configuration: configs, snapshot: UsageSnapshot(generatedAt: now, limits: limits), reports: reports, now: now)
+    #expect(rows.prefix(3).allSatisfy { !$0.limits.isEmpty })
     let rates = Dictionary(uniqueKeysWithValues: configs.prefix(4).map { config in
         (config.id, Dictionary(uniqueKeysWithValues: limits.filter { $0.accountID == config.id }.map {
             ($0.id, ObservedBurnRate(limitID: $0.id, unitsPerHour: 1.5, observedDurationHours: 2, sampleCount: 3))
