@@ -393,6 +393,7 @@ struct SettingsPane: View {
     @StateObject private var model = SettingsPaneModel()
     @State private var focusedDestination: SettingsNavigationRequest.Destination?
     @State private var galleryRoute: ValidationGalleryRoute?
+    @State private var authPathDrafts: [String: String] = [:]
 
     var body: some View {
         Form {
@@ -499,11 +500,20 @@ struct SettingsPane: View {
                             }
                         }
                         if account.connectorKind == .codexRateLimits {
-                            TextField("Existing auth file path", text: Binding(
-                                get: { account.authPath ?? "" },
-                                set: { model.setAuthPath(account.id, path: $0) }
-                            ))
-                            .textFieldStyle(.roundedBorder)
+                            HStack {
+                                TextField("Existing auth file path", text: Binding(
+                                    get: { authPathDrafts[account.id] ?? account.authPath ?? "" },
+                                    set: { authPathDrafts[account.id] = $0 }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                                Button("Apply path") {
+                                    guard let path = authPathDrafts[account.id] else { return }
+                                    model.setAuthPath(account.id, path: path)
+                                }
+                                .disabled((authPathDrafts[account.id] ?? account.authPath ?? "") == (account.authPath ?? ""))
+                            }
+                            Text("Applying a different path disconnects the imported login. Select File to authorize the new source.")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             ForEach(Array(Set((appModel.storedSnapshot?.reports ?? [])
                                 .filter { account.matchesProviderReport($0) }.map(\.accountID))).sorted(), id: \.self) { id in
                                 TextField("Local name for account \(id.suffix(6))", text: Binding(
@@ -1789,7 +1799,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func setAuthPath(_ accountID: String, path: String) {
-        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }),
+              path != (accounts[index].authPath ?? "") else { return }
         // A new source must not continue polling the old imported credential.
         do {
             try credentialStore.delete(accountID: accountID)
@@ -6781,6 +6792,7 @@ struct AccountCapacityCard: View {
 
     private func stateText(_ row: AccountCapacity) -> String {
         guard row.isEnabled else { return "Off" }
+        if row.isNotConnected { return "Not connected · check Settings" }
         switch row.status {
         case .failure: return "Unavailable · check Settings"
         case .unknown: return "Unknown · check Settings"

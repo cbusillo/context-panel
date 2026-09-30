@@ -10,6 +10,11 @@ public struct AccountCapacity: Identifiable, Sendable {
     public let report: StoredProviderReport?
     public let status: UsageStatus
 
+    public var isNotConnected: Bool {
+        provider == .anthropic && (report?.requiresCredentialReconnect == true
+            || (report == nil && limits.isEmpty))
+    }
+
     public static func rows(
         configuration: [LocalProviderAccountConfiguration],
         snapshot: UsageSnapshot,
@@ -32,7 +37,7 @@ public struct AccountCapacity: Identifiable, Sendable {
                 let limits = matchingLimits.filter { $0.accountID == id }
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
                 let expired = limits.contains { ($0.resetsAt ?? .distantFuture) <= now }
-                let stale = report.map { now.timeIntervalSince($0.generatedAt) > 10 * 60 } ?? false
+                let stale = report.map { now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false
                 let status: UsageStatus = !account.isEnabled ? .unknown
                     : report?.status == .failure ? .failure
                     : stale || expired ? .stale

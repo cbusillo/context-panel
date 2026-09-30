@@ -544,6 +544,16 @@ average is labeled separately from measured history. Missing evidence stays
 unknown. A source-level failure applies to its last-known members without
 creating an extra account lane.
 
+Account rows use the shared app freshness policy for stale status and burn-rate
+visibility. Editing an auth path keeps a draft until **Apply path** is pressed;
+only applying a different path disconnects that entry's imported login. Use
+**Select File** to authorize the replacement source. Typing alone does not
+change the saved source or credential.
+
+Claude entries with no connection evidence yet, or a refresh report requiring
+reconnection, display **Not connected**. They do not borrow a sibling's usage
+or credentials. A provider/network failure remains **Unavailable**.
+
 | Account          | Read route                                                                     | What still needs local setup                         |
 | ---------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | OpenAI account 1 | Existing Codex auth file → read-only Codex usage endpoint                      | Choose its file and local name                       |

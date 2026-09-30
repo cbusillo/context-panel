@@ -41,7 +41,7 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
     #expect(rows[0].name == "Research")
     #expect(rows[1].isEnabled == false)
     let staleReport = StoredProviderReport(provider: .openAI, accountID: "a", configuredAccountID: "a",
-        accountName: "Ignored", generatedAt: capacityNow.addingTimeInterval(-700), status: .healthy, errorMessage: nil)
+        accountName: "Ignored", generatedAt: capacityNow.addingTimeInterval(-SnapshotFreshness.appMaximumAge - 1), status: .healthy, errorMessage: nil)
     let stale = AccountCapacity.rows(configuration: [alias], snapshot: UsageSnapshot(generatedAt: capacityNow,
         limits: [capacityLimit("a", used: 30)]), reports: [staleReport], now: capacityNow)
     #expect(stale.first?.status == .stale)
@@ -60,6 +60,40 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
     #expect(rates["a"]?[capacityLimit("a", used: 0).id]?.unitsPerHour == 4)
     #expect(rates["b"]?[capacityLimit("b", used: 0).id]?.unitsPerHour == 40)
     #expect(rates["missing"] == nil)
+}
+
+@Test(arguments: [0.75, 1.0, 1.01])
+func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
+    let observedAt = capacityNow.addingTimeInterval(-SnapshotFreshness.appMaximumAge * ageFraction)
+    let report = StoredProviderReport(provider: .openAI, accountID: "a", configuredAccountID: "a",
+        accountName: "Local a", generatedAt: observedAt, status: .healthy, errorMessage: nil)
+    let row = try #require(AccountCapacity.rows(configuration: [capacityConfiguration("a")],
+        snapshot: UsageSnapshot(generatedAt: observedAt, limits: [capacityLimit("a", used: 30, at: observedAt)]),
+        reports: [report], now: capacityNow).first)
+    #expect(row.status == (ageFraction > 1 ? .stale : .healthy))
+}
+
+@Test func claudeCapacityKeepsConnectedAndUnconnectedAccountsSeparate() throws {
+    let configs = ["primary", "secondary"].map { capacityConfiguration($0, provider: .anthropic) }
+    let limit = UsageLimit(provider: .anthropic, accountID: "primary", configuredAccountID: "primary",
+        accountName: "Writing", label: "Weekly", unit: .percent, used: 30, limit: 100,
+        lastUpdatedAt: capacityNow)
+    let connected = StoredProviderReport(provider: .anthropic, accountID: "primary", configuredAccountID: "primary",
+        accountName: "Writing", generatedAt: capacityNow, status: .healthy, errorMessage: nil)
+    let missing = StoredProviderReport(provider: .anthropic, accountID: "secondary", configuredAccountID: "secondary",
+        accountName: "Secondary", generatedAt: capacityNow, status: .failure,
+        errorMessage: "Claude is not connected. Sign in to Claude from Settings.")
+    for reports in [[connected], [connected, missing]] {
+        let rows = AccountCapacity.rows(configuration: configs,
+            snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [limit]), reports: reports, now: capacityNow)
+        #expect(rows.count == 2)
+        let primary = try #require(rows.first { $0.id == "primary" })
+        let secondary = try #require(rows.first { $0.id == "secondary" })
+        #expect(!primary.isNotConnected)
+        #expect(primary.limits == [limit])
+        #expect(secondary.isNotConnected)
+        #expect(secondary.limits.isEmpty)
+    }
 }
 
 @Test func accountBurnRateDoesNotCrossResetBoundary() {
