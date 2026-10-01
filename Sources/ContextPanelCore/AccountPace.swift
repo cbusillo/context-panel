@@ -118,7 +118,9 @@ public enum AccountPaceText {
         hour.locale = locale
         hour.timeZone = timeZone
         guard !calendar.isDate(date, inSameDayAs: now) else { return "~" + date.formatted(hour) }
-        var day = Date.FormatStyle.dateTime.weekday(.abbreviated)
+        let sameWeekday = calendar.component(.weekday, from: date) == calendar.component(.weekday, from: now)
+        var day = !sameWeekday && abs(date.timeIntervalSince(now)) < 7 * 86_400
+            ? Date.FormatStyle.dateTime.weekday(.abbreviated) : Date.FormatStyle.dateTime.month(.abbreviated).day()
         day.locale = locale
         day.timeZone = timeZone
         return date.formatted(day) + " ~" + date.formatted(hour)

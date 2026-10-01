@@ -146,7 +146,7 @@ struct AccountGlanceWidget: View {
             }
             Spacer(minLength: 0)
             if showsDeadline, let deadline = overview.nextDeadline {
-                Link(destination: links.deadlines) { bankedLine(deadline, compact: false, total: overview.deadlines.count) }
+                Link(destination: links.deadlines) { bankedLine(deadline, compact: false, total: overview.deadlines.filter { $0.state == .available }.count) }
                     .buttonStyle(.plain)
             } else if overview.accounts.count > rows.count {
                 Link("+\(overview.accounts.count - rows.count) more", destination: links.overview)
@@ -161,7 +161,7 @@ struct AccountGlanceWidget: View {
             Group {
                 Text("5h").frame(width: 44, alignment: .leading)
                 Text(overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 } ? "Week" : AccountTerms.longWindow).frame(width: 52, alignment: .leading)
-                Text(trailing).frame(width: 70, alignment: .trailing)
+                Text(trailing).frame(width: 98, alignment: .trailing)
             }
             .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
         }
@@ -177,7 +177,7 @@ struct AccountGlanceWidget: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             windowCell(account, window: fiveHour(account), width: 44)
             windowCell(account, window: weekly(account), width: 52)
-            trailingTime(account).frame(width: 70, alignment: .trailing)
+            trailingTime(account).frame(width: 98, alignment: .trailing)
         }
         .frame(height: 17)
         .contentShape(Rectangle())
@@ -303,7 +303,7 @@ struct AccountGlanceWidget: View {
             if let window { GlanceMeter(window: window, now: now, palette: palette, height: 3.5) }
             Text(window.flatMap { AccountTerms.reset($0, now: now) } ?? "")
                 .font(.system(size: 8)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
-                .frame(width: 58, alignment: .trailing)
+                .frame(width: 86, alignment: .trailing)
         }
         .frame(maxWidth: .infinity)
     }

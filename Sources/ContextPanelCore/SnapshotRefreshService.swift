@@ -688,7 +688,7 @@ public struct SnapshotRefreshService: Sendable {
             // even before this Mac has obtained its first usage observation.
             if accountResult.status == .healthy, let companionSyncPublisher {
                 _ = await companionSyncPublisher.publishAll(storedSnapshot: previousStoredSnapshot
-                    ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: []),
+                    ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: .distantPast, limits: []), reports: []),
                     publishedAt: now)
             }
             RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)

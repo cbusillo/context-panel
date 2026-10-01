@@ -1056,7 +1056,7 @@ private struct TVHeaderView: View {
                                 .lineLimit(1)
                         }
 
-                        if presentation.state == .setupNeeded {
+                        if presentation.state == .setupNeeded || presentation.generatedAt == .distantPast {
                             Text(isRefreshing ? "Checking for updates" : "No usage received yet")
                                 .font(.headline)
                                 .foregroundStyle(.secondary)

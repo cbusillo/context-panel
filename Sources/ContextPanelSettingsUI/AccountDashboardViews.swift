@@ -238,12 +238,13 @@ public struct AccountDashboardPanel: View {
                 Text(window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
                     .font(.system(size: 17, weight: window?.id == account.limitingWindow?.id ? .bold : .medium))
                     .monospacedDigit().foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
-                Text("%").font(.system(size: 10, weight: .medium)).foregroundStyle(palette.tertiary)
+                if window?.remainingFraction != nil { Text("%").font(.system(size: 10, weight: .medium)).foregroundStyle(palette.tertiary) }
                 Spacer(minLength: 4)
                 Text(window.map { w in
                     (w.duration == 5 * 3_600 || w.duration == 7 * 86_400 ? "" : w.shortLabel + " · ") + (AccountTerms.reset(w, now: now) ?? "")
                 } ?? "")
-                    .font(.system(size: 10.5)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
+                    .font(.system(size: window?.assumption == nil ? 10.5 : 9.5)).monospacedDigit().foregroundStyle(palette.secondary)
+                    .lineLimit(window?.assumption == nil ? 1 : 2)
             }
             if let window { DashboardMeter(window: window, now: now, palette: palette, height: 5) }
             else { Capsule().fill(palette.track).frame(height: 5) }

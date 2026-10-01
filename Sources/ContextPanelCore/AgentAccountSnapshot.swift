@@ -272,7 +272,7 @@ public extension AgentAccountSnapshot {
                 throw AgentAccountSnapshotReadError.unsupportedSchema
             }
             let history = JSONSnapshotStore(rootDirectory: snapshotDirectory).loadHistory(
-                query: SnapshotStoreQuery(since: now.addingTimeInterval(-24 * 3_600), limit: 2_000)
+                query: SnapshotStoreQuery(since: min(now, stored.snapshot.generatedAt).addingTimeInterval(-24 * 3_600), limit: 2_000)
             )
             return Self(configuration: configuration, stored: stored, history: history, now: now)
         } catch let error as AgentAccountSnapshotReadError {

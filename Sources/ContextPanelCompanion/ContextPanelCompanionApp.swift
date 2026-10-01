@@ -328,7 +328,7 @@ private struct CompanionRootView: View {
                         let overview = accountOverview(at: context.date)
                         switch route {
                         case .deadlines:
-                            AccountDeadlinesPanel(overview: overview,
+                            AccountDeadlinesPanel(overview: overview, now: context.date,
                                 openAccount: { accountPath.append(.account($0)) })
                         case let .account(id):
                             if let account = overview.accounts.first(where: { $0.id == id }) {

@@ -903,22 +903,22 @@ struct SettingsPane: View {
     }
 
     private var removalConfirmation: some View {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(AccountTerms.removeAccountEverywhereTitle).font(.headline)
-                Text(AccountTerms.removalExplanation).fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button(AccountTerms.cancel) { pendingRemovalID = nil }.keyboardShortcut(.cancelAction)
-                    Spacer()
-                    Button(AccountTerms.removeAccountEverywhere) {
-                        if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
-                        pendingRemovalID = nil
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(CPTheme.token(.destructiveFill))
-                    .foregroundStyle(CPTheme.token(.actionText))
+        VStack(alignment: .leading, spacing: 16) {
+            Text(AccountTerms.removeAccountEverywhereTitle).font(.headline)
+            Text(AccountTerms.removalExplanation).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(AccountTerms.cancel) { pendingRemovalID = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(AccountTerms.removeAccountEverywhere) {
+                    if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
+                    pendingRemovalID = nil
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(CPTheme.token(.destructiveFill))
+                .foregroundStyle(CPTheme.token(.actionText))
             }
-            .padding(24).frame(width: 420)
+        }
+        .padding(24).frame(width: 420)
     }
 
     private func nameBinding(_ field: SettingsNameField, saved: String) -> Binding<String> {
@@ -3135,7 +3135,7 @@ struct AccountDeadlinesDashboard: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let overview = model.accountOverview(at: context.date)
             ScrollView {
-                AccountDeadlinesPanel(overview: overview) { id in
+                AccountDeadlinesPanel(overview: overview, now: context.date) { id in
                     if let account = overview.accounts.first(where: { $0.id == id }) {
                         model.navigate(to: .providerAccount(account.metadata.provider, id))
                     }
@@ -5749,7 +5749,7 @@ final class ContextPanelAppModel: ObservableObject {
         let generatedAt = currentSnapshot.generatedAt
         observedBurnRatesTask = Task.detached(priority: .userInitiated) { [weak self] in
             let history = refreshService.loadHistory(
-                query: SnapshotStoreQuery(since: now.addingTimeInterval(-24 * 3_600))
+                query: SnapshotStoreQuery(since: min(now, currentSnapshot.generatedAt).addingTimeInterval(-24 * 3_600))
             )
             guard !Task.isCancelled else { return }
             let rates = MainLimitBurnRateEstimator.observedBurnRates(
