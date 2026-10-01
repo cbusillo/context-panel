@@ -7,11 +7,13 @@ public struct BankedResetDeadlinesView: View {
     private let reports: [StoredProviderReport]
     private let presentationDate: Date?
     private let limits: [UsageLimit]
+    private let maximumAge: TimeInterval
 
-    public init(reports: [StoredProviderReport], limits: [UsageLimit] = [], presentationDate: Date? = nil) {
+    public init(reports: [StoredProviderReport], limits: [UsageLimit] = [], presentationDate: Date? = nil, maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge) {
         self.reports = reports
         self.limits = limits
         self.presentationDate = presentationDate
+        self.maximumAge = maximumAge
     }
 
     public var body: some View {
@@ -43,7 +45,7 @@ public struct BankedResetDeadlinesView: View {
                                 Text("\(summary.availableCount - dates.count) expiry dates unknown")
                                     .foregroundStyle(.secondary)
                             }
-                            if report.status == .failure || abs(report.generatedAt.timeIntervalSince(summary.observedAt)) > 1 || now.timeIntervalSince(summary.observedAt) > SnapshotFreshness.companionProviderMaximumAge {
+                            if report.status == .failure || abs(report.generatedAt.timeIntervalSince(summary.observedAt)) > 1 || now.timeIntervalSince(summary.observedAt) > maximumAge {
                                 Text("Last observed · refresh the Mac for current inventory")
                                     .foregroundStyle(.secondary)
                             }

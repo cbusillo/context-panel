@@ -29,13 +29,14 @@ public enum CodexHomeBinding {
             URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
                 .deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
         }
-        if selected == shared && boundHome != mainHome.resolvingSymlinksInPath().standardizedFileURL.path { return true }
+        if (selected == shared || selected.hasPrefix(shared + "/")) && boundHome != mainHome.resolvingSymlinksInPath().standardizedFileURL.path { return true }
         return siblings.contains { sibling in
             guard sibling.id != account.id, sibling.isEnabled, sibling.provider == .openAI,
                   let path = sibling.authPath else { return false }
             let home = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).deletingLastPathComponent()
             guard home.resolvingSymlinksInPath().standardizedFileURL.path != boundHome else { return false }
-            return home.appending(path: "sessions").resolvingSymlinksInPath().standardizedFileURL.path == selected
+            let siblingSessions = home.appending(path: "sessions").resolvingSymlinksInPath().standardizedFileURL.path
+            return selected == siblingSessions || selected.hasPrefix(siblingSessions + "/")
         }
     }
 

@@ -121,11 +121,14 @@ private final class BindingDeletionRecorder: @unchecked Sendable {
     let unbound = LocalProviderAccountConfiguration(id: "unbound", provider: .openAI,
         connectorKind: .codexRateLimits, displayName: "Unbound")
     #expect(CodexHomeBinding.isSharedSessionMismatch(account: unbound, sessions: main.appending(path: "sessions"), mainHome: main))
+    #expect(CodexHomeBinding.isSharedSessionMismatch(account: unbound, sessions: main.appending(path: "sessions/2026/10/01"), mainHome: main))
+    #expect(!CodexHomeBinding.isSharedSessionMismatch(account: unbound, sessions: main.appending(path: "sessions-separate"), mainHome: main))
     let a = LocalProviderAccountConfiguration(id: "one", provider: .openAI,
         connectorKind: .codexRateLimits, displayName: "One", authPath: one.appending(path: "auth.json").path)
     var b = LocalProviderAccountConfiguration(id: "two", provider: .openAI,
         connectorKind: .codexRateLimits, displayName: "Two", authPath: two.appending(path: "auth.json").path)
     #expect(CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: two.appending(path: "sessions"), siblings: [a,b], mainHome: main))
+    #expect(CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: two.appending(path: "sessions/2026/10/01"), siblings: [a,b], mainHome: main))
     #expect(!CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: one.appending(path: "sessions"), siblings: [a,b], mainHome: main))
     b.isEnabled = false
     #expect(!CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: two.appending(path: "sessions"), siblings: [a,b], mainHome: main))

@@ -510,14 +510,20 @@ places banked reset offers and their expiry in web/Desktop **Settings → Usage*
 These offers are separate from the weekly natural reset schedule and usage
 credit balances. Read-only inspection of Claude Desktop 2.16120.0 program assets
 found a settings usage GET with `cedar_ember=1&skip_spend=1` and a `cedar_ember`
-grant inventory. After ordinary OAuth usage succeeds, the connector now makes
+grant inventory. Current Claude Code 2.1.286 program strings also contain the OAuth
+cedar_ember/skip_spend read route and the `claude-cli/` compatibility User-Agent
+format. The optional adapter uses that observed format; ordinary usage headers
+remain unchanged. This header alignment is a source lead, not proof of either
+private account’s offers. After ordinary OAuth usage succeeds, the connector now makes
 one optional GET to the same OAuth usage endpoint with those flags, using only
 that account's Context Panel-owned access token. It does not retry, rotate tokens
 or log raw responses for the optional request. That request has a three-second
 timeout. Failed, unsupported or malformed inventory reads have a six-hour
 process-local cooldown per account/endpoint, shared across newly constructed
 connectors; ordinary utilization continues on every refresh. Restarting the
-publisher permits one new probe. OAuth support for this inventory
+publisher permits one new probe. A successful read repeats on the next ordinary
+refresh; watch installed acceptance for vendor throttling before adding a
+success cache interval. OAuth support for this inventory
 has not yet been verified by a signed canonical runtime; the web/Desktop source
 is static schema evidence, not authenticated proof for either account.
 
@@ -527,9 +533,12 @@ offers count only when claimable under the vendor's limit/blocking/cooldown
 conditions. Malformed or absent inventory and rejected optional requests leave
 the known usage windows intact. IDs and provider metadata are discarded; only
 count, observation, coverage and dates enter the shared sanitized snapshot.
-The consuming reset POST is never used. The absence of a reset summary is
-**Banked resets unknown**, including on a connected Claude account. It is not a
-zero balance. Do not infer an offer expiry from `seven_day.resets_at`, a spend
+The consuming reset POST is never used. When no prior summary exists, absence of an inventory is **Banked resets unknown**,
+including on a connected Claude account. It is not a zero balance. If an optional
+read is missing or fails after an inventory was observed, keep its original dates
+and observation time as **Last observed**. Known expired entries stop counting
+even across repeated failures; undated historical counts remain explicitly stale
+and cannot support current widget advice. Do not infer an offer expiry from `seven_day.resets_at`, a spend
 balance, an issue comment or a sibling account. The owner declined manual fallback
 on #719 pending investigation of the automatic source used by Claude web/Desktop
 and additional OAuth usage fields. No manual balances or speculative API fields

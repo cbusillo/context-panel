@@ -352,7 +352,7 @@ private struct CompanionRootView: View {
 
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
             if !model.snapshot.reports.isEmpty {
-                BankedResetDeadlinesView(reports: model.snapshot.reports)
+                BankedResetDeadlinesView(reports: model.snapshot.reports, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
             }
             CompanionSyncStatusView(result: model.result)
         }
@@ -594,7 +594,7 @@ private struct CompanionValidationGalleryPreview: View {
                         }
                         CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
                         if !context.snapshot.reports.isEmpty {
-                            BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate)
+                            BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
                         }
                         CompanionSyncStatusView(result: result)
                     }

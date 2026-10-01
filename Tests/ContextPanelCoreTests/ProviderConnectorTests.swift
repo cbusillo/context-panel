@@ -2032,6 +2032,10 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         #expect(query.contains(URLQueryItem(name: "cedar_ember", value: "1")))
         #expect(query.contains(URLQueryItem(name: "skip_spend", value: "1")))
         #expect(optional.headers["Authorization"] == "Bearer panel-owned-access")
+        #expect(optional.headers["User-Agent"] == ClaudeOAuthMetadata.optionalResetUserAgent)
+        #expect(http.requests.first?.headers["User-Agent"] == ClaudeOAuthMetadata.usageUserAgent)
+        #expect(optional.headers["anthropic-client-platform"] == nil)
+        #expect(http.requests.first?.headers["anthropic-client-platform"] != nil)
         #expect(optional.timeoutInterval.map { $0 > 0 && $0 <= 5 } == true)
         #expect(store.savedData == nil)
         if optionalStatus != 200 {

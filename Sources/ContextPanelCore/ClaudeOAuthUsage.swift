@@ -335,7 +335,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 "Authorization": "Bearer \(currentAccessToken)",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "claude-code/2.1.141",
+                "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
                 "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                 "anthropic-version": "2023-06-01",
                 "anthropic-client-platform": "context-panel",
@@ -351,7 +351,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                     "Authorization": "Bearer \(refreshedToken)",
                     "Accept": "application/json",
                     "Content-Type": "application/json",
-                    "User-Agent": "claude-code/2.1.141",
+                    "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
                     "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                     "anthropic-version": "2023-06-01",
                     "anthropic-client-platform": "context-panel",
@@ -421,7 +421,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             headers: [
                 "Authorization": "Bearer \(accessToken)",
                 "Accept": "application/json",
-                "User-Agent": "claude-cli/2.1.286 (external, cli)",
+                "User-Agent": ClaudeOAuthMetadata.optionalResetUserAgent,
                 "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                 "anthropic-version": "2023-06-01",
             ],
@@ -529,6 +529,8 @@ private func encodeClaudeOAuthCredentials(_ credentials: ClaudeOAuthCredentials)
 }
 
 public enum ClaudeOAuthMetadata {
+    public static let usageUserAgent = "claude-code/2.1.141"
+    public static let optionalResetUserAgent = "claude-cli/2.1.286 (external, cli)"
     public static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     public static let authorizationEndpoint = URL(string: "https://claude.com/cai/oauth/authorize")!
     public static let tokenEndpoint = URL(string: "https://platform.claude.com/v1/oauth/token")!
