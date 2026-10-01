@@ -138,7 +138,7 @@ public struct AccountDashboardPanel: View {
     }
 
     private var bankedCard: some View {
-        DashboardCard(title: AccountTerms.bankedResets, trailing: overview.deadlines.isEmpty ? nil : "\(overview.deadlines.count) dated",
+        DashboardCard(title: AccountTerms.bankedResets, trailing: overview.deadlines.isEmpty ? nil : AccountTerms.dated(overview.deadlines.count),
                       palette: palette) {
             Button(action: openDeadlines) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -238,8 +238,8 @@ public struct AccountDashboardPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 15, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(palette.paceColor(total.paceRatio))
-                Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 10.5, weight: total.runOut == nil ? .regular : .medium))
-                    .monospacedDigit().foregroundStyle(total.runOut == nil ? palette.secondary : palette.bad).lineLimit(1)
+                Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 10.5, weight: total.runningOutCount == 0 ? .regular : .medium))
+                    .monospacedDigit().foregroundStyle(total.runningOutCount == 0 ? palette.secondary : palette.bad).lineLimit(1)
             }
             .frame(width: Column.pace, alignment: .leading)
             Color.clear.frame(width: Column.lane, height: 1)
@@ -387,8 +387,8 @@ public struct AccountDashboardPanel: View {
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 15, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(palette.paceColor(total.paceRatio))
-                    Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 12, weight: total.runOut == nil ? .regular : .medium))
-                        .monospacedDigit().foregroundStyle(total.runOut == nil ? palette.secondary : palette.bad).lineLimit(1)
+                    Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 12, weight: total.runningOutCount == 0 ? .regular : .medium))
+                        .monospacedDigit().foregroundStyle(total.runningOutCount == 0 ? palette.secondary : palette.bad).lineLimit(1)
                 }
             }
             HStack(spacing: 14) {
@@ -423,19 +423,19 @@ public struct AccountDashboardPanel: View {
         return layout {
             HStack(spacing: 5) {
                 Rectangle().fill(palette.primary.opacity(0.75)).frame(width: 1.5, height: 10)
-                Text("even-pace mark")
+                Text(AccountTerms.evenPaceMark)
             }
             HStack(spacing: 5) {
                 Rectangle().fill(palette.primary).frame(width: 1.5, height: 10)
-                Text("weekly reset")
+                Text(AccountTerms.weeklyReset)
             }
             HStack(spacing: 5) {
                 Capsule().fill(palette.bad).frame(width: 14, height: 4)
-                Text("out before reset at this pace")
+                Text(AccountTerms.outBeforeResetLegend)
             }
             HStack(spacing: 5) {
                 Image(systemName: AccountGlyphs.bankedExpiry).font(.system(size: 8)).foregroundStyle(palette.banked)
-                Text("banked reset expires")
+                Text(AccountTerms.bankedResetExpiresLegend)
             }
             Spacer()
         }
@@ -679,6 +679,8 @@ struct DashboardMeter: View {
     let even: Double?
     let palette: DashboardPalette
     let height: CGFloat
+    /// Overrides the headroom colour, for saved readings.
+    var fillToken: AccountColorToken? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -686,7 +688,7 @@ struct DashboardMeter: View {
             let filled = fraction ?? 0
             ZStack(alignment: .leading) {
                 Capsule().fill(palette.track).frame(height: height)
-                Capsule().fill(palette.color(forRemaining: fraction))
+                Capsule().fill(fillToken.map { palette.color($0) } ?? palette.color(forRemaining: fraction))
                     .frame(width: max(filled > 0 ? height : 0, width * filled), height: height)
                 if let even {
                     Rectangle().fill(palette.primary.opacity(0.75)).frame(width: 1.5, height: height + 6)

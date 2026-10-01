@@ -74,11 +74,25 @@ public enum AccountTerms {
             ? "\(total.accountCount) account" + (total.accountCount == 1 ? "" : "s")
             : "\(total.countedCount) of \(total.accountCount) current"
     }
-    /// The combined long window's fate: "out Sat ~4 PM" before the first reset, else "lasts to reset".
+    /// The combined outlook, true whatever each plan's size: "Week lasts to reset" when no account runs
+    /// out before its own reset, "1 of 3 run out" (before their resets) when some do, "all out by Sat ~4 PM" when all do.
     public static func combinedOutlook(_ total: AccountProviderTotal, now: Date) -> String {
-        if let date = total.runOut { return runOut(date, now: now) }
-        return total.paceRatio == nil ? measuring : lastsToReset
+        guard total.paceRatio != nil else { return measuring }
+        if let date = total.allOutBy { return "all out by " + AccountPaceText.approximately(date, now: now) }
+        if total.runningOutCount > 0 { return "\(total.runningOutCount) of \(total.countedCount) run out" }
+        return longColumn(weekly: total.longIsWeekly) + " " + lastsToReset
     }
+    /// "1 of 2" beside a compact combined number when some accounts are not current; empty otherwise.
+    public static func countedSuffix(_ total: AccountProviderTotal) -> String {
+        total.countedCount == total.accountCount ? "" : "\(total.countedCount) of \(total.accountCount)"
+    }
+    // Legends and counts.
+    public static let evenPaceMark = "even-pace mark"
+    public static let weeklyReset = "weekly reset"
+    public static let outBeforeResetLegend = "out before reset at this pace"
+    public static let bankedResetExpiresLegend = "banked reset expires"
+    public static func dated(_ count: Int) -> String { "\(count) dated" }
+    public static func accountsCount(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
     /// Combined burn as a share of the combined room per hour: "0.3%/h".
     public static func burn(_ perHour: Double?) -> String {
         perHour.map { String(format: "%.1f%%/h", $0 * 100) } ?? unknown
@@ -96,6 +110,11 @@ public enum AccountTerms {
     public static let noDatedBankedResets = "No dated banked resets"
     /// Whether the account's own weekly reset comes before this banked reset expires: if it does,
     /// the natural reset refills the account first; if not, the banked reset is the only refill before it lapses.
+    /// Only for a window that really is weekly, and "last seen" when the reading is saved.
+    public static func weekResetRelation(expiresAt: Date, week: AccountOverview.Window?, current: Bool = true, now: Date) -> String? {
+        guard let week, week.duration == 7 * 86_400, let weekReset = week.naturalResetAt else { return nil }
+        return weekResetRelation(expiresAt: expiresAt, weekReset: weekReset, now: now).map { current ? $0 : $0 + ", " + lastSeen }
+    }
     public static func weekResetRelation(expiresAt: Date, weekReset: Date?, now: Date) -> String? {
         guard let weekReset else { return nil }
         return weekReset < expiresAt

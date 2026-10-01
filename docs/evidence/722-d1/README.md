@@ -30,25 +30,28 @@ on cards. On the Mac and iPhone, accounts are grouped by provider with a
 provider-coloured edge; widgets put the mark in front of each name; the small
 widget gives each provider its own row of rings.
 
-**Combined usage, burn and run-out per provider** (`AccountOverview.providerTotals`).
-You move work to whichever account has room, so a provider's room is the sum of
-its accounts' room:
+**Combined usage, burn and outlook per provider** (`AccountOverview.providerTotals`).
+Providers report percentages, not plan sizes (one OpenAI account is 20×, another
+moving to 10×), so the combined numbers are an index in which each account counts
+equally, and the outlook is stated in a way that does not depend on plan size:
 
-- *Combined % left*: the mean of each current account's weekly (and 5-hour) %
-  left. Each account counts equally, because providers report percentages, not
-  plan sizes.
-- *Combined burn*: the accounts' observed burn added up, as a share of the
-  combined room per hour, so `0.3%/h` reads against `59%`.
-- *Combined pace*: combined burn against the burn that would land every account
-  on zero at its own reset, the same meaning as an account's pace.
-- *Run-out*: when the combined room runs out at the combined burn, shown only if
-  that comes before the first weekly reset among those accounts (which refills
-  the pool); otherwise "lasts to reset".
+- *Combined % left*: the mean of each current account's account-wide weekly
+  window (`poolWindow`: a model-only limit such as an Opus weekly window is never
+  pooled with an overall one), and of its 5-hour window.
+- *Combined burn*: the mean observed burn, as a share per hour, so `0.3%/h`
+  reads against `59%`.
+- *Combined pace*: summed burn against the burn that would land every account on
+  zero at its own reset, the same meaning as an account's pace.
+- *Outlook*: "Week lasts to reset" when no account runs out before its own
+  reset at its own burn; "1 of 3 run out" when some do; "all out by ~Sat 4 PM"
+  (the last of them) when all do. An earlier draft projected a pooled run-out
+  time; the outside review showed that with unequal plans it can be off several
+  times over, so it was replaced.
 - Honesty rules: saved, paused and unconnected accounts are listed but not
-  added ("2 of 3 current"); pace and run-out need every current account's
-  observed burn, otherwise "measuring", because a partial sum would understate
-  it. A provider with one account gets no combined row, since it would repeat
-  that account.
+  added ("2 of 3 current" on the Mac and iPhone, "1 of 2" beside compact
+  combined numbers); pace and outlook need every current account's observed
+  burn, otherwise "measuring". A provider with one account gets no combined row,
+  since it would repeat that account.
 
 Where it shows: a combined row opens each provider's group in the Mac table and
 iPhone list (in the same columns as the accounts), a combined line opens each
@@ -62,20 +65,46 @@ and the Watch show less: provider grouping and marks, no combined numbers.
 - four tiles: next expiry (date, minute, countdown, account), this week, next
   30 days, and dates unknown;
 - a 30-day timeline with one lane per account: diamonds where banked resets
-  expire, ticks where that account's weekly window resets on its own;
+  expire, and a tick at the weekly reset the provider reported (later resets are
+  not projected, since a window can restart with use);
 - rows grouped This week / Next 30 days / Later. Each row shows the expiry and
   countdown, the account with its provider mark, that account's weekly room
   now (number, bar, even-pace tick), and whether its weekly reset comes first.
   "Expires before week resets Tue 2:07 PM" is in the banked colour, because
   then the banked reset is the only refill before it lapses. These are facts,
-  not advice; the page doesn't tell you when to spend one.
-- saved offers keep "last seen"; undated offers are listed per account.
+  not advice; the page doesn't tell you when to spend one. The relation appears
+  only for a real weekly window.
+- saved offers keep "last seen"; a saved account's weekly room takes the saved
+  colour and says "last seen"; undated offers are listed per account.
 
 **Less plain, where it helps reading.** Provider colour carries identity
 (group edges, tinted combined rows, marks), not decoration; status colours are
 unchanged. In the medium widget and on the Watch, the status mark now appears
 only when an account is not "Available", so the provider mark leads and names
 stop truncating.
+
+## Review by another model
+
+OpenAI gpt-6.1-sol reviewed the code and all 40 screenshots read-only. Verdict:
+"a clear improvement in provider grouping, weekly-first reading, and the
+Deadlines page. I would keep the direction", with fixes before shipping. Acted on:
+
+- the pooled run-out time assumed equal plan sizes (high): replaced by the
+  size-independent outlook above;
+- model-only limits pooled with overall ones; "lasts to reset" broader than its
+  calculation; exclusions hidden on compact surfaces;
+- the small widget lost account names with three providers; the medium widget
+  could clip the banked line on a shorter widget (the combined strip now gives
+  way first); the large widget's header ignored non-weekly windows, its accounts
+  lacked separators, and the one- and two-account small widget lacked the header;
+- Deadlines: saved rooms in current colours, projected recurring resets, any
+  long window treated as weekly, a seven-day bucket gap, and a VoiceOver label
+  missing the provider, weekly room and "last seen";
+- legend and count words moved into `AccountTerms`.
+
+Declined: 8–10 pt secondary text in the medium and large widgets. That density
+is the trade the owner asked for; the primary numbers stay 10–11 pt and every
+token meets 4.5:1.
 
 ## Not changed
 

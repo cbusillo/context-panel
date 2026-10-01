@@ -35,7 +35,7 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(account.glanceWindows.map(\.shortLabel) == ["Week", "5h"])
 }
 
-@Test func providerTotalAddsAccountsRoomAndBurn() throws {
+@Test func providerTotalAveragesRoomBurnAndPace() throws {
     // Two OpenAI accounts: 20% and 60% weekly left, burning 1%/h and 0.5%/h, resets in 100h and 50h.
     let overview = totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 40, 50, 0.5, 0), ("c", .anthropic, 10, 100, 0.1, 0)])
     let totals = overview.providerTotals(now: totalsNow)
@@ -44,37 +44,58 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(openAI.isCombined && !(totals.last?.isCombined ?? true))
     #expect(abs((openAI.longRemaining ?? 0) - 0.4) < 0.0001)
     #expect(abs((openAI.shortRemaining ?? 0) - 0.8) < 0.0001)
-    // Combined burn is a share of the combined room: (0.01 + 0.005) / 2 per hour.
     #expect(abs((openAI.burnPerHour ?? 0) - 0.0075) < 0.000001)
-    // Pace: combined burn against the even burn that lands each account on zero at its own reset.
     let even = 0.2 / 100 + 0.6 / 50
     #expect(abs((openAI.paceRatio ?? 0) - 0.015 / even) < 0.0001)
-    // Room 0.8 at 0.015/h lasts 53.3h, past the first reset at 50h, so it lasts to the reset.
-    #expect(openAI.runOut == nil)
-    #expect(AccountTerms.combinedOutlook(openAI, now: totalsNow) == AccountTerms.lastsToReset)
+    // a runs out at 20h (before its 100h reset); b lasts 120h, past its 50h reset.
+    #expect(openAI.runningOutCount == 1 && openAI.allOutBy == nil)
+    #expect(AccountTerms.combinedOutlook(openAI, now: totalsNow) == "1 of 2 run out")
 }
 
-@Test func providerTotalRunsOutOnlyBeforeTheFirstReset() throws {
-    let overview = totalsOverview([("a", .openAI, 90, 100, 2.0, 0), ("b", .openAI, 90, 120, 2.0, 0)])
-    let total = try #require(overview.providerTotals(now: totalsNow).first)
-    // Room 0.2 at 0.04/h runs out in 5h, before the first reset at 100h.
-    let runOut = try #require(total.runOut)
-    #expect(abs(runOut.timeIntervalSince(totalsNow) - 5 * 3_600) < 1)
+@Test func providerOutlookDoesNotDependOnPlanSize() throws {
+    // Neither account runs out before its own reset at its own burn: true whatever each plan's size.
+    let lasting = try #require(totalsOverview([("a", .openAI, 50, 40, 1.0, 0), ("b", .openAI, 10, 40, 0.1, 0)])
+        .providerTotals(now: totalsNow).first)
+    #expect(lasting.runningOutCount == 0 && lasting.allOutBy == nil)
+    #expect(AccountTerms.combinedOutlook(lasting, now: totalsNow) == "Week lasts to reset")
+
+    // Both run out before their resets: the outlook names when the last one does, not a pooled guess.
+    let out = try #require(totalsOverview([("a", .openAI, 90, 100, 2.0, 0), ("b", .openAI, 80, 120, 1.0, 0)])
+        .providerTotals(now: totalsNow).first)
+    let last = try #require(out.allOutBy)
+    #expect(abs(last.timeIntervalSince(totalsNow) - 20 * 3_600) < 1)
+    #expect(AccountTerms.combinedOutlook(out, now: totalsNow).hasPrefix("all out by "))
 }
 
 @Test func providerTotalNeedsEveryCurrentAccountsBurnAndSkipsSavedOnes() throws {
-    // b has no observed burn: a partial sum would understate the combined burn, so no pace.
+    // b has no observed burn: a partial set would understate the combined burn, so no pace.
     let measuring = try #require(totalsOverview([("a", .openAI, 50, 100, 1.0, 0), ("b", .openAI, 50, 100, nil, 0)])
         .providerTotals(now: totalsNow).first)
-    #expect(measuring.paceRatio == nil && measuring.runOut == nil)
+    #expect(measuring.paceRatio == nil && measuring.runningOutCount == 0)
     #expect(AccountTerms.combinedOutlook(measuring, now: totalsNow) == AccountTerms.measuring)
 
-    // b is saved (observed long ago): listed, not added.
+    // b is saved (observed long ago): listed, not added, and compact surfaces say so.
     let saved = try #require(totalsOverview([("a", .openAI, 50, 100, 1.0, 0), ("b", .openAI, 0, 100, 1.0, 48)])
         .providerTotals(now: totalsNow).first)
     #expect(saved.accountCount == 2 && saved.countedCount == 1)
     #expect(abs((saved.longRemaining ?? 0) - 0.5) < 0.0001)
     #expect(AccountTerms.accountCount(saved) == "1 of 2 current")
+    #expect(AccountTerms.countedSuffix(saved) == "1 of 2")
+}
+
+@Test func providerTotalPoolsTheAccountWideWindowNotAModelLimit() throws {
+    // A model-only weekly limit is tighter than the account-wide one; the pool uses the account-wide one.
+    let overall = UsageLimit(provider: .anthropic, accountID: "a", accountName: "a", label: "Weekly", windowLabel: "Weekly",
+        unit: .percent, used: 40, limit: 100, resetsAt: totalsNow.addingTimeInterval(100 * 3_600), lastUpdatedAt: totalsNow, confidence: .observed)
+    let model = UsageLimit(provider: .anthropic, accountID: "a", accountName: "a", label: "Weekly", windowLabel: "Weekly", modelLabel: "Opus",
+        unit: .percent, used: 90, limit: 100, resetsAt: totalsNow.addingTimeInterval(100 * 3_600), lastUpdatedAt: totalsNow, confidence: .observed)
+    let report = StoredProviderReport(provider: .anthropic, accountID: "a", accountName: "a", generatedAt: totalsNow,
+        resetCredits: nil, status: .healthy, errorMessage: nil)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: totalsNow, limits: [overall, model]), reports: [report], now: totalsNow)
+    let account = try #require(overview.accounts.first)
+    #expect(account.longWindow?.modelLabel == "Opus")
+    #expect(account.poolWindow?.modelLabel == nil)
+    #expect(abs((overview.providerTotals(now: totalsNow).first?.longRemaining ?? 0) - 0.6) < 0.0001)
 }
 
 @Test func bankedResetSaysWhetherTheWeeklyResetComesFirst() {
@@ -84,6 +105,12 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(before?.hasPrefix("Expires before week resets") == true)
     #expect(after?.hasPrefix("Week resets first") == true)
     #expect(AccountTerms.weekResetRelation(expiresAt: reset, weekReset: nil, now: totalsNow) == nil)
+    // Only a real weekly window gets a week relation, and a saved one says so.
+    let account = totalsOverview([("a", .openAI, 50, 48, 1.0, 0)]).accounts.first
+    let week = account?.longWindow
+    #expect(AccountTerms.weekResetRelation(expiresAt: totalsNow.addingTimeInterval(24 * 3_600), week: week, current: false, now: totalsNow)?
+        .hasSuffix(AccountTerms.lastSeen) == true)
+    #expect(AccountTerms.weekResetRelation(expiresAt: totalsNow, week: account?.shortWindow, now: totalsNow) == nil)
 }
 
 @Test func providerMarksAreDistinctLettersAndColours() {

@@ -63,10 +63,10 @@ public struct TVAccountAnswers: View {
                                 }
                             }
                             if total.isCombined {
-                                Text([AccountTerms.combined + " " + AccountNumbers.percentWithSign(total.longRemaining),
+                                Text([AccountTerms.combined + " " + AccountNumbers.percentWithSign(total.longRemaining), AccountTerms.accountCount(total),
                                       AccountPaceText.ratio(total.paceRatio), AccountTerms.combinedOutlook(total, now: now)].joined(separator: " · "))
                                     .font(.system(size: 18)).monospacedDigit()
-                                    .foregroundStyle(TVTokens.color(total.runOut == nil ? .secondary : .critical))
+                                    .foregroundStyle(TVTokens.color(total.runningOutCount == 0 ? .secondary : .critical))
                                     .padding(.leading, 44)
                             }
                         }

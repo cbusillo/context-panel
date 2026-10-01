@@ -23,7 +23,7 @@ public struct AccountDeadlinesPanel: View {
 
     private var buckets: [(title: String, deadlines: [AccountOverview.Deadline])] {
         let week = overview.deadlines.filter { $0.expiresAt.timeIntervalSince(now) <= 7 * 86_400 }
-        let month = overview.deadlines.filter { (7 * 86_400 + 1...Self.span).contains($0.expiresAt.timeIntervalSince(now)) }
+        let month = overview.deadlines.filter { $0.expiresAt.timeIntervalSince(now) > 7 * 86_400 && $0.expiresAt.timeIntervalSince(now) <= Self.span }
         let later = overview.deadlines.filter { $0.expiresAt.timeIntervalSince(now) > Self.span }
         return [(AccountTerms.thisWeek, week), (AccountTerms.nextThirtyDays, month), (AccountTerms.later, later)].filter { !$0.1.isEmpty }
     }
@@ -35,7 +35,7 @@ public struct AccountDeadlinesPanel: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(AccountTerms.bankedResets).font(.system(size: 24, weight: .semibold))
                 Spacer()
-                Text("\(overview.deadlines.count) dated" + (undated.isEmpty ? "" : " · " + AccountTerms.undated(undated.reduce(0) { $0 + ($1.unknownExpiryCount ?? 0) })))
+                Text(AccountTerms.dated(overview.deadlines.count) + (undated.isEmpty ? "" : " · " + AccountTerms.undated(undated.reduce(0) { $0 + ($1.unknownExpiryCount ?? 0) })))
                     .font(.system(size: 12)).foregroundStyle(palette.secondary)
             }
             if overview.deadlines.isEmpty && undated.isEmpty {
@@ -82,8 +82,8 @@ public struct AccountDeadlinesPanel: View {
                     Text(AccountTerms.unknown).foregroundStyle(palette.secondary)
                 }
             }
-            countTile(AccountTerms.thisWeek, thisWeek, detail: overview.deadlines.first.map { _ in "of \(overview.deadlines.count) dated" })
-            countTile(AccountTerms.nextThirtyDays, month, detail: "\(accountsWithBanked) account" + (accountsWithBanked == 1 ? "" : "s"))
+            countTile(AccountTerms.thisWeek, thisWeek, detail: overview.deadlines.isEmpty ? nil : "of " + AccountTerms.dated(overview.deadlines.count))
+            countTile(AccountTerms.nextThirtyDays, month, detail: AccountTerms.accountsCount(accountsWithBanked))
             countTile(AccountTerms.datesUnknown, undated.reduce(0) { $0 + ($1.unknownExpiryCount ?? 0) },
                       detail: undated.isEmpty ? nil : undated.map(\.metadata.label).joined(separator: ", "))
         }
@@ -131,11 +131,11 @@ public struct AccountDeadlinesPanel: View {
                 HStack(spacing: 16) {
                     HStack(spacing: 5) {
                         Image(systemName: AccountGlyphs.bankedExpiry).font(.system(size: 8)).foregroundStyle(palette.banked)
-                        Text("banked reset expires")
+                        Text(AccountTerms.bankedResetExpiresLegend)
                     }
                     HStack(spacing: 5) {
                         Rectangle().fill(palette.secondary).frame(width: 1.5, height: 10)
-                        Text("weekly reset")
+                        Text(AccountTerms.weeklyReset)
                     }
                 }
                 .font(.system(size: 10.5)).foregroundStyle(palette.secondary).padding(.top, 2)
@@ -165,13 +165,14 @@ public struct AccountDeadlinesPanel: View {
     private func row(_ deadline: AccountOverview.Deadline) -> some View {
         let account = account(deadline.accountID)
         let week = account?.longWindow
-        let relation = AccountTerms.weekResetRelation(expiresAt: deadline.expiresAt, weekReset: week?.naturalResetAt, now: now)
-        let lapsesFirst = week?.naturalResetAt.map { $0 >= deadline.expiresAt } ?? false
+        let relation = AccountTerms.weekResetRelation(expiresAt: deadline.expiresAt, week: week,
+                                                      current: account?.isReliable ?? false, now: now)
+        let lapsesFirst = relation != nil && (week?.naturalResetAt.map { $0 >= deadline.expiresAt } ?? false)
         return ViewThatFits(in: .horizontal) {
             HStack(alignment: .center, spacing: 16) {
                 when(deadline).frame(width: 150, alignment: .leading)
                 who(deadline).frame(maxWidth: .infinity, alignment: .leading)
-                if let account { weekRoom(account, week: week).frame(width: 150) }
+                if let account { weekRoom(account, week: week).frame(width: 150) } else { Color.clear.frame(width: 150, height: 1) }
                 Text(relation ?? "").font(.system(size: 11, weight: lapsesFirst ? .medium : .regular))
                     .foregroundStyle(lapsesFirst ? palette.banked : palette.secondary).lineLimit(2)
                     .frame(width: 170, alignment: .leading)
@@ -192,7 +193,11 @@ public struct AccountDeadlinesPanel: View {
         .padding(.horizontal, 14).padding(.vertical, 11)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([AccountTerms.bankedResetExpires, deadline.label, ContextPanelDateFormatting.accountReset(deadline.expiresAt),
+        .accessibilityLabel([AccountTerms.bankedResetExpires, deadline.label, deadline.provider.accountDisplayName,
+                             ContextPanelDateFormatting.accountReset(deadline.expiresAt),
+                             deadline.state == .available ? nil : AccountTerms.lastSeen + " " + ContextPanelDateFormatting.accountReset(deadline.observedAt),
+                             week.map { (week?.shortLabel ?? AccountTerms.week) + " " + AccountNumbers.window($0) + " " + AccountTerms.left
+                                 + (account?.isReliable == false ? ", " + AccountTerms.lastSeen : "") },
                              relation].compactMap { $0 }.joined(separator: ", "))
     }
 
@@ -219,16 +224,20 @@ public struct AccountDeadlinesPanel: View {
     }
 
     /// The account's weekly room now, so you can see whether a banked reset is worth spending.
+    /// Saved readings take the saved tone and say "last seen", as on every other account surface.
     private func weekRoom(_ account: AccountOverview.Account, week: AccountOverview.Window?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let tone: AccountTone = account.isReliable ? AccountTone.forRemaining(week?.remainingFraction) : .saved
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(week.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
                     .font(.system(size: 14, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(week.map { palette.textColor(for: $0) } ?? palette.tertiary)
-                Text(AccountTerms.percentLeft + " · " + (week?.shortLabel ?? AccountTerms.week))
+                    .foregroundStyle(week == nil ? palette.tertiary : palette.color(tone.textToken))
+                Text(AccountTerms.percentLeft + " · " + (week?.shortLabel ?? AccountTerms.week)
+                     + (account.isReliable ? "" : ", " + AccountTerms.lastSeen))
                     .font(.system(size: 10.5)).foregroundStyle(palette.secondary).lineLimit(1)
             }
-            DashboardMeter(fraction: week?.remainingFraction, even: week?.evenPaceRemaining(now: now), palette: palette, height: 4)
+            DashboardMeter(fraction: week?.remainingFraction, even: account.isReliable ? week?.evenPaceRemaining(now: now) : nil,
+                           palette: palette, height: 4, fillToken: tone.fillToken)
         }
     }
 
@@ -279,9 +288,11 @@ struct DeadlineLane: View {
     let span: TimeInterval
     let palette: DashboardPalette
 
+    /// Only the reset the provider reported; later ones are not projected, since a window can restart with use.
     private var weeklyResets: [Date] {
-        guard let week = account.longWindow, week.duration == 7 * 86_400, let first = week.naturalResetAt, first > now else { return [] }
-        return (0..<5).map { first.addingTimeInterval(Double($0) * 7 * 86_400) }.filter { $0.timeIntervalSince(now) <= span }
+        guard let week = account.longWindow, week.duration == 7 * 86_400, let first = week.naturalResetAt, first > now,
+              first.timeIntervalSince(now) <= span else { return [] }
+        return [first]
     }
 
     var body: some View {

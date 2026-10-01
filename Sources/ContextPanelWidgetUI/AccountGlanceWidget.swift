@@ -57,8 +57,8 @@ struct AccountGlanceWidget: View {
         let names = overview.shortLabels
         let groups = Provider.allCases.map { provider in overview.accounts.filter { $0.metadata.provider == provider && shown.contains($0.id) } }
             .filter { !$0.isEmpty }
-        let ring: CGFloat = groups.count > 2 ? 27 : 31
-        return VStack(alignment: .leading, spacing: 5) {
+        let ring: CGFloat = groups.count > 2 ? 23 : 29
+        return VStack(alignment: .leading, spacing: groups.count > 2 ? 3 : 5) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(AccountTerms.widgetTitle).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 if overview.accounts.count > shown.count {
@@ -69,15 +69,15 @@ struct AccountGlanceWidget: View {
                 Text(AccountTerms.percentLeft).font(.system(size: 8.5, weight: .medium)).foregroundStyle(palette.tertiary)
             }
             ForEach(groups, id: \.first!.id) { group in
-                HStack(alignment: .top, spacing: 6) {
-                    GlanceProviderMark(provider: group[0].metadata.provider, palette: palette, size: 14).padding(.top, (ring - 14) / 2)
+                HStack(alignment: .top, spacing: 4) {
+                    GlanceProviderMark(provider: group[0].metadata.provider, palette: palette, size: 13).padding(.top, (ring - 13) / 2)
                     ForEach(group) { account in
                         VStack(spacing: 1) {
                             ZStack {
                                 GlanceRing(fraction: account.remainingFraction, color: palette.color(for: account),
                                            track: palette.track, lineWidth: 3)
                                 Text(AccountNumbers.account(account, sign: false))
-                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded)).monospacedDigit()
+                                    .font(.system(size: 9.5, weight: .semibold, design: .rounded)).monospacedDigit()
                                     .minimumScaleFactor(0.8)
                             }
                             .frame(width: ring, height: ring)
@@ -87,10 +87,8 @@ struct AccountGlanceWidget: View {
                                         .overlay(Circle().stroke(palette.surface, lineWidth: 1.5))
                                 }
                             }
-                            if groups.count <= 2 {
-                                Text(names[account.id] ?? account.metadata.label).font(.system(size: 8, weight: .medium)).lineLimit(1)
-                                    .foregroundStyle(palette.secondary).frame(width: ring + 8)
-                            }
+                            Text(names[account.id] ?? account.metadata.label).font(.system(size: 7.5, weight: .medium)).lineLimit(1)
+                                .foregroundStyle(palette.secondary).frame(width: ring + 10)
                         }
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
@@ -112,6 +110,7 @@ struct AccountGlanceWidget: View {
 
     private func spotlight(_ account: AccountOverview.Account, overview: AccountOverview) -> some View {
         VStack(alignment: .leading, spacing: 5) {
+            Text(AccountTerms.widgetTitle).font(.system(size: 11, weight: .semibold)).lineLimit(1)
             HStack(spacing: 5) {
                 GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 12)
                 Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
@@ -142,9 +141,17 @@ struct AccountGlanceWidget: View {
 
     // MARK: Medium
 
+    /// The combined strip is dropped before any account row or the banked deadline when height runs short.
     private func medium(_ overview: AccountOverview) -> some View {
-        let showsDeadline = showsBanked && overview.nextDeadline != nil
         let combined = overview.providerTotals(now: now).filter(\.isCombined)
+        return ViewThatFits(in: .vertical) {
+            mediumContent(overview, combined: combined)
+            mediumContent(overview, combined: [])
+        }
+    }
+
+    private func mediumContent(_ overview: AccountOverview, combined: [AccountProviderTotal]) -> some View {
+        let showsDeadline = showsBanked && overview.nextDeadline != nil
         let rows = Array(overview.accounts.prefix(showsDeadline ? 6 : 7))
         return VStack(alignment: .leading, spacing: 0) {
             columnHeader(title: AccountTerms.widgetTitle + (overview.accounts.count > rows.count ? " +\(overview.accounts.count - rows.count)" : ""),
@@ -156,7 +163,7 @@ struct AccountGlanceWidget: View {
                 }
                 .buttonStyle(.plain)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 2)
             if !combined.isEmpty {
                 combinedStrip(combined).padding(.bottom, 2)
             }
@@ -241,7 +248,10 @@ struct AccountGlanceWidget: View {
                     GlanceProviderMark(provider: total.provider, palette: palette, size: 10)
                     Text(AccountNumbers.percentWithSign(total.longRemaining)).fontWeight(.semibold).monospacedDigit()
                         .foregroundStyle(palette.color(AccountTone.forRemaining(total.longRemaining).textToken))
-                    if total.runOut != nil {
+                    if !AccountTerms.countedSuffix(total).isEmpty {
+                        Text(AccountTerms.countedSuffix(total)).foregroundStyle(palette.secondary)
+                    }
+                    if total.runningOutCount > 0 {
                         Text(AccountTerms.combinedOutlook(total, now: now)).foregroundStyle(palette.bad)
                     } else if total.paceRatio != nil {
                         Text(AccountPaceText.ratio(total.paceRatio)).foregroundStyle(palette.paceColor(total.paceRatio))
@@ -269,7 +279,8 @@ struct AccountGlanceWidget: View {
                         .foregroundStyle(palette.secondary)
                 }
                 Spacer()
-                Text([AccountTerms.week, AccountTerms.fiveHour, AccountTerms.pace.lowercased()].joined(separator: " · "))
+                Text([AccountTerms.longColumn(weekly: overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 }),
+                      AccountTerms.fiveHour, AccountTerms.pace.lowercased()].joined(separator: " · "))
                     .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
             }
             .padding(.bottom, 3)
@@ -281,6 +292,7 @@ struct AccountGlanceWidget: View {
                             largeCombinedRow(total)
                         }
                         ForEach(members) { account in
+                            if account.id != members.first?.id { Rectangle().fill(palette.line).frame(height: 0.5).padding(.leading, 18) }
                             Link(destination: links.account(account.metadata.provider, id: account.id)) {
                                 largeRow(account, showsMark: !total.isCombined)
                             }
@@ -327,9 +339,12 @@ struct AccountGlanceWidget: View {
                 .frame(width: 46)
             Text(AccountNumbers.percentWithSign(total.shortRemaining)).font(.system(size: 9)).monospacedDigit()
                 .foregroundStyle(palette.secondary)
+            if !AccountTerms.countedSuffix(total).isEmpty {
+                Text(AccountTerms.countedSuffix(total)).font(.system(size: 8.5)).foregroundStyle(palette.secondary)
+            }
             Spacer(minLength: 2)
-            Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 8.5, weight: total.runOut == nil ? .regular : .semibold))
-                .foregroundStyle(total.runOut == nil ? palette.secondary : palette.bad).lineLimit(1)
+            Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 8.5, weight: total.runningOutCount == 0 ? .regular : .semibold))
+                .foregroundStyle(total.runningOutCount == 0 ? palette.secondary : palette.bad).lineLimit(1)
             Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(palette.paceColor(total.paceRatio)).frame(width: 30, alignment: .trailing)
         }
