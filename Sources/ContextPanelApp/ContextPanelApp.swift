@@ -2295,28 +2295,28 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         panel.showsHiddenFiles = true
         panel.directoryURL = ContextPanelLocations.realUserHomeDirectory()
         panel.begin { [weak self] response in
-            guard let self, response == .OK, let home = panel.url,
-                  let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
-            let scoped = home.startAccessingSecurityScopedResource()
-            defer { if scoped { home.stopAccessingSecurityScopedResource() } }
-            do {
-                let updated = try CodexHomeBinding.bind(account: accounts[index], home: home, siblings: accounts)
-                guard let path = updated.authPath else { return }
-                let auth = URL(fileURLWithPath: path)
-                try bookmarkStore.createAndStoreBookmark(for: auth, path: path)
-                guard bookmarkStore.canResolveBookmark(for: path) else {
-                    errorMessage = "Codex home access could not be saved. Select it again."
-                    return
+            guard let self, response == .OK, let home = panel.url else { return }
+            Task { @MainActor in
+                let scoped = home.startAccessingSecurityScopedResource()
+                defer { if scoped { home.stopAccessingSecurityScopedResource() } }
+                do {
+                    guard let revised = try await CodexHomeBinding.commit(
+                        accountID: account.id, home: home, accountStore: self.store,
+                        bookmarkStore: self.bookmarkStore,
+                        deleteImportedCredential: { [credentialStore = self.credentialStore] id in
+                            try credentialStore.delete(accountID: id)
+                        }
+                    ) else {
+                        self.errorMessage = "Another refresh is running. Try connecting the home again in a moment."
+                        return
+                    }
+                    self.accounts = revised.accounts
+                    reloadContextPanelWidgetTimeline()
+                    self.errorMessage = nil
+                    onVerified()
+                } catch {
+                    self.errorMessage = ConnectorRedactor.safeErrorDescription(error)
                 }
-                // Rebinding must not leave a previously imported login ahead of the
-                // newly selected source in the existing credential-first loader.
-                try credentialStore.delete(accountID: account.id)
-                accounts[index] = updated
-                saveAccounts()
-                errorMessage = nil
-                onVerified()
-            } catch {
-                errorMessage = ConnectorRedactor.safeErrorDescription(error)
             }
         }
     }

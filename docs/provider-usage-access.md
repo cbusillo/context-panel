@@ -512,9 +512,10 @@ credit balances. No supported OAuth banked-reset schema or read-only details
 endpoint was verified in this investigation. The absence of a reset summary is
 **Banked resets unknown**, including on a connected Claude account. It is not a
 zero balance. Do not infer an offer expiry from `seven_day.resets_at`, a spend
-balance, an issue comment or a sibling account. Manual observation entry remains
-an owner decision on #719; no manual balances or speculative API fields were
-added. Existing reported reset summaries retain their observation time, coverage
+balance, an issue comment or a sibling account. The owner declined manual fallback
+on #719 pending investigation of the automatic source used by Claude web/Desktop
+and additional OAuth usage fields. No manual balances or speculative API fields
+were added. Existing reported reset summaries retain their observation time, coverage
 and known dates.
 
 ### Current Codex homes and OpenAI recovery
@@ -527,6 +528,9 @@ The picker saves the existing read-only security-scoped bookmark for the auth
 file while the selected folder is accessible. It changes no entitlements.
 Rebinding clears that entry's imported credential so a previously cached login
 cannot override the newly selected source. The normal app/refresh-agent adapter
+serializes with this change through the existing refresh lock; if refresh owns
+the lock, retry Connect Home when it finishes. Bookmark readability is checked
+before the binding is saved. The adapter
 then reads quota and automatic banked resets through the existing API routes.
 Credentials are never displayed or logged, and CLI homes/logins are unchanged.
 
