@@ -552,6 +552,9 @@ struct SettingsPane: View {
                             Button(model.hasSavedAuthorization(account) ? "Change Codex home" : "Connect Codex home") {
                                 model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
                             }.buttonStyle(.borderedProminent)
+                            if let warning = model.codexSourceWarning(for: account) {
+                                Text(warning).font(.caption).foregroundStyle(CPTheme.statusColor(.stale))
+                            }
                             DisclosureGroup("Advanced") {
                             HStack {
                                 Button(account.codexQuotaPath == nil ? "Select Codex Sessions" : "Change Sessions Folder") {
@@ -2746,25 +2749,27 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    func codexSourceWarning(for account: LocalProviderAccountConfiguration) -> String? {
+        guard account.isEnabled, account.connectorKind == .codexRateLimits, account.codexQuotaPath == nil,
+              let path = account.effectiveAuthPath else { return nil }
+        let expanded = NSString(string: path).expandingTildeInPath
+        let available = (!ContextPanelLocations.isRunningInAppSandbox && FileManager.default.isReadableFile(atPath: expanded))
+            || (try? bookmarkStore.withResolvedURL(for: expanded) { url in
+                (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            }) == true
+        return switch CodexHomeBinding.sourceState(account: account, authFileAvailable: available,
+                                                    hasSavedLogin: hasImportedCredential(for: account)) {
+        case .unavailableUsingSavedLogin: "Source unavailable; using saved login. Change Codex home to reconnect."
+        case .unavailable: "Source unavailable. Connect or change this account’s Codex home."
+        default: nil
+        }
+    }
+
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
         if !account.isEnabled {
             return "Off · \(ConnectorRedactor.redactedPath(account.effectiveAuthPath ?? detailSourceLabel(for: account)))"
         }
-        if account.connectorKind == .codexRateLimits, account.codexQuotaPath == nil,
-           let path = account.effectiveAuthPath {
-            let expanded = NSString(string: path).expandingTildeInPath
-            let available = (!ContextPanelLocations.isRunningInAppSandbox && FileManager.default.isReadableFile(atPath: expanded))
-                || (try? bookmarkStore.withResolvedURL(for: expanded) { url in
-                (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
-            }) == true
-            switch CodexHomeBinding.sourceState(account: account, authFileAvailable: available, hasSavedLogin: hasImportedCredential(for: account)) {
-            case .unavailableUsingSavedLogin:
-                return "Configured source unavailable; reading saved login. Select Codex Home to reconnect the source."
-            case .unavailable:
-                return "Configured source unavailable. Select Codex Home to connect this account."
-            default: break
-            }
-        }
+        if let warning = codexSourceWarning(for: account) { return warning }
         let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
     }
