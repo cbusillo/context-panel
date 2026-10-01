@@ -2306,7 +2306,7 @@ extension MainLimitSummary {
             parts.append(freshness)
         }
         if hasAssumedScheduledResetCapacity {
-            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
+            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown"))
         } else if let reset = widgetResetConfidenceText(presentationDate: presentationDate) {
             parts.append("Reset \(reset)")
         }
@@ -2332,7 +2332,7 @@ extension MainLimitSummary {
             parts.append(freshness)
         }
         if hasAssumedScheduledResetCapacity {
-            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
+            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown"))
         } else if let reset = widgetResetConfidenceText(presentationDate: presentationDate) {
             parts.append("Reset \(reset)")
         }
@@ -2360,6 +2360,7 @@ extension MainLimitSummary {
             }
             return provider == .anthropic ? nil : "reset ?"
         }
+        if hasAssumedScheduledResetCapacity { return "≈ " + ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true) }
         if resetsAt < presentationDate.addingTimeInterval(-60) {
             return "Passed \(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
         }
@@ -2388,6 +2389,7 @@ extension MainLimitSummary {
             }
             return "unknown reset"
         }
+        if hasAssumedScheduledResetCapacity { return "≈ " + resetsAt.widgetDateTimeText }
         if resetsAt < presentationDate.addingTimeInterval(-60) {
             return "Passed \(resetsAt.widgetDateTimeText)"
         }

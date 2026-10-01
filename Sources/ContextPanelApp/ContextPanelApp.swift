@@ -2732,7 +2732,7 @@ struct SidebarRateLimitRow: View {
                 Text(summary.sidebarTimingText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Text(summary.compactUsageText)
@@ -4991,7 +4991,7 @@ struct MainLimitRow: View {
                     Text(compact ? summary.resetText : summary.previewResetConfidenceText)
                         .font(.system(size: 10))
                         .foregroundStyle(presentationStatus == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -6365,7 +6365,7 @@ extension MainLimitSummary {
             usage = "Usage unknown"
         }
         if hasAssumedScheduledResetCapacity {
-            return "\(usage), \(accessibilityStateText(status: status)). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+            return "\(usage), \(accessibilityStateText(status: status)). \(resetAccessibilityText)."
         }
         return "\(usage), \(accessibilityStateText(status: status)). \(resetAccessibilityText). \(confidence.previewText)."
     }
@@ -6386,12 +6386,11 @@ extension MainLimitSummary {
     }
 
     var resetAccessibilityText: String {
-        if status == .failure { return "Refresh failed" }
         if hasAssumedScheduledResetCapacity {
-            return UsagePresentationAssumption.scheduledReset.accessibilityText
+            return UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown")
         }
-        guard let resetsAt else { return "Reset not reported" }
-        return resetsAt.accessibilityResetText
+        guard let resetsAt else { return status == .failure ? "Refresh failed; reset not reported" : "Reset not reported" }
+        return status == .failure ? "Refresh failed; last observed reset " + ContextPanelDateFormatting.resetDeadline(resetsAt) : resetsAt.accessibilityResetText
     }
 
     private var assumptionPrefix: String {
@@ -6404,7 +6403,7 @@ extension MainLimitSummary {
 
     private func accessibilityValueWithAssumption(_ value: String) -> String {
         guard hasAssumedScheduledResetCapacity else { return value }
-        return "\(value). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+        return "\(value). \(resetAccessibilityText)."
     }
 
     private func accessibilityStateText(status: UsageStatus) -> String {
@@ -6615,18 +6614,17 @@ extension UsageLimit {
             capacity = "Remaining capacity unknown"
         }
         if isAssumedAfterScheduledReset {
-            return "\(capacity), \(accessibilityStateText). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+            return "\(capacity), \(accessibilityStateText). \(resetAccessibilityText)."
         }
         return "\(capacity), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
     }
 
     private var resetAccessibilityText: String {
-        if status == .failure { return "Refresh failed" }
         if isAssumedAfterScheduledReset {
-            return UsagePresentationAssumption.scheduledReset.accessibilityText
+            return UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown")
         }
-        guard let resetsAt else { return "Reset not reported" }
-        return resetsAt.accessibilityResetText
+        guard let resetsAt else { return status == .failure ? "Refresh failed; reset not reported" : "Reset not reported" }
+        return status == .failure ? "Refresh failed; last observed reset " + ContextPanelDateFormatting.resetDeadline(resetsAt) : resetsAt.accessibilityResetText
     }
 
     private var accessibilityStateText: String {
@@ -6896,19 +6894,8 @@ extension Date {
     }
 
     var accessibilityResetText: String {
-        let seconds = Int(timeIntervalSince(Date()))
-        if abs(seconds) < 60 { return "Resets now" }
-        guard seconds > 0 else { return "Reset passed" }
-        let minutes = Self.roundedUpMinutes(seconds: seconds)
-        if minutes < 60 {
-            return "Resets in \(minutes) \(minutes == 1 ? "minute" : "minutes")"
-        }
-        let hours = Self.roundedUpHours(minutes: minutes)
-        if hours <= 24 {
-            return "Resets in \(hours) \(hours == 1 ? "hour" : "hours")"
-        }
-        let days = max(Int(ceil(Double(hours) / 24)), 1)
-        return "Resets in \(days) \(days == 1 ? "day" : "days")"
+        let deadline = ContextPanelDateFormatting.resetDeadline(self)
+        return self <= Date() ? "Reset passed at \(deadline)" : "Resets at \(deadline)"
     }
 
     var accessibilityAgeText: String {

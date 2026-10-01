@@ -368,7 +368,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
             unit: unit,
             used: 0,
             limit: limit,
-            resetsAt: nil,
+            resetsAt: resetsAt,
             lastUpdatedAt: lastUpdatedAt,
             confidence: .estimated,
             freshnessMode: freshnessMode,

@@ -765,3 +765,10 @@ sources or use the auth-file adapter; this reader cannot infer an account from
 shared token-count events. Independent copied histories also require the user's
 correct source binding. No private account-home paths or session bodies are
 written to reports, logs, or repository fixtures.
+
+When event-driven capacity is assumed after a known natural reset, its original
+passed timestamp is retained and qualified as assumed in app, widget, Watch and
+agent data. It is not a prediction of the next reset: future reset selection
+continues to exclude dates at or before the presentation time. Unknown historical
+reset dates remain unknown. Banked offer expiry is separate and never applies
+a reset or changes utilization.

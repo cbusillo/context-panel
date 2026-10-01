@@ -54,7 +54,7 @@ public struct AccountCapacity: Identifiable, Sendable {
                 guard seen.insert("\(account.provider.rawValue):\(id)").inserted else { return nil }
                 let limits = matchingLimits.filter { $0.accountID == id }
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
-                let expired = limits.contains { ($0.resetsAt ?? .distantFuture) <= now }
+                let expired = limits.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
                 let stale = (report.map { $0.generatedAt > now.addingTimeInterval(60)
                     || now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false)
                     || limits.contains { limit in limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)

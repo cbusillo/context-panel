@@ -583,7 +583,9 @@ private struct WatchLimitRow: View {
     }
 
     private var resetText: String? {
-        limit.resetText(now: presentationDate).map { "reset \($0)" }
+        limit.resetText(now: presentationDate).map { text in
+            text.hasPrefix("Passed") || text.lowercased().hasPrefix("assumed") ? text : "Resets " + text
+        }
     }
 
     @ViewBuilder

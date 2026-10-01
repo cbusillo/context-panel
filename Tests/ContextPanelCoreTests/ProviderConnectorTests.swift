@@ -1888,7 +1888,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     #expect(elapsed.presentationAssumption == nil)
     #expect(presentedElapsed.used == 0)
     #expect(presentedElapsed.remaining == 100)
-    #expect(presentedElapsed.resetsAt == nil)
+    #expect(presentedElapsed.resetsAt == elapsedReset)
     #expect(presentedElapsed.lastUpdatedAt == observedAt)
     #expect(presentedElapsed.confidence == .estimated)
     #expect(presentedElapsed.presentationAssumption == .scheduledReset)

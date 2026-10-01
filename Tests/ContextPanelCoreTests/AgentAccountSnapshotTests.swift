@@ -170,7 +170,7 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(exported.windows.first?.used == panel.limits.first?.used)
     #expect(exported.windows.first?.confidence == panel.limits.first?.confidence)
     #expect(exported.windows.first?.presentationAssumption == .scheduledReset)
-    #expect(exported.windows.first?.naturalResetAt == nil)
+    #expect(exported.windows.first?.naturalResetAt == panel.limits.first?.resetsAt)
 }
 
 @Test func agentSnapshotReaderFailsClosedAndDoesNotWriteOrReadAuthSources() throws {
