@@ -3095,7 +3095,7 @@ struct OverviewDashboard: View {
             let now = presentationDate ?? context.date
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    AccountOverviewPanel(overview: model.accountOverview(at: now), openAccount: { account in
+                    AccountDashboardPanel(overview: model.accountOverview(at: now), now: now, openAccount: { account in
                         model.navigate(to: .providerAccount(account.metadata.provider, account.id))
                     }, openDeadlines: { model.navigate(to: .deadlines) })
                     DisclosureGroup("Pace, cache and window details") {
@@ -3133,7 +3133,7 @@ struct AccountDashboard: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
-                        AccountDetailPanel(account: account, overview: overview)
+                        AccountDashboardDetail(account: account, overview: overview, now: context.date)
                     } else {
                         Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
                     }
@@ -5751,7 +5751,8 @@ final class ContextPanelAppModel: ObservableObject {
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
-            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now)
+            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
+            accountBurnRates: accountBurnRates)
     }
 
     func rawAccountID(for safeID: String) -> String? {

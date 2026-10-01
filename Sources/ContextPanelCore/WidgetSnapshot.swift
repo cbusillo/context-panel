@@ -28,6 +28,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let refreshAttentionSummary: RefreshAttentionSummary?
     public let syncErrorMessage: String?
     public let accountDisplayMetadata: [AccountDisplayMetadata]?
+    /// Per-account, per-window burn keyed by provider account ID then limit ID. Optional so older payloads decode.
+    public let accountBurnRates: [String: [String: ObservedBurnRate]]?
 
     public init(
         state: WidgetSnapshotState,
@@ -42,7 +44,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         message: String,
         refreshAttentionSummary: RefreshAttentionSummary? = nil,
         syncErrorMessage: String? = nil,
-        accountDisplayMetadata: [AccountDisplayMetadata]? = nil
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil
     ) {
         self.state = state
         self.generatedAt = generatedAt
@@ -57,13 +60,15 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.refreshAttentionSummary = refreshAttentionSummary
         self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.safeErrorDescription)
         self.accountDisplayMetadata = accountDisplayMetadata
+        self.accountBurnRates = accountBurnRates
     }
 
     public func accountOverview(now: Date, widgetsOnly: Bool = false,
                                 maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge) -> AccountOverview {
         AccountOverview(snapshot: usageSnapshot, reports: reports, metadata: accountDisplayMetadata,
                         now: now, maximumAge: maximumAge, widgetsOnly: widgetsOnly,
-                        isSavedSnapshot: state == .stale || state == .failure || syncErrorMessage != nil)
+                        isSavedSnapshot: state == .stale || state == .failure || syncErrorMessage != nil,
+                        accountBurnRates: accountBurnRates ?? [:])
     }
 
     public var usageSnapshot: UsageSnapshot {
@@ -221,7 +226,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             status: status,
             message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
             refreshAttentionSummary: refreshAttentionSummary,
-            accountDisplayMetadata: configuration.map { AccountDisplayMetadata.local(configuration: $0, stored: stored, now: now) }
+            accountDisplayMetadata: configuration.map { AccountDisplayMetadata.local(configuration: $0, stored: stored, now: now) },
+            accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)
         )
     }
 

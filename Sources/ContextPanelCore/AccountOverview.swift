@@ -59,6 +59,8 @@ public struct AccountOverview: Equatable, Sendable {
         public let observedAt: Date?
         public let confidence: UsageConfidence
         public let assumption: UsagePresentationAssumption?
+        /// Observed spend as a fraction of this window per hour, from this account's own history only.
+        public var burnFractionPerHour: Double? = nil
     }
 
     public struct Account: Equatable, Sendable, Identifiable {
@@ -117,7 +119,8 @@ public struct AccountOverview: Equatable, Sendable {
 
     public init(snapshot: UsageSnapshot, reports: [StoredProviderReport], metadata: [AccountDisplayMetadata]? = nil,
                 now: Date, maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge,
-                widgetsOnly: Bool = false, isSavedSnapshot: Bool = false) {
+                widgetsOnly: Bool = false, isSavedSnapshot: Bool = false,
+                accountBurnRates: [String: [String: ObservedBurnRate]] = [:]) {
         let presented = snapshot.presented(at: now)
         let entries = metadata ?? Self.inferredMetadata(snapshot: snapshot, reports: reports)
         accounts = entries.filter { !widgetsOnly || $0.showInWidgets }.map { entry in
@@ -135,7 +138,10 @@ public struct AccountOverview: Equatable, Sendable {
                        used: limit.used, limit: limit.limit, unit: limit.unit,
                        remainingFraction: limit.usageRatio.map { min(1, max(0, 1 - $0)) },
                        naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
-                       confidence: limit.confidence, assumption: limit.presentationAssumption)
+                       confidence: limit.confidence, assumption: limit.presentationAssumption,
+                       burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
+                           limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil }
+                       })
             }
             let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt
             let ageSensitive = limits.isEmpty || limits.contains { !$0.usesEventDrivenFreshness }

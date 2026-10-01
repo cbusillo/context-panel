@@ -22,13 +22,21 @@ private let canvas = CGSize(width: 1_024, height: 768)
 
 private let unsupportedPresentationStatus: Int32 = 3
 
+// Pixels per point. 1 by default; review screenshots use 2 to match a Retina display.
+private let pixelScale: Int = {
+    let arguments = CommandLine.arguments
+    guard let index = arguments.firstIndex(of: "--scale"), index + 1 < arguments.count,
+          let value = Int(arguments[index + 1]), (1...3).contains(value) else { return 1 }
+    return value
+}()
+
 private func fail(_ message: String, status: Int32 = EX_USAGE) -> Never {
     FileHandle.standardError.write(Data("ContextPanelSharedViewRenderer: \(message)\n".utf8))
     exit(status)
 }
 
 private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryRoute, output: URL, scenario: Bool, deadlines: Bool, accountPresentation: String?, sixAccounts: Bool) {
-    let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario"]
+    let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario", "--scale"]
     var values: [String: String] = [:]
     var index = 0
     while index < arguments.count {
@@ -92,11 +100,11 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         let overview = snapshot.accountOverview(now: now)
         switch accountPresentation {
         case "account-overview":
-            view = AnyView(AccountOverviewPanel(overview: overview, openAccount: { _ in }, openDeadlines: {}).padding(24))
+            view = AnyView(AccountDashboardPanel(overview: overview, now: now, openAccount: { _ in }, openDeadlines: {}).padding(24))
         case "account-deadlines":
             view = AnyView(AccountDeadlinesPanel(overview: overview, openAccount: { _ in }).padding(24))
         case "account-detail":
-            view = AnyView(AccountDetailPanel(account: overview.accounts[0], overview: overview).padding(24))
+            view = AnyView(AccountDashboardDetail(account: overview.accounts[0], overview: overview, now: now).padding(24))
         default:
             view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
                 displayPreferences: .defaultPreferences,
@@ -144,11 +152,11 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     hostingView.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
     hostingView.frame = NSRect(origin: .zero, size: size)
     hostingView.layoutSubtreeIfNeeded()
-    // One pixel per point regardless of the host display's backing scale.
+    // pixelScale pixels per point regardless of the host display's backing scale.
     guard let bitmap = NSBitmapImageRep(
         bitmapDataPlanes: nil,
-        pixelsWide: Int(size.width),
-        pixelsHigh: Int(size.height),
+        pixelsWide: Int(size.width) * pixelScale,
+        pixelsHigh: Int(size.height) * pixelScale,
         bitsPerSample: 8,
         samplesPerPixel: 4,
         hasAlpha: true,
@@ -165,29 +173,42 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
 }
 
 private func accountFixture(now: Date) -> WidgetSnapshot {
-    let names = ["A deliberately long OpenAI account name", "work@example.invalid", "Personal", "Claude primary", "Claude backup", "Antigravity"]
-    let providers: [Provider] = [.openAI, .openAI, .openAI, .anthropic, .anthropic, .google]
-    let used = [85, 28, 11, 63, 43, 9]
+    // Synthetic accounts only. Each row: name, provider, weekly used %, weekly reset (h), 5h used %, 5h reset (h),
+    // weekly burn %/h, 5h burn %/h (nil while measuring), banked expiries (h).
+    typealias Row = (String, Provider, Int, Double, Int, Double, Double?, Double?, [Double])
+    let rows: [Row] = [
+        ("A deliberately long OpenAI account name", .openAI, 85, 120, 40, 2 + 10 / 60.0, 0.45, 6, [24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
+        ("work@example.invalid", .openAI, 28, 55, 12, 4, 0.4, 3, []),
+        ("Personal", .openAI, 11, 147, 0, 5, nil, nil, []),
+        ("Claude primary", .anthropic, 63, 138, 78, 1 + 13 / 60.0, 0.35, 15, [4 * 24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
+        ("Claude backup", .anthropic, 43, 74, 5, 4 + 40 / 60.0, 0.2, 1, []),
+        ("Antigravity", .google, 9, 164, 0, 5, 0.05, nil, []),
+    ]
     var limits: [UsageLimit] = []
     var reports: [StoredProviderReport] = []
     var metadata: [AccountDisplayMetadata] = []
-    for index in names.indices {
+    var rates: [String: [String: ObservedBurnRate]] = [:]
+    for (index, row) in rows.enumerated() {
         let id = "synthetic-\(index)"
-        for (window, count) in [("Weekly", used[index]), ("5-hour", max(0, used[index] - 10))] {
-            limits.append(UsageLimit(provider: providers[index], accountID: id, accountName: "Unexported provider identity",
-                label: window, windowLabel: window, unit: .percent, used: count, limit: 100,
-                resetsAt: now.addingTimeInterval(window == "Weekly" ? 5 * 86_400 : 3_600), lastUpdatedAt: now, confidence: .observed))
+        for (window, used, resetHours, burn) in [("Weekly", row.2, row.3, row.6), ("5-hour", row.4, row.5, row.7)] {
+            let limit = UsageLimit(provider: row.1, accountID: id, accountName: "Unexported provider identity",
+                label: window, windowLabel: window, unit: .percent, used: used, limit: 100,
+                resetsAt: now.addingTimeInterval(resetHours * 3_600), lastUpdatedAt: now, confidence: .observed)
+            limits.append(limit)
+            if let burn {
+                rates[id, default: [:]][limit.id] = ObservedBurnRate(limitID: limit.id, unitsPerHour: burn,
+                    observedDurationHours: 6, sampleCount: 24)
+            }
         }
-        let banked = index == 0 || index == 3
-            ? ProviderResetCreditSummary(availableCount: 2, observedAt: now, coverage: .complete,
-                knownExpiries: [now.addingTimeInterval(Double(index + 1) * 86_400 + 20 * 60), now.addingTimeInterval(12 * 86_400 + 55 * 60)]) : nil
-        reports.append(StoredProviderReport(provider: providers[index], accountID: id, accountName: "Unexported provider identity",
+        let banked = row.8.isEmpty ? nil : ProviderResetCreditSummary(availableCount: row.8.count, observedAt: now,
+            coverage: .complete, knownExpiries: row.8.map { now.addingTimeInterval($0 * 3_600) })
+        reports.append(StoredProviderReport(provider: row.1, accountID: id, accountName: "Unexported provider identity",
             generatedAt: now, resetCredits: banked, status: .healthy, errorMessage: nil))
-        metadata.append(AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(providers[index], id),
-            configurationID: AccountDisplayMetadata.safeID(providers[index], id), provider: providers[index], label: names[index], useLast: index == 2))
+        metadata.append(AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(row.1, id),
+            configurationID: AccountDisplayMetadata.safeID(row.1, id), provider: row.1, label: row.0, useLast: index == 2))
     }
     return WidgetSnapshot(state: .ready, generatedAt: now, limits: limits, reports: reports, status: .healthy,
-        message: "", accountDisplayMetadata: metadata)
+        message: "", accountDisplayMetadata: metadata, accountBurnRates: rates)
 }
 
 // The gallery formats its fixed presentation time with the process's current time
