@@ -9,7 +9,7 @@ public enum TVSnapshotFreshnessPolicy {
         at now: Date,
         maximumAge: TimeInterval = SnapshotFreshness.companionProviderMaximumAge
     ) -> Bool {
-        state == .stale || now.timeIntervalSince(generatedAt) > maximumAge
+        state != .setupNeeded && (state == .stale || now.timeIntervalSince(generatedAt) > maximumAge)
     }
 
     public static func expirationDate(
@@ -141,6 +141,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
     }
 
     public func freshnessText(at now: Date) -> String {
+        if snapshotState == .setupNeeded { return AccountTerms.noCurrentReading }
         let prefix = isStale(at: now) ? "Saved" : "Updated"
         return "\(prefix) \(Self.compactAge(since: generatedAt, now: now))"
     }
