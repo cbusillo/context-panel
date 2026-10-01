@@ -277,8 +277,10 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private let httpClient: any ConnectorHTTPClient
     private let credentialStore: any ProviderCredentialStoring
     private let expirationSkew: TimeInterval
+    private let resetReadCooldown: ClaudeResetCreditReadCooldown
 
     public init(
+        resetReadCooldown: ClaudeResetCreditReadCooldown = .shared,
         accounts: [ClaudeOAuthAccountConfiguration],
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
         credentialStore: any ProviderCredentialStoring,
@@ -288,6 +290,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         self.httpClient = httpClient
         self.credentialStore = credentialStore
         self.expirationSkew = expirationSkew
+        self.resetReadCooldown = resetReadCooldown
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -401,6 +404,9 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         accessToken: String,
         now: Date
     ) async -> ProviderResetCreditSummary? {
+        guard await resetReadCooldown.begin(accountID: account.accountID, endpoint: account.usageEndpoint, now: now) else {
+            return nil
+        }
         guard var components = URLComponents(url: account.usageEndpoint, resolvingAgainstBaseURL: false) else {
             return nil
         }
@@ -419,9 +425,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                 "anthropic-version": "2023-06-01",
                 "anthropic-client-platform": "context-panel",
-            ]
+            ],
+            timeoutInterval: 3
         )), (200..<300).contains(response.statusCode) else { return nil }
-        return ClaudeResetCreditParser.summary(from: response.data, observedAt: now)
+        guard let summary = ClaudeResetCreditParser.summary(from: response.data, observedAt: now) else { return nil }
+        await resetReadCooldown.succeeded(accountID: account.accountID, endpoint: account.usageEndpoint)
+        return summary
     }
 
     private func loadCredentials(accountID: String) throws -> ClaudeOAuthCredentials {

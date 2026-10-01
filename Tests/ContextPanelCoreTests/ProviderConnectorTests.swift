@@ -1977,6 +1977,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -1999,7 +2000,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthConnectorReadsOptionalResetInventoryWithoutMutations() async throws {
-    for optionalStatus in [200, 403, 500] {
+    for optionalStatus in [200, 403, 429, 500] {
         let credentials = try claudeCredentialsData(
             accessToken: "panel-owned-access", refreshToken: "panel-owned-refresh",
             expiresAt: Date(timeIntervalSince1970: 4_000_000_000)
@@ -2009,10 +2010,12 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         let http = StubHTTPClient(responses: [
             ConnectorHTTPResponse(statusCode: 200, data: usage),
             ConnectorHTTPResponse(statusCode: optionalStatus, data: inventory),
+            ConnectorHTTPResponse(statusCode: 200, data: usage),
         ])
         let endpoint = try #require(URL(string: "https://example.test/usage?existing=value"))
         let store = StubCredentialStore(storage: ["own-account": credentials])
         let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
             accounts: [ClaudeOAuthAccountConfiguration(accountID: "own-account", usageEndpoint: endpoint)],
             httpClient: http, credentialStore: store
         )
@@ -2028,8 +2031,33 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         #expect(query.contains(URLQueryItem(name: "cedar_ember", value: "1")))
         #expect(query.contains(URLQueryItem(name: "skip_spend", value: "1")))
         #expect(optional.headers["Authorization"] == "Bearer panel-owned-access")
+        #expect(optional.timeoutInterval.map { $0 > 0 && $0 <= 5 } == true)
         #expect(store.savedData == nil)
+        if optionalStatus != 200 {
+            let next = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_060))
+            #expect(next.reports[0].status == .healthy)
+            #expect(next.reports[0].limits.first?.used == 20)
+            #expect(http.requests.count == 3)
+        }
     }
+}
+
+@Test func claudeOAuthInventoryTransportFailureBacksOffAcrossConnectorRecreation() async throws {
+    let credentials = try claudeCredentialsData(accessToken: "own", refreshToken: "own-refresh", expiresAt: Date(timeIntervalSince1970: 4_000_000_000))
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"five_hour":{"utilization":15}}"#.utf8))], failureAtRequest: 2)
+    let store = StubCredentialStore(storage: ["own": credentials])
+    let cooldown = ClaudeResetCreditReadCooldown()
+    let account = ClaudeOAuthAccountConfiguration(accountID: "own")
+    let first = ClaudeOAuthUsageConnector(resetReadCooldown: cooldown, accounts: [account], httpClient: http, credentialStore: store)
+    let second = ClaudeOAuthUsageConnector(resetReadCooldown: cooldown, accounts: [account], httpClient: http, credentialStore: store)
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let result = await first.refresh(now: now)
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.reports[0].resetCredits == nil)
+    let retry = await second.refresh(now: now.addingTimeInterval(60))
+    #expect(retry.reports[0].limits.first?.used == 15)
+    #expect(http.requests.count == 3)
+    #expect(http.requests.allSatisfy { $0.method == "GET" })
 }
 
 @Test func claudeOAuthConnectorReportsBlockedAccessFromStructuredUsage() async throws {
@@ -2047,6 +2075,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2079,6 +2108,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2114,6 +2144,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2139,6 +2170,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2160,6 +2192,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         ConnectorHTTPResponse(statusCode: 200, data: available),
     ])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
@@ -2262,6 +2295,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         ConnectorHTTPResponse(statusCode: 200, data: workUsage),
     ])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [
             ClaudeOAuthAccountConfiguration(accountID: "personal", accountName: "Personal Claude"),
             ClaudeOAuthAccountConfiguration(accountID: "work", accountName: "Work Claude"),
@@ -2292,6 +2326,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2319,6 +2354,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2343,6 +2379,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2373,6 +2410,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: statusCode, data: body)])
         let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
         let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
             accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
             httpClient: http,
             credentialStore: store
@@ -2459,6 +2497,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     ])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2486,6 +2525,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     )
     let validHTTP = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let validConnector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: validHTTP,
         credentialStore: StubCredentialStore(storage: ["claude-oauth-default": validCredentials])
@@ -2507,6 +2547,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         ConnectorHTTPResponse(statusCode: 200, data: usage),
     ])
     let boundaryConnector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: boundaryHTTP,
         credentialStore: StubCredentialStore(storage: ["claude-oauth-default": boundaryCredentials])
@@ -2526,6 +2567,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     )
     let http = StubHTTPClient(responses: [])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
@@ -2553,6 +2595,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     ])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2578,6 +2621,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         ])
         let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
         let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
             accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
             httpClient: http,
             credentialStore: store
@@ -2609,6 +2653,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"request_id":"second-secret"}"#.utf8)),
     ])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
@@ -2638,6 +2683,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         "claude-b": credentials,
     ])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [
             ClaudeOAuthAccountConfiguration(accountID: "claude-a", accountName: "Claude A"),
             ClaudeOAuthAccountConfiguration(accountID: "claude-b", accountName: "Claude B"),
@@ -2670,6 +2716,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let http = GatedClaudeHTTPClient()
     let store = CountingCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2861,6 +2908,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     ])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2881,6 +2929,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     ])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2902,6 +2951,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     ])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
         credentialStore: store
@@ -2998,14 +3048,17 @@ private func resetCreditReport(
 
 private final class StubHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
     private var responses: [ConnectorHTTPResponse]
+    private let failureAtRequest: Int?
     private(set) var requests: [ConnectorHTTPRequest] = []
 
-    init(responses: [ConnectorHTTPResponse]) {
+    init(responses: [ConnectorHTTPResponse], failureAtRequest: Int? = nil) {
         self.responses = responses
+        self.failureAtRequest = failureAtRequest
     }
 
     func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
         requests.append(request)
+        if requests.count == failureAtRequest { throw URLError(.timedOut) }
         guard !responses.isEmpty else {
             return ConnectorHTTPResponse(statusCode: 500, data: Data())
         }
@@ -3217,6 +3270,7 @@ private func claudeUsageRefreshResult(
         expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
     )
     let connector = ClaudeOAuthUsageConnector(
+        resetReadCooldown: ClaudeResetCreditReadCooldown(),
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)]),
         credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])

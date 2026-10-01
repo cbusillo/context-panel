@@ -513,7 +513,11 @@ found a settings usage GET with `cedar_ember=1&skip_spend=1` and a `cedar_ember`
 grant inventory. After ordinary OAuth usage succeeds, the connector now makes
 one optional GET to the same OAuth usage endpoint with those flags, using only
 that account's Context Panel-owned access token. It does not retry, rotate tokens
-or log raw responses for the optional request. OAuth support for this inventory
+or log raw responses for the optional request. That request has a three-second
+timeout. Failed, unsupported or malformed inventory reads have a six-hour
+process-local cooldown per account/endpoint, shared across newly constructed
+connectors; ordinary utilization continues on every refresh. Restarting the
+publisher permits one new probe. OAuth support for this inventory
 has not yet been verified by a signed canonical runtime; the web/Desktop source
 is static schema evidence, not authenticated proof for either account.
 

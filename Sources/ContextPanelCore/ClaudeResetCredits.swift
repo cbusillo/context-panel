@@ -21,7 +21,7 @@ public enum ClaudeResetCreditParser {
             let windows: Set<String> = ["five_hour", "seven_day", "seven_day_overage_included", "seven_day_opus",
                                         "seven_day_sonnet", "seven_day_cowork", "seven_day_omelette", "seven_day_oauth_apps"]
             let clears = (grant.clears ?? []).filter { windows.contains($0) }
-            let blocking = (grant.blocking ?? []).filter { windows.contains($0) && !clears.contains($0) }
+            let blocking = (grant.blocking ?? []).filter { !clears.contains($0) }
             let exhausted = status.atLimit == true ? (status.exhausted ?? []).filter { windows.contains($0) } : []
             let claimable = grant.usableNow == true && blocking.isEmpty && status.cooldownUntil == nil
                 && (grant.useRequiresLimit == false || clears.contains { exhausted.contains($0) })
@@ -72,5 +72,25 @@ public enum ClaudeResetCreditParser {
             case usableNow = "usable_now"
             case useRequiresLimit = "use_requires_limit"
         }
+    }
+}
+
+/// Process-local cooldown shared by newly constructed connectors. No tokens or provider rows are stored.
+/// Restarting the publisher permits one new probe; an unsupported source is not permanently disabled.
+public actor ClaudeResetCreditReadCooldown {
+    public static let shared = ClaudeResetCreditReadCooldown()
+    private var retryDates: [String: Date] = [:]
+
+    public init() {}
+
+    func begin(accountID: String, endpoint: URL, now: Date) -> Bool {
+        let key = accountID + "|" + endpoint.absoluteString
+        if let next = retryDates[key], next > now { return false }
+        retryDates[key] = now.addingTimeInterval(6 * 60 * 60)
+        return true
+    }
+
+    func succeeded(accountID: String, endpoint: URL) {
+        retryDates.removeValue(forKey: accountID + "|" + endpoint.absoluteString)
     }
 }

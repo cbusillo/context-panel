@@ -48,4 +48,17 @@ private let resetObservation = Date(timeIntervalSince1970: 1_800_000_000)
     #expect(try count(#""at_limit":true,"exhausted":["seven_day"],"#) == 1)
     #expect(try count(#""at_limit":false,"#) == 0)
     #expect(try count(#""at_limit":true,"exhausted":["seven_day"],"cooldown_until":"2099-01-01T00:00:00Z","#) == 0)
+    let unknownBlock = #"{"cedar_ember":{"eligible":true,"at_limit":true,"exhausted":["seven_day"],"grants":[{"id":"offer","resets_total":1,"resets_left":0,"ends_at":"2099-01-01T00:00:00Z","usable_now":true,"clears":["seven_day"],"blocking":["future_window"]}]}}"#
+    #expect(ClaudeResetCreditParser.summary(from: Data(unknownBlock.utf8), observedAt: resetObservation)?.availableCount == 0)
+}
+
+@Test func claudeResetCreditCooldownIsAccountSpecificAndAllowsRecovery() async throws {
+    let cooldown = ClaudeResetCreditReadCooldown()
+    let endpoint = try #require(URL(string: "https://example.test/usage"))
+    #expect(await cooldown.begin(accountID: "one", endpoint: endpoint, now: resetObservation))
+    #expect(await !cooldown.begin(accountID: "one", endpoint: endpoint, now: resetObservation.addingTimeInterval(60)))
+    #expect(await cooldown.begin(accountID: "two", endpoint: endpoint, now: resetObservation.addingTimeInterval(60)))
+    #expect(await cooldown.begin(accountID: "one", endpoint: endpoint, now: resetObservation.addingTimeInterval(7 * 60 * 60)))
+    await cooldown.succeeded(accountID: "one", endpoint: endpoint)
+    #expect(await cooldown.begin(accountID: "one", endpoint: endpoint, now: resetObservation.addingTimeInterval(7 * 60 * 60 + 1)))
 }

@@ -391,12 +391,14 @@ public struct ConnectorHTTPRequest: Sendable {
     public let method: String
     public let headers: [String: String]
     public let body: Data?
+    public let timeoutInterval: TimeInterval?
 
-    public init(url: URL, method: String, headers: [String: String] = [:], body: Data? = nil) {
+    public init(url: URL, method: String, headers: [String: String] = [:], body: Data? = nil, timeoutInterval: TimeInterval? = nil) {
         self.url = url
         self.method = method
         self.headers = headers
         self.body = body
+        self.timeoutInterval = timeoutInterval
     }
 }
 
@@ -425,7 +427,7 @@ public struct URLSessionConnectorHTTPClient: ConnectorHTTPClient {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
-        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.timeoutInterval = request.timeoutInterval ?? timeoutInterval
         for (key, value) in request.headers {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
