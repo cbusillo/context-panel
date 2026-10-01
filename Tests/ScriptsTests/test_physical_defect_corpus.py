@@ -70,7 +70,7 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             self.assertNotEqual(positive["changeDigest"], negative["changeDigest"])
 
     def test_scrubbed_lazy_fetch_is_enforced(self):
-        completed = subprocess.CompletedProcess(["git", "--version"], 0, "git version 0.0.0\n", "")
+        completed = subprocess.CompletedProcess(["git", "--version"], 0, b"git version 0.0.0\n", b"")
         with mock.patch.object(corpus_module.subprocess, "run", return_value=completed) as run:
             corpus_module._git_output(["--version"])
         self.assertEqual(run.call_args.kwargs["env"]["GIT_NO_LAZY_FETCH"], "1")
@@ -91,12 +91,12 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
 
     def test_added_lines_count_new_copies_and_skip_moves_and_binaries(self):
         blobs = {
-            "old": "moved\nkept\nrepeated\n",
-            "new": "kept\n++ value\nrepeated\nmoved\nrepeated",
-            "binary": "a\0b\n",
+            "old": b"moved\nkept\nrepeated\n",
+            "new": b"kept\n++ value\nrepeated\nmoved\nrepeated",
+            "binary": b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\n",
         }
         with mock.patch.object(
-            corpus_module, "_git_output", side_effect=lambda arguments: blobs[arguments[-1]]
+            corpus_module, "_git_bytes", side_effect=lambda arguments: blobs[arguments[-1]]
         ):
             self.assertEqual(
                 corpus_module._added_lines(

@@ -293,7 +293,7 @@ def _require_known_surfaces(value: Any, capabilities: dict[str, set[str]], label
     return sorted(surfaces)
 
 
-def _git_output(arguments: list[str]) -> str:
+def _git_bytes(arguments: list[str]) -> bytes:
     environment = {
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -316,12 +316,15 @@ def _git_output(arguments: list[str]) -> str:
         cwd=REPO_ROOT,
         capture_output=True,
         env=environment,
-        text=True,
         check=False,
     )
     if completed.returncode != 0:
         raise CorpusError("offline repository citation validation failed")
     return completed.stdout
+
+
+def _git_output(arguments: list[str]) -> str:
+    return _git_bytes(arguments).decode("utf-8", errors="surrogateescape")
 
 
 def _git_succeeds(arguments: list[str]) -> bool:
@@ -358,10 +361,10 @@ def _tree_changes(base: str, commit: str) -> list[dict[str, str]]:
 def _blob_lines(mode: str, object_id: str) -> list[str]:
     if mode in {"000000", "160000"}:
         return []
-    contents = _git_output(["cat-file", "blob", object_id])
-    if "\0" in contents[:8000]:
+    contents = _git_bytes(["cat-file", "blob", object_id])
+    if b"\0" in contents[:8000]:
         return []
-    lines = contents.split("\n")
+    lines = contents.decode("utf-8", errors="surrogateescape").split("\n")
     if lines[-1] == "":
         lines.pop()
     return lines
