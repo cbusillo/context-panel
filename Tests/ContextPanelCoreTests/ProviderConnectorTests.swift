@@ -1992,9 +1992,44 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     #expect(result.snapshot.limits.map(\.modelLabel) == ["Claude", "Claude", "Sonnet"])
     #expect(result.snapshot.limits.map(\.used) == [9, 12, 14])
     #expect(result.snapshot.limits.allSatisfy { $0.provider == .anthropic && $0.unit == .percent })
-    #expect(http.requests.count == 1)
+    #expect(http.requests.count == 2)
     #expect(http.requests[0].url.absoluteString == "https://api.anthropic.com/api/oauth/usage")
     #expect(http.requests[0].headers["Authorization"] == "Bearer access-secret")
+    #expect(result.reports[0].resetCredits == nil)
+}
+
+@Test func claudeOAuthConnectorReadsOptionalResetInventoryWithoutMutations() async throws {
+    for optionalStatus in [200, 403, 500] {
+        let credentials = try claudeCredentialsData(
+            accessToken: "panel-owned-access", refreshToken: "panel-owned-refresh",
+            expiresAt: Date(timeIntervalSince1970: 4_000_000_000)
+        )
+        let usage = Data(#"{"five_hour":{"utilization":20}}"#.utf8)
+        let inventory = Data(#"{"cedar_ember":{"eligible":true,"grants":[{"id":"offer","resets_total":2,"resets_left":2,"ends_at":"2099-01-01T00:00:00Z"}]}}"#.utf8)
+        let http = StubHTTPClient(responses: [
+            ConnectorHTTPResponse(statusCode: 200, data: usage),
+            ConnectorHTTPResponse(statusCode: optionalStatus, data: inventory),
+        ])
+        let endpoint = try #require(URL(string: "https://example.test/usage?existing=value"))
+        let store = StubCredentialStore(storage: ["own-account": credentials])
+        let connector = ClaudeOAuthUsageConnector(
+            accounts: [ClaudeOAuthAccountConfiguration(accountID: "own-account", usageEndpoint: endpoint)],
+            httpClient: http, credentialStore: store
+        )
+        let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(result.reports[0].status == .healthy)
+        #expect(result.reports[0].limits.first?.used == 20)
+        #expect(result.reports[0].resetCredits?.availableCount == (optionalStatus == 200 ? 2 : nil))
+        #expect(http.requests.count == 2)
+        #expect(http.requests.allSatisfy { $0.method == "GET" })
+        let optional = try #require(http.requests.last)
+        let query = try #require(URLComponents(url: optional.url, resolvingAgainstBaseURL: false)).queryItems ?? []
+        #expect(query.contains(URLQueryItem(name: "existing", value: "value")))
+        #expect(query.contains(URLQueryItem(name: "cedar_ember", value: "1")))
+        #expect(query.contains(URLQueryItem(name: "skip_spend", value: "1")))
+        #expect(optional.headers["Authorization"] == "Bearer panel-owned-access")
+        #expect(store.savedData == nil)
+    }
 }
 
 @Test func claudeOAuthConnectorReportsBlockedAccessFromStructuredUsage() async throws {
@@ -2432,7 +2467,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
     #expect(result.reports[0].status == .healthy)
-    #expect(http.requests.map(\.method) == ["POST", "GET"])
+    #expect(http.requests.map(\.method) == ["POST", "GET", "GET"])
     #expect(http.requests[0].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
     #expect(http.requests[0].headers["User-Agent"] == "context-panel")
     #expect(http.requests[0].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
@@ -2458,7 +2493,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 
     _ = await validConnector.refresh(now: now)
 
-    #expect(validHTTP.requests.map(\.method) == ["GET"])
+    #expect(validHTTP.requests.map(\.method) == ["GET", "GET"])
     #expect(validHTTP.requests[0].headers["Authorization"] == "Bearer current-access")
 
     let boundaryCredentials = try claudeCredentialsData(
@@ -2479,7 +2514,7 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 
     _ = await boundaryConnector.refresh(now: now)
 
-    #expect(boundaryHTTP.requests.map(\.method) == ["POST", "GET"])
+    #expect(boundaryHTTP.requests.map(\.method) == ["POST", "GET", "GET"])
     #expect(boundaryHTTP.requests[1].headers["Authorization"] == "Bearer new-access")
 }
 
@@ -2551,10 +2586,11 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
         #expect(result.reports[0].status == .healthy)
-        #expect(http.requests.map(\.method) == ["GET", "POST", "GET"])
+        #expect(http.requests.map(\.method) == ["GET", "POST", "GET", "GET"])
         #expect(http.requests[1].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
         #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
         #expect(http.requests[2].headers["Authorization"] == "Bearer new-access")
+        #expect(http.requests[3].headers["Authorization"] == "Bearer new-access")
         #expect(http.requests[2].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
         #expect(store.savedAccountID == "claude-oauth-default")
     }

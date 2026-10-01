@@ -508,8 +508,22 @@ account, and a candidate build has not yet passed signed native acceptance.
 Anthropic's [limit reset documentation](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset)
 places banked reset offers and their expiry in web/Desktop **Settings → Usage**.
 These offers are separate from the weekly natural reset schedule and usage
-credit balances. No supported OAuth banked-reset schema or read-only details
-endpoint was verified in this investigation. The absence of a reset summary is
+credit balances. Read-only inspection of Claude Desktop 2.16120.0 program assets
+found a settings usage GET with `cedar_ember=1&skip_spend=1` and a `cedar_ember`
+grant inventory. After ordinary OAuth usage succeeds, the connector now makes
+one optional GET to the same OAuth usage endpoint with those flags, using only
+that account's Context Panel-owned access token. It does not retry, rotate tokens
+or log raw responses for the optional request. OAuth support for this inventory
+has not yet been verified by a signed canonical runtime; the web/Desktop source
+is static schema evidence, not authenticated proof for either account.
+
+A valid eligible inventory supplies remaining resets, deduplicated by transient
+grant ID, and each offer's `ends_at`. Paused/expired offers are excluded; zero-left
+offers count only when claimable under the vendor's limit/blocking/cooldown
+conditions. Malformed or absent inventory and rejected optional requests leave
+the known usage windows intact. IDs and provider metadata are discarded; only
+count, observation, coverage and dates enter the shared sanitized snapshot.
+The consuming reset POST is never used. The absence of a reset summary is
 **Banked resets unknown**, including on a connected Claude account. It is not a
 zero balance. Do not infer an offer expiry from `seven_day.resets_at`, a spend
 balance, an issue comment or a sibling account. The owner declined manual fallback

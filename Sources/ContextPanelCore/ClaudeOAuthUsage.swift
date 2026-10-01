@@ -369,6 +369,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: retryUsage.limits,
+                resetCredits: await resetCredits(account: account, accessToken: refreshedToken, now: now),
                 status: retryUsage.limits.isEmpty ? .unknown : nil,
                 accessState: retryUsage.accessState
             )
@@ -389,9 +390,38 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             accountName: account.accountName,
             generatedAt: now,
             limits: usage.limits,
+            resetCredits: await resetCredits(account: account, accessToken: currentAccessToken, now: now),
             status: usage.limits.isEmpty ? .unknown : nil,
             accessState: usage.accessState
         )
+    }
+
+    private func resetCredits(
+        account: ClaudeOAuthAccountConfiguration,
+        accessToken: String,
+        now: Date
+    ) async -> ProviderResetCreditSummary? {
+        guard var components = URLComponents(url: account.usageEndpoint, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        var query = (components.queryItems ?? []).filter { !["cedar_ember", "skip_spend"].contains($0.name) }
+        query.append(contentsOf: [URLQueryItem(name: "cedar_ember", value: "1"), URLQueryItem(name: "skip_spend", value: "1")])
+        components.queryItems = query
+        guard let url = components.url else { return nil }
+        // Optional inventory read: no token rotation, retry, raw-response logging or consuming POST.
+        guard let response = try? await httpClient.data(for: ConnectorHTTPRequest(
+            url: url,
+            method: "GET",
+            headers: [
+                "Authorization": "Bearer \(accessToken)",
+                "Accept": "application/json",
+                "User-Agent": "claude-code/2.1.141",
+                "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
+                "anthropic-version": "2023-06-01",
+                "anthropic-client-platform": "context-panel",
+            ]
+        )), (200..<300).contains(response.statusCode) else { return nil }
+        return ClaudeResetCreditParser.summary(from: response.data, observedAt: now)
     }
 
     private func loadCredentials(accountID: String) throws -> ClaudeOAuthCredentials {
