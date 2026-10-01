@@ -2078,7 +2078,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         Task { @MainActor in
             defer { isRemovingAccount = false }
             do {
-                guard let document = try await store.removeAccount(id: accountID, storedSnapshot: SnapshotRefreshStores.appDefault().primary.loadCurrent().snapshot) else {
+                let scope = await CompanionCloudKitSyncStoreFactory.make().currentUserScope()
+                guard let document = try await store.removeAccount(id: accountID, storedSnapshot: SnapshotRefreshStores.appDefault().primary.loadCurrent().snapshot, userScope: scope) else {
                     errorMessage = "Another refresh is running. Try removing the account again in a moment."
                     return
                 }

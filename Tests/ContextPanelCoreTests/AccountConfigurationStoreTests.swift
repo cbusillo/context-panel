@@ -200,7 +200,9 @@ func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAc
     var expected = document
     expected.accounts[0].isEnabled = false
     expected.updatedAt = Date(timeIntervalSince1970: 20)
-    #expect(result.document == expected)
+    #expect(result.document.accounts == expected.accounts)
+    #expect(result.document.updatedAt == expected.updatedAt)
+    #expect(result.document.removedAccountIDs == expected.removedAccountIDs)
     #expect(!result.document.accounts.contains { $0.id == "openai-codex-lab-default" })
 }
 

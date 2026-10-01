@@ -1229,7 +1229,7 @@ public struct CompanionSyncPublisher: Sendable {
             fastModeForecastSettings: fastModeForecastSettingsStore.load(),
             cloudKitUserScope: removalUserScope,
             accountDisplayMetadata: configuration.map {
-                AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt)
+                AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt, publisherID: $0.publisherID)
             },
             removedDisplayIDs: configuration.flatMap { configuration in
                 guard configuration.removalUserScope == nil || removalUserScope == nil || configuration.removalUserScope == removalUserScope else { return nil }
@@ -1628,7 +1628,7 @@ private enum CompanionAccountIdentity {
 }
 
 public extension AccountDisplayMetadata {
-    static func companion(configuration: [LocalProviderAccountConfiguration], stored: StoredUsageSnapshot, now: Date) -> [Self] {
+    static func companion(configuration: [LocalProviderAccountConfiguration], stored: StoredUsageSnapshot, now: Date, publisherID: String? = nil) -> [Self] {
         let local = Self.local(configuration: configuration, stored: stored, now: now)
         return local.map { entry in
             let limit = stored.snapshot.limits.first { $0.provider == entry.provider && safeID($0.provider, $0.accountID) == entry.id }
@@ -1637,12 +1637,26 @@ public extension AccountDisplayMetadata {
             let rawID = limit?.accountID ?? report?.accountID ?? configuration.first {
                 safeID($0.provider, $0.id) == entry.configurationID
             }?.id ?? entry.id
-            let companionID = CompanionAccountIdentity.id(provider: entry.provider, accountID: rawID,
+            let setup = configuration.first { safeID($0.provider, $0.id) == entry.configurationID }
+            let placeholderID = setup.map { companionMembershipKey($0, publisherID: publisherID) } ?? rawID
+            let companionID = CompanionAccountIdentity.id(provider: entry.provider,
+                accountID: limit == nil && report == nil ? placeholderID : rawID,
                 configuredAccountID: limit?.configuredAccountID ?? report?.configuredAccountID)
-            return Self(id: safeID(entry.provider, companionID), configurationID: entry.configurationID,
+            return Self(id: safeID(entry.provider, companionID),
+                        configurationID: setup.map { companionConfigurationID($0, publisherID: publisherID) } ?? entry.configurationID,
                         provider: entry.provider, label: entry.label, isEnabled: entry.isEnabled,
                         showInWidgets: entry.showInWidgets, useLast: entry.useLast,
                         sourceConfigured: entry.sourceConfigured, readState: entry.readState)
         }
+    }
+}
+
+public extension AccountDisplayMetadata {
+    static func companionMembershipKey(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
+        guard account.isSharedDefaultMembership, let publisherID else { return account.id }
+        return "publisher:" + publisherID + ":" + account.id
+    }
+    static func companionConfigurationID(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
+        safeID(account.provider, companionMembershipKey(account, publisherID: publisherID))
     }
 }

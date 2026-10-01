@@ -26,7 +26,10 @@ are merged independently of usage age; updated Macs consume them before provider
 reads, and companions omit removed usage, status, cache and display rows. Offline
 publishers cannot revive the lane. Re-adding creates a new membership. Historical local removals are not promoted
 to global decisions. Shared built-in configuration IDs are not deletion keys:
-the observed provider lane identifies a default login, preserving another Mac's different login. Deletion markers bind to the resolved CloudKit user scope. Credentials,
+the observed provider lane identifies a default login, preserving another Mac's different login. Unread built-in defaults use a persistent random publisher
+identity to distinguish their setup memberships; old anonymous placeholders are
+retired during migration, with duplicate-account checks. Local credential keys
+and observed companion identities do not change. Deletion markers bind to the resolved CloudKit user scope. Credentials,
 bookmarks, home folders and local history remain. Configured but never-connected
 rows from another Mac survive until explicitly removed. Older builds must be
 updated to consume the deletion markers; their next remote publish is still filtered

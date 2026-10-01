@@ -96,7 +96,7 @@ private func removalFixture(_ id: String, observed: Bool) -> (LocalProviderAccou
     }
     let first = usage("login-a"), other = usage("login-b")
     try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account], removedAccountIDs: ["historical-local-removal"]))
-    #expect(store.load(now: removalNow).document.globalRemovedDisplayIDs.isEmpty)
+    #expect(!store.load(now: removalNow).document.globalRemovedDisplayIDs.contains(AccountDisplayMetadata.safeID(.openAI, "historical-local-removal")))
     let deleted = try #require(try await store.removeAccount(id: account.id,
         lock: SnapshotRefreshLock(lockURL: root.appending(path: "lock")), now: removalNow, storedSnapshot: first))
     try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account]))
@@ -132,4 +132,64 @@ private func removalFixture(_ id: String, observed: Bool) -> (LocalProviderAccou
     #expect(changed.accounts == [account])
     #expect(changed.globalRemovedDisplayIDs.isEmpty)
     #expect(changed.removalUserScope == second)
+}
+
+@Test func unreadDefaultsHaveStableDistinctMacMembershipsAndGlobalRemovalIsPrecise() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = AccountConfigurationStore(configurationURL: root.appending(path: "a/accounts.json"))
+    let b = AccountConfigurationStore(configurationURL: root.appending(path: "b/accounts.json"))
+    try a.save(AccountConfigurationStore.defaultDocument(now: removalNow))
+    try b.save(AccountConfigurationStore.defaultDocument(now: removalNow))
+    let first = a.load(now: removalNow).document
+    let second = b.load(now: removalNow).document
+    #expect(first.publisherID != second.publisherID)
+    #expect(a.load(now: removalNow).document.publisherID == first.publisherID)
+    let account = try #require(first.accounts.first { $0.provider == .anthropic })
+    let empty = StoredUsageSnapshot(savedAt: removalNow, snapshot: UsageSnapshot(generatedAt: removalNow, limits: []), reports: [])
+    let oldPlaceholder = CompanionSyncDocument(storedSnapshot: empty,
+        accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: first.accounts, stored: empty, now: removalNow))
+    let migrated = CompanionSyncDocument(storedSnapshot: empty,
+        accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: first.accounts, stored: empty, now: removalNow, publisherID: first.publisherID),
+        removedDisplayIDs: first.globalRemovedDisplayIDs)
+    #expect(migrated.mergingForRemotePublish(existing: oldPlaceholder, now: removalNow).accountDisplayMetadata?.count == first.accounts.count)
+    let deleted = try #require(try await a.removeAccount(id: account.id,
+        lock: SnapshotRefreshLock(lockURL: root.appending(path: "lock")), now: removalNow))
+    try b.applyGlobalRemovals(deleted.globalRemovedDisplayIDs, storedSnapshot: nil, now: removalNow)
+    #expect(b.load(now: removalNow).document.accounts == second.accounts)
+    let otherRows = AccountDisplayMetadata.companion(configuration: second.accounts, stored: empty, now: removalNow, publisherID: second.publisherID)
+    let remaining = CompanionSyncDocument(storedSnapshot: empty, accountDisplayMetadata: otherRows,
+        removedDisplayIDs: deleted.globalRemovedDisplayIDs).applyingGlobalRemovals()
+    #expect(remaining.accountDisplayMetadata == otherRows)
+}
+
+@Test func removalAfterCloudKitUserChangeBindsNewMarkerToCurrentUser() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let first = try #require(CompanionCloudKitUserScope(rawValue: String(repeating: "a", count: 64)))
+    let second = try #require(CompanionCloudKitUserScope(rawValue: String(repeating: "b", count: 64)))
+    let (account, stored, _) = removalFixture("local-current", observed: true)
+    try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account], removedDisplayIDs: ["old-user-marker"], removalUserScope: first))
+    let changed = try #require(try await store.removeAccount(id: account.id,
+        lock: SnapshotRefreshLock(lockURL: root.appending(path: "lock")), now: removalNow, storedSnapshot: stored, userScope: second))
+    #expect(changed.removalUserScope == second)
+    #expect(!changed.globalRemovedDisplayIDs.contains("old-user-marker"))
+    #expect(!changed.globalRemovedDisplayIDs.isEmpty)
+}
+
+@Test func publisherIdentityIsNotRegeneratedWhenItsSetupCannotBePersisted() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let blockedParent = root.appending(path: "not-a-directory")
+    try Data("sentinel".utf8).write(to: blockedParent)
+    let store = AccountConfigurationStore(configurationURL: blockedParent.appending(path: "accounts.json"))
+    for _ in 0..<2 {
+        let result = store.load(now: removalNow)
+        #expect(result.status == .failure)
+        #expect(result.document.publisherID == nil)
+        #expect(result.errorMessage != nil)
+    }
+    #expect(try Data(contentsOf: blockedParent) == Data("sentinel".utf8))
 }
