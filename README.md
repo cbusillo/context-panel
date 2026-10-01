@@ -126,7 +126,9 @@ swift run ContextPanelAccountSnapshot
 This read-only command emits versioned JSON from the canonical App Group store.
 It includes configured accounts that are disconnected, unavailable, disabled or
 stale, per-window usage/burn/natural resets, and reported banked resets. It does
-not refresh providers or change configuration. Unknown values stay null; inspect
+not refresh providers or change configuration. Unknown observations stay null;
+optional fields within provider summaries may be absent. A saved `accounts.json`
+is required. Inspect
 each account's state and observation time before relying on its capacity. See the
 [agent snapshot contract](docs/provider-usage-access.md#agent-readable-account-snapshot).
 

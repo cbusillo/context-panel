@@ -10,6 +10,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
 
     public struct Account: Encodable, Sendable {
         public let id: String
+        public let configurationID: String
         public let provider: Provider
         public let label: String
         public let state: AccountCapacityState
@@ -19,12 +20,13 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let bankedResets: BankedResets
 
         enum CodingKeys: String, CodingKey {
-            case id, provider, label, state, observedAt, windows, usageCredits, bankedResets
+            case id, configurationID, provider, label, state, observedAt, windows, usageCredits, bankedResets
         }
 
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(id, forKey: .id)
+            try container.encode(configurationID, forKey: .configurationID)
             try container.encode(provider, forKey: .provider)
             try container.encode(label, forKey: .label)
             try container.encode(state, forKey: .state)
@@ -44,9 +46,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let naturalResetAt: Date?
         public let observedAt: Date?
         public let burn: Burn?
+        public let confidence: UsageConfidence
+        public let presentationAssumption: UsagePresentationAssumption?
 
         enum CodingKeys: String, CodingKey {
-            case id, label, unit, used, limit, naturalResetAt, observedAt, burn
+            case id, label, unit, used, limit, naturalResetAt, observedAt, burn, confidence, presentationAssumption
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -59,6 +63,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(naturalResetAt, forKey: .naturalResetAt)
             try container.encode(observedAt, forKey: .observedAt)
             try container.encode(burn, forKey: .burn)
+            try container.encode(confidence, forKey: .confidence)
+            try container.encode(presentationAssumption, forKey: .presentationAssumption)
         }
     }
 
@@ -101,11 +107,12 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     ) {
         readAt = now
         savedAt = stored.savedAt
+        let presented = stored.snapshot.presented(at: now)
         let rates = AccountBurnRateEstimator.observedBurnRates(
-            current: stored.snapshot, history: history, now: now
+            current: presented, history: history, now: now
         )
         accounts = AccountCapacity.rows(configuration: configuration.accounts,
-            snapshot: stored.snapshot, reports: stored.reports, now: now).map { row in
+            snapshot: presented, reports: stored.reports, now: now).map { row in
             let current = [.available, .closeToLimit, .limited].contains(row.state)
             let summary = row.report?.resetCredits
             let resetState: AccountCapacityState
@@ -119,10 +126,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             } else { resetState = .unknown }
             return Account(
                 id: ConnectorRedactor.localAccountID(provider: row.provider, stableID: row.id),
+                configurationID: ConnectorRedactor.localAccountID(provider: row.provider, stableID: row.configuredAccountID),
                 provider: row.provider,
                 label: ConnectorRedactor.safeErrorDescription(row.name),
                 state: row.state,
-                observedAt: row.report?.generatedAt ?? row.limits.compactMap(\.lastUpdatedAt).min(),
+                observedAt: row.limits.compactMap(\.lastUpdatedAt).min() ?? row.report?.generatedAt,
                 windows: row.limits.map { limit in
                     let burn = current ? rates[row.id]?[limit.id] : nil
                     return Window(
@@ -131,7 +139,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                         unit: limit.unit, used: limit.used, limit: limit.limit,
                         naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
                         burn: burn.map { Burn(unitsPerHour: $0.unitsPerHour,
-                            observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) }
+                            observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) },
+                        confidence: limit.confidence, presentationAssumption: limit.presentationAssumption
                     )
                 },
                 usageCredits: row.report?.usageCredits,

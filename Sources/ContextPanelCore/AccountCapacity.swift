@@ -3,6 +3,7 @@ import Foundation
 /// Account membership comes from local setup, not successful provider responses.
 public struct AccountCapacity: Identifiable, Sendable {
     public let id: String
+    public let configuredAccountID: String
     public let provider: Provider
     public let name: String
     public let isEnabled: Bool
@@ -64,7 +65,7 @@ public struct AccountCapacity: Identifiable, Sendable {
                     : limits.isEmpty ? .unknown
                     : ([report?.status ?? .unknown] + limits.map(\.status)).contextPanelWorstStatus
                 return Self(
-                    id: id, provider: account.provider,
+                    id: id, configuredAccountID: account.id, provider: account.provider,
                     name: account.accountAliases?[id] ?? (ids.count > 1 ? "\(account.displayName) \(id.suffix(6))" : account.displayName),
                     isEnabled: account.isEnabled, limits: limits, report: report, status: status
                 )

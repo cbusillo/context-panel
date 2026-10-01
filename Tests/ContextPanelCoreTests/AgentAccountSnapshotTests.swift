@@ -119,6 +119,58 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(AgentAccountSnapshot.BankedResets(state: .available, summary: zero).unknownExpiryCount == 0)
 }
 
+@Test func agentSnapshotAccountObservationDoesNotAdvanceWhenSessionQuotaIsPolled() throws {
+    let eventAt = agentNow.addingTimeInterval(-SnapshotFreshness.appMaximumAge * 0.8)
+    var account = agentConfiguration("a")
+    account.codexQuotaPath = "/not-read/account/sessions"
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [account])
+    let stored = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow,
+        limits: [agentLimit("a", used: 30, at: eventAt)]),
+        reports: [StoredProviderReport(provider: .openAI, accountID: "a", configuredAccountID: "a",
+            accountName: "Ignored", generatedAt: agentNow, status: .healthy, errorMessage: nil)])
+    let row = try #require(AgentAccountSnapshot(configuration: config, stored: stored, history: [], now: agentNow).accounts.first)
+    #expect(row.state == .available)
+    #expect(row.observedAt == eventAt)
+    #expect(row.observedAt != stored.reports.first?.generatedAt)
+}
+
+@Test func agentSnapshotRetainsConfigurationKeyWhenClaudeConnects() throws {
+    let account = agentConfiguration("d", provider: .anthropic)
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [account])
+    let empty = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow, limits: []))
+    let before = try #require(AgentAccountSnapshot(configuration: config, stored: empty, history: [], now: agentNow).accounts.first)
+    let logical = ConnectorRedactor.localAccountID(provider: .anthropic, stableID: account.id)
+    let limit = UsageLimit(provider: .anthropic, accountID: logical, accountName: "Ignored", label: "Weekly",
+        windowLabel: "Weekly", unit: .percent, used: 21, limit: 100, lastUpdatedAt: agentNow)
+    let connected = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow, limits: [limit]),
+        reports: [StoredProviderReport(provider: .anthropic, accountID: logical,
+            accountName: "Ignored", generatedAt: agentNow, status: .healthy, errorMessage: nil)])
+    let after = try #require(AgentAccountSnapshot(configuration: config, stored: connected, history: [], now: agentNow).accounts.first)
+    #expect(before.state == .notConnected)
+    #expect(after.state == .available)
+    #expect(before.configurationID == after.configurationID)
+}
+
+@Test func agentSnapshotMatchesPanelScheduledResetPresentationWithExplicitAssumption() throws {
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [agentConfiguration("f", provider: .google)])
+    let raw = UsageLimit(provider: .google, accountID: "f", configuredAccountID: "f", accountName: "Ignored",
+        label: "Quota", windowLabel: "Weekly", unit: .percent, used: 100, limit: 100,
+        resetsAt: agentNow.addingTimeInterval(-30), lastUpdatedAt: agentNow.addingTimeInterval(-60),
+        freshnessMode: .eventDriven)
+    let stored = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow, limits: [raw]),
+        reports: [StoredProviderReport(provider: .google, accountID: "f", configuredAccountID: "f",
+            accountName: "Ignored", generatedAt: agentNow, status: .healthy, errorMessage: nil)])
+    let presented = stored.snapshot.presented(at: agentNow)
+    let panel = try #require(AccountCapacity.rows(configuration: config.accounts, snapshot: presented,
+        reports: stored.reports, now: agentNow).first)
+    let exported = try #require(AgentAccountSnapshot(configuration: config, stored: stored, history: [], now: agentNow).accounts.first)
+    #expect(exported.state == panel.state)
+    #expect(exported.windows.first?.used == panel.limits.first?.used)
+    #expect(exported.windows.first?.confidence == panel.limits.first?.confidence)
+    #expect(exported.windows.first?.presentationAssumption == .scheduledReset)
+    #expect(exported.windows.first?.naturalResetAt == nil)
+}
+
 @Test func agentSnapshotReaderFailsClosedAndDoesNotWriteOrReadAuthSources() throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

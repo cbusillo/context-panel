@@ -526,10 +526,17 @@ selects an explicit store containing `accounts.json` and
 operator-selected root. The command reads saved normalized history for burn
 estimates. It requires ordinary filesystem read access; it adds no app
 entitlement and cannot bypass macOS access restrictions.
+The publisher must have saved `accounts.json` (for example after an account
+setting is edited). An unsaved default configuration deliberately fails closed;
+the reader does not invent default accounts or persist them.
 
 Schema 1 has `readAt`, `savedAt` and `accounts`. Each row has an opaque local ID,
 provider, redacted local label, shared panel `state`, observation time, windows,
-reported usage credits and a separate `bankedResets` object. Account states are
+and a stable opaque `configurationID` for the configured source. The row `id`
+identifies its current logical lane and can change when a connection first
+establishes the account or a catalog source gains or loses members. Track the
+source using `configurationID`; multiple catalog members can share that value.
+Rows also include reported usage credits and a separate `bankedResets` object. Account states are
 `available`, `closeToLimit`, `limited`, `unknown`, `stale`, `refreshing`,
 `unavailable`, `notConnected` and `off`. Every configured non-retired account is
 included; the reader does not invent unconfigured accounts. Membership and
@@ -539,8 +546,13 @@ the All Accounts card.
 Windows include their own observation time, unit, used/limit quantities,
 `naturalResetAt` and nullable `burn` (units per hour, observation duration,
 sample count). Burn is null when there is insufficient history or the account
-is not current. Old/future observations and expired natural-reset windows are
-not live capacity. Banked-reset state is independent of usage-window freshness:
+is not current. A burn `sampleCount` of zero means a whole-window average rather
+than measured recent pace, matching the panel's window-average label. Windows
+retain `confidence` and `presentationAssumption` so event-driven scheduled-reset
+estimates match the panel without being mistaken for new provider observations.
+Optional fields inside provider summaries may be absent; absence means unknown.
+Old/future observations do not supply live capacity. Event-driven scheduled
+resets remain explicitly estimated. Banked-reset state is independent of usage-window freshness:
 the summary contains provider-reported count, coverage, observation time and
 known expiries. Missing banked data has a null summary and unknown state;
 `unknownExpiryCount` states how many dates are missing, including for older
