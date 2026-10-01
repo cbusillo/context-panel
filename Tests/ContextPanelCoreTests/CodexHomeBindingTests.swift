@@ -133,3 +133,26 @@ private final class BindingDeletionRecorder: @unchecked Sendable {
     b.isEnabled = false
     #expect(!CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: two.appending(path: "sessions"), siblings: [a,b], mainHome: main))
 }
+
+@Test func codexHomeCommitDoesNotOverwriteUnreadableConfiguration() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appending(path: "accounts.json")
+    let original = Data("{not-decodable}".utf8)
+    try original.write(to: url)
+    let store = AccountConfigurationStore(configurationURL: url)
+    let fallbackID = try #require(store.load().document.accounts.first?.id)
+    let deletions = BindingDeletionRecorder()
+    do {
+        _ = try await CodexHomeBinding.commit(accountID: fallbackID, home: root, accountStore: store,
+            bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json")),
+            deleteImportedCredential: { deletions.delete($0) }, lock: SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock")))
+        Issue.record("Unreadable configuration should reject a home mutation")
+    } catch let error as AccountConfigurationMutationError {
+        #expect(error.localizedDescription == AccountConfigurationMutationError.unreadableConfiguration.localizedDescription)
+    }
+    #expect(try Data(contentsOf: url) == original)
+    #expect(deletions.ids.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: root.appending(path: "bookmarks.json").path))
+}

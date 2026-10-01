@@ -610,6 +610,10 @@ private struct CompanionValidationGalleryPreview: View {
             case .overview:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        AccountOverviewPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), openAccount: { _ in }, openDeadlines: {})
+                        DisclosureGroup("Settings, pace and sync details") {
+                        VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         ContextPanelWidgetContentView(
                             family: .systemLarge,
                             snapshot: context.snapshot,
@@ -634,6 +638,8 @@ private struct CompanionValidationGalleryPreview: View {
                             BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
                         }
                         CompanionSyncStatusView(result: result)
+                        }
+                        }
                     }
                     .padding(18)
                 }

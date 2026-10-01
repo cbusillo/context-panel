@@ -163,10 +163,15 @@ private struct TVRootView: View {
                 if providerRawValue == tvValidationGalleryNavigationValue {
                     TVValidationGalleryView()
                 } else if providerRawValue.hasPrefix("account:") || providerRawValue == "deadlines" {
+                    if presentationMode == .fullDetail {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         TVAccountDetailContent(
                             overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
                             accountID: providerRawValue == "deadlines" ? nil : String(providerRawValue.dropFirst(8)))
+                    }
+                    } else {
+                        ContentUnavailableView("Account details hidden", systemImage: "eye.slash",
+                            description: Text("Choose Full detail on the overview to show named accounts and deadlines."))
                     }
                 } else if providerRawValue == "details" {
                     TVRunwayContent(presentation: presentation, receivedAt: model.lastReceivedAt,
@@ -222,7 +227,7 @@ private struct TVRootView: View {
     }
 }
 
-private struct TVAccountOverviewContent: View {
+struct TVAccountOverviewContent: View {
     let overview: AccountOverview
     @Binding var presentationModeRawValue: String
     let isRefreshing: Bool

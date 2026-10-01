@@ -55,7 +55,9 @@ public enum CodexHomeBinding {
         lock: SnapshotRefreshLock = .appDefault(), now: Date = Date()
     ) async throws -> AccountConfigurationDocument? {
         try await lock.withLock {
-            var document = accountStore.load(now: now).document
+            let loaded = accountStore.load(now: now)
+            guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+            var document = loaded.document
             guard let index = document.accounts.firstIndex(where: { $0.id == accountID }) else {
                 throw CodexHomeBindingError.missingAuthFile
             }

@@ -124,11 +124,10 @@ public struct AccountOverview: Equatable, Sendable {
             let limits = entry.sourceConfigured ? presented.limits.filter {
                 $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             } : []
+            // AccountCapacity already classifies whole-source failures in readState.
+            // A failed sibling must not replace this member's report or banked data.
             let report = reports.filter {
-                $0.provider == entry.provider && (AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
-                    || ($0.status == .failure && $0.configuredAccountID.map {
-                        AccountDisplayMetadata.safeID(entry.provider, $0) == entry.configurationID
-                    } == true))
+                $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             }.max { $0.generatedAt < $1.generatedAt }
             let windows = limits.map { limit in
                 Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id),
@@ -192,7 +191,7 @@ public struct AccountOverview: Equatable, Sendable {
                 let key = AccountDisplayMetadata.safeID(provider, id)
                 guard seen.insert(key).inserted else { return nil }
                 return AccountDisplayMetadata(id: key, configurationID: AccountDisplayMetadata.safeID(provider, configured ?? id),
-                                              provider: provider, label: name)
+                                              provider: provider, label: ConnectorRedactor.safeErrorDescription(name))
             }
     }
 }

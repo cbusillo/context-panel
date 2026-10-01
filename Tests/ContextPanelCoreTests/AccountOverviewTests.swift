@@ -158,10 +158,15 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     let second = root.appending(path: "b@example.invalid")
     let nested = root.appending(path: "not-a-home/nested")
     for url in [first, second, nested] {
-        try FileManager.default.createDirectory(at: url.appending(path: "auth.json"), withIntermediateDirectories: true)
-        // A directory cannot be decoded as credentials. Discovery needs only metadata.
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        // Invalid synthetic bytes cannot be decoded as credentials; discovery needs only metadata.
+        try Data([0xff]).write(to: url.appending(path: "auth.json"))
     }
     try FileManager.default.createSymbolicLink(at: root.appending(path: "linked-home"), withDestinationURL: first)
+    let linkedAuth = root.appending(path: "linked-auth")
+    try FileManager.default.createDirectory(at: linkedAuth, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: linkedAuth.appending(path: "auth.json"), withDestinationURL: first.appending(path: "auth.json"))
+    #expect(try CodexHomeDiscovery.find(in: linkedAuth).isEmpty)
     #expect(try CodexHomeDiscovery.find(in: root).map(\.lastPathComponent) == ["a@example.invalid", "b@example.invalid"])
     #expect(try CodexHomeDiscovery.find(in: first) == [first])
 }
@@ -175,4 +180,36 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     let utc = ContextPanelDateFormatting.accountReset(date, locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
     #expect(utc.contains("Fri"))
     #expect(utc.contains("12:07"))
+}
+
+@Test func oneFailedCatalogMemberDoesNotPoisonItsHealthySibling() throws {
+    let config = LocalProviderAccountConfiguration(id: "catalog", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Typed", authPath: "/synthetic/auth.json")
+    let limits = [overviewLimit("healthy-member", "Weekly", used: 20), overviewLimit("failed-member", "Weekly", used: 70)].map { limit in
+        UsageLimit(provider: limit.provider, accountID: limit.accountID, configuredAccountID: config.id,
+            accountName: limit.accountName, label: limit.label, windowLabel: limit.windowLabel,
+            unit: limit.unit, used: limit.used, limit: limit.limit, resetsAt: limit.resetsAt, lastUpdatedAt: limit.lastUpdatedAt)
+    }
+    let reports = [StoredProviderReport(provider: .openAI, accountID: "healthy-member", configuredAccountID: config.id,
+        accountName: "Ignored", generatedAt: overviewNow, status: .healthy, errorMessage: nil),
+        StoredProviderReport(provider: .openAI, accountID: "failed-member", configuredAccountID: config.id,
+        accountName: "Ignored", generatedAt: overviewNow.addingTimeInterval(1), status: .failure, errorMessage: "Failed member")]
+    let stored = StoredUsageSnapshot(savedAt: overviewNow, snapshot: UsageSnapshot(generatedAt: overviewNow, limits: limits), reports: reports)
+    let metadata = AccountDisplayMetadata.local(configuration: [config], stored: stored, now: overviewNow)
+    let overview = AccountOverview(snapshot: stored.snapshot, reports: reports, metadata: metadata, now: overviewNow)
+    let healthy = try #require(overview.accounts.first { $0.id == AccountDisplayMetadata.safeID(.openAI, "healthy-member") })
+    #expect(healthy.state == .available)
+    #expect(overview.useNext(provider: .openAI)?.id == healthy.id)
+    #expect(overview.accounts.first { $0.id == AccountDisplayMetadata.safeID(.openAI, "failed-member") }?.state == .unavailable)
+}
+
+@Test func fallbackProviderEmailsAreRedactedWhileTypedMetadataEmailsRemain() throws {
+    let snapshot = UsageSnapshot(generatedAt: overviewNow, limits: [UsageLimit(provider: .openAI, accountID: "a",
+        accountName: "provider@example.invalid", label: "Weekly", unit: .percent, used: 10, limit: 100, lastUpdatedAt: overviewNow)])
+    let fallback = AccountOverview(snapshot: snapshot, reports: [], now: overviewNow)
+    #expect(fallback.accounts.first?.metadata.label.contains("provider@example.invalid") == false)
+    let typed = AccountOverview(snapshot: snapshot, reports: [], metadata: [AccountDisplayMetadata(
+        id: AccountDisplayMetadata.safeID(.openAI, "a"), configurationID: "safe-config", provider: .openAI,
+        label: "typed@example.invalid")], now: overviewNow)
+    #expect(typed.accounts.first?.metadata.label == "typed@example.invalid")
 }
