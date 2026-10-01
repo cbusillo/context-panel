@@ -1,0 +1,132 @@
+<!DOCTYPE html><html data-theme='dark'><head><style>
+:root {
+    --bg-color: #FFFFFF;
+    --text-color: #000000;
+    --text-muted: #8A8A8E;
+    --card-bg: #F2F2F7;
+    --card-bg-2: #FFFFFF;
+    --danger: #FF3B30;
+    --ok: #34C759;
+    --track: #E5E5EA;
+    --border: rgba(0,0,0,0.1);
+}
+[data-theme="dark"] {
+    --bg-color: #000000;
+    --text-color: #FFFFFF;
+    --text-muted: #8E8E93;
+    --card-bg: #1C1C1E;
+    --card-bg-2: #2C2C2E;
+    --track: #3A3A3C;
+    --border: rgba(255,255,255,0.1);
+}
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+.widget {
+    background-color: var(--card-bg);
+    border-radius: 22px;
+    padding: 16px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+.widget-small { width: 158px; height: 158px; }
+.widget-medium { width: 338px; height: 158px; }
+.widget-large { width: 338px; height: 354px; }
+.mac-window { width: 800px; height: 600px; padding: 32px; box-sizing: border-box; }
+
+h1, h2, h3, p { margin: 0; }
+
+.provider-icon {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white; font-weight: bold; font-size: 14px; flex-shrink: 0;
+}
+.provider-icon-lg { width: 32px; height: 32px; font-size: 18px; }
+
+.danger-text { color: var(--danger); }
+.muted-text { color: var(--text-muted); }
+
+/* Utility */
+.flex { display: flex; }
+.col { flex-direction: column; }
+.flex-1 { flex: 1; }
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.font-bold { font-weight: bold; }
+.font-medium { font-weight: 500; }
+.text-xs { font-size: 10px; }
+.text-sm { font-size: 12px; }
+.text-base { font-size: 14px; }
+.text-lg { font-size: 18px; }
+.text-xl { font-size: 24px; }
+.text-2xl { font-size: 32px; }
+.border-b { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+
+/* Custom components */
+.status-pill {
+    padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;
+}
+.status-danger { background-color: rgba(255,59,48,0.2); color: var(--danger); }
+.status-ok { background-color: rgba(52,199,89,0.2); color: var(--ok); }
+
+.progress-track { height: 6px; width: 100%; background: var(--track); border-radius: 3px; overflow: hidden; display: flex; margin-top: 4px;}
+.progress-fill { height: 100%; border-radius: 3px; }
+</style></head><body>
+        <div class="widget widget-large col gap-4">
+            <div class="col gap-1">
+                <span class="text-sm font-medium muted-text">Context Panel</span>
+                <span class="text-xl font-bold">You're OK</span>
+            </div>
+            <div class="col gap-3">
+                <span class="text-xs font-bold muted-text">RECOMMENDED NEXT</span>
+                <div class="flex items-center justify-between border-b">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon" style="background: #1A73E8;">G</div>
+                        <span class="font-bold text-sm">Gemini Advanced</span>
+                    </div>
+                    <span class="text-xs muted-text">Best capacity</span>
+                </div>
+                <div class="flex items-center justify-between border-b">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon" style="background: #10A37F;">O</div>
+                        <span class="font-bold text-sm">OpenAI Work</span>
+                    </div>
+                    <span class="text-xs muted-text">Plenty of room</span>
+                </div>
+                <div class="flex items-center justify-between border-b">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon" style="background: #D97757;">C</div>
+                        <span class="font-bold text-sm">Claude Opus</span>
+                    </div>
+                    <span class="text-xs muted-text">Plenty of room</span>
+                </div>
+            </div>
+            <div class="col gap-3" style="margin-top: auto">
+                <span class="text-xs font-bold muted-text">WARNINGS</span>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon" style="background: #10A37F;">O</div>
+                        <span class="font-bold text-sm danger-text">OpenAI Research</span>
+                    </div>
+                    <span class="text-xs danger-text">Runs out before reset</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon" style="background: #D97757;">C</div>
+                        <span class="font-bold text-sm muted-text">Claude Sonnet</span>
+                    </div>
+                    <span class="text-xs muted-text">Empty. Resets in 2h</span>
+                </div>
+            </div>
+        </div>
+        </body></html>

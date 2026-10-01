@@ -1,0 +1,201 @@
+<!DOCTYPE html><html data-theme='light'><head><style>
+:root {
+    --bg-color: #FFFFFF;
+    --text-color: #000000;
+    --text-muted: #8A8A8E;
+    --card-bg: #F2F2F7;
+    --card-bg-2: #FFFFFF;
+    --danger: #FF3B30;
+    --ok: #34C759;
+    --track: #E5E5EA;
+    --border: rgba(0,0,0,0.1);
+}
+[data-theme="dark"] {
+    --bg-color: #000000;
+    --text-color: #FFFFFF;
+    --text-muted: #8E8E93;
+    --card-bg: #1C1C1E;
+    --card-bg-2: #2C2C2E;
+    --track: #3A3A3C;
+    --border: rgba(255,255,255,0.1);
+}
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+.widget {
+    background-color: var(--card-bg);
+    border-radius: 22px;
+    padding: 16px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+.widget-small { width: 158px; height: 158px; }
+.widget-medium { width: 338px; height: 158px; }
+.widget-large { width: 338px; height: 354px; }
+.mac-window { width: 800px; height: 600px; padding: 32px; box-sizing: border-box; }
+
+h1, h2, h3, p { margin: 0; }
+
+.provider-icon {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white; font-weight: bold; font-size: 14px; flex-shrink: 0;
+}
+.provider-icon-lg { width: 32px; height: 32px; font-size: 18px; }
+
+.danger-text { color: var(--danger); }
+.muted-text { color: var(--text-muted); }
+
+/* Utility */
+.flex { display: flex; }
+.col { flex-direction: column; }
+.flex-1 { flex: 1; }
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.font-bold { font-weight: bold; }
+.font-medium { font-weight: 500; }
+.text-xs { font-size: 10px; }
+.text-sm { font-size: 12px; }
+.text-base { font-size: 14px; }
+.text-lg { font-size: 18px; }
+.text-xl { font-size: 24px; }
+.text-2xl { font-size: 32px; }
+.border-b { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+
+/* Custom components */
+.status-pill {
+    padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;
+}
+.status-danger { background-color: rgba(255,59,48,0.2); color: var(--danger); }
+.status-ok { background-color: rgba(52,199,89,0.2); color: var(--ok); }
+
+.progress-track { height: 6px; width: 100%; background: var(--track); border-radius: 3px; overflow: hidden; display: flex; margin-top: 4px;}
+.progress-fill { height: 100%; border-radius: 3px; }
+</style></head><body>
+        <div class="mac-window col gap-4">
+            <h1 class="text-2xl font-bold">Context Panel</h1>
+            <p class="text-lg muted-text">You are OK. Use <b>Gemini Advanced</b> next. One account will run out before it resets.</p>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+        
+                <div style="background: var(--card-bg); padding: 16px; border-radius: 16px;" class="col gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon provider-icon-lg" style="background: #10A37F;">O</div>
+                        <span class="font-bold text-lg">OpenAI Work</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium muted-text text-sm">Plenty of room</span>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>Weekly</span><span>20%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 20%; background: #10A37F;"></div></div>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>5-hour</span><span>10%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 10%; background: #10A37F;"></div></div>
+                    </div>
+                </div>
+            
+                <div style="background: var(--card-bg); padding: 16px; border-radius: 16px;" class="col gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon provider-icon-lg" style="background: #10A37F;">O</div>
+                        <span class="font-bold text-lg">OpenAI Research</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium danger-text text-sm">Runs out before reset</span>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>Weekly</span><span>80%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 80%; background: #10A37F;"></div></div>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>5-hour</span><span>90%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 90%; background: var(--danger);"></div></div>
+                    </div>
+                </div>
+            
+                <div style="background: var(--card-bg); padding: 16px; border-radius: 16px;" class="col gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon provider-icon-lg" style="background: #10A37F;">O</div>
+                        <span class="font-bold text-lg">OpenAI Personal</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium muted-text text-sm">Available</span>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>Weekly</span><span>50%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 50%; background: #10A37F;"></div></div>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>5-hour</span><span>0%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 0%; background: #10A37F;"></div></div>
+                    </div>
+                </div>
+            
+                <div style="background: var(--card-bg); padding: 16px; border-radius: 16px;" class="col gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon provider-icon-lg" style="background: #D97757;">C</div>
+                        <span class="font-bold text-lg">Claude Opus</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium muted-text text-sm">Plenty of room</span>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>Weekly</span><span>30%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 30%; background: #D97757;"></div></div>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>5-hour</span><span>20%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 20%; background: #D97757;"></div></div>
+                    </div>
+                </div>
+            
+                <div style="background: var(--card-bg); padding: 16px; border-radius: 16px;" class="col gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon provider-icon-lg" style="background: #D97757;">C</div>
+                        <span class="font-bold text-lg">Claude Sonnet</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium muted-text text-sm">Empty. Resets in 2h</span>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>Weekly</span><span>95%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 95%; background: #D97757;"></div></div>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>5-hour</span><span>100%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 100%; background: #D97757;"></div></div>
+                    </div>
+                </div>
+            
+                <div style="background: var(--card-bg); padding: 16px; border-radius: 16px;" class="col gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="provider-icon provider-icon-lg" style="background: #1A73E8;">G</div>
+                        <span class="font-bold text-lg">Gemini Advanced</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium muted-text text-sm">Best to use next</span>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>Weekly</span><span>10%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 10%; background: #1A73E8;"></div></div>
+                    </div>
+                    <div class="col gap-1">
+                        <div class="flex justify-between text-xs muted-text font-medium"><span>5-hour</span><span>5%</span></div>
+                        <div class="progress-track"><div class="progress-fill" style="width: 5%; background: #1A73E8;"></div></div>
+                    </div>
+                </div>
+            
+            </div>
+        </div>
+        </body></html>
