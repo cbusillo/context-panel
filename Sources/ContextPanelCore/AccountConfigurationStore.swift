@@ -126,15 +126,17 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public var updatedAt: Date
     public var accounts: [LocalProviderAccountConfiguration]
     public var removedAccountIDs: [String]
+    public var removedDisplayIDs: [String]?
 
-    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = []) {
+    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil) {
         schemaVersion = 1
         self.updatedAt = updatedAt
         self.accounts = accounts
         self.removedAccountIDs = removedAccountIDs
+        self.removedDisplayIDs = removedDisplayIDs
     }
 
-    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs }
+    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -142,6 +144,7 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         accounts = try container.decode([LocalProviderAccountConfiguration].self, forKey: .accounts)
         removedAccountIDs = try container.decodeIfPresent([String].self, forKey: .removedAccountIDs) ?? []
+        removedDisplayIDs = try container.decodeIfPresent([String].self, forKey: .removedDisplayIDs)
     }
 }
 
@@ -211,19 +214,46 @@ public struct AccountConfigurationStore: Sendable {
 
     /// Removes panel membership only. No credential store, bookmark store or provider home is accessed.
     public func removeAccount(
-        id: String, lock: SnapshotRefreshLock = .appDefault(), now: Date = Date()
+        id: String, lock: SnapshotRefreshLock = .appDefault(), now: Date = Date(),
+        storedSnapshot: StoredUsageSnapshot? = nil
     ) async throws -> AccountConfigurationDocument? {
         try await lock.withLock {
             let result = load(now: now)
             guard result.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
             var document = result.document
-            guard document.accounts.contains(where: { $0.id == id }) else { return document }
+            guard let account = document.accounts.first(where: { $0.id == id }) else { return document }
+            var removed = Set(document.globalRemovedDisplayIDs)
+            removed.insert(AccountDisplayMetadata.safeID(account.provider, id))
+            if let storedSnapshot {
+                for entry in AccountDisplayMetadata.companion(configuration: [account], stored: storedSnapshot, now: now) {
+                    removed.insert(entry.id)
+                }
+            }
+            document.removedDisplayIDs = removed.sorted()
             document.accounts.removeAll { $0.id == id }
             if !document.removedAccountIDs.contains(id) { document.removedAccountIDs.append(id) }
             document.updatedAt = now
             try save(document)
             return document
         }
+    }
+
+    /// Called under the refresh lock, before reading provider credentials.
+    public func applyGlobalRemovals(_ ids: [String], storedSnapshot: StoredUsageSnapshot?, now: Date) throws {
+        let result = load(now: now)
+        guard result.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+        var document = result.document
+        let removed = Set(document.globalRemovedDisplayIDs).union(ids)
+        let rows = storedSnapshot.map { AccountDisplayMetadata.companion(configuration: document.accounts, stored: $0, now: now) } ?? []
+        let removedConfigurations = Set(rows.filter { removed.contains($0.id) }.map(\.configurationID))
+        let deleted = document.accounts.filter {
+            removed.contains(AccountDisplayMetadata.safeID($0.provider, $0.id))
+                || removedConfigurations.contains(AccountDisplayMetadata.safeID($0.provider, $0.id))
+        }
+        document.accounts.removeAll { account in deleted.contains { $0.id == account.id } }
+        document.removedAccountIDs = Array(Set(document.removedAccountIDs).union(deleted.map(\.id))).sorted()
+        document.removedDisplayIDs = removed.sorted()
+        if document != result.document { document.updatedAt = now; try save(document) }
     }
 
     public static func defaultDocument(now: Date = Date()) -> AccountConfigurationDocument {
@@ -474,5 +504,14 @@ public enum AccountConnectorFactory {
 private struct UnavailableGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
     func load() throws -> GoogleAntigravityStatusLineSnapshot? {
         throw GoogleAntigravityStatusLineStoreError.unavailable
+    }
+}
+
+public extension AccountConfigurationDocument {
+    var globalRemovedDisplayIDs: [String] {
+        // Old removals retain their opaque configuration key after the upgrade.
+        Array(Set(removedDisplayIDs ?? []).union(removedAccountIDs.flatMap { id in
+            Provider.allCases.map { AccountDisplayMetadata.safeID($0, id) }
+        })).sorted()
     }
 }

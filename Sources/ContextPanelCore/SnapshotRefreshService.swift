@@ -648,6 +648,8 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
+        try await companionSyncPublisher?.receiveGlobalRemovals(accountStore: accountStore,
+            storedSnapshot: stores.primary.loadCurrent().snapshot, now: now)
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
         let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
@@ -681,6 +683,13 @@ public struct SnapshotRefreshService: Sendable {
                     savedAt: now,
                     preservesUnreportedAccounts: false
                 )
+            }
+            // Setup-only publications carry never-connected rows and explicit removals,
+            // even before this Mac has obtained its first usage observation.
+            if accountResult.status == .healthy, let companionSyncPublisher {
+                _ = await companionSyncPublisher.publishAll(storedSnapshot: previousStoredSnapshot
+                    ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: []),
+                    publishedAt: now)
             }
             RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)
             return SnapshotRefreshOutcome(

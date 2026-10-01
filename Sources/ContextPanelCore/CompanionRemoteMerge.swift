@@ -5,12 +5,12 @@ public extension CompanionSyncDocument {
         existing: CompanionSyncDocument?,
         now: Date
     ) -> CompanionSyncDocument {
-        let incomingDocument = normalizedForRemotePublish()
+        let incomingDocument = normalizedForRemotePublish().applyingGlobalRemovals()
         let existingDocument = existing
             .flatMap { existing in
                 existing.cloudKitUserScope == cloudKitUserScope ? existing : nil
             }?
-            .normalizedForRemotePublish()
+            .normalizedForRemotePublish().applyingGlobalRemovals()
         let existingDegradedAccountKeys = existingDocument?.snapshot.degradedAccountKeysForRemotePublish ?? []
         let incomingDegradedAccountKeys = snapshot.degradedAccountKeysForRemotePublish
 
@@ -58,8 +58,10 @@ public extension CompanionSyncDocument {
             accountRetentionStates: retained.states,
             cloudKitUserScope: incomingDocument.cloudKitUserScope,
             accountDisplayMetadata: mergedAccountDisplayMetadata(existing: existingDocument,
-                incoming: incomingDocument, retainedSnapshot: retained.snapshot, settingsDocument: settingsDocument)
-        )
+                incoming: incomingDocument, retainedSnapshot: retained.snapshot, settingsDocument: settingsDocument),
+            removedDisplayIDs: existingDocument?.removedDisplayIDs == nil && incomingDocument.removedDisplayIDs == nil ? nil
+                : Array(Set(existingDocument?.removedDisplayIDs ?? []).union(incomingDocument.removedDisplayIDs ?? [])).sorted()
+        ).applyingGlobalRemovals()
     }
 
     private func mergedAccountDisplayMetadata(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
@@ -82,9 +84,9 @@ public extension CompanionSyncDocument {
         for entry in primary + secondary {
             guard seen.insert(entry.id).inserted else { continue }
             guard let (key, selected) = retainedByID[entry.id] else {
-                // Keep configured-but-never-observed rows from the current setup,
-                // without resurrecting lanes removed by bounded remote retention.
-                if !allObservedIDs.contains(entry.id), primary.contains(where: { $0.id == entry.id }) { result.append(entry) }
+                // Explicit global tombstones distinguish removal from a different Mac
+                // publishing its own setup. Never-observed rows remain visible.
+                if !allObservedIDs.contains(entry.id) { result.append(entry) }
                 continue
             }
             let older = existing?.accountDisplayMetadata?.first { $0.id == entry.id }
@@ -141,7 +143,8 @@ private extension CompanionSyncDocument {
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
             cloudKitUserScope: cloudKitUserScope,
-            accountDisplayMetadata: accountDisplayMetadata
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs
         )
     }
 
@@ -149,7 +152,8 @@ private extension CompanionSyncDocument {
         let payload = CompanionRemoteSettingsSelection(
             widgetDisplayPreferences: widgetDisplayPreferences,
             fastModeForecastSettings: fastModeForecastSettings,
-            accountDisplayMetadata: accountDisplayMetadata
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -161,6 +165,7 @@ private struct CompanionRemoteSettingsSelection: Encodable {
     let widgetDisplayPreferences: WidgetDisplayPreferences
     let fastModeForecastSettings: FastModeForecastSettings
     let accountDisplayMetadata: [AccountDisplayMetadata]?
+    let removedDisplayIDs: [String]?
 }
 
 private struct CompanionRemoteAccountRetentionResult {

@@ -21,8 +21,14 @@ receipts bind changed labels, order, visibility, Use last and layout through
 hashes rather than emitting those private values. No CloudKit server schema or
 entitlement changed. Remote metadata follows all retained account feeds, including
 other Macs; it preserves newest settings for the same configured source.
-Local removal does not silently delete another Mac’s feed; the existing bounded
-remote retention remains while the owner answers the scope question.
+Chris's recorded decision makes removal global. Explicit opaque deletion markers
+are merged independently of usage age; updated Macs consume them before provider
+reads, and companions omit removed usage, status, cache and display rows. Offline
+publishers cannot revive the lane. Re-adding creates a new membership. Credentials,
+bookmarks, home folders and local history remain. Configured but never-connected
+rows from another Mac survive until explicitly removed. Older builds must be
+updated to consume the deletion markers; their next remote publish is still filtered
+by an updated merger.
 
 ## Product screens
 
@@ -31,7 +37,10 @@ remote retention remains while the owner answers the scope question.
   remain in detail disclosures and existing provider navigation.
 - Settings uses Accounts, Updates, Alerts and Display tabs. Show in widgets
   does not pause active collection/warnings. Use last affects recommendations.
-  Remove/reorder remain supported. Name edits persist on submit/focus loss.
+  Remove/reorder remain supported; removal confirms its all-Macs/companions scope.
+  Name edits persist on submit/focus loss. The actual text input has a 220pt minimum,
+  and the Settings window enforces a usable minimum size. Source-unavailable warnings
+  remain visible outside Advanced without exposing paths.
   Older paused accounts retain Resume updates while the owner migration question
   is pending. Session/auth file controls are in Advanced.
 - Add account offers existing Codex homes discovered by file metadata within a
@@ -60,9 +69,12 @@ remote retention remains while the owner answers the scope question.
 registering an app/widget bundle and using synthetic accounts only. The original
 HTML design evidence in `proposed/` is distinct from these captures. These are
 shared-view evidence, not installed app, WidgetKit placement, sandbox or device
-acceptance. The signed canonical Production app was preserved. Its fingerprint
-is from #720, not this source. Its timeline freshness check remains pending; no
-Development installation, widget-placement reset or daemon restart occurred.
+acceptance. Chris authorized signed installation and desktop interaction in #719 comment
+5931669062. The agent inspected the canonical app and installed the signed candidate
+in place, preserving Production CloudKit, entitlements, data and widget placements.
+Private desktop captures stay outside the repository. Final source identity and
+runtime acceptance are recorded on #719/#722; no Development installation, widget
+placement reset or daemon restart occurred. Chris's own acceptance remains required.
 
 Widget text contrast against the documented surface palette, computed with the
 WCAG relative-luminance formula:
@@ -72,7 +84,9 @@ WCAG relative-luminance formula:
 | Light | 18.96:1 | 6.88:1 |
 | Dark | 14.12:1 | 7.77:1 |
 
-The TV focus/percentage change is built natively; physical focus and composited
+The installed Overview exposed bright purple banked text on the dark pane. Shared
+views now use primary text for banked counts and expiry text; the reset icon and
+labels convey the meaning. The TV focus/percentage change is built natively; physical focus and composited
 Top Shelf acceptance await the matching signed build. Companion publication,
 release integration and #720 acceptance remain separate gates.
 

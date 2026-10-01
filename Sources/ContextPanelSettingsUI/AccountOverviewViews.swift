@@ -57,7 +57,7 @@ public struct AccountOverviewPanel: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(deadline.label).font(.headline).lineLimit(2)
                         Text(ContextPanelDateFormatting.accountReset(deadline.expiresAt, compact: true))
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(.primary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.buttonStyle(.plain)
             }
@@ -100,7 +100,7 @@ public struct AccountOverviewRow: View {
                 Text(account.resetDisplayText).font(.caption).foregroundStyle(.secondary)
                 if let summary = account.bankedResets, summary.availableCount > 0 {
                     Text("\(account.bankedState == .available ? "" : "Last seen · ")\(summary.availableCount) banked\(account.unknownExpiryCount == 0 ? "" : " · dates incomplete")")
-                        .font(.caption).foregroundStyle(.purple)
+                        .font(.caption).foregroundStyle(.primary)
                 }
             }
         }
@@ -127,7 +127,7 @@ public struct AccountDeadlinesPanel: View {
             ForEach(overview.deadlines) { deadline in
                 Button { openAccount(deadline.accountID) } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 16) {
-                        Image(systemName: "arrow.counterclockwise.circle").foregroundStyle(.purple)
+                        Image(systemName: "arrow.counterclockwise.circle").foregroundStyle(.primary)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(deadline.label).font(.headline)
                             Text(deadline.provider.accountDisplayName).font(.caption).foregroundStyle(.secondary)

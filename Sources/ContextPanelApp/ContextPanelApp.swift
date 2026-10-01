@@ -410,6 +410,7 @@ struct SettingsPane: View {
     @FocusState private var focusedName: SettingsNameField?
     @State private var nameInputError: String?
     @State private var showsAddAccount = false
+    @State private var pendingRemovalID: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -457,7 +458,7 @@ struct SettingsPane: View {
                             .accessibilityLabel("Move account down")
                             .disabled(model.settingsAccounts.last?.id == account.id)
                             Button("Remove account", role: .destructive) {
-                                model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
+                                pendingRemovalID = account.id
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.regular)
@@ -644,13 +645,13 @@ struct SettingsPane: View {
                             .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         Spacer()
                         Button("Remove account", role: .destructive) {
-                            model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
+                            pendingRemovalID = account.id
                         }
                         .controlSize(.regular)
                     }
                 }
                 Button("Add account") { showsAddAccount = true }.buttonStyle(.borderedProminent)
-                Text("Hidden accounts still update and warn. Use last excludes an account from Use next. Remove account keeps credentials and home folders.")
+                Text("Hidden accounts still update and warn. Use last excludes an account from Use next. Remove account removes this lane on all Macs and companions after sync, keeping credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
                 Text("A replacement OpenAI or Claude entry needs its own source selection or sign-in.")
@@ -856,6 +857,17 @@ struct SettingsPane: View {
         }
         .frame(width: 720)
         .frame(minHeight: 600)
+        .confirmationDialog("Remove account everywhere?", isPresented: Binding(
+            get: { pendingRemovalID != nil }, set: { if !$0 { pendingRemovalID = nil } }
+        ), titleVisibility: .visible) {
+            Button("Remove account everywhere", role: .destructive) {
+                if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
+                pendingRemovalID = nil
+            }
+            Button("Cancel", role: .cancel) { pendingRemovalID = nil }
+        } message: {
+            Text("This lane will disappear from all Macs and companions after their next successful sync. Credentials, home folders and history stay on each Mac.")
+        }
         .sheet(isPresented: $showsAddAccount) {
             AddAccountSheet(model: model, onAdded: refreshAfterAuthorization)
         }
@@ -2019,7 +2031,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if provider == .google {
             guard !settingsAccounts.contains(where: { $0.provider == .google }),
                   let account = AccountConfigurationStore.defaultDocument().accounts.first(where: { $0.provider == .google }) else { return }
-            accounts.append(account)
+            accounts.append(LocalProviderAccountConfiguration(id: "local-" + UUID().uuidString.lowercased(),
+                provider: account.provider, connectorKind: account.connectorKind, displayName: account.displayName))
             saveAccounts()
             return
         }
@@ -2065,7 +2078,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         Task { @MainActor in
             defer { isRemovingAccount = false }
             do {
-                guard let document = try await store.removeAccount(id: accountID) else {
+                guard let document = try await store.removeAccount(id: accountID, storedSnapshot: SnapshotRefreshStores.appDefault().primary.loadCurrent().snapshot) else {
                     errorMessage = "Another refresh is running. Try removing the account again in a moment."
                     return
                 }
@@ -2197,8 +2210,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
             var document = loaded.document
             document.updatedAt = Date()
+            accounts.removeAll { document.removedAccountIDs.contains($0.id) }
             document.accounts = accounts
-            document.removedAccountIDs.removeAll { id in accounts.contains { $0.id == id } }
             try store.save(document)
             reloadContextPanelWidgetTimeline()
         } catch {

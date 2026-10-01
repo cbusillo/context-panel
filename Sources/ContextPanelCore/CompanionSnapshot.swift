@@ -54,6 +54,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let accountRetentionStates: [CompanionAccountRetentionState]?
     public let cloudKitUserScope: CompanionCloudKitUserScope?
     public let accountDisplayMetadata: [AccountDisplayMetadata]?
+    public let removedDisplayIDs: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -64,6 +65,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case accountRetentionStates
         case cloudKitUserScope
         case accountDisplayMetadata
+        case removedDisplayIDs
     }
 
     public init(
@@ -73,7 +75,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
         cloudKitUserScope: CompanionCloudKitUserScope? = nil,
-        accountDisplayMetadata: [AccountDisplayMetadata]? = nil
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
+        removedDisplayIDs: [String]? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
@@ -83,6 +86,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         self.accountRetentionStates = accountRetentionStates
         self.cloudKitUserScope = cloudKitUserScope
         self.accountDisplayMetadata = accountDisplayMetadata
+        self.removedDisplayIDs = removedDisplayIDs
     }
 
     public init(
@@ -93,7 +97,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
         cloudKitUserScope: CompanionCloudKitUserScope? = nil,
-        accountDisplayMetadata: [AccountDisplayMetadata]? = nil
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
+        removedDisplayIDs: [String]? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
@@ -102,7 +107,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
             cloudKitUserScope: cloudKitUserScope,
-            accountDisplayMetadata: accountDisplayMetadata
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs
         )
     }
 
@@ -121,6 +127,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             forKey: .accountRetentionStates
         )
         accountDisplayMetadata = try container.decodeIfPresent([AccountDisplayMetadata].self, forKey: .accountDisplayMetadata)
+        removedDisplayIDs = try container.decodeIfPresent([String].self, forKey: .removedDisplayIDs)
         cloudKitUserScope = try container.decodeIfPresent(
             CompanionCloudKitUserScope.self,
             forKey: .cloudKitUserScope
@@ -135,7 +142,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
             cloudKitUserScope: scope,
-            accountDisplayMetadata: accountDisplayMetadata
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs
         )
     }
 }
@@ -1182,6 +1190,14 @@ public struct CompanionSyncPublisher: Sendable {
         return result
     }
 
+    public func receiveGlobalRemovals(accountStore: AccountConfigurationStore, storedSnapshot: StoredUsageSnapshot?, now: Date) async throws {
+        guard let remoteStore else { return }
+        let remote = await remoteStore.load(now: now)
+        guard remote.outcome.succeeded, let document = remote.result.document,
+              let scope = await remoteStore.currentUserScope(), document.cloudKitUserScope == scope else { return }
+        try accountStore.applyGlobalRemovals(document.removedDisplayIDs ?? [], storedSnapshot: storedSnapshot, now: now)
+    }
+
     private func makeDocument(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date,
@@ -1200,7 +1216,8 @@ public struct CompanionSyncPublisher: Sendable {
             fastModeForecastSettings: fastModeForecastSettingsStore.load(),
             accountDisplayMetadata: configuration.map {
                 AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt)
-            }
+            },
+            removedDisplayIDs: configuration?.globalRemovedDisplayIDs
         )
     }
 
