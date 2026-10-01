@@ -6,7 +6,7 @@ public enum CodexHomeBindingError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingAuthFile: "Select a Codex home containing a regular auth.json file. For a symbolic login file, use Select File to authorize its target."
-        case .sharedHome: "This Codex home is already assigned to another enabled account."
+        case .sharedHome: "This Codex home is already assigned to another enabled account. Change that account’s home or remove its panel entry before reusing it."
         }
     }
 }
@@ -73,6 +73,42 @@ public enum CodexHomeBinding {
         }
     }
 
+    /// Create the named source and its bookmark together; a busy refresh saves nothing.
+    public static func add(account: LocalProviderAccountConfiguration, home: URL,
+                           accountStore: AccountConfigurationStore, bookmarkStore: SecureFileBookmarkStore,
+                           lock: SnapshotRefreshLock = .appDefault(), now: Date = Date()) async throws -> AccountConfigurationDocument? {
+        try await lock.withLock {
+            let loaded = accountStore.load(now: now)
+            guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+            var document = loaded.document
+            let updated = try bind(account: account, home: home, siblings: document.accounts)
+            guard let path = updated.authPath else { throw CodexHomeBindingError.missingAuthFile }
+            try bookmarkStore.createAndStoreBookmark(for: URL(fileURLWithPath: path), path: path)
+            guard bookmarkStore.canReadBookmark(for: path) else { throw CocoaError(.fileReadNoPermission) }
+            document.accounts.append(updated)
+            document.updatedAt = now
+            try accountStore.save(document)
+            return document
+        }
+    }
+
+    public static func usingAuthFile(account: LocalProviderAccountConfiguration,
+                                     siblings: [LocalProviderAccountConfiguration]) throws -> LocalProviderAccountConfiguration {
+        guard let path = account.authPath, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CodexHomeBindingError.missingAuthFile
+        }
+        let canonical = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).resolvingSymlinksInPath().standardizedFileURL
+        for sibling in siblings where sibling.id != account.id && sibling.isEnabled && sibling.provider == .openAI {
+            if let other = sibling.authPath,
+               URL(fileURLWithPath: NSString(string: other).expandingTildeInPath).resolvingSymlinksInPath().standardizedFileURL == canonical {
+                throw CodexHomeBindingError.sharedHome
+            }
+        }
+        var result = account
+        result.codexQuotaPath = nil
+        return result
+    }
+
     public static func bind(
         account: LocalProviderAccountConfiguration,
         home: URL,
@@ -83,7 +119,7 @@ public enum CodexHomeBinding {
         let values = try? auth.resourceValues(forKeys: [.isRegularFileKey])
         guard values?.isRegularFile == true else { throw CodexHomeBindingError.missingAuthFile }
         for sibling in siblings where sibling.id != account.id && sibling.isEnabled && sibling.provider == .openAI {
-            guard let path = sibling.effectiveAuthPath else { continue }
+            guard let path = sibling.authPath, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let source = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             if source.resolvingSymlinksInPath().standardizedFileURL == canonical {
                 throw CodexHomeBindingError.sharedHome

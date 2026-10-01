@@ -156,3 +156,53 @@ private final class BindingDeletionRecorder: @unchecked Sendable {
     #expect(deletions.ids.isEmpty)
     #expect(!FileManager.default.fileExists(atPath: root.appending(path: "bookmarks.json").path))
 }
+
+@Test func addingCodexHomeDuringRefreshDoesNotSaveAHalfConnectedAccount() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let home = root.appending(path: "home")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    try Data([0xff]).write(to: home.appending(path: "auth.json"))
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let original = AccountConfigurationDocument(updatedAt: .distantPast, accounts: [])
+    try store.save(original)
+    let account = LocalProviderAccountConfiguration(id: "new", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Typed@example.invalid")
+    let bookmarksURL = root.appending(path: "bookmarks.json")
+    let bookmarks = SecureFileBookmarkStore(storeURL: bookmarksURL)
+    let refreshLock = SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock"))
+    _ = try await refreshLock.withLock {
+        let result = try await CodexHomeBinding.add(account: account, home: home, accountStore: store,
+            bookmarkStore: bookmarks, lock: refreshLock)
+        #expect(result == nil)
+    }
+    #expect(store.load().document == original)
+    #expect(!FileManager.default.fileExists(atPath: bookmarksURL.path))
+    let changed = try #require(try await CodexHomeBinding.add(account: account, home: home,
+        accountStore: store, bookmarkStore: bookmarks, lock: refreshLock))
+    #expect(changed.accounts.count == 1)
+    #expect(changed.accounts.first?.displayName == account.displayName)
+    #expect(changed.accounts.first?.authPath == home.appending(path: "auth.json").path)
+}
+
+@Test func aSessionsOverrideStillReservesItsSavedCodexHome() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data([0xff]).write(to: root.appending(path: "auth.json"))
+    let first = LocalProviderAccountConfiguration(id: "first", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "First", authPath: root.appending(path: "auth.json").path,
+        codexQuotaPath: root.appending(path: "sessions").path)
+    let second = LocalProviderAccountConfiguration(id: "second", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Second", authPath: root.appending(path: "auth.json").path)
+    #expect(throws: CodexHomeBindingError.self) {
+        try CodexHomeBinding.bind(account: second, home: root, siblings: [first, second])
+    }
+    #expect(throws: CodexHomeBindingError.self) {
+        try CodexHomeBinding.usingAuthFile(account: first, siblings: [first, second])
+    }
+    let restored = try CodexHomeBinding.usingAuthFile(account: first, siblings: [first])
+    #expect(restored.codexQuotaPath == nil)
+    #expect(restored.authPath == first.authPath)
+}

@@ -213,3 +213,33 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
         label: "typed@example.invalid")], now: overviewNow)
     #expect(typed.accounts.first?.metadata.label == "typed@example.invalid")
 }
+
+@Test func remoteMergeKeepsDifferentMacAccountListsAndLatestSameSourceDisplayEdits() throws {
+    func document(_ id: String, provider: Provider, now: Date, hidden: Bool = false, useLast: Bool = false) -> CompanionSyncDocument {
+        let setup = LocalProviderAccountConfiguration(id: id, provider: provider,
+            connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
+            displayName: "Typed \(id)", authPath: provider == .openAI ? "/synthetic/auth.json" : nil,
+            showInWidgets: !hidden, useLast: useLast)
+        let stored = StoredUsageSnapshot(savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: [overviewLimit(id, "Weekly", used: 20, at: now, provider: provider)]),
+            reports: [StoredProviderReport(provider: provider, accountID: id, configuredAccountID: id,
+                accountName: "Provider identity", generatedAt: now, status: .healthy, errorMessage: nil)])
+        return CompanionSyncDocument(storedSnapshot: stored, publishedAt: now,
+            accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: [setup], stored: stored, now: now))
+    }
+    let first = document("Mac-A", provider: .openAI, now: overviewNow)
+    let second = document("Mac-B", provider: .anthropic, now: overviewNow.addingTimeInterval(5), hidden: true, useLast: true)
+    let merged = second.mergingForRemotePublish(existing: first, now: overviewNow.addingTimeInterval(6))
+    let rows = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: merged, status: .healthy), now: overviewNow.addingTimeInterval(6))
+        .accountOverview(now: overviewNow.addingTimeInterval(6)).accounts
+    #expect(rows.count == 2)
+    #expect(Set(rows.map(\.metadata.label)) == ["Typed Mac-A", "Typed Mac-B"])
+    #expect(rows.first { $0.metadata.provider == .anthropic }?.metadata.showInWidgets == false)
+    #expect(rows.first { $0.metadata.provider == .anthropic }?.metadata.useLast == true)
+    let edit = document("Mac-A", provider: .openAI, now: overviewNow.addingTimeInterval(10), useLast: true)
+    let afterEdit = edit.mergingForRemotePublish(existing: merged, now: overviewNow.addingTimeInterval(11))
+    #expect(afterEdit.accountDisplayMetadata?.count == 2)
+    #expect(afterEdit.accountDisplayMetadata?.first { $0.provider == .openAI }?.useLast == true)
+    let reverse = first.mergingForRemotePublish(existing: second, now: overviewNow.addingTimeInterval(6))
+    #expect(reverse.accountDisplayMetadata == merged.accountDisplayMetadata)
+}

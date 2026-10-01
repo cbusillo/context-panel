@@ -57,8 +57,60 @@ public extension CompanionSyncDocument {
             fastModeForecastSettings: settingsDocument.fastModeForecastSettings,
             accountRetentionStates: retained.states,
             cloudKitUserScope: incomingDocument.cloudKitUserScope,
-            accountDisplayMetadata: settingsDocument.accountDisplayMetadata
+            accountDisplayMetadata: mergedAccountDisplayMetadata(existing: existingDocument,
+                incoming: incomingDocument, retainedSnapshot: retained.snapshot, settingsDocument: settingsDocument)
         )
+    }
+
+    private func mergedAccountDisplayMetadata(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
+                                              retainedSnapshot: CompanionSnapshot,
+                                              settingsDocument: CompanionSyncDocument) -> [AccountDisplayMetadata]? {
+        guard existing?.accountDisplayMetadata != nil || incoming.accountDisplayMetadata != nil else { return nil }
+        let retained = companionRemoteAccountData(in: retainedSnapshot)
+        let oldData = existing.map { companionRemoteAccountData(in: $0.snapshot) } ?? [:]
+        let newData = companionRemoteAccountData(in: incoming.snapshot)
+        let allObservedIDs = Set((Array(oldData.keys) + Array(newData.keys)).map {
+            AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID)
+        })
+        let retainedByID = Dictionary(uniqueKeysWithValues: retained.map { key, data in
+            (AccountDisplayMetadata.safeID(key.provider, key.companionAccountID), (key, data))
+        })
+        let primary = settingsDocument.accountDisplayMetadata ?? []
+        let secondary = settingsDocument == incoming ? existing?.accountDisplayMetadata ?? [] : incoming.accountDisplayMetadata ?? []
+        var seen = Set<String>()
+        var result: [AccountDisplayMetadata] = []
+        for entry in primary + secondary {
+            guard seen.insert(entry.id).inserted else { continue }
+            guard let (key, selected) = retainedByID[entry.id] else {
+                // Keep configured-but-never-observed rows from the current setup,
+                // without resurrecting lanes removed by bounded remote retention.
+                if !allObservedIDs.contains(entry.id), primary.contains(where: { $0.id == entry.id }) { result.append(entry) }
+                continue
+            }
+            let older = existing?.accountDisplayMetadata?.first { $0.id == entry.id }
+            let newer = incoming.accountDisplayMetadata?.first { $0.id == entry.id }
+            if let older, let newer, older.configurationID == newer.configurationID {
+                // Settings edits remain authoritative even when an older complete
+                // usage observation wins over a failed/incomplete refresh.
+                result.append(primary.first { $0.id == entry.id } ?? entry)
+            } else if newData[key]?.semanticSelectionData == selected.semanticSelectionData, let newer {
+                result.append(newer)
+            } else if oldData[key]?.semanticSelectionData == selected.semanticSelectionData, let older {
+                result.append(older)
+            } else {
+                result.append(Self.fallbackMetadata(key: key, data: selected))
+            }
+        }
+        for (id, pair) in retainedByID.sorted(by: { $0.key < $1.key }) where !seen.contains(id) {
+            result.append(Self.fallbackMetadata(key: pair.0, data: pair.1))
+        }
+        return result
+    }
+
+    private static func fallbackMetadata(key: CompanionRemoteAccountKey, data: CompanionRemoteAccountData) -> AccountDisplayMetadata {
+        let id = AccountDisplayMetadata.safeID(key.provider, key.companionAccountID)
+        return AccountDisplayMetadata(id: id, configurationID: id, provider: key.provider,
+            label: ConnectorRedactor.safeErrorDescription(data.accountName))
     }
 
     private func preferredSettingsDocument(

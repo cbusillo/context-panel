@@ -1117,6 +1117,7 @@ struct AddAccountSheet: View {
     @State private var selectedHome: URL?
     @State private var scopeRoot: URL?
     @State private var hasSearched = false
+    @State private var isAdding = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Add account").font(.title2.weight(.semibold))
@@ -1161,7 +1162,7 @@ struct AddAccountSheet: View {
                 Spacer()
                 Button(provider == .anthropic ? "Sign in" : "Add account") { add() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
+                    .disabled(isAdding || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
                         || (provider == .openAI && selectedHome == nil)
                         || (provider == .google && model.settingsAccounts.contains { $0.provider == .google }))
             }
@@ -1175,17 +1176,24 @@ struct AddAccountSheet: View {
         }
     }
     private func add() {
+        let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .openAI, let selectedHome {
+            isAdding = true
+            model.addCodexAccount(name: label, home: selectedHome, scopeRoot: scopeRoot) { succeeded in
+                isAdding = false
+                if succeeded { onAdded(); dismiss() }
+            }
+            return
+        }
         let existing = Set(model.accounts.map(\.id))
         model.addAccount(provider: provider)
         guard let account = model.accounts.first(where: { !existing.contains($0.id) }) else { return }
-        model.renameAccount(account.id, name: name.trimmingCharacters(in: .whitespacesAndNewlines))
-        if provider == .openAI, let selectedHome {
-            model.connectCodexHome(for: account, home: selectedHome, scopeRoot: scopeRoot, onVerified: onAdded)
-        } else if provider == .anthropic {
-            model.authorizeClaudeOAuth(for: account)
-        } else { onAdded() }
+        model.renameAccount(account.id, name: label)
+        if provider == .anthropic { model.authorizeClaudeOAuth(for: account) }
+        onAdded()
         dismiss()
     }
+
 }
 
 struct ClaudeOAuthCodeSheet: View {
@@ -2066,9 +2074,16 @@ final class SettingsPaneModel: NSObject, ObservableObject {
               path != (accounts[index].authPath ?? "") else { return }
         // A new source must not continue polling the old imported credential.
         do {
+            var candidate = accounts[index]
+            candidate.authPath = path
+            if candidate.provider == .openAI, candidate.isEnabled, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = try CodexHomeBinding.usingAuthFile(account: candidate, siblings: accounts)
+            }
             try credentialStore.delete(accountID: accountID)
-            accounts[index].authPath = path
+            accounts[index] = candidate
             saveAccounts()
+        } catch let error as CodexHomeBindingError {
+            errorMessage = error.localizedDescription
         } catch {
             errorMessage = "The previous source could not be disconnected."
         }
@@ -2094,8 +2109,14 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func setAccount(_ accountID: String, isEnabled: Bool) {
         guard !isRemovingAccount else { return }
         guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
-        accounts[index].isEnabled = isEnabled
-        saveAccounts()
+        do {
+            if isEnabled, accounts[index].provider == .openAI,
+               let path = accounts[index].authPath, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = try CodexHomeBinding.usingAuthFile(account: accounts[index], siblings: accounts)
+            }
+            accounts[index].isEnabled = isEnabled
+            saveAccounts()
+        } catch { errorMessage = ConnectorRedactor.safeErrorDescription(error) }
     }
 
     func copyAntigravityBridgeSetupCommand() {
@@ -2547,8 +2568,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     func useCodexAuthFile(_ accountID: String) {
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
-        accounts[index].codexQuotaPath = nil
-        saveAccounts()
+        do {
+            accounts[index] = try CodexHomeBinding.usingAuthFile(account: accounts[index], siblings: accounts)
+            saveAccounts()
+        } catch { errorMessage = ConnectorRedactor.safeErrorDescription(error) }
     }
 
     func authorizeCodexHome(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
@@ -2591,6 +2614,31 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                     self.errorMessage = ConnectorRedactor.safeErrorDescription(error)
                 }
             }
+    }
+
+    func addCodexAccount(name: String, home: URL, scopeRoot: URL?, onCompletion: @escaping (Bool) -> Void) {
+        let account = LocalProviderAccountConfiguration(id: "local-" + UUID().uuidString.lowercased(),
+            provider: .openAI, connectorKind: .codexRateLimits, displayName: name, codexClient: .codex)
+        Task { @MainActor in
+            let root = scopeRoot ?? home
+            let scoped = root.startAccessingSecurityScopedResource()
+            defer { if scoped { root.stopAccessingSecurityScopedResource() } }
+            do {
+                guard let revised = try await CodexHomeBinding.add(account: account, home: home,
+                    accountStore: store, bookmarkStore: bookmarkStore) else {
+                    errorMessage = "A refresh is running. Your account has not been added; try Add account again in a moment."
+                    onCompletion(false)
+                    return
+                }
+                accounts = revised.accounts
+                errorMessage = nil
+                reloadContextPanelWidgetTimeline()
+                onCompletion(true)
+            } catch {
+                errorMessage = ConnectorRedactor.safeErrorDescription(error)
+                onCompletion(false)
+            }
+        }
     }
 
     func findCodexHomes(onFound: @escaping (URL, [URL]) -> Void) {

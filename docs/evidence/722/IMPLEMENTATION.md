@@ -19,7 +19,10 @@ flags to the existing companion payload. Older payloads remain readable. No
 credential contents, paths or provider-derived identity are added. Presentation
 receipts bind changed labels, order, visibility, Use last and layout through
 hashes rather than emitting those private values. No CloudKit server schema or
-entitlement changed.
+entitlement changed. Remote metadata follows all retained account feeds, including
+other Macs; it preserves newest settings for the same configured source.
+Local removal does not silently delete another Mac’s feed; the existing bounded
+remote retention remains while the owner answers the scope question.
 
 ## Product screens
 
@@ -33,7 +36,11 @@ entitlement changed.
   is pending. Session/auth file controls are in Advanced.
 - Add account offers existing Codex homes discovered by file metadata within a
   user-selected folder, owned Claude sign-in, or the existing Antigravity setup.
-  It never scans ungranted home folders or displays credential contents.
+  It never scans ungranted home folders or displays credential contents. Codex
+  addition commits the source and bookmark under the existing refresh lock; a
+  busy refresh saves no empty account and leaves the sheet open to retry. Home
+  changes/auth-mode switches/resume also prevent two enabled entries sharing a
+  reserved home, with Change home and Remove available as supported remedies.
 - Widgets default to account rows, preserving Windows layout as a Display
   setting. Medium/large rows open their own account; small opens closest or the
   displayed saved account. Exact reset/expiry minutes remain visible. A More
