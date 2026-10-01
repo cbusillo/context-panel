@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Panel Deadlines</title>
+<!-- Context Panel design exploration "Horizon" (Claude Opus). Static mockup, synthetic accounts only.
+     Theme follows the system; add ?theme=light or ?theme=dark to force one. -->
+<script>(function(){var t=new URLSearchParams(location.search).get('theme');if(t)document.documentElement.dataset.theme=t;})();</script>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#ECEEF2; --wall1:#C9D6E8; --wall2:#E9DDEB;
+  --window:#F6F6F8; --sidebar:#EDEDF0; --surface:#FFFFFF; --raised:#FFFFFF;
+  --ink:#1D1D1F; --ink2:#55555C; --ink3:#6C6C74; --hair:rgba(0,0,0,.08); --grid:rgba(0,0,0,.07);
+  --track:rgba(0,0,0,.055);
+  --openai:#0F7A6B; --claude:#A3631B; --google:#6A4BD6;
+  --openai-tint:rgba(15,122,107,.07); --claude-tint:rgba(163,99,27,.075); --google-tint:rgba(106,75,214,.07);
+  --red:#CC1F2F; --red-tint:rgba(204,31,47,.07); --banked:#0A6FCC;
+  --widget:rgba(255,255,255,.86); --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 28px rgba(30,40,70,.12);
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg)}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}
+.openai{--p:var(--openai);--pt:var(--openai-tint)} .claude{--p:var(--claude);--pt:var(--claude-tint)} .google{--p:var(--google);--pt:var(--google-tint)}
+.pname{color:var(--p);font-weight:650;letter-spacing:.01em}
+.red{color:var(--red)}
+.dia{display:inline-block;width:8px;height:8px;background:var(--banked);transform:rotate(45deg);border-radius:1px;margin:0 4px 1px 1px}
+.desk{background:radial-gradient(120% 120% at 0% 0%,var(--wall1),transparent 60%),radial-gradient(120% 120% at 100% 100%,var(--wall2),transparent 60%),var(--bg)}
+
+.stage{padding:40px;display:inline-block}
+.window{width:1280px;border-radius:12px;overflow:hidden;background:var(--window);box-shadow:var(--shadow),0 0 0 .5px var(--hair);display:flex}
+.side{width:210px;background:var(--sidebar);border-right:1px solid var(--hair);padding:14px 10px;flex:none}
+.lights{display:flex;gap:8px;padding:2px 6px 22px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#FF5F57;display:block}
+.lights i:nth-child(2){background:#FEBC2E}.lights i:nth-child(3){background:#28C840}
+.nav a{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;font-size:13px;color:var(--ink);margin-bottom:2px}
+.nav a.on{background:var(--hair);font-weight:600}
+.nav .sec{font-size:11px;font-weight:600;color:var(--ink3);padding:16px 10px 6px}
+.nav .sw{width:8px;height:8px;border-radius:3px;background:var(--p)}
+.nav .ct{margin-left:auto;color:var(--ink3);font-size:12px}.nav .ct.red{color:var(--red);font-size:10px}
+.main{flex:1;padding:30px 36px 36px;min-width:0}
+.kicker{font-size:13px;color:var(--ink3);margin-bottom:6px}
+h1{font-size:30px;line-height:1.15;font-weight:700;letter-spacing:-.02em}
+h1 .soft{color:var(--ink3);font-weight:600}
+
+.lede{font-size:15px;color:var(--ink2);margin-top:10px;max-width:760px;line-height:1.45}
+.cols{display:grid;grid-template-columns:1fr 300px;gap:28px;margin-top:26px;align-items:start}
+.day{display:grid;grid-template-columns:150px 1fr;gap:18px;padding:16px 0 6px;border-top:1px solid var(--hair)}
+.day:first-child{border-top:0;padding-top:0}
+.dname{font-size:20px;font-weight:700;letter-spacing:-.01em;line-height:1.1}
+.ddate{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.ev{display:grid;grid-template-columns:76px 24px 1fr;align-items:start;padding:7px 12px 9px;margin-bottom:6px;border-radius:10px}
+.ev.alarm{background:var(--red-tint)}
+.ev.warn{background:var(--surface);box-shadow:0 0 0 .5px var(--hair)}
+.ev .tm{font-size:13px;color:var(--ink2);padding-top:2px}
+.ev .gl{padding-top:3px}
+.ev .tt{font-size:14.5px;font-weight:600;line-height:1.3}
+.ev .tt .acct{font-weight:600}
+.ev .ds{font-size:12.5px;color:var(--ink2);margin-top:2px;line-height:1.35}
+.ev.quiet .tt{font-weight:500;color:var(--ink2);font-size:13.5px}
+.ev .pv{font-size:11.5px;font-weight:650;color:var(--p);margin-right:6px}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%}
+.dot.red{background:var(--red)}
+.rf{display:inline-block;width:11px;height:11px;border-radius:50%;border:2px solid var(--p)}
+.aside{background:var(--surface);border-radius:12px;padding:16px 18px;box-shadow:0 0 0 .5px var(--hair)}
+.aside h3{font-size:13px;color:var(--ink3);font-weight:600;margin-bottom:10px}
+.lane{margin-bottom:12px}
+.lane .ln{font-size:12.5px;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between;gap:8px}
+.lane .ln span:last-child{font-weight:500;color:var(--ink3);white-space:nowrap}
+.aside .key{font-size:11.5px;color:var(--ink2);margin-top:4px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="stage desk"><div class="window"><nav class="side"><div class="lights"><i></i><i></i><i></i></div>
+<div class="nav"><a href="overview.html">Overview</a><a href="deadlines.html" class="on">Deadlines</a>
+<div class="sec">Providers</div><a class="openai" href="#openai"><span class="sw"></span>OpenAI<span class="ct red">●</span></a><a class="claude" href="#claude"><span class="sw"></span>Claude<span class="ct red">●</span></a><a class="google" href="#google"><span class="sw"></span>Google<span class="ct">1</span></a><div class="sec"></div><a href="#settings">Settings</a></div></nav><main class="main">
+<div class="kicker">Deadlines · the next 7 days, then later</div>
+<h1>2 accounts run out before they reset.</h1><p class="lede">Both have a banked reset that lapses first. Everything else this week is a routine reset.</p>
+<div class="cols"><div><section class="day"><div><div class="dname">Tomorrow</div><div class="ddate">October 2</div></div><div><a class="ev warn openai" href="overview.html#synthetic-0"><div class="tm">2:27 PM</div><div class="gl"><span class="dia" style="margin:2px 0 0 2px"></span></div><div><div class="tt"><span class="pv">OpenAI</span>Banked reset lapses · <span class="acct">A deliberately long OpenAI account name</span></div><div class="ds">Lapses about 9 hours before this account runs out, so spending it before then loses nothing.</div></div></a><a class="ev alarm openai" href="overview.html#synthetic-0"><div class="tm">~11 PM</div><div class="gl"><span class="dot red"></span></div><div><div class="tt"><span class="pv">OpenAI</span><span class="red">Runs out</span> · <span class="acct">A deliberately long OpenAI account name</span></div><div class="ds">Empty for 3½ days, until it resets Tue 2:07 PM.</div></div></a></div></section><section class="day"><div><div class="dname">Saturday</div><div class="ddate">October 3</div></div><div><a class="ev quiet openai" href="overview.html#synthetic-1"><div class="tm">9:07 PM</div><div class="gl"><span class="rf openai"></span></div><div><div class="tt"><span class="pv">OpenAI</span>Resets with ~50% unused · <span class="acct">work@<wbr>example.invalid</span></div></div></a></div></section><section class="day"><div><div class="dname">Sunday</div><div class="ddate">October 4</div></div><div><a class="ev quiet claude" href="overview.html#synthetic-4"><div class="tm">4:07 PM</div><div class="gl"><span class="rf claude"></span></div><div><div class="tt"><span class="pv">Claude</span>Resets with ~42% unused · <span class="acct">Claude backup</span></div></div></a></div></section><section class="day"><div><div class="dname">Monday</div><div class="ddate">October 5</div></div><div><a class="ev warn claude" href="overview.html#synthetic-3"><div class="tm">2:27 PM</div><div class="gl"><span class="dia" style="margin:2px 0 0 2px"></span></div><div><div class="tt"><span class="pv">Claude</span>Banked reset lapses · <span class="acct">Claude primary</span></div><div class="ds">Lapses about 9 hours before this account runs out, so spending it before then loses nothing.</div></div></a><a class="ev alarm claude" href="overview.html#synthetic-3"><div class="tm">~11 PM</div><div class="gl"><span class="dot red"></span></div><div><div class="tt"><span class="pv">Claude</span><span class="red">Runs out</span> · <span class="acct">Claude primary</span></div><div class="ds">Empty for 32 hours, until it resets Wed 8:07 AM.</div></div></a></div></section><section class="day"><div><div class="dname">Tuesday</div><div class="ddate">October 6</div></div><div><a class="ev quiet openai" href="overview.html#synthetic-0"><div class="tm">2:07 PM</div><div class="gl"><span class="rf openai"></span></div><div><div class="tt"><span class="pv">OpenAI</span>Resets, back to full · <span class="acct">A deliberately long OpenAI account name</span></div></div></a></div></section><section class="day"><div><div class="dname">Wednesday</div><div class="ddate">October 7</div></div><div><a class="ev quiet claude" href="overview.html#synthetic-3"><div class="tm">8:07 AM</div><div class="gl"><span class="rf claude"></span></div><div><div class="tt"><span class="pv">Claude</span>Resets, back to full · <span class="acct">Claude primary</span></div></div></a><a class="ev quiet openai" href="overview.html#synthetic-2"><div class="tm">5:07 PM</div><div class="gl"><span class="rf openai"></span></div><div><div class="tt"><span class="pv">OpenAI</span>Resets with ~85% unused · <span class="acct">Personal</span></div></div></a></div></section><section class="day"><div><div class="dname">Thursday</div><div class="ddate">October 8</div></div><div><a class="ev quiet google" href="overview.html#synthetic-5"><div class="tm">10:07 AM</div><div class="gl"><span class="rf google"></span></div><div><div class="tt"><span class="pv">Google</span>Resets with ~83% unused · <span class="acct">Antigravity</span></div></div></a></div></section><section class="day"><div><div class="dname">Later</div><div class="ddate">after this week</div></div><div><div class="ev quiet"><div class="tm">3:02 PM</div><div class="gl"><span class="dia" style="margin:2px 0 0 2px"></span></div><div><div class="tt" style="color:var(--ink)"><b style="font-weight:600">Tue, Oct 13</b> · 2 banked resets lapse · <span class="pv openai">OpenAI</span><span class="acct">A deliberately long OpenAI account name</span> and <span class="pv claude">Claude</span><span class="acct">Claude primary</span></div></div></div><div class="ev quiet"><div class="tm">5:07 PM</div><div class="gl"><span class="dia" style="margin:2px 0 0 2px"></span></div><div><div class="tt" style="color:var(--ink)"><b style="font-weight:600">Tue, Oct 27</b> · Banked reset lapses · <span class="pv openai">OpenAI</span><span class="acct">work@<wbr>example.invalid</span></div></div></div><div class="ev quiet"><div class="tm">2:37 PM</div><div class="gl"><span class="dia" style="margin:2px 0 0 2px"></span></div><div><div class="tt" style="color:var(--ink)"><b style="font-weight:600">Sat, Nov 14</b> · Banked reset lapses · <span class="pv openai">OpenAI</span><span class="acct">work@<wbr>example.invalid</span></div></div></div></div></section></div><aside class="aside"><h3>This week at a glance</h3><div class="lane openai"><div class="ln"><span>A deliberately long OpenAI account name</span></div><svg class="hz" width="264" height="18" viewBox="0 0 264 18" aria-hidden="true"><defs><linearGradient id="gdsynthetic-0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rdsynthetic-0" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="188.57142857142858" height="18" rx="3" fill="var(--track)"/><path d="M0 18 L0 15.5 L52.4 18.0 L52.4 18 Z" fill="url(#gdsynthetic-0)"/><path d="M0 15.5 L52.4 18.0" stroke="var(--openai)" stroke-width="1.5" fill="none"/><rect x="52.4" y="0" width="136.2" height="18" fill="url(#rdsynthetic-0)"/><rect x="52.4" y="15.5" width="136.2" height="2.5" rx="1" fill="var(--red)"/><rect x="188.6" y="1.5" width="75.4" height="16.5" rx="2" fill="var(--openai)" opacity=".13"/><line x1="188.6" x2="188.6" y1="-2" y2="18" stroke="var(--ink)" stroke-width="1.5"/><path d="M38.2 9 l4 4 l-4 4 l-4 -4 Z" fill="var(--banked)" stroke="var(--surface)" stroke-width="1.5"/></svg></div><div class="lane openai"><div class="ln"><span>work@<wbr>example.invalid</span></div><svg class="hz" width="264" height="18" viewBox="0 0 264 18" aria-hidden="true"><defs><linearGradient id="gdsynthetic-1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rdsynthetic-1" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="86.42857142857143" height="18" rx="3" fill="var(--track)"/><path d="M0 18 L0 6.1 L86.4 9.8 L86.4 18 Z" fill="url(#gdsynthetic-1)"/><path d="M0 6.1 L86.4 9.8" stroke="var(--openai)" stroke-width="1.5" fill="none"/><rect x="86.4" y="1.5" width="177.6" height="16.5" rx="2" fill="var(--openai)" opacity=".13"/><line x1="86.4" x2="86.4" y1="-2" y2="18" stroke="var(--ink)" stroke-width="1.5"/></svg></div><div class="lane openai"><div class="ln"><span>Personal</span></div><svg class="hz" width="264" height="18" viewBox="0 0 264 18" aria-hidden="true"><defs><linearGradient id="gdsynthetic-2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rdsynthetic-2" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="231.0" height="18" rx="3" fill="var(--track)"/><path d="M0 18 L0 3.3 L231.0 4.0 L231.0 18 Z" fill="url(#gdsynthetic-2)"/><path d="M0 3.3 L231.0 4.0" stroke="var(--openai)" stroke-width="1.5" fill="none"/><rect x="231.0" y="1.5" width="33.0" height="16.5" rx="2" fill="var(--openai)" opacity=".13"/><line x1="231.0" x2="231.0" y1="-2" y2="18" stroke="var(--ink)" stroke-width="1.5"/></svg></div><div class="lane claude"><div class="ln"><span>Claude primary</span></div><svg class="hz" width="264" height="18" viewBox="0 0 264 18" aria-hidden="true"><defs><linearGradient id="gdsynthetic-3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--claude)" stop-opacity=".95"/><stop offset="1" stop-color="var(--claude)" stop-opacity=".45"/></linearGradient><pattern id="rdsynthetic-3" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="216.85714285714286" height="18" rx="3" fill="var(--track)"/><path d="M0 18 L0 11.9 L166.1 18.0 L166.1 18 Z" fill="url(#gdsynthetic-3)"/><path d="M0 11.9 L166.1 18.0" stroke="var(--claude)" stroke-width="1.5" fill="none"/><rect x="166.1" y="0" width="50.7" height="18" fill="url(#rdsynthetic-3)"/><rect x="166.1" y="15.5" width="50.7" height="2.5" rx="1" fill="var(--red)"/><rect x="216.9" y="1.5" width="47.1" height="16.5" rx="2" fill="var(--claude)" opacity=".13"/><line x1="216.9" x2="216.9" y1="-2" y2="18" stroke="var(--ink)" stroke-width="1.5"/><path d="M151.4 9 l4 4 l-4 4 l-4 -4 Z" fill="var(--banked)" stroke="var(--surface)" stroke-width="1.5"/></svg></div><div class="lane claude"><div class="ln"><span>Claude backup</span></div><svg class="hz" width="264" height="18" viewBox="0 0 264 18" aria-hidden="true"><defs><linearGradient id="gdsynthetic-4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--claude)" stop-opacity=".95"/><stop offset="1" stop-color="var(--claude)" stop-opacity=".45"/></linearGradient><pattern id="rdsynthetic-4" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="116.28571428571428" height="18" rx="3" fill="var(--track)"/><path d="M0 18 L0 8.6 L116.3 11.0 L116.3 18 Z" fill="url(#gdsynthetic-4)"/><path d="M0 8.6 L116.3 11.0" stroke="var(--claude)" stroke-width="1.5" fill="none"/><rect x="116.3" y="1.5" width="147.7" height="16.5" rx="2" fill="var(--claude)" opacity=".13"/><line x1="116.3" x2="116.3" y1="-2" y2="18" stroke="var(--ink)" stroke-width="1.5"/></svg></div><div class="lane google"><div class="ln"><span>Antigravity</span></div><svg class="hz" width="264" height="18" viewBox="0 0 264 18" aria-hidden="true"><defs><linearGradient id="gdsynthetic-5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--google)" stop-opacity=".95"/><stop offset="1" stop-color="var(--google)" stop-opacity=".45"/></linearGradient><pattern id="rdsynthetic-5" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="257.7142857142857" height="18" rx="3" fill="var(--track)"/><path d="M0 18 L0 3.0 L257.7 4.3 L257.7 18 Z" fill="url(#gdsynthetic-5)"/><path d="M0 3.0 L257.7 4.3" stroke="var(--google)" stroke-width="1.5" fill="none"/><rect x="257.7" y="1.5" width="6.3" height="16.5" rx="2" fill="var(--google)" opacity=".13"/><line x1="257.7" x2="257.7" y1="-2" y2="18" stroke="var(--ink)" stroke-width="1.5"/></svg></div><div class="key">A map of the list on the left: each lane runs from now to one week out, the vertical mark is the weekly reset, and hatching is time spent empty.</div></aside></div>
+</main></div></div>
+</body>
+</html>

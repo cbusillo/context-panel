@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Panel Medium Widget</title>
+<!-- Context Panel design exploration "Horizon" (Claude Opus). Static mockup, synthetic accounts only.
+     Theme follows the system; add ?theme=light or ?theme=dark to force one. -->
+<script>(function(){var t=new URLSearchParams(location.search).get('theme');if(t)document.documentElement.dataset.theme=t;})();</script>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#ECEEF2; --wall1:#C9D6E8; --wall2:#E9DDEB;
+  --window:#F6F6F8; --sidebar:#EDEDF0; --surface:#FFFFFF; --raised:#FFFFFF;
+  --ink:#1D1D1F; --ink2:#55555C; --ink3:#6C6C74; --hair:rgba(0,0,0,.08); --grid:rgba(0,0,0,.07);
+  --track:rgba(0,0,0,.055);
+  --openai:#0F7A6B; --claude:#A3631B; --google:#6A4BD6;
+  --openai-tint:rgba(15,122,107,.07); --claude-tint:rgba(163,99,27,.075); --google-tint:rgba(106,75,214,.07);
+  --red:#CC1F2F; --red-tint:rgba(204,31,47,.07); --banked:#0A6FCC;
+  --widget:rgba(255,255,255,.86); --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 28px rgba(30,40,70,.12);
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg)}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}
+.openai{--p:var(--openai);--pt:var(--openai-tint)} .claude{--p:var(--claude);--pt:var(--claude-tint)} .google{--p:var(--google);--pt:var(--google-tint)}
+.pname{color:var(--p);font-weight:650;letter-spacing:.01em}
+.red{color:var(--red)}
+.dia{display:inline-block;width:8px;height:8px;background:var(--banked);transform:rotate(45deg);border-radius:1px;margin:0 4px 1px 1px}
+.desk{background:radial-gradient(120% 120% at 0% 0%,var(--wall1),transparent 60%),radial-gradient(120% 120% at 100% 100%,var(--wall2),transparent 60%),var(--bg)}
+
+.stage{padding:28px;display:inline-block}
+.w{background:var(--widget);border-radius:22px;box-shadow:var(--shadow),0 0 0 .5px var(--hair);padding:13px 14px;overflow:hidden;
+  backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);position:relative}
+.wh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.wt{font-size:12.5px;font-weight:700;letter-spacing:-.005em}
+.wr{font-size:11px;color:var(--ink3);font-weight:500}
+.small{width:164px;height:164px}
+.medium{width:344px;height:164px}
+.large{width:344px;height:344px}
+.cap{font-size:10.5px;font-weight:650;color:var(--p);letter-spacing:.01em}
+.status{font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px}
+.status .d{width:7px;height:7px;border-radius:50%;background:var(--red);flex:none}
+
+.cols3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;height:125px}
+.mc{display:flex;flex-direction:column;border-radius:12px;padding:8px 7px 8px 8px;background:var(--pt)}
+.mc .nm{font-size:11.5px;font-weight:650;line-height:1.2;letter-spacing:-.025em;margin-top:2px;height:30px;overflow:hidden}
+.mc .pr{display:flex;align-items:baseline;gap:4px;margin-top:3px}
+.mc .pr b{font-size:21px;font-weight:700;letter-spacing:-.03em}
+.mc .pr span{font-size:10.5px;color:var(--ink2)}
+.mc svg.hz{display:block;margin-top:3px}
+.mc .ft{font-size:10.5px;font-weight:600;margin-top:auto;line-height:1.2}
+.mc .ft.ok{color:var(--ink2);font-weight:500}
+</style>
+</head>
+<body>
+<div class="stage desk"><div class="w medium"><div class="wh"><span class="wt">Context Panel</span><span class="wr">next up · 2:07 PM</span></div>
+<div class="cols3"><a class="mc openai" href="contextpanel://account/synthetic-1"><span class="cap">OpenAI</span><div class="nm">work@<wbr>example.invalid</div><div class="pr"><b>72%</b><span>left</span></div><svg class="hz" width="100%" height="12" preserveAspectRatio="none" viewBox="0 0 88 12" aria-hidden="true"><defs><linearGradient id="gmsynthetic-1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rmsynthetic-1" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="88" height="12" rx="3" fill="var(--track)"/><path d="M0 12 L0 4.4 L88.0 6.8 L88.0 12 Z" fill="url(#gmsynthetic-1)"/><path d="M0 4.4 L88.0 6.8" stroke="var(--openai)" stroke-width="1.5" fill="none"/><line x1="88.0" x2="88.0" y1="-2" y2="12" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ft red">1 of 3 runs out Fri</div></a><a class="mc claude" href="contextpanel://account/synthetic-4"><span class="cap">Claude</span><div class="nm">Claude backup</div><div class="pr"><b>57%</b><span>left</span></div><svg class="hz" width="100%" height="12" preserveAspectRatio="none" viewBox="0 0 88 12" aria-hidden="true"><defs><linearGradient id="gmsynthetic-4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--claude)" stop-opacity=".95"/><stop offset="1" stop-color="var(--claude)" stop-opacity=".45"/></linearGradient><pattern id="rmsynthetic-4" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="88" height="12" rx="3" fill="var(--track)"/><path d="M0 12 L0 6.0 L88.0 7.6 L88.0 12 Z" fill="url(#gmsynthetic-4)"/><path d="M0 6.0 L88.0 7.6" stroke="var(--claude)" stroke-width="1.5" fill="none"/><line x1="88.0" x2="88.0" y1="-2" y2="12" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ft red">1 of 2 runs out Mon</div></a><a class="mc google" href="contextpanel://account/synthetic-5"><span class="cap">Google</span><div class="nm">Antigravity</div><div class="pr"><b>91%</b><span>left</span></div><svg class="hz" width="100%" height="12" preserveAspectRatio="none" viewBox="0 0 88 12" aria-hidden="true"><defs><linearGradient id="gmsynthetic-5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--google)" stop-opacity=".95"/><stop offset="1" stop-color="var(--google)" stop-opacity=".45"/></linearGradient><pattern id="rmsynthetic-5" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="88" height="12" rx="3" fill="var(--track)"/><path d="M0 12 L0 2.4 L88.0 3.3 L88.0 12 Z" fill="url(#gmsynthetic-5)"/><path d="M0 2.4 L88.0 3.3" stroke="var(--google)" stroke-width="1.5" fill="none"/><line x1="88.0" x2="88.0" y1="-2" y2="12" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ft ok">~83% to spare</div></a></div></div></div>
+</body>
+</html>

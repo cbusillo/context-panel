@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Panel Large Widget</title>
+<!-- Context Panel design exploration "Horizon" (Claude Opus). Static mockup, synthetic accounts only.
+     Theme follows the system; add ?theme=light or ?theme=dark to force one. -->
+<script>(function(){var t=new URLSearchParams(location.search).get('theme');if(t)document.documentElement.dataset.theme=t;})();</script>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#ECEEF2; --wall1:#C9D6E8; --wall2:#E9DDEB;
+  --window:#F6F6F8; --sidebar:#EDEDF0; --surface:#FFFFFF; --raised:#FFFFFF;
+  --ink:#1D1D1F; --ink2:#55555C; --ink3:#6C6C74; --hair:rgba(0,0,0,.08); --grid:rgba(0,0,0,.07);
+  --track:rgba(0,0,0,.055);
+  --openai:#0F7A6B; --claude:#A3631B; --google:#6A4BD6;
+  --openai-tint:rgba(15,122,107,.07); --claude-tint:rgba(163,99,27,.075); --google-tint:rgba(106,75,214,.07);
+  --red:#CC1F2F; --red-tint:rgba(204,31,47,.07); --banked:#0A6FCC;
+  --widget:rgba(255,255,255,.86); --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 28px rgba(30,40,70,.12);
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg)}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}
+.openai{--p:var(--openai);--pt:var(--openai-tint)} .claude{--p:var(--claude);--pt:var(--claude-tint)} .google{--p:var(--google);--pt:var(--google-tint)}
+.pname{color:var(--p);font-weight:650;letter-spacing:.01em}
+.red{color:var(--red)}
+.dia{display:inline-block;width:8px;height:8px;background:var(--banked);transform:rotate(45deg);border-radius:1px;margin:0 4px 1px 1px}
+.desk{background:radial-gradient(120% 120% at 0% 0%,var(--wall1),transparent 60%),radial-gradient(120% 120% at 100% 100%,var(--wall2),transparent 60%),var(--bg)}
+
+.stage{padding:28px;display:inline-block}
+.w{background:var(--widget);border-radius:22px;box-shadow:var(--shadow),0 0 0 .5px var(--hair);padding:13px 14px;overflow:hidden;
+  backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);position:relative}
+.wh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.wt{font-size:12.5px;font-weight:700;letter-spacing:-.005em}
+.wr{font-size:11px;color:var(--ink3);font-weight:500}
+.small{width:164px;height:164px}
+.medium{width:344px;height:164px}
+.large{width:344px;height:344px}
+.cap{font-size:10.5px;font-weight:650;color:var(--p);letter-spacing:.01em}
+.status{font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px}
+.status .d{width:7px;height:7px;border-radius:50%;background:var(--red);flex:none}
+
+.verdict{font-size:15px;font-weight:700;letter-spacing:-.015em;line-height:1.2;margin:0 0 9px}
+.verdict .soft{color:var(--ink3);font-weight:600}
+.grp{border-radius:11px;background:var(--pt);padding:5px 9px 3px;margin-bottom:5px}
+.grp .gh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:1px}
+.grp .gh .sm{font-size:10.5px;color:var(--ink2)}
+.lr{display:grid;grid-template-columns:minmax(0,1fr) 30px 54px 74px;gap:6px;align-items:center;padding:3px 0;min-height:22px}
+.lr .pc{font-size:12px;font-weight:650;text-align:right}
+.lr .nm{font-size:12px;font-weight:600;line-height:1.15;letter-spacing:-.01em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.lr .nm .nx{color:var(--p);font-size:10px;font-weight:700;margin-left:3px;white-space:nowrap}
+.lr .ou{font-size:10.5px;text-align:right;line-height:1.2;color:var(--ink2);white-space:nowrap}
+.lr .ou.red{color:var(--red);font-weight:600}
+.lr .ou b{font-size:12px;color:var(--ink);font-weight:650}
+.foot{font-size:10.5px;color:var(--ink2);display:flex;align-items:center;gap:2px;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="stage desk"><div class="w large"><div class="wh"><span class="wt">Context Panel</span><span class="wr">2:07 PM</span></div>
+<div class="verdict"><span class="red">2 run out before reset.</span> <span class="soft">4 are fine.</span></div><div class="grp openai"><div class="gh"><span class="cap">OpenAI</span><span class="sm">3 accounts · 59% left on average</span></div><a class="lr" href="contextpanel://account/synthetic-0"><div class="nm">A deliberately long OpenAI account name</div><div class="pc">15%</div><svg class="hz" width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><defs><linearGradient id="glsynthetic-0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rlsynthetic-0" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="54" height="14" rx="3" fill="var(--track)"/><path d="M0 14 L0 12.1 L15.0 14.0 L15.0 14 Z" fill="url(#glsynthetic-0)"/><path d="M0 12.1 L15.0 14.0" stroke="var(--openai)" stroke-width="1.5" fill="none"/><rect x="15.0" y="0" width="39.0" height="14" fill="url(#rlsynthetic-0)"/><rect x="15.0" y="11.5" width="39.0" height="2.5" rx="1" fill="var(--red)"/><line x1="54.0" x2="54.0" y1="-2" y2="14" stroke="var(--ink)" stroke-width="1.5"/><path d="M10.9 5 l4 4 l-4 4 l-4 -4 Z" fill="var(--banked)" stroke="var(--surface)" stroke-width="1.5"/></svg><div class="ou red">Out Fri night</div></a><a class="lr" href="contextpanel://account/synthetic-1"><div class="nm">work@<wbr>example.invalid<span class="nx">next</span></div><div class="pc">72%</div><svg class="hz" width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><defs><linearGradient id="glsynthetic-1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rlsynthetic-1" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="54" height="14" rx="3" fill="var(--track)"/><path d="M0 14 L0 5.0 L54.0 7.8 L54.0 14 Z" fill="url(#glsynthetic-1)"/><path d="M0 5.0 L54.0 7.8" stroke="var(--openai)" stroke-width="1.5" fill="none"/><line x1="54.0" x2="54.0" y1="-2" y2="14" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ou">~50% spare</div></a><a class="lr" href="contextpanel://account/synthetic-2"><div class="nm">Personal</div><div class="pc">89%</div><svg class="hz" width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><defs><linearGradient id="glsynthetic-2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--openai)" stop-opacity=".95"/><stop offset="1" stop-color="var(--openai)" stop-opacity=".45"/></linearGradient><pattern id="rlsynthetic-2" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="54" height="14" rx="3" fill="var(--track)"/><path d="M0 14 L0 2.9 L54.0 3.4 L54.0 14 Z" fill="url(#glsynthetic-2)"/><path d="M0 2.9 L54.0 3.4" stroke="var(--openai)" stroke-width="1.5" fill="none"/><line x1="54.0" x2="54.0" y1="-2" y2="14" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ou">~85% spare</div></a></div><div class="grp claude"><div class="gh"><span class="cap">Claude</span><span class="sm">2 accounts · 47% left on average</span></div><a class="lr" href="contextpanel://account/synthetic-3"><div class="nm">Claude primary</div><div class="pc">37%</div><svg class="hz" width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><defs><linearGradient id="glsynthetic-3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--claude)" stop-opacity=".95"/><stop offset="1" stop-color="var(--claude)" stop-opacity=".45"/></linearGradient><pattern id="rlsynthetic-3" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="54" height="14" rx="3" fill="var(--track)"/><path d="M0 14 L0 9.4 L41.4 14.0 L41.4 14 Z" fill="url(#glsynthetic-3)"/><path d="M0 9.4 L41.4 14.0" stroke="var(--claude)" stroke-width="1.5" fill="none"/><rect x="41.4" y="0" width="12.6" height="14" fill="url(#rlsynthetic-3)"/><rect x="41.4" y="11.5" width="12.6" height="2.5" rx="1" fill="var(--red)"/><line x1="54.0" x2="54.0" y1="-2" y2="14" stroke="var(--ink)" stroke-width="1.5"/><path d="M37.7 5 l4 4 l-4 4 l-4 -4 Z" fill="var(--banked)" stroke="var(--surface)" stroke-width="1.5"/></svg><div class="ou red">Out Mon night</div></a><a class="lr" href="contextpanel://account/synthetic-4"><div class="nm">Claude backup<span class="nx">next</span></div><div class="pc">57%</div><svg class="hz" width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><defs><linearGradient id="glsynthetic-4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--claude)" stop-opacity=".95"/><stop offset="1" stop-color="var(--claude)" stop-opacity=".45"/></linearGradient><pattern id="rlsynthetic-4" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="54" height="14" rx="3" fill="var(--track)"/><path d="M0 14 L0 6.9 L54.0 8.7 L54.0 14 Z" fill="url(#glsynthetic-4)"/><path d="M0 6.9 L54.0 8.7" stroke="var(--claude)" stroke-width="1.5" fill="none"/><line x1="54.0" x2="54.0" y1="-2" y2="14" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ou">~42% spare</div></a></div><div class="grp google"><div class="gh"><span class="cap">Google</span><span class="sm"></span></div><a class="lr" href="contextpanel://account/synthetic-5"><div class="nm">Antigravity</div><div class="pc">91%</div><svg class="hz" width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><defs><linearGradient id="glsynthetic-5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--google)" stop-opacity=".95"/><stop offset="1" stop-color="var(--google)" stop-opacity=".45"/></linearGradient><pattern id="rlsynthetic-5" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--red)" opacity=".28"/></pattern></defs><rect x="0" y="0" width="54" height="14" rx="3" fill="var(--track)"/><path d="M0 14 L0 2.6 L54.0 3.7 L54.0 14 Z" fill="url(#glsynthetic-5)"/><path d="M0 2.6 L54.0 3.7" stroke="var(--google)" stroke-width="1.5" fill="none"/><line x1="54.0" x2="54.0" y1="-2" y2="14" stroke="var(--ink)" stroke-width="1.5"/></svg><div class="ou">~83% spare</div></a></div><div class="foot"><span class="dia"></span>OpenAI banked reset lapses tomorrow 2:27 PM, before it runs out</div></div></div>
+</body>
+</html>

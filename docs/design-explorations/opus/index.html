@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horizon Mockups</title>
+<!-- Context Panel design exploration "Horizon" (Claude Opus). Static mockup, synthetic accounts only.
+     Theme follows the system; add ?theme=light or ?theme=dark to force one. -->
+<script>(function(){var t=new URLSearchParams(location.search).get('theme');if(t)document.documentElement.dataset.theme=t;})();</script>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#ECEEF2; --wall1:#C9D6E8; --wall2:#E9DDEB;
+  --window:#F6F6F8; --sidebar:#EDEDF0; --surface:#FFFFFF; --raised:#FFFFFF;
+  --ink:#1D1D1F; --ink2:#55555C; --ink3:#6C6C74; --hair:rgba(0,0,0,.08); --grid:rgba(0,0,0,.07);
+  --track:rgba(0,0,0,.055);
+  --openai:#0F7A6B; --claude:#A3631B; --google:#6A4BD6;
+  --openai-tint:rgba(15,122,107,.07); --claude-tint:rgba(163,99,27,.075); --google-tint:rgba(106,75,214,.07);
+  --red:#CC1F2F; --red-tint:rgba(204,31,47,.07); --banked:#0A6FCC;
+  --widget:rgba(255,255,255,.86); --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 28px rgba(30,40,70,.12);
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  color-scheme: dark;
+  --bg:#0E0F13; --wall1:#1B2337; --wall2:#2A1E33;
+  --window:#1E1E21; --sidebar:#252528; --surface:#2A2A2E; --raised:#303035;
+  --ink:#F2F2F5; --ink2:#B4B4BC; --ink3:#9A9AA3; --hair:rgba(255,255,255,.09); --grid:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.07);
+  --openai:#3CC4AE; --claude:#E3A65C; --google:#A895FF;
+  --openai-tint:rgba(60,196,174,.09); --claude-tint:rgba(227,166,92,.09); --google-tint:rgba(168,149,255,.1);
+  --red:#FF6B6E; --red-tint:rgba(255,107,110,.09); --banked:#5DB2FF;
+  --widget:rgba(30,30,33,.88); --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg)}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}
+.openai{--p:var(--openai);--pt:var(--openai-tint)} .claude{--p:var(--claude);--pt:var(--claude-tint)} .google{--p:var(--google);--pt:var(--google-tint)}
+.pname{color:var(--p);font-weight:650;letter-spacing:.01em}
+.red{color:var(--red)}
+.dia{display:inline-block;width:8px;height:8px;background:var(--banked);transform:rotate(45deg);border-radius:1px;margin:0 4px 1px 1px}
+.desk{background:radial-gradient(120% 120% at 0% 0%,var(--wall1),transparent 60%),radial-gradient(120% 120% at 100% 100%,var(--wall2),transparent 60%),var(--bg)}
+
+body{padding:32px 24px;max-width:1200px;margin:0 auto}
+h1{font-size:26px;margin-bottom:6px} p{color:var(--ink2);margin-bottom:18px;line-height:1.5}
+.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.g a{background:var(--surface);border-radius:12px;padding:14px 16px;box-shadow:0 0 0 .5px var(--hair)}
+.g a b{display:block;margin-bottom:4px}.g a span{font-size:13px;color:var(--ink3)}
+</style>
+</head>
+<body>
+<h1>Horizon</h1><p>Context Panel design exploration (Claude Opus). Static mockups of six synthetic accounts at Thu Oct 1, 2:07 PM. Add <code>?theme=dark</code> or <code>?theme=light</code> to any page.</p><div class="g"><a href="overview.html"><b>Mac overview</b><span>overview.html</span></a><a href="deadlines.html"><b>Mac Deadlines</b><span>deadlines.html</span></a><a href="widget-small.html"><b>Widget, small</b><span>widget-small.html</span></a><a href="widget-medium.html"><b>Widget, medium</b><span>widget-medium.html</span></a><a href="widget-large.html"><b>Widget, large</b><span>widget-large.html</span></a></div>
+</body>
+</html>
