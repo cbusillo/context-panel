@@ -438,7 +438,8 @@ private struct CompanionRootView: View {
                 isEditable: model.canEditDisplayPreferences,
                 errorMessage: model.displayPreferencesErrorMessage,
                 onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
-                onMove: model.moveWidgetMainLimits(from:to:)
+                onMove: model.moveWidgetMainLimits(from:to:),
+                onLayoutChange: model.setWidgetAccountLayout(_:)
             )
 
             CompanionRefreshSettingsView(
@@ -660,7 +661,8 @@ private struct CompanionValidationGalleryPreview: View {
                             isEditable: false,
                             errorMessage: nil,
                             onVisibilityChange: { _, _ in },
-                            onMove: { _, _ in }
+                            onMove: { _, _ in },
+                            onLayoutChange: { _ in }
                         )
                         CompanionRefreshSettingsView(
                             settings: .defaultSettings,
@@ -991,6 +993,12 @@ private final class CompanionSyncModel {
         }
     }
 
+    func setWidgetAccountLayout(_ accountRows: Bool) {
+        var updated = displayPreferences
+        updated.usesAccountRows = accountRows
+        saveDisplayPreferences(updated)
+    }
+
     func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
         var updated = displayPreferences
         updated.setMainLimit(
@@ -1213,6 +1221,7 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
     let errorMessage: String?
     let onVisibilityChange: @MainActor (WidgetMainLimitPreference, Bool) -> Void
     let onMove: @MainActor (IndexSet, Int) -> Void
+    var onLayoutChange: (@MainActor (Bool) -> Void)? = nil
 
     var body: some View {
         CompanionSettingsCard {
@@ -1228,13 +1237,21 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                         }
                     }
                     .buttonStyle(.borderless)
-                    .disabled(!isEditable)
+                    .disabled(!isEditable || preferences.usesAccountRows)
                 }
                 Text(displayPreferencesScopeText)
                     .font(.footnote)
                     .foregroundStyle(palette.secondaryText)
 
                 if isLoaded {
+                    Picker("Widget layout", selection: Binding(get: { preferences.usesAccountRows }, set: { onLayoutChange?($0) })) {
+                        Text("Accounts").tag(true)
+                        Text("Windows").tag(false)
+                    }.pickerStyle(.segmented).disabled(!isEditable || onLayoutChange == nil)
+                    if preferences.usesAccountRows {
+                        Text("Choose Windows to select or reorder limits. Accounts follows your Mac’s account visibility.")
+                            .font(.footnote).foregroundStyle(palette.secondaryText)
+                    }
                     WidgetMainLimitSettingsStack(
                         preferences: preferences,
                         colors: palette.settingsControlColors,
@@ -1253,7 +1270,7 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                         onVisibilityChange: onVisibilityChange,
                         onMove: onMove
                     )
-                    .disabled(!isEditable)
+                    .disabled(!isEditable || preferences.usesAccountRows)
                 } else {
                     ProgressView("Loading display settings…")
                         .frame(maxWidth: .infinity, minHeight: 80)

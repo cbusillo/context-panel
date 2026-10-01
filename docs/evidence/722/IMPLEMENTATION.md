@@ -46,7 +46,8 @@ remote retention remains while the owner answers the scope question.
   displayed saved account. Exact reset/expiry minutes remain visible. A More
   accounts link handles bounded widget space. No macOS extra-large family added.
 - iPhone/iPad and Vision Pro share account pages and links. Existing settings,
-  pace and sync diagnostics remain available. TV full detail uses six named
+  pace and sync diagnostics remain available, including an Accounts/Windows
+  layout switch so retained limit selection and reorder controls still work. TV full detail uses six named
   cards with fixed name/number areas; focus changes only the outline. Privacy
   modes and legacy provider detail remain. Top Shelf shows up to six account
   cards when typed display metadata is present; legacy/privacy payloads keep
@@ -86,3 +87,12 @@ swift run ContextPanelSharedViewRenderer --fixture healthy \
 Use `account-overview`, `account-deadlines` or `account-detail` for the new shared
 panels. The output must not already exist. Widget-family support remains the
 operator gallery's supported macOS family set.
+
+## Open review boundary
+
+Claude Opus 5.5 rechecked `9618da6` and found one remaining low-severity case:
+configured no-data rows from a secondary Mac can disappear when another Mac
+publishes. Rows with observed data are retained correctly, including settings
+edits. Publisher provenance/removal scope is unresolved on #722; this remains
+open before PR readiness. The current single-Mac saved-data read returns all six
+configured accounts without reading credentials.
