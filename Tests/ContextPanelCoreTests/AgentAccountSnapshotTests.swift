@@ -212,3 +212,31 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(row.windows.first?.label.contains("provider@example.invalid") == false)
     #expect(ConnectorRedactor.safeErrorDescription("Typed@example.invalid").contains("Typed@example.invalid") == false)
 }
+
+@Test func agentSnapshotDisplayUsesTheSameWordsAndNumbersAsTheApp() throws {
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [agentConfiguration("a"), agentConfiguration("b")])
+    let history = (0...2).map { index in
+        let at = agentNow.addingTimeInterval(Double(index - 2) * 1_800)
+        let limits = [agentLimit("a", used: 70 + index * 5, at: at), agentLimit("b", used: 10, at: at)]
+        return StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: limits),
+            reports: limits.map { StoredProviderReport(provider: $0.provider, accountID: $0.accountID,
+                configuredAccountID: $0.configuredAccountID, accountName: "Ignored", generatedAt: at,
+                status: .healthy, errorMessage: nil) })
+    }
+    let stored = try #require(history.last)
+    let export = AgentAccountSnapshot(configuration: config, stored: stored, history: history, now: agentNow)
+    let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+        metadata: AccountDisplayMetadata.local(configuration: config.accounts, stored: stored, now: agentNow), now: agentNow,
+        accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: agentNow))
+    for account in overview.accounts {
+        let display = try #require(export.accounts.first { $0.id == account.id }?.display)
+        #expect(display.percentLeft == account.remainingText)
+        #expect(display.state == account.state.displayText)
+        #expect(display.pace == AccountNumbers.pace(account.paceRatio(now: agentNow)))
+        #expect(display.runOut == account.earliestRunOut(now: agentNow).map { AccountTerms.runOut($0.date, now: agentNow) })
+    }
+    let a = try #require(export.accounts.first { $0.label == "Local a" }?.display)
+    #expect(a.percentLeft == "20%")
+    #expect(a.runOut != nil)
+    #expect(export.answers.closestAccountID == overview.closest?.id)
+}

@@ -56,13 +56,13 @@ struct AccountGlanceWidget: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 3)
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Accounts").font(.system(size: 11, weight: .semibold))
+                Text(AccountTerms.accounts).font(.system(size: 11, weight: .semibold))
                 if overview.accounts.count > shown.count {
                     Text("+\(overview.accounts.count - shown.count)").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(palette.secondary)
                 }
                 Spacer(minLength: 0)
-                Text("% left").font(.system(size: 9, weight: .medium)).foregroundStyle(palette.tertiary)
+                Text(AccountTerms.percentLeft).font(.system(size: 9, weight: .medium)).foregroundStyle(palette.tertiary)
             }
             LazyVGrid(columns: columns, alignment: .center, spacing: 6) {
                 ForEach(shown) { account in
@@ -70,7 +70,7 @@ struct AccountGlanceWidget: View {
                         ZStack {
                             GlanceRing(fraction: account.remainingFraction, color: palette.color(for: account),
                                        track: palette.track, lineWidth: 3.5)
-                            Text(account.remainingFraction.map { "\(Int(($0 * 100).rounded()))" } ?? "—")
+                            Text(AccountNumbers.percent(account.remainingFraction))
                                 .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
                         }
                         .frame(width: 34, height: 34)
@@ -92,7 +92,7 @@ struct AccountGlanceWidget: View {
                 bankedLine(deadline, compact: true)
             } else if let runOut = overview.accounts.compactMap({ a in a.earliestRunOut(now: now).map { (a, $0.date) } }).min(by: { $0.1 < $1.1 }) {
                 HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
+                    Image(systemName: AccountGlyphs.runOut).font(.system(size: 8))
                     Text("\(runOut.0.metadata.label) out \(AccountPaceText.approximately(runOut.1, now: now))").lineLimit(1)
                 }.font(.system(size: 9, weight: .medium)).foregroundStyle(palette.bad)
             }
@@ -109,7 +109,7 @@ struct AccountGlanceWidget: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(account.remainingText).font(.system(size: 30, weight: .semibold, design: .rounded)).monospacedDigit()
-                Text("left").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+                Text(AccountTerms.left).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
             }
             ForEach(account.orderedWindows) { window in
                 VStack(alignment: .leading, spacing: 2) {
@@ -188,7 +188,7 @@ struct AccountGlanceWidget: View {
 
     private func windowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?, width: CGFloat) -> some View {
         HStack(spacing: 4) {
-            Text(window?.remainingFraction.map { "\(Int(($0 * 100).rounded()))" } ?? "—")
+            Text(AccountNumbers.percent(window?.remainingFraction))
                 .font(.system(size: 10, weight: window?.id == account.limitingWindow?.id ? .bold : .regular).monospacedDigit())
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 20, alignment: .trailing)
@@ -202,7 +202,7 @@ struct AccountGlanceWidget: View {
     private func trailingTime(_ account: AccountOverview.Account) -> some View {
         if let runOut = account.earliestRunOut(now: now) {
             HStack(spacing: 2) {
-                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 7))
+                Image(systemName: AccountGlyphs.runOut).font(.system(size: 7))
                 Text(AccountPaceText.approximately(runOut.date, now: now)).monospacedDigit()
             }
             .font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.bad).lineLimit(1)
@@ -221,7 +221,7 @@ struct AccountGlanceWidget: View {
         let rows = Array(overview.accounts.prefix(6))
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Accounts").font(.system(size: 12, weight: .semibold))
+                Text(AccountTerms.accounts).font(.system(size: 12, weight: .semibold))
                 if overview.accounts.count > rows.count {
                     Text("+\(overview.accounts.count - rows.count)").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(palette.secondary)
@@ -243,7 +243,7 @@ struct AccountGlanceWidget: View {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(overview.deadlines.prefix(3)) { deadline in
                             HStack(spacing: 5) {
-                                Image(systemName: "arrow.counterclockwise.circle.fill").foregroundStyle(palette.banked)
+                                Image(systemName: AccountGlyphs.banked).foregroundStyle(palette.banked)
                                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold).monospacedDigit()
                                     .frame(width: 84, alignment: .leading)
                                 Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).monospacedDigit()
@@ -267,14 +267,14 @@ struct AccountGlanceWidget: View {
                 if nextIDs.contains(account.id) { NextTag(palette: palette) }
                 if let count = account.bankedResets?.availableCount, count > 0, showsBanked {
                     HStack(spacing: 2) {
-                        Image(systemName: "arrow.counterclockwise").font(.system(size: 7, weight: .bold))
+                        Image(systemName: AccountGlyphs.bankedSmall).font(.system(size: 7, weight: .bold))
                         Text("\(count)")
                     }
                     .font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.banked)
                 }
                 Spacer(minLength: 2)
                 if let runOut = account.earliestRunOut(now: now) {
-                    Text("out " + AccountPaceText.approximately(runOut.date, now: now))
+                    Text(AccountTerms.runOut(runOut.date, now: now))
                         .font(.system(size: 9, weight: .semibold)).monospacedDigit().foregroundStyle(palette.bad).lineLimit(1)
                 }
                 Text(AccountPaceText.ratio(account.paceRatio(now: now)))
@@ -296,7 +296,7 @@ struct AccountGlanceWidget: View {
 
     private func largeWindowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?) -> some View {
         HStack(spacing: 4) {
-            Text(window?.remainingFraction.map { "\(Int(($0 * 100).rounded()))" } ?? "—")
+            Text(AccountNumbers.percent(window?.remainingFraction))
                 .font(.system(size: 11, weight: window?.id == account.limitingWindow?.id ? .bold : .medium).monospacedDigit())
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 22, alignment: .trailing)
@@ -314,20 +314,17 @@ struct AccountGlanceWidget: View {
 
     private func weekly(_ account: AccountOverview.Account) -> AccountOverview.Window? { account.longWindow }
 
-    private func paceColor(_ account: AccountOverview.Account) -> Color {
-        guard let ratio = account.paceRatio(now: now) else { return palette.tertiary }
-        return ratio > 1.15 ? palette.bad : ratio > 0.95 ? palette.warn : palette.primary
-    }
+    private func paceColor(_ account: AccountOverview.Account) -> Color { palette.paceColor(account.paceRatio(now: now)) }
 
     private func bankedLine(_ deadline: AccountOverview.Deadline, compact: Bool, total: Int = 0) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: "arrow.counterclockwise.circle.fill").font(.system(size: compact ? 9 : 10))
+            Image(systemName: AccountGlyphs.banked).font(.system(size: compact ? 9 : 10))
                 .foregroundStyle(palette.banked)
             if compact {
                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold).monospacedDigit()
                 Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).foregroundStyle(palette.secondary)
             } else {
-                Text("Banked reset expires").foregroundStyle(palette.secondary)
+                Text(AccountTerms.bankedResetExpires).foregroundStyle(palette.secondary)
                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold).monospacedDigit()
                 Text("· " + deadline.label).foregroundStyle(palette.secondary)
                 Spacer(minLength: 0)
@@ -345,43 +342,33 @@ struct AccountGlanceWidget: View {
 struct GlancePalette {
     let dark: Bool
 
-    private func pick(_ light: (Double, Double, Double), _ dark: (Double, Double, Double)) -> Color {
-        let value = self.dark ? dark : light
-        return Color(.sRGB, red: value.0 / 255, green: value.1 / 255, blue: value.2 / 255)
+    /// Every value comes from `AccountColorToken` in ContextPanelCore.
+    func color(_ token: AccountColorToken) -> Color {
+        let value = token.rgb(dark: dark)
+        return Color(.sRGB, red: value.red, green: value.green, blue: value.blue, opacity: token.opacity(dark: dark))
     }
 
-    var surface: Color { pick((250, 250, 250), (30, 31, 34)) }
-    var primary: Color { pick((17, 17, 19), (240, 241, 243)) }
-    var secondary: Color { pick((88, 89, 95), (172, 175, 182)) }
-    var tertiary: Color { pick((108, 109, 116), (142, 145, 154)) }
-    var line: Color { dark ? Color.white.opacity(0.10) : Color.black.opacity(0.08) }
-    var track: Color { dark ? Color.white.opacity(0.13) : Color.black.opacity(0.09) }
-    var fill: Color { pick((52, 120, 98), (88, 196, 152)) }
-    var good: Color { pick((31, 138, 76), (76, 201, 122)) }
-    var warn: Color { pick((158, 92, 0), (242, 169, 59)) }
-    var bad: Color { pick((196, 52, 44), (255, 112, 100)) }
-    var stale: Color { pick((134, 104, 56), (204, 172, 110)) }
-    var banked: Color { pick((10, 122, 160), (92, 205, 236)) }
-    var next: Color { pick((36, 99, 209), (120, 169, 255)) }
+    var surface: Color { color(.surface) }
+    var card: Color { color(.card) }
+    var primary: Color { color(.primary) }
+    var secondary: Color { color(.secondary) }
+    var tertiary: Color { color(.tertiary) }
+    var line: Color { color(.line) }
+    var track: Color { color(.track) }
+    var fill: Color { color(.fill) }
+    var good: Color { color(.available) }
+    var warn: Color { color(.low) }
+    var bad: Color { color(.critical) }
+    var stale: Color { color(.saved) }
+    var banked: Color { color(.banked) }
+    var next: Color { color(.next) }
 
-    func color(forRemaining fraction: Double?) -> Color {
-        guard let fraction else { return tertiary }
-        return fraction <= 0.10 ? bad : fraction <= 0.25 ? warn : fill
-    }
-
-    func color(for account: AccountOverview.Account) -> Color {
-        switch account.state {
-        case .stale, .unavailable: stale
-        case .limited: bad
-        case .notConnected, .off, .unknown: tertiary
-        default: color(forRemaining: account.remainingFraction)
-        }
-    }
-
+    func color(forRemaining fraction: Double?) -> Color { color(AccountTone.forRemaining(fraction).fillToken) }
+    func color(for account: AccountOverview.Account) -> Color { color(AccountTone.forAccount(account).fillToken) }
     func textColor(for window: AccountOverview.Window) -> Color {
-        guard let fraction = window.remainingFraction else { return tertiary }
-        return fraction <= 0.10 ? bad : fraction <= 0.25 ? warn : primary
+        color(AccountTone.forRemaining(window.remainingFraction).textToken)
     }
+    func paceColor(_ ratio: Double?) -> Color { color(AccountTone.forPace(ratio)) }
 }
 
 /// Remaining share as a bar, with a tick where an even spend would be now.
@@ -438,36 +425,16 @@ struct GlanceStatusMark: View {
     let palette: GlancePalette
 
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 7.5, weight: .bold)).foregroundStyle(color)
+        Image(systemName: state.glyphName).font(.system(size: 7.5, weight: .bold))
+            .foregroundStyle(palette.color(state.colorToken))
             .frame(width: 9).accessibilityHidden(true)
-    }
-
-    private var symbol: String {
-        switch state {
-        case .available: "circle.fill"
-        case .closeToLimit: "triangle.fill"
-        case .limited: "octagon.fill"
-        case .stale, .unavailable: "clock.fill"
-        case .refreshing: "arrow.clockwise"
-        default: "circle.dashed"
-        }
-    }
-
-    private var color: Color {
-        switch state {
-        case .available: palette.good
-        case .closeToLimit: palette.warn
-        case .limited: palette.bad
-        case .stale, .unavailable: palette.stale
-        default: palette.tertiary
-        }
     }
 }
 
 struct NextTag: View {
     let palette: GlancePalette
     var body: some View {
-        Text("NEXT").font(.system(size: 6.5, weight: .heavy)).tracking(0.4)
+        Text(AccountTerms.next).font(.system(size: 6.5, weight: .heavy)).tracking(0.4)
             .foregroundStyle(palette.next)
             .padding(.horizontal, 3).padding(.vertical, 1)
             .overlay(RoundedRectangle(cornerRadius: 2.5).stroke(palette.next, lineWidth: 0.8))
@@ -479,7 +446,7 @@ struct NextTag: View {
 struct NextMark: View {
     let palette: GlancePalette
     var body: some View {
-        Image(systemName: "arrow.right.circle.fill").font(.system(size: 8.5)).foregroundStyle(palette.next)
+        Image(systemName: AccountGlyphs.useNext).font(.system(size: 8.5)).foregroundStyle(palette.next)
             .accessibilityLabel("Use next")
     }
 }

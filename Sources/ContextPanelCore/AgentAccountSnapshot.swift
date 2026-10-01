@@ -13,10 +13,12 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public struct Answers: Encodable, Sendable {
         public let closestAccountID: String?
         public let useNext: [Recommendation]
-        enum CodingKeys: CodingKey { case closestAccountID, useNext }
+        /// `tightestAccountID` is the UI's word ("Tightest"); `closestAccountID` stays for existing readers.
+        enum CodingKeys: CodingKey { case closestAccountID, tightestAccountID, useNext }
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(closestAccountID, forKey: .closestAccountID)
+            try container.encode(closestAccountID, forKey: .tightestAccountID)
             try container.encode(useNext, forKey: .useNext)
         }
     }
@@ -48,9 +50,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let windows: [Window]
         public let usageCredits: ProviderUsageCreditSummary?
         public let bankedResets: BankedResets
+        public let display: Display?
 
         enum CodingKeys: String, CodingKey {
-            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets
+            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -68,6 +71,51 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(windows, forKey: .windows)
             try container.encode(usageCredits, forKey: .usageCredits)
             try container.encode(bankedResets, forKey: .bankedResets)
+            try container.encode(display, forKey: .display)
+        }
+    }
+
+    /// The exact words and numbers the app and widgets show for this account, from the same
+    /// shared formatting (`AccountTerms`, `AccountNumbers`, `AccountPaceText`), in this Mac's time zone.
+    public struct Display: Encodable, Sendable {
+        public let provider: String
+        public let state: String
+        public let percentLeft: String
+        public let tightestWindow: String?
+        public let resets: String?
+        public let pace: String
+        public let paceWord: String
+        public let runOut: String?
+        public let banked: String?
+        public let useNext: Bool
+        public let windows: [WindowDisplay]
+
+        public struct WindowDisplay: Encodable, Sendable {
+            public let id: String
+            public let name: String
+            public let percentLeft: String
+            public let resets: String?
+            public let evenPacePercentLeft: String?
+        }
+
+        public init(account: AccountOverview.Account, isNext: Bool, now: Date) {
+            provider = account.metadata.provider.accountDisplayName
+            state = account.state.displayText
+            percentLeft = account.remainingText
+            tightestWindow = account.limitingWindow?.label
+            resets = account.limitingWindow?.naturalResetAt.map { AccountPaceText.when($0, now: now) }
+            let ratio = account.paceRatio(now: now)
+            pace = AccountNumbers.pace(ratio)
+            paceWord = AccountTerms.paceWord(ratio)
+            runOut = account.earliestRunOut(now: now).map { AccountTerms.runOut($0.date, now: now) }
+            banked = account.bankedResets.flatMap { $0.availableCount > 0
+                ? AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) : nil }
+            useNext = isNext
+            windows = account.orderedWindows.map { window in
+                WindowDisplay(id: window.id, name: window.shortLabel, percentLeft: AccountNumbers.percentWithSign(window.remainingFraction),
+                    resets: window.naturalResetAt.map { AccountPaceText.when($0, now: now) },
+                    evenPacePercentLeft: window.evenPaceRemaining(now: now).map(AccountNumbers.percentWithSign))
+            }
         }
     }
 
@@ -142,8 +190,13 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         readAt = now
         savedAt = stored.savedAt
         let presented = stored.snapshot.presented(at: now)
+        let rates = AccountBurnRateEstimator.observedBurnRates(
+            current: presented, history: history, now: now
+        )
         let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
-            metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now)
+            metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
+            accountBurnRates: rates)
+        let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
         answers = Answers(closestAccountID: overview.closest?.id, useNext: Provider.allCases.compactMap { provider in
             overview.useNext(provider: provider).map { Recommendation(provider: provider, accountID: $0.id) }
         })
@@ -151,9 +204,6 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,
                      expiresAt: $0.expiresAt, observedAt: $0.observedAt, state: $0.state)
         }
-        let rates = AccountBurnRateEstimator.observedBurnRates(
-            current: presented, history: history, now: now
-        )
         accounts = AccountCapacity.rows(configuration: configuration.accounts,
             snapshot: presented, reports: stored.reports, now: now).map { row in
             let shared = overview.accounts.first { $0.id == AccountDisplayMetadata.safeID(row.provider, row.id) }
@@ -195,7 +245,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     )
                 },
                 usageCredits: row.report?.usageCredits,
-                bankedResets: BankedResets(state: shared?.bankedState ?? resetState, summary: summary)
+                bankedResets: BankedResets(state: shared?.bankedState ?? resetState, summary: summary),
+                display: shared.map { Display(account: $0, isNext: nextIDs.contains($0.id), now: now) }
             )
         }
     }
