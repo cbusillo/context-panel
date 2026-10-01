@@ -29,21 +29,25 @@ public struct WidgetMainLimitPreference: Codable, Equatable, Identifiable, Senda
 public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var mainLimits: [WidgetMainLimitPreference]
+    public var usesAccountRows: Bool
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion
         case mainLimits
+        case usesAccountRows
     }
 
-    public init(mainLimits: [WidgetMainLimitPreference]) {
+    public init(mainLimits: [WidgetMainLimitPreference], usesAccountRows: Bool = true) {
         schemaVersion = 1
         self.mainLimits = Self.normalized(mainLimits)
+        self.usesAccountRows = usesAccountRows
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         mainLimits = Self.normalized(try container.decode([WidgetMainLimitPreference].self, forKey: .mainLimits))
+        usesAccountRows = try container.decodeIfPresent(Bool.self, forKey: .usesAccountRows) ?? true
     }
 
     public static var defaultPreferences: WidgetDisplayPreferences {

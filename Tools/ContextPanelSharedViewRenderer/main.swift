@@ -27,7 +27,7 @@ private func fail(_ message: String, status: Int32 = EX_USAGE) -> Never {
     exit(status)
 }
 
-private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryRoute, output: URL, scenario: Bool, deadlines: Bool) {
+private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryRoute, output: URL, scenario: Bool, deadlines: Bool, accountPresentation: String?, sixAccounts: Bool) {
     let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario"]
     var values: [String: String] = [:]
     var index = 0
@@ -40,8 +40,10 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
         index += 2
     }
     let deadlines = values["--presentation"] == "reset-deadlines"
-    let presentationValue = deadlines ? "widget" : values["--presentation"] ?? ""
-    if let scenario = values["--scenario"], scenario != "four-offers-long-name" { fail("unsupported scenario") }
+    let accountPresentation = ["account-overview", "account-deadlines", "account-detail"].contains(values["--presentation"] ?? "") ? values["--presentation"] : nil
+    let sixAccounts = values["--scenario"] == "six-accounts"
+    let presentationValue = deadlines || accountPresentation != nil ? "widget" : values["--presentation"] ?? ""
+    if let scenario = values["--scenario"], scenario != "four-offers-long-name" && scenario != "six-accounts" { fail("unsupported scenario") }
     guard let fixture = values["--fixture"].flatMap(ValidationFixtureID.init(rawValue:)),
           let family = values["--family"].flatMap(ValidationGalleryFamily.init(rawValue:)),
           let appearance = values["--appearance"].flatMap(ValidationGalleryAppearance.init(rawValue:)),
@@ -68,7 +70,9 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
         ),
         URL(fileURLWithPath: output),
         values["--scenario"] != nil || deadlines,
-        deadlines
+        deadlines,
+        accountPresentation,
+        sixAccounts
     )
 }
 
@@ -78,11 +82,29 @@ private func renderSize(route: ValidationGalleryRoute, scenario: Bool, deadlines
 }
 
 @MainActor
-private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bool) -> Data? {
+private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bool, accountPresentation: String?, sixAccounts: Bool) -> Data? {
     let isDark = route.appearance == .dark
-    let size = renderSize(route: route, scenario: scenario, deadlines: deadlines)
+    let size = accountPresentation != nil ? CGSize(width: 900, height: 720) : renderSize(route: route, scenario: scenario, deadlines: deadlines)
     let view: AnyView
-    if scenario {
+    if accountPresentation != nil || sixAccounts {
+        let now = ContextPanelDateFormatting.date(from: "2026-10-01T14:07:00Z")!
+        let snapshot = accountFixture(now: now)
+        let overview = snapshot.accountOverview(now: now)
+        switch accountPresentation {
+        case "account-overview":
+            view = AnyView(AccountOverviewPanel(overview: overview, openAccount: { _ in }, openDeadlines: {}).padding(24))
+        case "account-deadlines":
+            view = AnyView(AccountDeadlinesPanel(overview: overview, openAccount: { _ in }).padding(24))
+        case "account-detail":
+            view = AnyView(AccountDetailPanel(account: overview.accounts[0], overview: overview).padding(24))
+        default:
+            view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
+                displayPreferences: .defaultPreferences,
+                links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!, reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!, resetCreditInteraction: .none),
+                showsResetCreditSurfaces: true, presentationDate: now)
+                .cpwThemeVariant(isDark ? .dark : .light))
+        }
+    } else if scenario {
         // Operator-owned synthetic data only: no publisher storage, account homes or credentials.
         let now = ContextPanelDateFormatting.date(from: "2026-10-01T02:00:00Z")!
         let name = "A deliberately long OpenAI account name"
@@ -112,7 +134,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     let content = view
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .foregroundStyle(isDark ? Color.white : Color.black)
-        .background(deadlines ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
+        .background(deadlines || accountPresentation != nil ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
         .environment(\.colorScheme, isDark ? .dark : .light)
         // The gallery prints its fixed presentation time; pin how it is formatted so
         // the image does not depend on the host's region or time zone.
@@ -142,6 +164,32 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     return bitmap.representation(using: .png, properties: [:])
 }
 
+private func accountFixture(now: Date) -> WidgetSnapshot {
+    let names = ["A deliberately long OpenAI account name", "work@example.invalid", "Personal", "Claude primary", "Claude backup", "Antigravity"]
+    let providers: [Provider] = [.openAI, .openAI, .openAI, .anthropic, .anthropic, .google]
+    let used = [85, 28, 11, 63, 43, 9]
+    var limits: [UsageLimit] = []
+    var reports: [StoredProviderReport] = []
+    var metadata: [AccountDisplayMetadata] = []
+    for index in names.indices {
+        let id = "synthetic-\(index)"
+        for (window, count) in [("Weekly", used[index]), ("5-hour", max(0, used[index] - 10))] {
+            limits.append(UsageLimit(provider: providers[index], accountID: id, accountName: "Unexported provider identity",
+                label: window, windowLabel: window, unit: .percent, used: count, limit: 100,
+                resetsAt: now.addingTimeInterval(window == "Weekly" ? 5 * 86_400 : 3_600), lastUpdatedAt: now, confidence: .observed))
+        }
+        let banked = index == 0 || index == 3
+            ? ProviderResetCreditSummary(availableCount: 2, observedAt: now, coverage: .complete,
+                knownExpiries: [now.addingTimeInterval(Double(index + 1) * 86_400 + 20 * 60), now.addingTimeInterval(12 * 86_400 + 55 * 60)]) : nil
+        reports.append(StoredProviderReport(provider: providers[index], accountID: id, accountName: "Unexported provider identity",
+            generatedAt: now, resetCredits: banked, status: .healthy, errorMessage: nil))
+        metadata.append(AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(providers[index], id),
+            configurationID: AccountDisplayMetadata.safeID(providers[index], id), provider: providers[index], label: names[index], useLast: index == 2))
+    }
+    return WidgetSnapshot(state: .ready, generatedAt: now, limits: limits, reports: reports, status: .healthy,
+        message: "", accountDisplayMetadata: metadata)
+}
+
 // The gallery formats its fixed presentation time with the process's current time
 // zone and locale, not SwiftUI's environment. Pin both so the PNG is the same on
 // every host.
@@ -153,11 +201,11 @@ UserDefaults.standard.setVolatileDomain(
     forName: UserDefaults.argumentDomain
 )
 
-let (route, output, scenario, deadlines) = parseArguments(Array(CommandLine.arguments.dropFirst()))
+let (route, output, scenario, deadlines, accountPresentation, sixAccounts) = parseArguments(Array(CommandLine.arguments.dropFirst()))
 guard !FileManager.default.fileExists(atPath: output.path) else {
     fail("refusing to overwrite \(output.path)")
 }
-guard let png = render(route: route, scenario: scenario, deadlines: deadlines) else {
+guard let png = render(route: route, scenario: scenario, deadlines: deadlines, accountPresentation: accountPresentation, sixAccounts: sixAccounts) else {
     fail("the gallery cell could not be rendered", status: EX_SOFTWARE)
 }
 do {

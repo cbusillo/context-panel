@@ -27,6 +27,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let message: String
     public let refreshAttentionSummary: RefreshAttentionSummary?
     public let syncErrorMessage: String?
+    public let accountDisplayMetadata: [AccountDisplayMetadata]?
 
     public init(
         state: WidgetSnapshotState,
@@ -40,7 +41,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         status: UsageStatus,
         message: String,
         refreshAttentionSummary: RefreshAttentionSummary? = nil,
-        syncErrorMessage: String? = nil
+        syncErrorMessage: String? = nil,
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil
     ) {
         self.state = state
         self.generatedAt = generatedAt
@@ -54,6 +56,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.message = message
         self.refreshAttentionSummary = refreshAttentionSummary
         self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.accountDisplayMetadata = accountDisplayMetadata
+    }
+
+    public func accountOverview(now: Date, widgetsOnly: Bool = false,
+                                maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge) -> AccountOverview {
+        AccountOverview(snapshot: usageSnapshot, reports: reports, metadata: accountDisplayMetadata,
+                        now: now, maximumAge: maximumAge, widgetsOnly: widgetsOnly,
+                        isSavedSnapshot: state == .stale || state == .failure || syncErrorMessage != nil)
     }
 
     public var usageSnapshot: UsageSnapshot {
@@ -150,7 +160,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         history: [StoredUsageSnapshot] = [],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         promptCacheWidgetState: PromptCacheWidgetState? = nil,
-        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+        configuration: [LocalProviderAccountConfiguration]? = nil
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -159,7 +170,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 limits: [],
                 fastModeForecastSettings: fastModeForecastSettings,
                 status: result.status,
-                message: result.errorMessage ?? "Set up Context Panel in the app."
+                message: result.errorMessage ?? "Set up Context Panel in the app.",
+                accountDisplayMetadata: configuration.map {
+                    AccountDisplayMetadata.local(configuration: $0,
+                        stored: StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: [])), now: now)
+                }
             )
         }
 
@@ -205,7 +220,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             fastModeForecastSettings: fastModeForecastSettings,
             status: status,
             message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
-            refreshAttentionSummary: refreshAttentionSummary
+            refreshAttentionSummary: refreshAttentionSummary,
+            accountDisplayMetadata: configuration.map { AccountDisplayMetadata.local(configuration: $0, stored: stored, now: now) }
         )
     }
 
@@ -305,7 +321,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 )
                 : "Showing saved usage because the latest update failed.",
             refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary,
-            syncErrorMessage: result.errorMessage
+            syncErrorMessage: result.errorMessage,
+            accountDisplayMetadata: document.accountDisplayMetadata
         )
     }
 

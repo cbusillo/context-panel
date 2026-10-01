@@ -192,6 +192,11 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+private enum CompanionAccountRoute: Hashable {
+    case account(String)
+    case deadlines
+}
+
 @MainActor
 private struct CompanionRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -199,6 +204,7 @@ private struct CompanionRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = CompanionSyncModel()
     @State private var galleryRoute: ValidationGalleryRoute?
+    @State private var accountPath: [CompanionAccountRoute] = []
 
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
@@ -251,7 +257,7 @@ private struct CompanionRootView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $accountPath) {
             GeometryReader { geometry in
                 let layoutMode = CompanionLayoutPolicy.mode(
                     availableWidth: geometry.size.width,
@@ -266,7 +272,14 @@ private struct CompanionRootView: View {
                                 model.reload()
                             }
                         }
-                        companionContent(layoutMode: layoutMode)
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            AccountOverviewPanel(overview: accountOverview(at: context.date),
+                                openAccount: { accountPath.append(.account($0.id)) },
+                                openDeadlines: { accountPath.append(.deadlines) })
+                        }
+                        DisclosureGroup("Settings, pace and sync details") {
+                            companionContent(layoutMode: layoutMode).padding(.top, 16)
+                        }
                     }
                         .frame(
                             maxWidth: CompanionLayoutPolicy.maximumContentWidth(
@@ -308,9 +321,29 @@ private struct CompanionRootView: View {
             )) { _ in
                 model.handleCloudKitAccountChange()
             }
+            .navigationDestination(for: CompanionAccountRoute.self) { route in
+                ScrollView {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let overview = accountOverview(at: context.date)
+                        switch route {
+                        case .deadlines:
+                            AccountDeadlinesPanel(overview: overview,
+                                openAccount: { accountPath.append(.account($0)) })
+                        case let .account(id):
+                            if let account = overview.accounts.first(where: { $0.id == id }) {
+                                AccountDetailPanel(account: account, overview: overview)
+                            } else { Text("Account is no longer in this snapshot.") }
+                        }
+                    }.padding(pagePadding)
+                }.background(surfacePalette.pageBackground.ignoresSafeArea())
+            }
             .onOpenURL { url in
-                if let route = ValidationGalleryRoute(url: url) {
-                    galleryRoute = route
+                if let route = ValidationGalleryRoute(url: url) { galleryRoute = route }
+                else if url.scheme == CompanionDeepLinks.overview.scheme {
+                    if url.host == "deadlines" { accountPath = [.deadlines] }
+                    else if url.host == "provider", let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "account" })?.value {
+                        accountPath = [.account(id)]
+                    } else { accountPath = [] }
                 }
             }
             .sheet(item: $galleryRoute) { route in
@@ -319,6 +352,10 @@ private struct CompanionRootView: View {
         }
         .environment(\.companionSurfacePalette, surfacePalette)
         .companionVisionOSAppearance(model.appearanceSettings)
+    }
+
+    private func accountOverview(at date: Date) -> AccountOverview {
+        model.snapshot.accountOverview(now: date, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
     }
 
     @ViewBuilder

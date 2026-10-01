@@ -7,6 +7,32 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public let readAt: Date
     public let savedAt: Date
     public let accounts: [Account]
+    public let answers: Answers
+    public let deadlines: [Deadline]
+
+    public struct Answers: Encodable, Sendable {
+        public let closestAccountID: String?
+        public let useNext: [Recommendation]
+        enum CodingKeys: CodingKey { case closestAccountID, useNext }
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(closestAccountID, forKey: .closestAccountID)
+            try container.encode(useNext, forKey: .useNext)
+        }
+    }
+    public struct Recommendation: Encodable, Sendable {
+        public let provider: Provider
+        public let accountID: String
+    }
+    public struct Deadline: Encodable, Sendable {
+        public let id: String
+        public let accountID: String
+        public let provider: Provider
+        public let label: String
+        public let expiresAt: Date
+        public let observedAt: Date
+        public let state: AccountCapacityState
+    }
 
     public struct Account: Encodable, Sendable {
         public let id: String
@@ -14,13 +40,17 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let provider: Provider
         public let label: String
         public let state: AccountCapacityState
+        public let showInWidgets: Bool
+        public let useLast: Bool
+        public let remainingFraction: Double?
+        public let limitingWindowID: String?
         public let observedAt: Date?
         public let windows: [Window]
         public let usageCredits: ProviderUsageCreditSummary?
         public let bankedResets: BankedResets
 
         enum CodingKeys: String, CodingKey {
-            case id, configurationID, provider, label, state, observedAt, windows, usageCredits, bankedResets
+            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -30,6 +60,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(provider, forKey: .provider)
             try container.encode(label, forKey: .label)
             try container.encode(state, forKey: .state)
+            try container.encode(showInWidgets, forKey: .showInWidgets)
+            try container.encode(useLast, forKey: .useLast)
+            try container.encode(remainingFraction, forKey: .remainingFraction)
+            try container.encode(limitingWindowID, forKey: .limitingWindowID)
             try container.encode(observedAt, forKey: .observedAt)
             try container.encode(windows, forKey: .windows)
             try container.encode(usageCredits, forKey: .usageCredits)
@@ -108,12 +142,22 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         readAt = now
         savedAt = stored.savedAt
         let presented = stored.snapshot.presented(at: now)
+        let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+            metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now)
+        answers = Answers(closestAccountID: overview.closest?.id, useNext: Provider.allCases.compactMap { provider in
+            overview.useNext(provider: provider).map { Recommendation(provider: provider, accountID: $0.id) }
+        })
+        deadlines = overview.deadlines.map {
+            Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,
+                     expiresAt: $0.expiresAt, observedAt: $0.observedAt, state: $0.state)
+        }
         let rates = AccountBurnRateEstimator.observedBurnRates(
             current: presented, history: history, now: now
         )
         accounts = AccountCapacity.rows(configuration: configuration.accounts,
             snapshot: presented, reports: stored.reports, now: now).map { row in
-            let current = [.available, .closeToLimit, .limited].contains(row.state)
+            let shared = overview.accounts.first { $0.id == AccountDisplayMetadata.safeID(row.provider, row.id) }
+            let current = [.available, .closeToLimit, .limited].contains(shared?.state ?? row.state)
             let summary = row.report?.resetCredits?.presented(at: now)
             let resetState: AccountCapacityState
             if !row.isEnabled { resetState = .off }
@@ -132,7 +176,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 // AccountCapacity names come only from configured local names/aliases.
                 // Provider-derived identity and diagnostic labels keep ordinary redaction.
                 label: ConnectorRedactor.safeErrorDescription(row.name, preservingTypedEmail: true),
-                state: row.state,
+                state: shared?.state ?? row.state,
+                showInWidgets: shared?.metadata.showInWidgets ?? row.isEnabled,
+                useLast: shared?.metadata.useLast ?? false,
+                remainingFraction: shared?.remainingFraction,
+                limitingWindowID: shared?.limitingWindow?.id,
                 observedAt: row.limits.compactMap(\.lastUpdatedAt).min() ?? row.report?.generatedAt,
                 windows: row.limits.map { limit in
                     let burn = current ? rates[row.id]?[limit.id] : nil
@@ -147,7 +195,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     )
                 },
                 usageCredits: row.report?.usageCredits,
-                bankedResets: BankedResets(state: resetState, summary: summary)
+                bankedResets: BankedResets(state: shared?.bankedState ?? resetState, summary: summary)
             )
         }
     }

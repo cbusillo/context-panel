@@ -310,12 +310,12 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
 
         let hostingController = NSHostingController(
             rootView: SettingsPane(appModel: model, navigation: settingsNavigation)
-                .frame(minWidth: 520, minHeight: 560)
+                .frame(minWidth: 720, minHeight: 600)
         )
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Context Panel Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 560, height: 620))
+        window.setContentSize(NSSize(width: 720, height: 700))
         window.isReleasedWhenClosed = false
         window.center()
         settingsWindow = window
@@ -354,6 +354,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
 
 enum AppNavigationSelection: Hashable {
     case overview
+    case deadlines
     case reconnect
     case provider(Provider)
     case providerAccount(Provider, String)
@@ -387,6 +388,15 @@ struct AppRoot: View {
     }
 }
 
+private enum SettingsTab: String, CaseIterable, Identifiable {
+    case accounts = "Accounts", updates = "Updates", alerts = "Alerts", display = "Display"
+    var id: String { rawValue }
+}
+private enum SettingsNameField: Hashable {
+    case account(String)
+    case alias(String, String)
+}
+
 struct SettingsPane: View {
     @ObservedObject var appModel: ContextPanelAppModel
     @ObservedObject var navigation: SettingsNavigationModel
@@ -394,27 +404,37 @@ struct SettingsPane: View {
     @State private var focusedDestination: SettingsNavigationRequest.Destination?
     @State private var galleryRoute: ValidationGalleryRoute?
     @State private var authPathDrafts: [String: String] = [:]
+    @State private var tab: SettingsTab = .accounts
+    @State private var nameDrafts: [SettingsNameField: String] = [:]
+    @FocusState private var focusedName: SettingsNameField?
+    @State private var nameInputError: String?
+    @State private var showsAddAccount = false
 
     var body: some View {
-        Form {
-            if focusedDestination == .cacheStats {
+        VStack(spacing: 0) {
+            Picker("Settings", selection: $tab) {
+                ForEach(SettingsTab.allCases) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented).padding(16)
+            Form {
+            if tab == .display && focusedDestination == .cacheStats {
                 cacheStatsSetupSection
             }
 
+            if tab == .accounts {
+            if let nameInputError { Text(nameInputError).foregroundStyle(.red) }
             Section("Accounts") {
                 ForEach(model.settingsAccounts) { account in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             ProviderBadge(provider: account.provider)
-                            TextField("Local account name", text: Binding(
-                                get: { account.displayName },
-                                set: { model.renameAccount(account.id, name: $0) }
-                            ))
+                            TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
+                            .focused($focusedName, equals: .account(account.id))
+                            .onSubmit { commitName(.account(account.id)) }
                             .textFieldStyle(.roundedBorder)
                             .frame(minWidth: 180, maxWidth: .infinity)
-                            Toggle("Enabled", isOn: Binding(
-                                get: { account.isEnabled },
-                                set: { model.setAccount(account.id, isEnabled: $0) }
+                            Toggle("Show in widgets", isOn: Binding(
+                                get: { account.showInWidgets ?? account.isEnabled },
+                                set: { model.setWidgetAccountVisibility(account.id, isVisible: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
                             .fixedSize()
                             .toggleStyle(.switch)
@@ -437,11 +457,16 @@ struct SettingsPane: View {
                             .buttonStyle(.bordered)
                             .controlSize(.regular)
                         }
+                        Toggle("Use last", isOn: Binding(
+                            get: { account.useLast ?? false },
+                            set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                        )).toggleStyle(.checkbox)
                         HStack(spacing: 12) {
                             if !account.isEnabled {
-                                Text("Off")
+                                Text("Paused")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.tertiaryText)
+                                Button("Resume updates") { model.setAccount(account.id, isEnabled: true); refreshAfterAuthorization() }
                             } else if account.connectorKind == .googleAntigravityQuota {
                                 let authorizationSummary = model.authorizationSummary(
                                     for: account,
@@ -479,7 +504,7 @@ struct SettingsPane: View {
                                     Text(authorizationSummary.text)
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(CPTheme.statusColor(authorizationSummary.status))
-                                    if model.canAuthorizeAuthFile(for: account) {
+                                    if account.connectorKind != .codexRateLimits && model.canAuthorizeAuthFile(for: account) {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
                                             .controlSize(.regular)
@@ -497,15 +522,16 @@ struct SettingsPane: View {
                                     Text("File access needs update")
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(CPTheme.statusColor(.stale))
-                                    Button("Update") { authorizeAuthFile(for: account) }
+                                    Button("Update") {
+                                        if account.connectorKind == .codexRateLimits { model.authorizeCodexHome(for: account) { refreshAfterAuthorization() } }
+                                        else { authorizeAuthFile(for: account) }
+                                    }
                                         .buttonStyle(.bordered)
                                         .controlSize(.regular)
                                 }
                             } else if model.needsAuthorization(account) {
                                 if model.canAuthorizeAuthFile(for: account) {
-                                    Button("Select File") { authorizeAuthFile(for: account) }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.regular)
+                                    Text("Connect this account’s Codex home.").foregroundStyle(.secondary)
                                 } else if account.connectorKind == .claudeOAuthUsage {
                                     Button("Connect") { model.authorizeClaudeOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
@@ -518,10 +544,11 @@ struct SettingsPane: View {
                             }
                         }
                         if account.connectorKind == .codexRateLimits {
+                            Button(model.hasSavedAuthorization(account) ? "Change Codex home" : "Connect Codex home") {
+                                model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
+                            }.buttonStyle(.borderedProminent)
+                            DisclosureGroup("Advanced") {
                             HStack {
-                                Button("Select Codex Home") {
-                                    model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
-                                }
                                 Button(account.codexQuotaPath == nil ? "Select Codex Sessions" : "Change Sessions Folder") {
                                     model.authorizeCodexQuota(for: account) {
                                         refreshAfterAuthorization()
@@ -545,6 +572,7 @@ struct SettingsPane: View {
                                     set: { authPathDrafts[account.id] = $0 }
                                 ))
                                 .textFieldStyle(.roundedBorder)
+                                Button("Select auth file") { authorizeAuthFile(for: account) }
                                 Button("Apply path") {
                                     guard let path = authPathDrafts[account.id] else { return }
                                     model.setAuthPath(account.id, path: path)
@@ -556,12 +584,12 @@ struct SettingsPane: View {
                             }
                             ForEach(Array(Set((appModel.storedSnapshot?.reports ?? [])
                                 .filter { account.matchesProviderReport($0) }.map(\.accountID))).sorted(), id: \.self) { id in
-                                TextField("Local name for account \(id.suffix(6))", text: Binding(
-                                    get: { account.accountAliases?[id] ?? "" },
-                                    set: { model.renameAccount(account.id, name: $0, logicalID: id) }
-                                ))
+                                TextField("Local name for account \(id.suffix(6))", text: nameBinding(.alias(account.id, id), saved: account.accountAliases?[id] ?? ""))
+                                .focused($focusedName, equals: .alias(account.id, id))
+                                .onSubmit { commitName(.alias(account.id, id)) }
                                 .textFieldStyle(.roundedBorder)
                             }
+                        }
                         }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
@@ -609,16 +637,8 @@ struct SettingsPane: View {
                         .controlSize(.regular)
                     }
                 }
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
-                        Button("Add Claude Account") { model.addAccount(provider: .anthropic) }
-                    }
-                    Button("Add Antigravity Account") { model.addAccount(provider: .google) }
-                        .disabled(model.settingsAccounts.contains { $0.provider == .google })
-                }
-                .controlSize(.regular)
-                Text("Use a local nickname. Turn off entries you no longer use, or remove their panel setup. Remove account keeps saved credentials and home folders.")
+                Button("Add account") { showsAddAccount = true }.buttonStyle(.borderedProminent)
+                Text("Hidden accounts still update and warn. Use last excludes an account from Use next. Remove account keeps credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
                 Text("A replacement OpenAI or Claude entry needs its own source selection or sign-in.")
@@ -626,6 +646,8 @@ struct SettingsPane: View {
             }
             .disabled(model.isRemovingAccount)
 
+            }
+            if tab == .updates {
             Section("Diagnostics") {
                 DetailRow(label: "Status", value: model.status.previewStatusText)
                 DetailRow(label: "Last refresh", value: appModel.lastRefreshText)
@@ -680,11 +702,17 @@ struct SettingsPane: View {
                 }
                 .disabled(!model.backgroundRefreshSettings.isEnabled)
 
+                Button("Repair background updates") {
+                    model.setBackgroundRefreshEnabled(false)
+                    model.setBackgroundRefreshEnabled(true)
+                }.disabled(!model.backgroundRefreshSettings.isEnabled)
                 Text(model.backgroundRefreshStatusText)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
             }
 
+            }
+            if tab == .alerts {
             Section("Limit Warnings") {
                 Toggle(isOn: Binding(
                     get: { model.limitWarningSettings.isEnabled },
@@ -776,6 +804,16 @@ struct SettingsPane: View {
                 }
             }
 
+            }
+            if tab == .display {
+            Section("Widget layout") {
+                Picker("Layout", selection: Binding(get: { model.widgetPreferences.usesAccountRows }, set: { model.setAccountWidgetLayout($0) })) {
+                    Text("Accounts").tag(true)
+                    Text("Windows").tag(false)
+                }
+                Text("Accounts uses every quota window to show the tightest capacity. Window selections below apply to Windows layout.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Widget Main Limits") {
                 Text("Choose which main limits appear in the widget and drag rows to set their priority.")
                     .font(.system(size: 11))
@@ -800,17 +838,25 @@ struct SettingsPane: View {
                 .frame(height: widgetMainLimitListHeight)
             }
 
+            }
         }
         .formStyle(.grouped)
-        .padding(20)
-        .frame(width: 560)
-        .frame(minHeight: 360)
+        }
+        .frame(width: 720)
+        .frame(minHeight: 600)
+        .sheet(isPresented: $showsAddAccount) {
+            AddAccountSheet(model: model, onAdded: refreshAfterAuthorization)
+        }
         .sheet(isPresented: $model.isClaudeOAuthCodeSheetPresented) {
             ClaudeOAuthCodeSheet(model: model) {}
         }
         .sheet(item: $galleryRoute) { route in
             SettingsValidationGallerySheet(route: route)
         }
+        .onChange(of: focusedName) { previous, current in
+            if previous != current, let previous { commitName(previous) }
+        }
+        .onDisappear { for field in Array(nameDrafts.keys) { commitName(field) } }
         .onAppear {
             model.load()
             consumeNavigationRequest(clearWhenEmpty: true)
@@ -828,6 +874,23 @@ struct SettingsPane: View {
         ) { _ in
             model.reloadBackgroundRefreshRegistrationDiagnostic()
         }
+    }
+
+    private func nameBinding(_ field: SettingsNameField, saved: String) -> Binding<String> {
+        Binding(get: { nameDrafts[field] ?? saved }, set: { nameDrafts[field] = $0; nameInputError = nil })
+    }
+    private func commitName(_ field: SettingsNameField) {
+        guard let draft = nameDrafts.removeValue(forKey: field) else { return }
+        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.count <= 80 else { nameInputError = "Use a name of 80 characters or fewer."; return }
+        switch field {
+        case let .account(id):
+            guard !value.isEmpty else { nameInputError = "Enter an account name."; return }
+            let members = Set((appModel.storedSnapshot?.reports ?? []).filter { $0.configuredAccountID == id }.map(\.accountID))
+            model.renameAccount(id, name: value, soleLogicalID: members.count == 1 ? members.first : nil)
+        case let .alias(id, logical): model.renameAccount(id, name: value, logicalID: logical)
+        }
+        appModel.loadSnapshot(reloadWidgetTimelines: false)
     }
 
     private var widgetMainLimitListHeight: CGFloat {
@@ -850,6 +913,7 @@ struct SettingsPane: View {
             focusedDestination = nil
         } else {
             focusedDestination = request.destination
+            if request.destination == .cacheStats { tab = .display }
         }
     }
 
@@ -1040,6 +1104,87 @@ struct MacValidationDiagnosticsPreview: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(CPTheme.background)
+    }
+}
+
+struct AddAccountSheet: View {
+    @ObservedObject var model: SettingsPaneModel
+    let onAdded: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var provider: Provider = .openAI
+    @State private var name = ""
+    @State private var homes: [URL] = []
+    @State private var selectedHome: URL?
+    @State private var scopeRoot: URL?
+    @State private var hasSearched = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Add account").font(.title2.weight(.semibold))
+            Picker("Provider", selection: $provider) {
+                ForEach(Provider.allCases) { Text($0.accountDisplayName).tag($0) }
+            }.pickerStyle(.segmented)
+            TextField("Local account name", text: $name).textFieldStyle(.roundedBorder)
+            if provider == .openAI {
+                Button("Find Codex sign-ins…") {
+                    model.findCodexHomes { root, results in
+                        scopeRoot = root; homes = results; hasSearched = true; selectedHome = nil
+                    }
+                }
+                if hasSearched && homes.isEmpty { Text("No Codex homes found in that folder.").foregroundStyle(.secondary) }
+                ScrollView {
+                  VStack(spacing: 4) {
+                ForEach(homes, id: \.self) { home in
+                    Button {
+                        selectedHome = home
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedHome == home ? "checkmark.circle.fill" : "circle")
+                            Text(home.lastPathComponent)
+                            Spacer()
+                            if isConnected(home) { Text("Already connected").foregroundStyle(.secondary) }
+                        }.padding(8).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(isConnected(home))
+                }
+                  }
+                }.frame(maxHeight: 140)
+                Text("Folder names identify these choices. Credentials are not displayed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if provider == .anthropic {
+                Text("Sign in with this account’s Claude login.").foregroundStyle(.secondary)
+            } else {
+                Text("Add Antigravity, then use Copy Setup in its account settings.").foregroundStyle(.secondary)
+            }
+            if let error = model.errorMessage { Text(error).font(.caption).foregroundStyle(.red) }
+            Spacer(minLength: 0)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button(provider == .anthropic ? "Sign in" : "Add account") { add() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
+                        || (provider == .openAI && selectedHome == nil)
+                        || (provider == .google && model.settingsAccounts.contains { $0.provider == .google }))
+            }
+        }.padding(24).frame(width: 520, height: 440)
+    }
+    private func isConnected(_ home: URL) -> Bool {
+        model.settingsAccounts.contains { account in
+            guard account.provider == .openAI, let path = account.authPath else { return false }
+            return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).deletingLastPathComponent()
+                .resolvingSymlinksInPath() == home.resolvingSymlinksInPath()
+        }
+    }
+    private func add() {
+        let existing = Set(model.accounts.map(\.id))
+        model.addAccount(provider: provider)
+        guard let account = model.accounts.first(where: { !existing.contains($0.id) }) else { return }
+        model.renameAccount(account.id, name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        if provider == .openAI, let selectedHome {
+            model.connectCodexHome(for: account, home: selectedHome, scopeRoot: scopeRoot, onVerified: onAdded)
+        } else if provider == .anthropic {
+            model.authorizeClaudeOAuth(for: account)
+        } else { onAdded() }
+        dismiss()
     }
 }
 
@@ -1879,7 +2024,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         saveAccounts()
     }
 
-    func renameAccount(_ accountID: String, name: String, logicalID: String? = nil) {
+    func renameAccount(_ accountID: String, name: String, logicalID: String? = nil, soleLogicalID: String? = nil) {
         guard !isRemovingAccount else { return }
         guard name.count <= 80,
               let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
@@ -1889,6 +2034,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accounts[index].accountAliases = aliases
         } else {
             accounts[index].displayName = name
+            if let soleLogicalID { accounts[index].accountAliases?[soleLogicalID] = nil }
         }
         saveAccounts()
     }
@@ -1926,6 +2072,23 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         } catch {
             errorMessage = "The previous source could not be disconnected."
         }
+    }
+
+    func setWidgetAccountVisibility(_ accountID: String, isVisible: Bool) {
+        guard !isRemovingAccount, let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].showInWidgets = isVisible
+        // Preserve legacy paused accounts; active accounts keep collecting when hidden.
+        saveAccounts()
+    }
+    func setUseLast(_ accountID: String, useLast: Bool) {
+        guard !isRemovingAccount, let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].useLast = useLast
+        saveAccounts()
+    }
+    func setAccountWidgetLayout(_ accountRows: Bool) {
+        var updated = widgetPreferences
+        updated.usesAccountRows = accountRows
+        saveWidgetPreferences(updated)
     }
 
     func setAccount(_ accountID: String, isEnabled: Bool) {
@@ -2399,9 +2562,16 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         panel.directoryURL = ContextPanelLocations.realUserHomeDirectory()
         panel.begin { [weak self] response in
             guard let self, response == .OK, let home = panel.url else { return }
+            self.connectCodexHome(for: account, home: home, onVerified: onVerified)
+        }
+    }
+
+    func connectCodexHome(for account: LocalProviderAccountConfiguration, home: URL, scopeRoot: URL? = nil,
+                          onVerified: @escaping () -> Void = {}) {
             Task { @MainActor in
-                let scoped = home.startAccessingSecurityScopedResource()
-                defer { if scoped { home.stopAccessingSecurityScopedResource() } }
+                let root = scopeRoot ?? home
+                let scoped = root.startAccessingSecurityScopedResource()
+                defer { if scoped { root.stopAccessingSecurityScopedResource() } }
                 do {
                     guard let revised = try await CodexHomeBinding.commit(
                         accountID: account.id, home: home, accountStore: self.store,
@@ -2421,6 +2591,23 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                     self.errorMessage = ConnectorRedactor.safeErrorDescription(error)
                 }
             }
+    }
+
+    func findCodexHomes(onFound: @escaping (URL, [URL]) -> Void) {
+        let panel = NSOpenPanel()
+        panel.message = "Choose your Codex accounts folder, or a single Codex home."
+        panel.prompt = "Find accounts"
+        panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false; panel.showsHiddenFiles = true
+        panel.directoryURL = ContextPanelLocations.realUserHomeDirectory()
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let root = panel.url else { return }
+            let scoped = root.startAccessingSecurityScopedResource()
+            defer { if scoped { root.stopAccessingSecurityScopedResource() } }
+            do {
+                let homes = try CodexHomeDiscovery.find(in: root)
+                onFound(root, homes)
+            } catch { self.errorMessage = "This folder could not be searched." }
         }
     }
 
@@ -2627,13 +2814,26 @@ struct AccountsSidebar: View {
             Section {
                 Label("Overview", systemImage: "gauge.medium")
                     .tag(AppNavigationSelection.overview)
+                Label("Deadlines", systemImage: "calendar.badge.clock")
+                    .tag(AppNavigationSelection.deadlines)
                 if model.shouldShowReconnectNavigation {
                     Label(model.attentionNavigationTitle, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(CPTheme.statusColor(.failure))
                         .tag(AppNavigationSelection.reconnect)
                 }
             }
-            Section("Providers") {
+            Section("Accounts") {
+                ForEach(model.accountOverview(at: Date()).accounts) { account in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(account.metadata.label).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        Text(account.metadata.provider.accountDisplayName + " · " + account.remainingText + " left")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .tag(AppNavigationSelection.providerAccount(account.metadata.provider, account.id))
+                    .accessibilityLabel(account.accessibilityText)
+                }
+            }
+            Section("Details") {
                 let reports = model.storedSnapshot?.reports ?? []
                 let resetCreditSummary = ResetCreditSurfaceAdvisor.appSummary(
                     reports: reports,
@@ -2790,17 +2990,14 @@ struct MainContent: View {
         switch selection {
         case .overview:
             OverviewDashboard(model: model, snapshot: snapshot)
+        case .deadlines:
+            AccountDeadlinesDashboard(model: model)
         case .reconnect:
             ReconnectDashboard(appModel: model, snapshot: snapshot)
         case .provider(let provider):
             ProviderDashboard(model: model, snapshot: snapshot, provider: provider)
         case let .providerAccount(provider, accountID):
-            ProviderDashboard(
-                model: model,
-                snapshot: snapshot,
-                provider: provider,
-                focusedAccountID: accountID
-            )
+            AccountDashboard(model: model, provider: provider, accountID: accountID)
         case .mainLimit(let id):
             if let summary = snapshot.mainLimitSummaries.first(where: { $0.id == id }) {
                 MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
@@ -2812,6 +3009,70 @@ struct MainContent: View {
 }
 
 struct OverviewDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    let presentationDate: Date?
+    init(model: ContextPanelAppModel, snapshot: UsageSnapshot, presentationDate: Date? = nil) {
+        self.model = model; self.snapshot = snapshot; self.presentationDate = presentationDate
+    }
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let now = presentationDate ?? context.date
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    AccountOverviewPanel(overview: model.accountOverview(at: now), openAccount: { account in
+                        model.navigate(to: .providerAccount(account.metadata.provider, account.id))
+                    }, openDeadlines: { model.navigate(to: .deadlines) })
+                    DisclosureGroup("Pace, cache and window details") {
+                        OverviewTechnicalDetails(model: model, snapshot: snapshot, presentationDate: now).frame(minHeight: 600)
+                    }
+                }.padding(24)
+            }.background(CPTheme.background)
+        }
+    }
+}
+
+struct AccountDeadlinesDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let overview = model.accountOverview(at: context.date)
+            ScrollView {
+                AccountDeadlinesPanel(overview: overview) { id in
+                    if let account = overview.accounts.first(where: { $0.id == id }) {
+                        model.navigate(to: .providerAccount(account.metadata.provider, id))
+                    }
+                }.padding(24)
+            }.background(CPTheme.background)
+        }
+    }
+}
+
+struct AccountDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let provider: Provider
+    let accountID: String
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let overview = model.accountOverview(at: context.date)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
+                        AccountDetailPanel(account: account, overview: overview)
+                    } else {
+                        Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
+                    }
+                    DisclosureGroup("Provider diagnostics, pace and history") {
+                        ProviderDashboard(model: model, snapshot: model.currentSnapshot, provider: provider,
+                            focusedAccountID: model.rawAccountID(for: accountID) ?? accountID).frame(minHeight: 600)
+                    }
+                }.padding(24)
+            }.background(CPTheme.background)
+        }
+    }
+}
+
+struct OverviewTechnicalDetails: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     let presentationDate: Date
@@ -5372,7 +5633,8 @@ final class ContextPanelAppModel: ObservableObject {
             selectedSource: result.snapshot == nil ? .none : .appGroupSnapshot,
             presentationDigest: RuntimePresentationDigest.storedSnapshot(
                 result.snapshot,
-                status: result.status
+                status: result.status,
+                accountMetadata: result.snapshot.map { AccountDisplayMetadata.local(configuration: configuredAccounts, stored: $0, now: Date()) }
             ),
             stateBranch: stateBranch,
             outcome: outcome
@@ -5408,6 +5670,22 @@ final class ContextPanelAppModel: ObservableObject {
         }
     }
 
+    func navigate(to selection: AppNavigationSelection) { navigationRequest = selection }
+
+    func accountOverview(at now: Date) -> AccountOverview {
+        let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: []))
+        return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now)
+    }
+
+    func rawAccountID(for safeID: String) -> String? {
+        AccountCapacity.rows(configuration: configuredAccounts, snapshot: currentSnapshot,
+            reports: storedSnapshot?.reports ?? [], now: Date()).first {
+                AccountDisplayMetadata.safeID($0.provider, $0.id) == safeID
+            }?.id
+    }
+
     func handleOpenURL(_ url: URL) {
         switch url.host?.lowercased() {
         case "settings":
@@ -5416,6 +5694,8 @@ final class ContextPanelAppModel: ObservableObject {
             navigationRequest = .reconnect
         case "overview":
             navigationRequest = .overview
+        case "deadlines":
+            navigationRequest = .deadlines
         case "provider":
             let providerValue = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
             guard let provider = Provider(rawValue: providerValue) else {

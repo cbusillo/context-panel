@@ -8,6 +8,12 @@ import WidgetKit
 @testable import ContextPanelCore
 @testable import ContextPanelWidgetUI
 
+private var legacyWindowRenderPreferences: WidgetDisplayPreferences {
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    preferences.usesAccountRows = false
+    return preferences
+}
+
 private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     overview: URL(string: "contextpanel://overview")!,
     reconnect: URL(string: "contextpanel://reconnect")!,
@@ -181,7 +187,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     let view = ContextPanelWidgetContentView(
         family: .systemMedium,
         snapshot: snapshot,
-        displayPreferences: .defaultPreferences,
+        displayPreferences: legacyWindowRenderPreferences,
         links: renderTestWidgetLinks
     )
     .cpwThemeVariant(.light)
@@ -259,7 +265,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         let view = ContextPanelWidgetContentView(
             family: family,
             snapshot: snapshot,
-            displayPreferences: .defaultPreferences,
+            displayPreferences: legacyWindowRenderPreferences,
             links: renderTestWidgetLinks,
             presentationDate: now
         )
@@ -316,7 +322,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         let view = ContextPanelWidgetContentView(
             family: family,
             snapshot: snapshot,
-            displayPreferences: .defaultPreferences,
+            displayPreferences: legacyWindowRenderPreferences,
             links: renderTestWidgetLinks,
             presentationDate: now
         )
@@ -356,7 +362,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         let view = ContextPanelWidgetContentView(
             family: family,
             snapshot: snapshot,
-            displayPreferences: .defaultPreferences,
+            displayPreferences: legacyWindowRenderPreferences,
             links: renderTestWidgetLinks,
             showsResetCreditSurfaces: true,
             presentationDate: now
@@ -386,7 +392,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         let constrainedView = ContextPanelWidgetContentView(
             family: .systemMedium,
             snapshot: constrainedSnapshot,
-            displayPreferences: .defaultPreferences,
+            displayPreferences: legacyWindowRenderPreferences,
             links: renderTestWidgetLinks,
             showsResetCreditSurfaces: true,
             presentationDate: now
@@ -413,7 +419,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     let considerBeforeView = ContextPanelWidgetContentView(
         family: .systemMedium,
         snapshot: considerBeforeSnapshot,
-        displayPreferences: .defaultPreferences,
+        displayPreferences: legacyWindowRenderPreferences,
         links: renderTestWidgetLinks,
         showsResetCreditSurfaces: true,
         presentationDate: now
@@ -440,7 +446,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     let neutralView = ContextPanelWidgetContentView(
         family: .systemLarge,
         snapshot: neutralSnapshot,
-        displayPreferences: .defaultPreferences,
+        displayPreferences: legacyWindowRenderPreferences,
         links: renderTestWidgetLinks,
         showsResetCreditSurfaces: true,
         presentationDate: now
@@ -477,7 +483,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
             let view = ContextPanelWidgetContentView(
                 family: family,
                 snapshot: snapshot,
-                displayPreferences: .defaultPreferences,
+                displayPreferences: legacyWindowRenderPreferences,
                 links: renderCompanionWidgetLinks,
                 showsResetCreditSurfaces: true,
                 resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
@@ -508,9 +514,9 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         (smallWidgetSnapshot(usedPercent: nil, status: .unknown), singleLaneWidgetPreferences, .dark, false),
         (smallWidgetSnapshot(usedPercent: 58, state: .stale), singleLaneWidgetPreferences, .light, false),
         (smallWidgetSnapshot(usedPercent: 58, state: .failure), singleLaneWidgetPreferences, .dark, false),
-        (multiLaneSmallWidgetSnapshot(), .defaultPreferences, .dark, true),
-        (multiLaneSmallWidgetSnapshot(state: .stale), .defaultPreferences, .light, true),
-        (multiLaneSmallWidgetSnapshot(state: .failure), .defaultPreferences, .dark, true),
+        (multiLaneSmallWidgetSnapshot(), legacyWindowRenderPreferences, .dark, true),
+        (multiLaneSmallWidgetSnapshot(state: .stale), legacyWindowRenderPreferences, .light, true),
+        (multiLaneSmallWidgetSnapshot(state: .failure), legacyWindowRenderPreferences, .dark, true),
     ]
 
     for scenario in scenarios {
@@ -613,7 +619,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     let view = ContextPanelWidgetContentView(
         family: .systemLarge,
         snapshot: snapshot,
-        displayPreferences: .defaultPreferences,
+        displayPreferences: legacyWindowRenderPreferences,
         links: renderTestWidgetLinks
     )
     .cpwThemeVariant(.light)
@@ -626,7 +632,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
 }
 
 private var singleLaneWidgetPreferences: WidgetDisplayPreferences {
-    var preferences = WidgetDisplayPreferences.defaultPreferences
+    var preferences = legacyWindowRenderPreferences
     for index in preferences.mainLimits.indices {
         preferences.mainLimits[index].isVisible = preferences.mainLimits[index].provider == .openAI
             && preferences.mainLimits[index].window == .weekly
@@ -972,4 +978,32 @@ private func smallWidgetSnapshot(
         status: snapshotStatus,
         message: "Synced"
     )
+}
+
+@Test func accountWidgetLinksRoundTripAllProvidersAndDeadlineDestination() throws {
+    for provider in Provider.allCases {
+        let id = AccountDisplayMetadata.safeID(provider, "synthetic-account")
+        let mac = renderTestWidgetLinks.account(provider, id: id)
+        #expect(mac.host == "provider")
+        #expect(mac.path == "/\(provider.rawValue)")
+        #expect(URLComponents(url: mac, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == id)
+        let companion = renderCompanionWidgetLinks.account(provider, id: id)
+        #expect(companion.scheme == renderCompanionWidgetLinks.overview.scheme)
+        #expect(companion.query == mac.query)
+    }
+    #expect(renderTestWidgetLinks.deadlines.host == "deadlines")
+    #expect(renderCompanionWidgetLinks.deadlines.scheme == renderCompanionWidgetLinks.overview.scheme)
+}
+
+@MainActor
+@Test func accountRowsRenderCapacityAndBankedExpiryInsideMediumCanvas() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = resetCreditRenderSnapshot(now: now, weeklyUsed: 71)
+    let view = ContextPanelWidgetContentView(family: .systemMedium, snapshot: snapshot,
+        displayPreferences: .defaultPreferences, links: renderTestWidgetLinks,
+        showsResetCreditSurfaces: true, presentationDate: now)
+        .cpwThemeVariant(.light).frame(width: 344, height: 164)
+    let image = try #require(renderedImage(from: view, width: 344, height: 164))
+    #expect(nonBackgroundPixelCount(in: image) > 500)
+    #expect(nonBackgroundPixelCount(in: image, rows: 125..<160) > 30)
 }

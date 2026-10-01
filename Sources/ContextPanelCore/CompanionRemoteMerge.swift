@@ -56,7 +56,8 @@ public extension CompanionSyncDocument {
             ),
             fastModeForecastSettings: settingsDocument.fastModeForecastSettings,
             accountRetentionStates: retained.states,
-            cloudKitUserScope: incomingDocument.cloudKitUserScope
+            cloudKitUserScope: incomingDocument.cloudKitUserScope,
+            accountDisplayMetadata: settingsDocument.accountDisplayMetadata
         )
     }
 
@@ -87,14 +88,16 @@ private extension CompanionSyncDocument {
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
-            cloudKitUserScope: cloudKitUserScope
+            cloudKitUserScope: cloudKitUserScope,
+            accountDisplayMetadata: accountDisplayMetadata
         )
     }
 
     var deterministicSettingsSelectionData: Data {
         let payload = CompanionRemoteSettingsSelection(
             widgetDisplayPreferences: widgetDisplayPreferences,
-            fastModeForecastSettings: fastModeForecastSettings
+            fastModeForecastSettings: fastModeForecastSettings,
+            accountDisplayMetadata: accountDisplayMetadata
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -105,6 +108,7 @@ private extension CompanionSyncDocument {
 private struct CompanionRemoteSettingsSelection: Encodable {
     let widgetDisplayPreferences: WidgetDisplayPreferences
     let fastModeForecastSettings: FastModeForecastSettings
+    let accountDisplayMetadata: [AccountDisplayMetadata]?
 }
 
 private struct CompanionRemoteAccountRetentionResult {

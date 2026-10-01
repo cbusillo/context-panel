@@ -53,6 +53,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let fastModeForecastSettings: FastModeForecastSettings
     public let accountRetentionStates: [CompanionAccountRetentionState]?
     public let cloudKitUserScope: CompanionCloudKitUserScope?
+    public let accountDisplayMetadata: [AccountDisplayMetadata]?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -62,6 +63,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case fastModeForecastSettings
         case accountRetentionStates
         case cloudKitUserScope
+        case accountDisplayMetadata
     }
 
     public init(
@@ -70,7 +72,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
-        cloudKitUserScope: CompanionCloudKitUserScope? = nil
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil,
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
@@ -79,6 +82,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         self.fastModeForecastSettings = fastModeForecastSettings
         self.accountRetentionStates = accountRetentionStates
         self.cloudKitUserScope = cloudKitUserScope
+        self.accountDisplayMetadata = accountDisplayMetadata
     }
 
     public init(
@@ -88,7 +92,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
-        cloudKitUserScope: CompanionCloudKitUserScope? = nil
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil,
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
@@ -96,7 +101,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
-            cloudKitUserScope: cloudKitUserScope
+            cloudKitUserScope: cloudKitUserScope,
+            accountDisplayMetadata: accountDisplayMetadata
         )
     }
 
@@ -114,6 +120,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             [CompanionAccountRetentionState].self,
             forKey: .accountRetentionStates
         )
+        accountDisplayMetadata = try container.decodeIfPresent([AccountDisplayMetadata].self, forKey: .accountDisplayMetadata)
         cloudKitUserScope = try container.decodeIfPresent(
             CompanionCloudKitUserScope.self,
             forKey: .cloudKitUserScope
@@ -127,7 +134,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
-            cloudKitUserScope: scope
+            cloudKitUserScope: scope,
+            accountDisplayMetadata: accountDisplayMetadata
         )
     }
 }
@@ -1105,13 +1113,16 @@ public struct CompanionSyncPublisher: Sendable {
     public let remoteStore: CompanionRemoteSyncStore?
     public let widgetPreferencesStore: WidgetDisplayPreferencesStore
     public let fastModeForecastSettingsStore: FastModeForecastSettingsStore
+    public let accountConfigurationURL: URL?
 
     public init(
         stores: CompanionSyncStoreSet,
         remoteStore: CompanionRemoteSyncStore? = nil,
         widgetPreferencesStore: WidgetDisplayPreferencesStore,
-        fastModeForecastSettingsStore: FastModeForecastSettingsStore
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore,
+        accountConfigurationURL: URL? = nil
     ) {
+        self.accountConfigurationURL = accountConfigurationURL
         self.stores = stores
         self.remoteStore = remoteStore
         self.widgetPreferencesStore = widgetPreferencesStore
@@ -1127,7 +1138,8 @@ public struct CompanionSyncPublisher: Sendable {
             ),
             fastModeForecastSettingsStore: FastModeForecastSettingsStore(
                 settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
-            )
+            ),
+            accountConfigurationURL: ContextPanelLocations.accountConfigurationURL()
         )
     }
 
@@ -1175,12 +1187,20 @@ public struct CompanionSyncPublisher: Sendable {
         publishedAt: Date,
         observedBurnRates: [String: ObservedBurnRate]
     ) -> CompanionSyncDocument {
-        CompanionSyncDocument(
+        let configuration = accountConfigurationURL.flatMap { url in
+            (try? Data(contentsOf: url)).flatMap {
+                try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
+            }
+        }
+        return CompanionSyncDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             observedBurnRates: observedBurnRates,
-            fastModeForecastSettings: fastModeForecastSettingsStore.load()
+            fastModeForecastSettings: fastModeForecastSettingsStore.load(),
+            accountDisplayMetadata: configuration.map {
+                AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt)
+            }
         )
     }
 
@@ -1570,5 +1590,25 @@ private enum CompanionAccountIdentity {
         guard !displayName.isEmpty else { return "Account" }
         let pathRedacted = NSString(string: displayName).lastPathComponent
         return pathRedacted.isEmpty ? "Account" : pathRedacted
+    }
+}
+
+public extension AccountDisplayMetadata {
+    static func companion(configuration: [LocalProviderAccountConfiguration], stored: StoredUsageSnapshot, now: Date) -> [Self] {
+        let local = Self.local(configuration: configuration, stored: stored, now: now)
+        return local.map { entry in
+            let limit = stored.snapshot.limits.first { $0.provider == entry.provider && safeID($0.provider, $0.accountID) == entry.id }
+            let report = stored.reports.first { $0.provider == entry.provider && safeID($0.provider, $0.accountID) == entry.id }
+            // Match the existing companion identity formula, including legacy records without a configuration key.
+            let rawID = limit?.accountID ?? report?.accountID ?? configuration.first {
+                safeID($0.provider, $0.id) == entry.configurationID
+            }?.id ?? entry.id
+            let companionID = CompanionAccountIdentity.id(provider: entry.provider, accountID: rawID,
+                configuredAccountID: limit?.configuredAccountID ?? report?.configuredAccountID)
+            return Self(id: safeID(entry.provider, companionID), configurationID: entry.configurationID,
+                        provider: entry.provider, label: entry.label, isEnabled: entry.isEnabled,
+                        showInWidgets: entry.showInWidgets, useLast: entry.useLast,
+                        sourceConfigured: entry.sourceConfigured, readState: entry.readState)
+        }
     }
 }

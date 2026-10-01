@@ -387,6 +387,29 @@ struct TVTopShelfRenderer {
             return
         }
 
+        if cards.count > 3 {
+            let spacing = 20 * scale
+            let width = (size.width - 2 * horizontalPadding - 2 * spacing) / 3
+            let originY = size.height * 0.24
+            let height = (size.height - originY - size.height * 0.04 - spacing) / 2
+            for (index, card) in cards.enumerated() {
+                let frame = CGRect(x: horizontalPadding + CGFloat(index % 3) * (width + spacing),
+                    y: originY + CGFloat(index / 3) * (height + spacing), width: width, height: height)
+                UIColor.white.withAlphaComponent(0.055).setFill()
+                UIBezierPath(roundedRect: frame, cornerRadius: 18 * scale).fill()
+                draw(card.title, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 12 * scale,
+                    width: frame.width - 36 * scale, height: 30 * scale),
+                    font: .systemFont(ofSize: 23 * scale, weight: .semibold), color: .white, alignment: .left)
+                draw(card.headline, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 48 * scale,
+                    width: frame.width - 36 * scale, height: 62 * scale),
+                    font: .monospacedDigitSystemFont(ofSize: 46 * scale, weight: .semibold),
+                    color: providerColor(card.provider), alignment: .left)
+                draw(card.detail, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 116 * scale,
+                    width: frame.width - 36 * scale, height: frame.height - 124 * scale),
+                    font: .systemFont(ofSize: 19 * scale, weight: .medium), color: .white.withAlphaComponent(0.7), alignment: .left)
+            }
+            return
+        }
         let spacing = 26 * scale
         let contentWidth = size.width - 2 * horizontalPadding
         let columnWidth = (contentWidth - spacing * 2) / 3

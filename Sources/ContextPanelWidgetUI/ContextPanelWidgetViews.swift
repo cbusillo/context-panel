@@ -50,6 +50,22 @@ public struct ContextPanelWidgetLinks: Sendable {
     public let cacheStatsSettings: URL
     public let resetCreditInteraction: ContextPanelResetCreditInteraction
 
+    public func account(_ provider: Provider, id: String) -> URL {
+        var components = URLComponents()
+        components.scheme = overview.scheme
+        components.host = "provider"
+        components.path = "/\(provider.rawValue)"
+        components.queryItems = [URLQueryItem(name: "account", value: id)]
+        return components.url ?? overview
+    }
+
+    public var deadlines: URL {
+        var components = URLComponents()
+        components.scheme = overview.scheme
+        components.host = "deadlines"
+        return components.url ?? overview
+    }
+
     public init(
         overview: URL,
         reconnect: URL,
@@ -103,6 +119,14 @@ public struct ContextPanelWidgetContentView: View {
     }
 
     private var widgetDestination: URL? {
+        if displayPreferences.usesAccountRows {
+            let accounts = snapshot.accountOverview(now: presentationDate, widgetsOnly: true,
+                maximumAge: resetCreditMaximumAge)
+            if family == .systemSmall, let account = accounts.closest ?? accounts.accounts.first {
+                return links.account(account.metadata.provider, id: account.id)
+            }
+            return links.overview
+        }
         guard family == .systemSmall, showsResetCreditSurfaces,
               snapshot.widgetProblemText(presentationDate: presentationDate) == nil,
               snapshot.widgetDeepLinkURL(links: links) == links.overview,
@@ -118,7 +142,11 @@ public struct ContextPanelWidgetContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if snapshot.shouldShowSetupPlaceholder {
+        if displayPreferences.usesAccountRows {
+            AccountRowsWidget(family: family, snapshot: snapshot, links: links,
+                now: presentationDate, maximumAge: resetCreditMaximumAge,
+                showsBanked: showsResetCreditSurfaces)
+        } else if snapshot.shouldShowSetupPlaceholder {
             CPWSetupPlaceholderWidget(family: family)
         } else {
             switch family {

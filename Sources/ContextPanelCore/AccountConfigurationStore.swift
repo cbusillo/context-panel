@@ -41,6 +41,9 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var accountAliases: [String: String]?
     /// User-selected, account-specific session folder. Nil retains the auth-file adapter.
     public var codexQuotaPath: String?
+    /// Independent of collection. Missing values preserve older setup until edited.
+    public var showInWidgets: Bool?
+    public var useLast: Bool?
 
     public init(
         id: String,
@@ -52,7 +55,9 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         commandPath: String? = nil,
         codexClient: CodexClient? = nil,
         accountAliases: [String: String]? = nil,
-        codexQuotaPath: String? = nil
+        codexQuotaPath: String? = nil,
+        showInWidgets: Bool? = nil,
+        useLast: Bool? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -64,6 +69,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.codexClient = codexClient
         self.accountAliases = accountAliases
         self.codexQuotaPath = codexQuotaPath
+        self.showInWidgets = showInWidgets
+        self.useLast = useLast
     }
 
     public var effectiveAuthPath: String? {

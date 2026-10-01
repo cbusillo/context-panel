@@ -600,7 +600,7 @@ The publisher must have saved `accounts.json` (for example after an account
 setting is edited). An unsaved default configuration deliberately fails closed;
 the reader does not invent default accounts or persist them.
 
-Schema 1 has `readAt`, `savedAt` and `accounts`. Each row has an opaque local ID,
+Schema 1 has `readAt`, `savedAt`, `accounts`, `answers` and `deadlines`. Each row has an opaque local ID,
 provider, typed local label (including email-like names), shared panel `state`, observation time, windows,
 and a stable opaque `configurationID` for the configured source. The row `id`
 identifies its current logical lane and can change when a connection first
@@ -610,8 +610,9 @@ Rows also include reported usage credits and a separate `bankedResets` object. A
 `available`, `closeToLimit`, `limited`, `unknown`, `stale`, `refreshing`,
 `unavailable`, `notConnected` and `off`. Every configured non-retired account is
 included; the reader does not invent unconfigured accounts. Membership and
-states use `AccountCapacity`, and burn uses `AccountBurnRateEstimator`, matching
-the All Accounts card.
+states use the shared `AccountOverview` projection over `AccountCapacity` membership,
+and burn uses `AccountBurnRateEstimator`, matching
+the account overview.
 
 Windows include their own observation time, unit, used/limit quantities,
 `naturalResetAt` and nullable `burn` (units per hour, observation duration,
@@ -627,8 +628,26 @@ the summary contains provider-reported count, coverage, observation time and
 known expiries. Missing banked data has a null summary and unknown state;
 `unknownExpiryCount` states how many dates are missing, including for older
 publishers whose complete coverage stored only the earliest expiry.
-expired or stale reported offers retain their historical quantities/dates with
-stale state. A reported zero remains distinguishable from no observation.
+Known expired offers disappear from the current count and deadline list at the
+expiry instant. Historical observations remain in the stored provider report.
+Saved/failing reads keep unexpired offers explicitly marked last seen. A reported
+zero remains distinguishable from no observation.
+
+Each account also exposes `showInWidgets`, `useLast`, its nullable tightest
+`remainingFraction`, and `limitingWindowID`. `answers.closestAccountID` is null
+without reliable current capacity. `answers.useNext` contains at most one opaque
+account ID per provider: room is required in every window, scheduled-reset
+assumptions and saved/unknown rows are ineligible, and Use last accounts are
+skipped. Saved configuration order breaks ties. `deadlines` is a sorted list of
+known future expiry dates, safe local IDs, typed account labels, observation
+times and states. Unknown expiry dates are never invented. App, widgets and
+companions consume the same account math; widgets alone filter Show in widgets.
+Hiding an active account does not pause collection or limit warnings. Previously
+paused accounts retain their pause and have an explicit Resume updates action.
+
+The companion payload adds optional display metadata containing opaque IDs,
+typed labels and display/availability flags. Older payloads remain decodable.
+No new CloudKit record type, server schema or entitlement is introduced.
 
 No credentials, source paths, raw provider responses, diagnostics, credential-derived
 account identity or transcript/cache payloads are exported. Explicitly typed local

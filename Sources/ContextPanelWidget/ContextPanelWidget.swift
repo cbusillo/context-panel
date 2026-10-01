@@ -158,6 +158,9 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             bookmarkStore: bookmarkStore,
             now: date
         )
+        let configuration = (try? Data(contentsOf: accountStore.configurationURL)).flatMap {
+            try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0).accounts
+        }
         let result = store.loadCurrent(policy: policy, now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(
@@ -174,7 +177,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                             history: containerFallbackStore.loadHistory(),
                             fastModeForecastSettings: forecastSettings,
                             promptCacheWidgetState: promptCacheWidgetState,
-                            stalenessPolicy: policy
+                            stalenessPolicy: policy,
+                            configuration: configuration
                         ),
                         displayPreferences: displayPreferences
                     ),
@@ -191,7 +195,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                     history: store.loadHistory(),
                     fastModeForecastSettings: forecastSettings,
                     promptCacheWidgetState: promptCacheWidgetState,
-                    stalenessPolicy: policy
+                    stalenessPolicy: policy,
+                    configuration: configuration
                 ),
                 displayPreferences: displayPreferences
             ),

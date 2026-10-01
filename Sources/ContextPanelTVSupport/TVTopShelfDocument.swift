@@ -1,5 +1,6 @@
 import ContextPanelCore
 import Foundation
+import CryptoKit
 
 public enum TVSnapshotFreshnessPolicy {
     public static func isStale(
@@ -80,9 +81,31 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         snapshotState = presentation.state
         presentationMode = mode
         self.cloudKitUserScope = cloudKitUserScope
-        cards = presentation.sections.isEmpty
-            ? [Self.setupCard(presentation: presentation)]
-            : presentation.sections.map { Self.card(section: $0, mode: mode) }
+        let accounts = snapshot.accountOverview(now: now, widgetsOnly: true,
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge).accounts
+        if mode == .fullDetail, snapshot.accountDisplayMetadata != nil, !accounts.isEmpty {
+            cards = accounts.map { account in
+                let status: UsageStatus = switch account.state {
+                case .available: .healthy
+                case .closeToLimit: .close
+                case .limited: .limited
+                case .stale: .stale
+                case .unavailable: .failure
+                case .refreshing: .loading
+                default: .unknown
+                }
+                return TVTopShelfCard(id: account.id, provider: account.metadata.provider,
+                    title: account.metadata.label, headline: account.remainingText + " left",
+                    detail: account.state.displayText + " · " + account.resetDisplayText,
+                    status: status,
+                    remainingPercent: account.remainingFraction.map { Int(($0 * 100).rounded()) },
+                    actionURLString: TVAppRoute.account(account.metadata.provider, account.id).url.absoluteString)
+            }
+        } else {
+            cards = presentation.sections.isEmpty
+                ? [Self.setupCard(presentation: presentation)]
+                : presentation.sections.map { Self.card(section: $0, mode: mode) }
+        }
     }
 
     public var containsProviderData: Bool {
@@ -90,7 +113,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
     }
 
     public var renderedCards: [TVTopShelfCard] {
-        Array(cards.prefix(Provider.allCases.count))
+        Array(cards.prefix(cards.first?.id.hasPrefix("provider-") == false && cards.first?.provider != nil ? 6 : Provider.allCases.count))
     }
 
     public func isStale(
@@ -114,7 +137,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         if cards.contains(where: { $0.status == .close }) {
             return "Runway is getting tight"
         }
-        return "Provider runway"
+        return cards.first?.id.hasPrefix("provider-") == false ? "Accounts" : "Provider runway"
     }
 
     public func freshnessText(at now: Date) -> String {
@@ -317,8 +340,18 @@ public struct TVTopShelfRuntimeReceiptEvidence: Equatable, Sendable {
                     remainingPercent: card.remainingPercent
                 )
             },
-            contentReturned: contentReturned
+            contentReturned: contentReturned,
+            visibleCardsDigest: document.renderedCards.first?.id.hasPrefix("provider-") == false
+                && document.renderedCards.first?.provider != nil
+                ? Self.visibleCardsDigest(document.renderedCards) : nil
         )
+    }
+
+    private static func visibleCardsDigest(_ cards: [TVTopShelfCard]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode(cards)) ?? Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func freshness(

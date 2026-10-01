@@ -1012,3 +1012,40 @@ private func makeRecoveredTopShelfSnapshot(
         message: "Available"
     )
 }
+
+@Test func tvAccountCardsUseTypedNamesEveryWindowAndKeepPrivacyModesAnonymous() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let accounts = (0..<6).map { index in
+        AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(.openAI, "account-\(index)"),
+            configurationID: AccountDisplayMetadata.safeID(.openAI, "account-\(index)"), provider: .openAI,
+            label: "Typed name \(index)")
+    }
+    let limits = (0..<6).flatMap { index in
+        [("Weekly", 10), ("5-hour", 85)].map { window, used in
+            UsageLimit(provider: .openAI, accountID: "account-\(index)", accountName: "Provider identity",
+                label: window, windowLabel: window, unit: .percent, used: used, limit: 100,
+                resetsAt: now.addingTimeInterval(3_600), lastUpdatedAt: now, confidence: .observed)
+        }
+    }
+    let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: limits, status: .healthy,
+        message: "", accountDisplayMetadata: accounts)
+    let full = TVTopShelfDocument(snapshot: snapshot, mode: .fullDetail, now: now)
+    #expect(full.renderedCards.count == 6)
+    #expect(full.cards.map(\.title) == accounts.map(\.label))
+    #expect(full.cards.allSatisfy { $0.remainingPercent == 15 })
+    #expect(TVAppRoute(url: try #require(URL(string: full.cards[0].actionURLString))) == .account(.openAI, accounts[0].id))
+    for mode in [TVPresentationMode.projectOnly, .countsOnly] {
+        let document = TVTopShelfDocument(snapshot: snapshot, mode: mode, now: now)
+        let json = String(decoding: try JSONEncoder().encode(document), as: UTF8.self)
+        #expect(!json.contains("Typed name"))
+        #expect(!json.contains("Provider identity"))
+    }
+    let renamedMetadata = accounts.enumerated().map { index, metadata in
+        AccountDisplayMetadata(id: metadata.id, configurationID: metadata.configurationID,
+            provider: metadata.provider, label: "Renamed \(index)")
+    }
+    let renamed = WidgetSnapshot(state: .ready, generatedAt: now, limits: limits, status: .healthy, message: "", accountDisplayMetadata: renamedMetadata)
+    let before = TVTopShelfRuntimeReceiptEvidence(document: full, loadedDocument: true, contentReturned: true, now: now)
+    let after = TVTopShelfRuntimeReceiptEvidence(document: TVTopShelfDocument(snapshot: renamed, mode: .fullDetail, now: now), loadedDocument: true, contentReturned: true, now: now)
+    #expect(before.presentationDigest != after.presentationDigest)
+}

@@ -718,7 +718,8 @@ public struct RuntimeReceipt: Codable, Equatable, Identifiable, Sendable {
 public enum RuntimePresentationDigest {
     public static func storedSnapshot(
         _ snapshot: StoredUsageSnapshot?,
-        status: UsageStatus
+        status: UsageStatus,
+        accountMetadata: [AccountDisplayMetadata]? = nil
     ) -> String {
         let payload = StoredSnapshotDigestPayload(
             schemaVersion: 1,
@@ -726,7 +727,8 @@ public enum RuntimePresentationDigest {
             generatedAtMilliseconds: snapshot.map { milliseconds($0.snapshot.generatedAt) },
             status: status.rawValue,
             limits: sanitizedLimits(snapshot?.snapshot.limits ?? []),
-            reports: sanitizedReports(snapshot?.reports ?? [])
+            reports: sanitizedReports(snapshot?.reports ?? []),
+            accountMetadataDigest: accountMetadata.map(RuntimeReceiptDigest.canonicalDigest)
         )
         return RuntimeReceiptDigest.canonicalDigest(payload)
     }
@@ -804,7 +806,9 @@ public enum RuntimePresentationDigest {
                 presentationMode: presentationMode
             ),
             limits: sanitizedLimits(snapshot.limits),
-            reports: sanitizedReports(snapshot.reports)
+            reports: sanitizedReports(snapshot.reports),
+            accountMetadataDigest: snapshot.accountDisplayMetadata.map(RuntimeReceiptDigest.canonicalDigest),
+            usesAccountRows: displayPreferences.usesAccountRows
         )
         return RuntimeReceiptDigest.canonicalDigest(payload)
     }
@@ -856,7 +860,8 @@ public enum RuntimePresentationDigest {
         tvPresentationMode: RuntimeTVPresentationMode,
         freshness: RuntimeTopShelfFreshness,
         cards: [RuntimeTopShelfCardPresentation],
-        contentReturned: Bool
+        contentReturned: Bool,
+        visibleCardsDigest: String? = nil
     ) -> String {
         let payload = TopShelfDocumentDigestPayload(
             schemaVersion: 1,
@@ -868,6 +873,7 @@ public enum RuntimePresentationDigest {
             freshnessValue: freshness.value,
             isStale: freshness.isStale,
             contentReturned: contentReturned,
+            visibleCardsDigest: visibleCardsDigest,
             cards: cards.map { card in
                 SanitizedTopShelfCardDigestPayload(
                     provider: card.provider?.rawValue,
@@ -1047,6 +1053,7 @@ private struct StoredSnapshotDigestPayload: Encodable {
     let status: String
     let limits: [SanitizedLimitDigestPayload]
     let reports: [SanitizedReportDigestPayload]
+    let accountMetadataDigest: String?
 }
 
 private struct WidgetSnapshotDigestPayload: Encodable {
@@ -1064,6 +1071,8 @@ private struct WidgetSnapshotDigestPayload: Encodable {
     let selectedMainLimits: [SanitizedWidgetLaneDigestPayload]
     let limits: [SanitizedLimitDigestPayload]
     let reports: [SanitizedReportDigestPayload]
+    let accountMetadataDigest: String?
+    let usesAccountRows: Bool
 }
 
 private struct CompanionSnapshotDigestPayload: Encodable {
@@ -1089,6 +1098,7 @@ private struct TopShelfDocumentDigestPayload: Encodable {
     let freshnessValue: Int
     let isStale: Bool
     let contentReturned: Bool
+    let visibleCardsDigest: String?
     let cards: [SanitizedTopShelfCardDigestPayload]
 }
 

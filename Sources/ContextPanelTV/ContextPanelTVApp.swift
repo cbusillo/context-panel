@@ -110,6 +110,19 @@ private struct TVRootView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
+            Group {
+                if presentationMode == .fullDetail {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TVAccountOverviewContent(
+                            overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                            presentationModeRawValue: $presentationModeRawValue,
+                            isRefreshing: model.isLoading, notice: visibleNoticeMessage,
+                            onRefresh: { model.reload() },
+                            openAccount: { navigationPath.append("account:" + $0) },
+                            openDeadlines: { navigationPath.append("deadlines") },
+                            openDetails: { navigationPath.append("details") })
+                    }
+                } else {
             TVRunwayContent(
                 presentation: presentation,
                 receivedAt: model.lastReceivedAt,
@@ -122,6 +135,8 @@ private struct TVRootView: View {
                 onRefresh: { model.reload() },
                 snapshotReports: model.snapshot.reports
             )
+                }
+            }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
                     model.reload()
@@ -147,6 +162,18 @@ private struct TVRootView: View {
             .navigationDestination(for: String.self) { providerRawValue in
                 if providerRawValue == tvValidationGalleryNavigationValue {
                     TVValidationGalleryView()
+                } else if providerRawValue.hasPrefix("account:") || providerRawValue == "deadlines" {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TVAccountDetailContent(
+                            overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                            accountID: providerRawValue == "deadlines" ? nil : String(providerRawValue.dropFirst(8)))
+                    }
+                } else if providerRawValue == "details" {
+                    TVRunwayContent(presentation: presentation, receivedAt: model.lastReceivedAt,
+                        keepWorkingForecast: keepWorkingForecast, isRefreshing: model.isLoading,
+                        presentationModeRawValue: $presentationModeRawValue, noticeMessage: visibleNoticeMessage,
+                        presentationDate: nil, detailActionMode: .navigation,
+                        onRefresh: { model.reload() }, snapshotReports: model.snapshot.reports)
                 } else if let section = presentation.sections.first(where: { $0.provider.rawValue == providerRawValue }) {
                     TVProviderDetailView(
                         section: section,
@@ -167,6 +194,12 @@ private struct TVRootView: View {
                 case .runway:
                     pendingProviderRawValue = nil
                     navigationPath = []
+                case let .account(_, id):
+                    pendingProviderRawValue = nil
+                    navigationPath = ["account:" + id]
+                case .deadlines:
+                    pendingProviderRawValue = nil
+                    navigationPath = ["deadlines"]
                 case let .provider(provider):
                     pendingProviderRawValue = provider.rawValue
                     resolvePendingProviderRoute()
@@ -186,6 +219,138 @@ private struct TVRootView: View {
         }
         navigationPath = [pendingProviderRawValue]
         self.pendingProviderRawValue = nil
+    }
+}
+
+private struct TVAccountOverviewContent: View {
+    let overview: AccountOverview
+    @Binding var presentationModeRawValue: String
+    let isRefreshing: Bool
+    let notice: String?
+    let onRefresh: () -> Void
+    let openAccount: (String) -> Void
+    let openDeadlines: () -> Void
+    let openDetails: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 30) {
+                HStack {
+                    Text("Accounts").font(.system(size: 58, weight: .semibold))
+                    Spacer()
+                    Button(isRefreshing ? "Updating" : "Refresh", action: onRefresh).disabled(isRefreshing)
+                    Menu("Display") {
+                        Picker("Presentation", selection: $presentationModeRawValue) {
+                            ForEach(TVPresentationMode.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }
+                    }
+                    Button("Details", action: openDetails)
+                }
+                if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
+                HStack(alignment: .top, spacing: 32) {
+                    if let closest = overview.closest {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Closest to limit").foregroundStyle(.secondary)
+                            Text(closest.metadata.label + " · " + closest.remainingText + " left").font(.headline)
+                        }
+                    }
+                    ForEach(Provider.allCases) { provider in
+                        if let next = overview.useNext(provider: provider) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Use next · " + provider.accountDisplayName).foregroundStyle(.secondary)
+                                Text(next.metadata.label).font(.headline)
+                            }
+                        }
+                    }
+                }
+                if overview.accounts.isEmpty { Text("Add an account on your Mac, then refresh.") }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
+                    ForEach(overview.accounts) { account in
+                        TVAccountOverviewCard(account: account) { openAccount(account.id) }
+                    }
+                }
+                if let deadline = overview.nextDeadline {
+                    Button(action: openDeadlines) {
+                        HStack {
+                            Text("Next banked expiry · " + deadline.label)
+                            Spacer()
+                            Text(ContextPanelDateFormatting.accountReset(deadline.expiresAt))
+                        }
+                    }
+                } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
+                    Button("Banked reset dates unknown", action: openDeadlines)
+                }
+            }.padding(.horizontal, 72).padding(.vertical, 40)
+        }.background(TVTheme.background.ignoresSafeArea())
+    }
+}
+
+private struct TVAccountOverviewCard: View {
+    let account: AccountOverview.Account
+    let open: () -> Void
+    @FocusState private var isFocused: Bool
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(account.metadata.provider.accountDisplayName).font(.system(size: 18)).foregroundStyle(.secondary)
+                    Text(account.metadata.label).font(.system(size: 24, weight: .semibold)).lineLimit(2)
+                }.frame(height: 82, alignment: .top)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(account.remainingText).font(.system(size: 76, weight: .semibold)).monospacedDigit()
+                    Text("left").font(.system(size: 24)).foregroundStyle(.secondary)
+                }.frame(height: 94, alignment: .top)
+                ProgressView(value: account.remainingFraction ?? 0).tint(TVTheme.providerColor(account.metadata.provider))
+                Text(account.state.displayText + (account.metadata.useLast ? " · Use last" : ""))
+                    .font(.system(size: 20)).lineLimit(1)
+                Text(account.resetDisplayText).font(.system(size: 18)).foregroundStyle(.secondary).lineLimit(2)
+                    .frame(height: 52, alignment: .top)
+                Text(account.bankedResets.map { "\(account.bankedState == .available ? "" : "Last seen · ")\($0.availableCount) banked" } ?? "Banked resets unknown")
+                    .font(.system(size: 18)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            .background(TVTheme.providerColor(account.metadata.provider).opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(isFocused ? Color.white : Color.white.opacity(0.16), lineWidth: isFocused ? 4 : 1))
+            .accessibilityElement(children: .ignore).accessibilityLabel(account.accessibilityText)
+        }.buttonStyle(.plain).focusEffectDisabled().focused($isFocused)
+    }
+}
+
+private struct TVAccountDetailContent: View {
+    let overview: AccountOverview
+    let accountID: String?
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let accountID, let account = overview.accounts.first(where: { $0.id == accountID }) {
+                    Text(account.metadata.label).font(.largeTitle)
+                    Text(account.metadata.provider.accountDisplayName + " · " + account.state.displayText)
+                    ForEach(account.windows) { window in
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(window.label).font(.headline)
+                            Text(window.remainingFraction.map { (window.assumption == nil ? "" : "≈ ") + "\(Int(($0 * 100).rounded()))% left" } ?? "Unknown").font(.title)
+                            Text(window.naturalResetAt.map { (window.assumption == nil ? "Reset " : "Assumed after reset ") + ContextPanelDateFormatting.accountReset($0) } ?? "Reset unknown")
+                            if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
+                        }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
+                    }
+                    Text(account.bankedResets.map { "\($0.availableCount) banked · \(account.bankedState == .available ? "available" : "last seen")" } ?? "Banked resets unknown")
+                    if (account.unknownExpiryCount ?? 0) > 0 { Text("Some banked reset dates are unknown.").foregroundStyle(.secondary) }
+                } else { Text(accountID == nil ? "Deadlines" : "Account no longer in this snapshot").font(.largeTitle) }
+                ForEach(overview.deadlines.filter { accountID == nil || $0.accountID == accountID }) { deadline in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(deadline.label + " · " + deadline.provider.accountDisplayName).font(.headline)
+                        Text("Expires " + ContextPanelDateFormatting.accountReset(deadline.expiresAt))
+                        if deadline.state != .available { Text("Last seen " + ContextPanelDateFormatting.accountReset(deadline.observedAt)).foregroundStyle(.secondary) }
+                    }
+                }
+                if accountID == nil {
+                    ForEach(overview.accounts.filter { ($0.unknownExpiryCount ?? 0) > 0 }) { account in
+                        Text(account.metadata.label + ": banked reset dates unknown").foregroundStyle(.secondary)
+                    }
+                }
+            }.padding(72).frame(maxWidth: .infinity, alignment: .leading)
+        }.background(TVTheme.background.ignoresSafeArea())
     }
 }
 

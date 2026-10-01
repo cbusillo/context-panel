@@ -25,6 +25,14 @@ extension JSONDecoder {
 }
 
 public enum ContextPanelDateFormatting {
+    public static func accountReset(_ date: Date, compact: Bool = false,
+                                    locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        var style = Date.FormatStyle.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
+        if !compact { style = style.year() }
+        style.locale = locale
+        style.timeZone = timeZone
+        return date.formatted(style)
+    }
     public static func resetDeadline(
         _ date: Date, compact: Bool = false,
         locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent
