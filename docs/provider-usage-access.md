@@ -622,7 +622,8 @@ than measured recent pace, matching the panel's window-average label. Windows
 retain `confidence` and `presentationAssumption` so event-driven scheduled-reset
 estimates match the panel without being mistaken for new provider observations.
 Optional fields inside provider summaries may be absent; absence means unknown.
-Old/future observations do not supply live capacity. Event-driven scheduled
+Aged polling observations and future observations do not supply live capacity.
+Event-driven AGY idle age alone does not make a reading stale. Event-driven scheduled
 resets remain explicitly estimated. Banked-reset state is independent of usage-window freshness:
 the summary contains provider-reported count, coverage, observation time and
 known expiries. Missing banked data has a null summary and unknown state;

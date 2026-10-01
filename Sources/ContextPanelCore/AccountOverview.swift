@@ -138,8 +138,12 @@ public struct AccountOverview: Equatable, Sendable {
                        confidence: limit.confidence, assumption: limit.presentationAssumption)
             }
             let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt
-            let old = (observed.map { now.timeIntervalSince($0) > maximumAge || $0 > now.addingTimeInterval(60) } ?? false)
-                || report.map { now.timeIntervalSince($0.generatedAt) > maximumAge || $0.generatedAt > now.addingTimeInterval(60) } == true
+            let ageSensitive = limits.isEmpty || limits.contains { !$0.usesEventDrivenFreshness }
+            let old = limits.contains { limit in
+                limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
+                    || !limit.usesEventDrivenFreshness && now.timeIntervalSince($0) > maximumAge } ?? false
+            } || report.map { $0.generatedAt > now.addingTimeInterval(60)
+                || ageSensitive && now.timeIntervalSince($0.generatedAt) > maximumAge } == true
             let passed = limits.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
             let state: AccountCapacityState
             if !entry.isEnabled { state = .off }

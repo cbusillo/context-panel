@@ -315,6 +315,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Context Panel Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.contentMinSize = NSSize(width: 720, height: 600)
         window.setContentSize(NSSize(width: 720, height: 700))
         window.isReleasedWhenClosed = false
         window.center()

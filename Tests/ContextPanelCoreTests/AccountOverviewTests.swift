@@ -243,3 +243,28 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     let reverse = first.mergingForRemotePublish(existing: second, now: overviewNow.addingTimeInterval(6))
     #expect(reverse.accountDisplayMetadata == merged.accountDisplayMetadata)
 }
+
+@Test func accountAnswersRespectEventDrivenIdleAgeButRejectFutureAndAssumedObservations() throws {
+    let old = overviewNow.addingTimeInterval(-2 * 3_600)
+    let setup = LocalProviderAccountConfiguration(id: "agy", provider: .google,
+        connectorKind: .googleAntigravityQuota, displayName: "Antigravity")
+    func projected(observedAt: Date, reset: Date, mode: UsageFreshnessMode) -> AccountOverview {
+        let limit = UsageLimit(provider: .google, accountID: "event-account", configuredAccountID: setup.id,
+            accountName: "Provider identity", label: "Weekly", unit: .percent, used: 4, limit: 100,
+            resetsAt: reset, lastUpdatedAt: observedAt, confidence: .observed, freshnessMode: mode)
+        let report = StoredProviderReport(provider: .google, accountID: limit.accountID, configuredAccountID: setup.id,
+            accountName: "Ignored", generatedAt: observedAt, status: .healthy, errorMessage: nil)
+        let stored = StoredUsageSnapshot(savedAt: overviewNow,
+            snapshot: UsageSnapshot(generatedAt: overviewNow, limits: [limit]), reports: [report])
+        return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+            metadata: AccountDisplayMetadata.local(configuration: [setup], stored: stored, now: overviewNow), now: overviewNow)
+    }
+    let event = projected(observedAt: old, reset: overviewNow.addingTimeInterval(86_400), mode: .eventDriven)
+    #expect(event.accounts.first?.state == .available)
+    #expect(event.useNext(provider: .google) != nil)
+    #expect(projected(observedAt: old, reset: overviewNow.addingTimeInterval(86_400), mode: .polling).accounts.first?.state == .stale)
+    #expect(projected(observedAt: overviewNow.addingTimeInterval(61), reset: overviewNow.addingTimeInterval(86_400), mode: .eventDriven).accounts.first?.state == .stale)
+    let assumed = projected(observedAt: old, reset: overviewNow.addingTimeInterval(-1), mode: .eventDriven)
+    #expect(assumed.useNext(provider: .google) == nil)
+    #expect(assumed.accounts.first?.windows.first?.assumption != nil)
+}
