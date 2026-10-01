@@ -139,8 +139,9 @@ public struct AccountOverview: Equatable, Sendable {
                        remainingFraction: limit.usageRatio.map { min(1, max(0, 1 - $0)) },
                        naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
                        confidence: limit.confidence, assumption: limit.presentationAssumption,
+                       // sampleCount 0 is the estimator's window-average fallback, not observed history.
                        burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
-                           limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil }
+                           rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        })
             }
             let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt

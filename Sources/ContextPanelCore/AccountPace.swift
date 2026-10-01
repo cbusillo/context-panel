@@ -3,12 +3,12 @@ import Foundation
 /// Pace for one account window: where the remaining share sits against an even spend
 /// across the window, and when the observed burn would run it out before the reset.
 public extension AccountOverview.Window {
-    /// Window length from its label; nil when the window has no fixed length.
+    /// Window length from its label; nil unless the label names a fixed length.
     var duration: TimeInterval? {
         let text = label.lowercased()
-        if text.contains("5-hour") || text.contains("5h") || text.contains("five") || text.contains("session") { return 5 * 3_600 }
-        if text.contains("week") || text.contains("7-day") || text.contains("1w") { return 7 * 86_400 }
-        if text.contains("daily") || text.contains("day") || text.contains("24") { return 86_400 }
+        if text.contains("5-hour") || text.contains("5 hour") || text == "5h" { return 5 * 3_600 }
+        if text.contains("weekly") || text.contains("7-day") || text == "week" { return 7 * 86_400 }
+        if text.contains("daily") || text.contains("24-hour") { return 86_400 }
         return nil
     }
 
@@ -50,17 +50,44 @@ public extension AccountOverview.Account {
         windows.sorted { ($0.duration ?? .infinity) < ($1.duration ?? .infinity) }
     }
 
-    /// The earliest run-out across windows, with the window that causes it.
+    /// The short column: a window under a day long.
+    var shortWindow: AccountOverview.Window? {
+        windows.filter { ($0.duration ?? .infinity) < 86_400 }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+    }
+
+    /// The long column: the tightest of every other window, so the limiting one is never hidden.
+    var longWindow: AccountOverview.Window? {
+        windows.filter { $0.id != shortWindow?.id }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+    }
+
+    /// The earliest run-out across windows, with the window that causes it. Saved data gets none.
     func earliestRunOut(now: Date) -> (window: AccountOverview.Window, date: Date)? {
         guard isReliable else { return nil }
         return windows.compactMap { window in window.projectedRunOut(now: now).map { (window, $0) } }
             .min { $0.1 < $1.1 }
     }
 
-    /// Fastest pace across this account's windows.
+    /// Fastest pace across this account's windows. Saved data gets none.
     func paceRatio(now: Date) -> Double? {
         guard isReliable else { return nil }
         return windows.compactMap { $0.paceRatio(now: now) }.max()
+    }
+
+    /// Spoken summary with every window, pace and run-out.
+    func glanceAccessibilityText(now: Date, isNext: Bool) -> String {
+        var parts = [accessibilityText]
+        for window in orderedWindows {
+            guard let fraction = window.remainingFraction else { continue }
+            var part = "\(window.label) \(Int((fraction * 100).rounded())) percent left"
+            if let reset = window.naturalResetAt { part += ", resets \(ContextPanelDateFormatting.accountReset(reset, compact: true))" }
+            parts.append(part)
+        }
+        if let ratio = paceRatio(now: now) { parts.append("pace \(AccountPaceText.ratio(ratio))") }
+        if let runOut = earliestRunOut(now: now) {
+            parts.append("at this pace \(runOut.window.label) runs out around \(AccountPaceText.approximately(runOut.date, now: now)), before its reset")
+        }
+        if isNext { parts.append("use next") }
+        return parts.joined(separator: ", ")
     }
 }
 

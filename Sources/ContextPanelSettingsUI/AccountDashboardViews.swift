@@ -123,7 +123,8 @@ public struct AccountDashboardPanel: View {
                             Text(AccountPaceText.countdown(to: first.expiresAt, now: now))
                                 .font(.system(size: 11)).foregroundStyle(palette.secondary)
                         }
-                        Text(first.label).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+                        Text(first.label + (first.state == .available ? "" : " · last seen"))
+                            .font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                         ForEach(overview.deadlines.dropFirst().prefix(2)) { deadline in
                             HStack(spacing: 6) {
                                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
@@ -202,8 +203,8 @@ public struct AccountDashboardPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            windowCell(account, window: account.windows.first { ($0.duration ?? 0) < 86_400 }).frame(width: Column.fiveHour)
-            windowCell(account, window: account.windows.first { ($0.duration ?? 0) >= 86_400 }).frame(width: Column.week)
+            windowCell(account, window: account.shortWindow).frame(width: Column.fiveHour)
+            windowCell(account, window: account.longWindow).frame(width: Column.week)
             paceCell(account).frame(width: Column.pace, alignment: .leading)
             DashboardWeekLane(account: account, deadlines: overview.deadlines.filter { $0.accountID == account.id },
                               now: now, palette: palette)
@@ -212,7 +213,7 @@ public struct AccountDashboardPanel: View {
         .padding(.horizontal, 14).padding(.vertical, 10)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.accessibilityText)
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
     }
 
     private func windowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?) -> some View {
@@ -341,12 +342,12 @@ public struct AccountDashboardDetail: View {
                     if let even = window.evenPaceRemaining(now: now) {
                         fact("Even pace", "\(Int((even * 100).rounded()))% left now")
                     }
-                    fact("Burn", window.burnFractionPerHour.map { String(format: "%.1f%%/h", $0 * 100) + " · "
+                    fact("Burn", !account.isReliable ? "not current" : window.burnFractionPerHour.map { String(format: "%.1f%%/h", $0 * 100) + " · "
                         + AccountPaceText.ratio(window.paceRatio(now: now)) + " pace" } ?? "measuring")
-                    if let runOut = window.projectedRunOut(now: now) {
+                    if account.isReliable, let runOut = window.projectedRunOut(now: now) {
                         GridRow {
                             Text("Runs out").foregroundStyle(palette.secondary)
-                            Text(ContextPanelDateFormatting.accountReset(runOut, compact: true) + " · before reset")
+                            Text(AccountPaceText.approximately(runOut, now: now) + " · before reset")
                                 .fontWeight(.semibold).foregroundStyle(palette.bad)
                         }
                     }
@@ -366,7 +367,8 @@ public struct AccountDashboardDetail: View {
 
     private var bankedCard: some View {
         let deadlines = overview.deadlines.filter { $0.accountID == account.id }
-        return DashboardCard(title: "Banked resets", trailing: account.bankedResets.map { "\($0.availableCount) available" },
+        return DashboardCard(title: "Banked resets", trailing: account.bankedResets.map {
+            "\($0.availableCount) \(account.bankedState == .available ? "available" : "last seen")" },
                              fillsHeight: false, palette: palette) {
             VStack(alignment: .leading, spacing: 6) {
                 if account.bankedResets == nil {
@@ -376,6 +378,10 @@ public struct AccountDashboardDetail: View {
                     HStack(spacing: 10) {
                         Image(systemName: "diamond.fill").font(.system(size: 9)).foregroundStyle(palette.banked)
                         Text("Expires " + ContextPanelDateFormatting.accountReset(deadline.expiresAt)).monospacedDigit()
+                        if deadline.state != .available {
+                            Text("last seen " + AccountPaceText.when(deadline.observedAt, now: now))
+                                .foregroundStyle(palette.stale)
+                        }
                         Spacer()
                         Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).monospacedDigit()
                             .foregroundStyle(palette.secondary)
@@ -593,9 +599,9 @@ struct DashboardWeekLane: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let height = proxy.size.height
-            let weekly = account.windows.first { ($0.duration ?? 0) >= 86_400 }
-            let reset = weekly?.naturalResetAt
-            let runOut = weekly?.projectedRunOut(now: now)
+            let long = account.longWindow
+            let reset = long?.naturalResetAt
+            let runOut = account.isReliable ? long?.projectedRunOut(now: now) : nil
             ZStack(alignment: .leading) {
                 ForEach(0..<7, id: \.self) { day in
                     let start = Calendar.current.startOfDay(for: now).addingTimeInterval(Double(day + 1) * 86_400)

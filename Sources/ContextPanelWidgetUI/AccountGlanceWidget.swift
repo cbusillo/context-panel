@@ -57,6 +57,10 @@ struct AccountGlanceWidget: View {
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Accounts").font(.system(size: 11, weight: .semibold))
+                if overview.accounts.count > shown.count {
+                    Text("+\(overview.accounts.count - shown.count)").font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(palette.secondary)
+                }
                 Spacer(minLength: 0)
                 Text("% left").font(.system(size: 9, weight: .medium)).foregroundStyle(palette.tertiary)
             }
@@ -80,7 +84,7 @@ struct AccountGlanceWidget: View {
                             .truncationMode(.tail).foregroundStyle(palette.secondary)
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(account.accessibilityText)
+                    .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
                 }
             }
             Spacer(minLength: 0)
@@ -122,7 +126,7 @@ struct AccountGlanceWidget: View {
             if showsBanked, let deadline = overview.nextDeadline { bankedLine(deadline, compact: true) }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.accessibilityText)
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
     }
 
     // MARK: Medium
@@ -131,7 +135,8 @@ struct AccountGlanceWidget: View {
         let showsDeadline = showsBanked && overview.nextDeadline != nil
         let rows = Array(overview.accounts.prefix(showsDeadline ? 6 : 7))
         return VStack(alignment: .leading, spacing: 0) {
-            columnHeader(title: "Accounts", trailing: "Next", compact: true)
+            columnHeader(title: overview.accounts.count > rows.count ? "Accounts +\(overview.accounts.count - rows.count)" : "Accounts",
+                         trailing: "Next", compact: true)
                 .padding(.bottom, 4)
             ForEach(rows) { account in
                 Link(destination: links.account(account.metadata.provider, id: account.id)) {
@@ -177,7 +182,7 @@ struct AccountGlanceWidget: View {
         .frame(height: 17)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.accessibilityText)
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
         .accessibilityHint("Opens this account")
     }
 
@@ -217,6 +222,10 @@ struct AccountGlanceWidget: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Accounts").font(.system(size: 12, weight: .semibold))
+                if overview.accounts.count > rows.count {
+                    Text("+\(overview.accounts.count - rows.count)").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(palette.secondary)
+                }
                 Spacer()
                 Text("5h · Week · pace").font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
             }
@@ -281,7 +290,7 @@ struct AccountGlanceWidget: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.accessibilityText)
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
         .accessibilityHint("Opens this account")
     }
 
@@ -301,13 +310,9 @@ struct AccountGlanceWidget: View {
 
     // MARK: Shared
 
-    private func fiveHour(_ account: AccountOverview.Account) -> AccountOverview.Window? {
-        account.windows.first { ($0.duration ?? 0) < 86_400 }
-    }
+    private func fiveHour(_ account: AccountOverview.Account) -> AccountOverview.Window? { account.shortWindow }
 
-    private func weekly(_ account: AccountOverview.Account) -> AccountOverview.Window? {
-        account.windows.first { ($0.duration ?? 0) >= 86_400 } ?? account.windows.first { $0.duration == nil }
-    }
+    private func weekly(_ account: AccountOverview.Account) -> AccountOverview.Window? { account.longWindow }
 
     private func paceColor(_ account: AccountOverview.Account) -> Color {
         guard let ratio = account.paceRatio(now: now) else { return palette.tertiary }
