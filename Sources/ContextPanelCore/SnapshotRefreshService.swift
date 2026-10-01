@@ -575,7 +575,7 @@ public struct SnapshotRefreshService: Sendable {
 
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
         let result = accountStore.load(now: now)
-        migrateClaudeStateIfNeeded(accounts: result.document.accounts, now: now)
+        migrateClaudeStateIfNeeded(document: result.document, now: now)
         return result
     }
 
@@ -653,7 +653,7 @@ public struct SnapshotRefreshService: Sendable {
         let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
         let previousLoadResult = stores.primary.loadCurrent()
         let previousStoredSnapshot = previousLoadResult.snapshot
-        migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
+        migrateClaudeStateIfNeeded(document: accountResult.document, now: now)
         let connectors = AccountConnectorFactory.connectors(
             from: accountResult.document,
             bookmarkStore: bookmarkStore,
@@ -801,15 +801,15 @@ public struct SnapshotRefreshService: Sendable {
         )
     }
 
-    private func migrateClaudeStateIfNeeded(accounts: [LocalProviderAccountConfiguration], now: Date) {
+    private func migrateClaudeStateIfNeeded(document: AccountConfigurationDocument, now: Date) {
         if let credentialStore {
             ClaudeAccountMigration.migrateClaudeCredentials(credentialStore)
         }
         let migratedDocument = ClaudeAccountMigration.migrateAccountConfiguration(
-            AccountConfigurationDocument(updatedAt: now, accounts: accounts),
+            document,
             now: now
         )
-        if migratedDocument.accounts != accounts {
+        if migratedDocument.accounts != document.accounts {
             try? accountStore.save(migratedDocument)
         }
     }

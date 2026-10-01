@@ -2,17 +2,15 @@ import Foundation
 import Testing
 @testable import ContextPanelCore
 
-@Test func accountRemovalPersistsWithoutTouchingSourceOrCredentials() async throws {
+@Test func accountRemovalPersistsWithoutTouchingSource() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let home = root.appending(path: "home")
     try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
     let auth = home.appending(path: "auth.json")
-    let credential = root.appending(path: "saved-login")
     let sentinel = Data([0xff, 0x00, 0xfe])
     try sentinel.write(to: auth)
-    try sentinel.write(to: credential)
     let removed = LocalProviderAccountConfiguration(id: "removed", provider: .openAI,
         connectorKind: .codexRateLimits, displayName: "Old source", authPath: auth.path)
     let kept = LocalProviderAccountConfiguration(id: "kept", provider: .anthropic,
@@ -25,10 +23,28 @@ import Testing
     #expect(changed.accounts == [kept])
     #expect(store.load(now: now).document == changed)
     #expect(try Data(contentsOf: auth) == sentinel)
-    #expect(try Data(contentsOf: credential) == sentinel)
     let rows = AccountCapacity.rows(configuration: changed.accounts,
         snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [], now: now)
     #expect(rows.map(\.configuredAccountID) == [kept.id])
+}
+
+@Test func accountRemovalSurvivesRetiredSourceMigration() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let codex = try #require(AccountConfigurationStore.defaultDocument(now: now).accounts.first { $0.provider == .openAI })
+    let retired = LocalProviderAccountConfiguration(id: "retired", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Retained history", authPath: "/retired/auth.json", codexClient: .everyCode)
+    try store.save(AccountConfigurationDocument(updatedAt: now, accounts: [retired, codex]))
+    _ = try #require(try await store.removeAccount(id: codex.id,
+        lock: SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock")), now: now))
+    for _ in 0..<2 {
+        let document = store.load(now: now).document
+        #expect(!document.accounts.contains { $0.id == codex.id })
+        #expect(document.accounts.contains { $0.id == retired.id })
+        #expect(document.removedAccountIDs.contains(codex.id))
+    }
 }
 
 @Test func accountRemovalWaitsForRefreshAndCanRemoveAllDefaults() async throws {

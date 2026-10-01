@@ -593,7 +593,10 @@ struct SettingsPane: View {
                 Text("Use a local nickname. Turn off entries you no longer use, or remove their panel setup. Remove account keeps saved credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
+                Text("A replacement OpenAI or Claude entry needs its own source selection or sign-in.")
+                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
             }
+            .disabled(model.isRemovingAccount)
 
             Section("Diagnostics") {
                 DetailRow(label: "Status", value: model.status.previewStatusText)
@@ -1115,6 +1118,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
+    @Published private(set) var isRemovingAccount = false
     @Published private(set) var backgroundRefreshRegistrationDiagnostic: RefreshAgentRegistrationDiagnostic?
     @Published private(set) var limitWarningSettings: LimitWarningSettings = .defaultSettings
     @Published private(set) var webhookSettings: LimitWarningWebhookSettings = .defaultSettings
@@ -1803,6 +1807,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func addAccount(provider: Provider) {
+        guard !isRemovingAccount else { return }
         if provider == .google {
             guard !settingsAccounts.contains(where: { $0.provider == .google }),
                   let account = AccountConfigurationStore.defaultDocument().accounts.first(where: { $0.provider == .google }) else { return }
@@ -1822,6 +1827,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func renameAccount(_ accountID: String, name: String, logicalID: String? = nil) {
+        guard !isRemovingAccount else { return }
         guard !name.contains("@"), name.count <= 80,
               let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
         if let logicalID {
@@ -1835,7 +1841,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func removeAccount(_ accountID: String, onRemoved: @escaping () -> Void) {
+        guard !isRemovingAccount else { return }
+        isRemovingAccount = true
         Task { @MainActor in
+            defer { isRemovingAccount = false }
             do {
                 guard let document = try await store.removeAccount(id: accountID) else {
                     errorMessage = "Another refresh is running. Try removing the account again in a moment."
@@ -1853,6 +1862,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func setAuthPath(_ accountID: String, path: String) {
+        guard !isRemovingAccount else { return }
         guard let index = accounts.firstIndex(where: { $0.id == accountID }),
               path != (accounts[index].authPath ?? "") else { return }
         // A new source must not continue polling the old imported credential.
@@ -1866,6 +1876,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func setAccount(_ accountID: String, isEnabled: Bool) {
+        guard !isRemovingAccount else { return }
         guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
         accounts[index].isEnabled = isEnabled
         saveAccounts()
@@ -1931,8 +1942,15 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func saveAccounts() {
+        guard !isRemovingAccount else { return }
         do {
-            try store.save(AccountConfigurationDocument(updatedAt: Date(), accounts: accounts))
+            let loaded = store.load()
+            guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+            var document = loaded.document
+            document.updatedAt = Date()
+            document.accounts = accounts
+            document.removedAccountIDs.removeAll { id in accounts.contains { $0.id == id } }
+            try store.save(document)
             reloadContextPanelWidgetTimeline()
         } catch {
             errorMessage = error.localizedDescription
@@ -2428,10 +2446,14 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
+        if !account.isEnabled {
+            return "Off · \(ConnectorRedactor.redactedPath(account.effectiveAuthPath ?? detailSourceLabel(for: account)))"
+        }
         if account.connectorKind == .codexRateLimits, account.codexQuotaPath == nil,
            let path = account.effectiveAuthPath {
             let expanded = NSString(string: path).expandingTildeInPath
-            let available = (try? bookmarkStore.withResolvedURL(for: expanded) { url in
+            let available = (!ContextPanelLocations.isRunningInAppSandbox && FileManager.default.isReadableFile(atPath: expanded))
+                || (try? bookmarkStore.withResolvedURL(for: expanded) { url in
                 (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
             }) == true
             switch CodexHomeBinding.sourceState(account: account, authFileAvailable: available, hasSavedLogin: hasImportedCredential(for: account)) {

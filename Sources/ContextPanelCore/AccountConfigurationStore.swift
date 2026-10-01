@@ -118,11 +118,23 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var updatedAt: Date
     public var accounts: [LocalProviderAccountConfiguration]
+    public var removedAccountIDs: [String]
 
-    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration]) {
+    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = []) {
         schemaVersion = 1
         self.updatedAt = updatedAt
         self.accounts = accounts
+        self.removedAccountIDs = removedAccountIDs
+    }
+
+    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        accounts = try container.decode([LocalProviderAccountConfiguration].self, forKey: .accounts)
+        removedAccountIDs = try container.decodeIfPresent([String].self, forKey: .removedAccountIDs) ?? []
     }
 }
 
@@ -200,6 +212,7 @@ public struct AccountConfigurationStore: Sendable {
             var document = result.document
             guard document.accounts.contains(where: { $0.id == id }) else { return document }
             document.accounts.removeAll { $0.id == id }
+            if !document.removedAccountIDs.contains(id) { document.removedAccountIDs.append(id) }
             document.updatedAt = now
             try save(document)
             return document
@@ -257,6 +270,7 @@ public struct AccountConfigurationStore: Sendable {
             changed = true
         }
         for var account in defaultDocument(now: now).accounts where hasRetiredSource && account.connectorKind == .codexRateLimits {
+            guard !document.removedAccountIDs.contains(account.id) else { continue }
             guard !document.accounts.contains(where: {
                 $0.id == account.id || $0.effectiveCodexClient == account.effectiveCodexClient
             }) else { continue }

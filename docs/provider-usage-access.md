@@ -543,6 +543,11 @@ Removal changes only panel configuration membership, under the shared refresh
 lock; it does not delete Keychain credentials, bookmarks, CLI logins or home
 folders. A busy refresh asks the user to retry. Removed entries stay removed after
 reloading, and the next full refresh drops their live lanes while history remains.
+Local removal markers prevent the retired-source setup migration from recreating
+an explicitly removed default entry. Account controls pause while removal commits
+so a queued name/toggle edit cannot restore the old whole list. Re-adding an
+OpenAI or Claude entry requires selecting its source or signing in again; retained
+credentials are not automatically attached to the new entry.
 Use Add OpenAI Account, Add Claude Account or Add Antigravity Account to set up a
 replacement. Antigravity has one configured bridge source at a time.
 
