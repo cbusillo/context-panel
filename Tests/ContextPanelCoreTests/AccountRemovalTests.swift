@@ -52,8 +52,8 @@ import Testing
     defer { try? FileManager.default.removeItem(at: root) }
     let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let original = AccountConfigurationStore.defaultDocument(now: now)
-    try store.save(original)
+    try store.save(AccountConfigurationStore.defaultDocument(now: now))
+    let original = store.load(now: now).document
     let lock = SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock"))
     let first = try #require(original.accounts.first)
     let blocked = try await lock.withLock { try await store.removeAccount(id: first.id, lock: lock, now: now) }

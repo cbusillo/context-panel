@@ -127,16 +127,20 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public var accounts: [LocalProviderAccountConfiguration]
     public var removedAccountIDs: [String]
     public var removedDisplayIDs: [String]?
+    public var removalUserScope: CompanionCloudKitUserScope?
+    public var publisherID: String?
 
-    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil) {
+    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil) {
         schemaVersion = 1
         self.updatedAt = updatedAt
         self.accounts = accounts
         self.removedAccountIDs = removedAccountIDs
         self.removedDisplayIDs = removedDisplayIDs
+        self.removalUserScope = removalUserScope
+        self.publisherID = publisherID
     }
 
-    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs }
+    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, removalUserScope, publisherID }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -145,6 +149,8 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         accounts = try container.decode([LocalProviderAccountConfiguration].self, forKey: .accounts)
         removedAccountIDs = try container.decodeIfPresent([String].self, forKey: .removedAccountIDs) ?? []
         removedDisplayIDs = try container.decodeIfPresent([String].self, forKey: .removedDisplayIDs)
+        removalUserScope = try container.decodeIfPresent(CompanionCloudKitUserScope.self, forKey: .removalUserScope)
+        publisherID = try container.decodeIfPresent(String.self, forKey: .publisherID)
     }
 }
 
@@ -179,7 +185,11 @@ public struct AccountConfigurationStore: Sendable {
             ? configurationURL
             : fallbackConfigurationURL
         guard let loadURL, FileManager.default.fileExists(atPath: loadURL.path) else {
-            return AccountConfigurationLoadResult(document: Self.defaultDocument(now: now), status: .unknown)
+            var document = Self.defaultDocument(now: now)
+            document.publisherID = UUID().uuidString.lowercased()
+            do { try save(document) }
+            catch { return AccountConfigurationLoadResult(document: Self.defaultDocument(now: now), status: .failure, errorMessage: error.localizedDescription) }
+            return AccountConfigurationLoadResult(document: document, status: .unknown)
         }
 
         do {
@@ -193,7 +203,8 @@ public struct AccountConfigurationStore: Sendable {
             }
             let migratedDocument = Self.migratedDocument(document, now: now)
             if loadURL != configurationURL || migratedDocument != document || Self.containsLegacyConnectorRawValue(data) {
-                try? save(migratedDocument)
+                do { try save(migratedDocument) }
+                catch { return AccountConfigurationLoadResult(document: document, status: .failure, errorMessage: error.localizedDescription) }
             }
             return AccountConfigurationLoadResult(document: migratedDocument, status: .healthy)
         } catch {
@@ -215,17 +226,22 @@ public struct AccountConfigurationStore: Sendable {
     /// Removes panel membership only. No credential store, bookmark store or provider home is accessed.
     public func removeAccount(
         id: String, lock: SnapshotRefreshLock = .appDefault(), now: Date = Date(),
-        storedSnapshot: StoredUsageSnapshot? = nil
+        storedSnapshot: StoredUsageSnapshot? = nil, userScope: CompanionCloudKitUserScope? = nil
     ) async throws -> AccountConfigurationDocument? {
         try await lock.withLock {
             let result = load(now: now)
             guard result.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
             var document = result.document
             guard let account = document.accounts.first(where: { $0.id == id }) else { return document }
+            if document.removalUserScope != userScope {
+                document.removedDisplayIDs = []
+                document.removalUserScope = userScope
+            }
             var removed = Set(document.globalRemovedDisplayIDs)
-            removed.insert(AccountDisplayMetadata.safeID(account.provider, id))
-            if let storedSnapshot {
-                for entry in AccountDisplayMetadata.companion(configuration: [account], stored: storedSnapshot, now: now) {
+            if id.hasPrefix("local-") { removed.insert(AccountDisplayMetadata.safeID(account.provider, id)) }
+            let membershipSnapshot = storedSnapshot ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
+            do {
+                for entry in AccountDisplayMetadata.companion(configuration: [account], stored: membershipSnapshot, now: now, publisherID: document.publisherID) {
                     removed.insert(entry.id)
                 }
             }
@@ -239,20 +255,26 @@ public struct AccountConfigurationStore: Sendable {
     }
 
     /// Called under the refresh lock, before reading provider credentials.
-    public func applyGlobalRemovals(_ ids: [String], storedSnapshot: StoredUsageSnapshot?, now: Date) throws {
+    public func applyGlobalRemovals(_ ids: [String], storedSnapshot: StoredUsageSnapshot?, now: Date, userScope: CompanionCloudKitUserScope? = nil) throws {
         let result = load(now: now)
-        guard result.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+        guard result.status != .failure else { return }
         var document = result.document
-        let removed = Set(document.globalRemovedDisplayIDs).union(ids)
-        let rows = storedSnapshot.map { AccountDisplayMetadata.companion(configuration: document.accounts, stored: $0, now: now) } ?? []
+        let changedScope = userScope != nil && document.removalUserScope != nil && document.removalUserScope != userScope
+        let existing = changedScope ? [] : document.globalRemovedDisplayIDs
+        let removed = Set(existing).union(ids)
+        guard !removed.isEmpty || changedScope else { return }
+        if let userScope { document.removalUserScope = userScope }
+        let membershipSnapshot = storedSnapshot ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
+        let rows = AccountDisplayMetadata.companion(configuration: document.accounts, stored: membershipSnapshot, now: now, publisherID: document.publisherID)
         let removedConfigurations = Set(rows.filter { removed.contains($0.id) }.map(\.configurationID))
         let deleted = document.accounts.filter {
             removed.contains(AccountDisplayMetadata.safeID($0.provider, $0.id))
-                || removedConfigurations.contains(AccountDisplayMetadata.safeID($0.provider, $0.id))
+                || removedConfigurations.contains(AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID))
         }
         document.accounts.removeAll { account in deleted.contains { $0.id == account.id } }
         document.removedAccountIDs = Array(Set(document.removedAccountIDs).union(deleted.map(\.id))).sorted()
         document.removedDisplayIDs = removed.sorted()
+        if result.status == .unknown && deleted.isEmpty { return }
         if document != result.document { document.updatedAt = now; try save(document) }
     }
 
@@ -333,6 +355,13 @@ public struct AccountConfigurationStore: Sendable {
             account.isEnabled = false
             document.accounts.append(account)
             changed = true
+        }
+        if document.publisherID == nil && document.accounts.contains(where: { $0.isSharedDefaultMembership }) {
+            document.publisherID = UUID().uuidString.lowercased()
+            // Retire only old anonymous setup placeholders, never an observed login.
+            let empty = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
+            let legacyPlaceholders = AccountDisplayMetadata.companion(configuration: document.accounts.filter { $0.isSharedDefaultMembership }, stored: empty, now: now)
+            document.removedDisplayIDs = Array(Set(document.globalRemovedDisplayIDs).union(legacyPlaceholders.map(\.id))).sorted()
         }
         if changed {
             document.updatedAt = now
@@ -509,9 +538,13 @@ private struct UnavailableGoogleAntigravitySnapshotLoader: GoogleAntigravityQuot
 
 public extension AccountConfigurationDocument {
     var globalRemovedDisplayIDs: [String] {
-        // Old removals retain their opaque configuration key after the upgrade.
-        Array(Set(removedDisplayIDs ?? []).union(removedAccountIDs.flatMap { id in
-            Provider.allCases.map { AccountDisplayMetadata.safeID($0, id) }
-        })).sorted()
+        // Historical local removals are not new global deletion decisions.
+        Array(Set(removedDisplayIDs ?? [])).sorted()
+    }
+}
+
+public extension LocalProviderAccountConfiguration {
+    var isSharedDefaultMembership: Bool {
+        AccountConfigurationStore.defaultDocument(now: .distantPast).accounts.contains { $0.id == id }
     }
 }

@@ -1177,10 +1177,22 @@ public struct CompanionSyncPublisher: Sendable {
         publishedAt: Date = Date(),
         observedBurnRates: [String: ObservedBurnRate] = [:]
     ) async -> CompanionSyncSaveResult {
+        let scope = await remoteStore?.currentUserScope()
+        if let scope, let accountConfigurationURL {
+            let store = AccountConfigurationStore(configurationURL: accountConfigurationURL)
+            let result = store.load(now: publishedAt)
+            if result.status == .healthy, result.document.removalUserScope == nil,
+               !result.document.globalRemovedDisplayIDs.isEmpty {
+                var configuration = result.document
+                configuration.removalUserScope = scope
+                try? store.save(configuration)
+            }
+        }
         let document = makeDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
-            observedBurnRates: observedBurnRates
+            observedBurnRates: observedBurnRates,
+            removalUserScope: scope
         )
         var result = publish(document: document)
         if let remoteStore {
@@ -1195,13 +1207,14 @@ public struct CompanionSyncPublisher: Sendable {
         let remote = await remoteStore.load(now: now)
         guard remote.outcome.succeeded, let document = remote.result.document,
               let scope = await remoteStore.currentUserScope(), document.cloudKitUserScope == scope else { return }
-        try accountStore.applyGlobalRemovals(document.removedDisplayIDs ?? [], storedSnapshot: storedSnapshot, now: now)
+        try accountStore.applyGlobalRemovals(document.removedDisplayIDs ?? [], storedSnapshot: storedSnapshot, now: now, userScope: scope)
     }
 
     private func makeDocument(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date,
-        observedBurnRates: [String: ObservedBurnRate]
+        observedBurnRates: [String: ObservedBurnRate],
+        removalUserScope: CompanionCloudKitUserScope? = nil
     ) -> CompanionSyncDocument {
         let configuration = accountConfigurationURL.flatMap { url in
             (try? Data(contentsOf: url)).flatMap {
@@ -1214,10 +1227,14 @@ public struct CompanionSyncPublisher: Sendable {
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettingsStore.load(),
+            cloudKitUserScope: removalUserScope,
             accountDisplayMetadata: configuration.map {
-                AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt)
+                AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt, publisherID: $0.publisherID)
             },
-            removedDisplayIDs: configuration?.globalRemovedDisplayIDs
+            removedDisplayIDs: configuration.flatMap { configuration in
+                guard configuration.removalUserScope == nil || removalUserScope == nil || configuration.removalUserScope == removalUserScope else { return nil }
+                return configuration.globalRemovedDisplayIDs
+            }
         )
     }
 
@@ -1611,7 +1628,7 @@ private enum CompanionAccountIdentity {
 }
 
 public extension AccountDisplayMetadata {
-    static func companion(configuration: [LocalProviderAccountConfiguration], stored: StoredUsageSnapshot, now: Date) -> [Self] {
+    static func companion(configuration: [LocalProviderAccountConfiguration], stored: StoredUsageSnapshot, now: Date, publisherID: String? = nil) -> [Self] {
         let local = Self.local(configuration: configuration, stored: stored, now: now)
         return local.map { entry in
             let limit = stored.snapshot.limits.first { $0.provider == entry.provider && safeID($0.provider, $0.accountID) == entry.id }
@@ -1620,12 +1637,26 @@ public extension AccountDisplayMetadata {
             let rawID = limit?.accountID ?? report?.accountID ?? configuration.first {
                 safeID($0.provider, $0.id) == entry.configurationID
             }?.id ?? entry.id
-            let companionID = CompanionAccountIdentity.id(provider: entry.provider, accountID: rawID,
+            let setup = configuration.first { safeID($0.provider, $0.id) == entry.configurationID }
+            let placeholderID = setup.map { companionMembershipKey($0, publisherID: publisherID) } ?? rawID
+            let companionID = CompanionAccountIdentity.id(provider: entry.provider,
+                accountID: limit == nil && report == nil ? placeholderID : rawID,
                 configuredAccountID: limit?.configuredAccountID ?? report?.configuredAccountID)
-            return Self(id: safeID(entry.provider, companionID), configurationID: entry.configurationID,
+            return Self(id: safeID(entry.provider, companionID),
+                        configurationID: setup.map { companionConfigurationID($0, publisherID: publisherID) } ?? entry.configurationID,
                         provider: entry.provider, label: entry.label, isEnabled: entry.isEnabled,
                         showInWidgets: entry.showInWidgets, useLast: entry.useLast,
                         sourceConfigured: entry.sourceConfigured, readState: entry.readState)
         }
+    }
+}
+
+public extension AccountDisplayMetadata {
+    static func companionMembershipKey(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
+        guard account.isSharedDefaultMembership, let publisherID else { return account.id }
+        return "publisher:" + publisherID + ":" + account.id
+    }
+    static func companionConfigurationID(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
+        safeID(account.provider, companionMembershipKey(account, publisherID: publisherID))
     }
 }
