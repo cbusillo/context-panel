@@ -4,10 +4,11 @@
       "candidateMatched": true,
       "caseKind": "positive",
       "change": {
+        "changeDigest": "ff6f7c72311b79de663e85a3c5cc7c04d15dffa3eee25b93de2aa50b594530a2",
         "commits": [
           {
+            "changeDigest": "1944e8f13ba9e02807766dbcba5b4fc59fed90e342ea4d251e85c7893768b455",
             "commit": "0a7656663719bf6ed897c14affc61594f13a9298",
-            "patchDigest": "d490d6d22a0e0ac3e29ddd9942c19bdcfdad0e48dc29fb45d046ae2642ef4441",
             "paths": [
               "ContextPanel.xcodeproj/project.pbxproj",
               "Sources/ContextPanelTV/ContextPanelTVApp.swift",
@@ -20,7 +21,6 @@
             ]
           }
         ],
-        "patchDigest": "6cd9d4c7c366f34b7076f47ba4766d6bb6a4ddf7984aeb1aa664aca28f4f3a54",
         "paths": [
           "ContextPanel.xcodeproj/project.pbxproj",
           "Sources/ContextPanelTV/ContextPanelTVApp.swift",
@@ -57,8 +57,8 @@
       "candidateMatched": false,
       "caseKind": "negative-near-miss",
       "change": {
+        "changeDigest": "68586a80533f008d6a9e3293f7c6f2808910c9c6df4b28e40f35d1c410e0690a",
         "commit": "98809d1b5987962ead8b1da77786de5d538e0d7d",
-        "patchDigest": "5e807e592107b39297933b850797f9ccac2d8dc531f67b864d6f6e4f77bc47f8",
         "paths": [
           "Sources/ContextPanelTV/ContextPanelTVApp.swift",
           "Tests/ScriptsTests/test_validation_gallery_target_graph.py",
@@ -87,10 +87,11 @@
       "candidateMatched": true,
       "caseKind": "positive",
       "change": {
+        "changeDigest": "e388f3039c92e28f3a19280c389d4ef1631e3333aa8d281ddfdb4c124fe66fec",
         "commits": [
           {
+            "changeDigest": "62c214082e05d5f5d6a4dbc996cb102b4f3100b8edc4f1cd50be6b1adfb53fc6",
             "commit": "4a57aeac5b681137d072287988ea6b0b73364ef8",
-            "patchDigest": "4f3fe30e5b32b2c24a589f6844672637b082e8c224057288fe21b94ae4e03950",
             "paths": [
               "Sources/ContextPanelTV/ContextPanelTVApp.swift",
               "Tests/ScriptsTests/test_validation_gallery_target_graph.py",
@@ -98,8 +99,8 @@
             ]
           },
           {
+            "changeDigest": "f63d76e3f84622437545897887672549f31bfa51355240a577b2367a298bba28",
             "commit": "ae960d0ceae69b52890d4fd5ce856f65ddd9689d",
-            "patchDigest": "ccba89cf0717a4362a49588926ca80be3a73d313622ee7ec6521169a69bada88",
             "paths": [
               "Sources/ContextPanelTV/ContextPanelTVApp.swift",
               "Sources/ContextPanelTV/TVPreviewFixtures.swift",
@@ -109,7 +110,6 @@
             ]
           }
         ],
-        "patchDigest": "26cf73beb243d13b361e2066d3d26414c4a38f20a3ea604a368423f5fe4207a7",
         "paths": [
           "Sources/ContextPanelTV/ContextPanelTVApp.swift",
           "Sources/ContextPanelTV/TVPreviewFixtures.swift",
@@ -154,8 +154,8 @@
       "candidateMatched": false,
       "caseKind": "negative-near-miss",
       "change": {
+        "changeDigest": "c5487c25ea2b12597aa00930eba90430a9e16bcad226c404994018392bea6e2c",
         "commit": "6c55b6060fc2749571a0fcb638e693a038b55c52",
-        "patchDigest": "0c0fce9fc51d0c2e5157be1f7cb4e30df638992d87916bec432fa03aea08912b",
         "paths": [
           "Sources/ContextPanelTV/ContextPanelTVApp.swift",
           "Tests/ScriptsTests/test_validation_gallery_target_graph.py",
@@ -184,10 +184,11 @@
       "candidateMatched": true,
       "caseKind": "positive",
       "change": {
+        "changeDigest": "170e3600ca15aebde1bbd3b975600b9052fe900a4e4ebf96b623001ea5c8214d",
         "commits": [
           {
+            "changeDigest": "66685daf34e8cbe18c3569f9d448da0dd047a4e03c11a3df6d0213ec40be40b7",
             "commit": "c0bc64a90b4d5561f0cd242e0db153076b77f1e5",
-            "patchDigest": "5b233731578a9e5d071b14ab4eb2f076366a9d7225eee3f8cc29dbb8f7a4c718",
             "paths": [
               "Sources/ContextPanelTV/TVSystemSurfaces.swift",
               "Sources/ContextPanelTVSupport/TVTopShelfDocument.swift",
@@ -196,7 +197,6 @@
             ]
           }
         ],
-        "patchDigest": "af3b1a961a6af18352782dc54e8178ba8a7964b753828fbcb5d12f8121d60a70",
         "paths": [
           "Sources/ContextPanelTV/TVSystemSurfaces.swift",
           "Sources/ContextPanelTVSupport/TVTopShelfDocument.swift",
@@ -240,8 +240,8 @@
       "candidateMatched": false,
       "caseKind": "negative-near-miss",
       "change": {
+        "changeDigest": "63fb4cd1897f9bfac324e9a36e6b36a5cd99daee7ca56ae01705ed0118dde725",
         "commit": "426eab772bd9f3953b337cf6432ec2bee149059e",
-        "patchDigest": "c37ae419e1aa2412ae6674c4566d3b6192d790c13a6995b2776c5be93c09088b",
         "paths": [
           "Sources/ContextPanelTVSupport/TVTopShelfDocument.swift",
           "Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift",
@@ -271,10 +271,11 @@
       "candidateMatched": true,
       "caseKind": "positive",
       "change": {
+        "changeDigest": "615d8b5fad1032f57754fce9ecd3923a631773f60d3ffe2faffd4a1e97ad7d6c",
         "commits": [
           {
+            "changeDigest": "82e5ede6bc90c5ba56e9cf1a9d3f6b4a23ca5a643aa5f519b42e84d7a562311e",
             "commit": "f3f7a8ee9f2c5c2f0753398331d72eeedd5ef3a1",
-            "patchDigest": "806de0f92373b7ba82d0e2dc6646c1fc6bebf4251d3c271b211d31d094c458fd",
             "paths": [
               "Config/ContextPanelWatch.entitlements",
               "Config/ContextPanelWatchAppStore.entitlements",
@@ -293,7 +294,6 @@
             ]
           }
         ],
-        "patchDigest": "030d8aecb915e6e883d9e6fb9d5108f6150300a34ad25ac1d7d4a55a4160385c",
         "paths": [
           "Config/ContextPanelWatch.entitlements",
           "Config/ContextPanelWatchAppStore.entitlements",
@@ -342,8 +342,8 @@
       "candidateMatched": false,
       "caseKind": "negative-near-miss",
       "change": {
+        "changeDigest": "90ab8e14fc19f8132863ffc6ce9c63b813d7ee29d7f1e32aebe2721e8831a2c1",
         "commit": "23fefedb02262c0ac17843009ebccdc462bd376c",
-        "patchDigest": "3b34ead625ee56e5ee3ac64d0475c59307a1572b5e4e75cfb996f9f73e6ffc8c",
         "paths": [
           "Sources/ContextPanelWatch/ContextPanelWatchApp.swift",
           "Sources/ContextPanelWatchSupport/WatchCompanionLoader.swift",
@@ -373,10 +373,9 @@
       ]
     }
   ],
-  "corpusDigest": "55e8a646a60d4b1a4f147bb4a30bd5744776c8dadd9c3467cfe3b8eeba97eeff",
-  "corpusVersion": 6,
+  "corpusDigest": "b79d23544da2f6e3ad376b7114c3b126996d4109d4c2ce4959c93cee17e2cc76",
+  "corpusVersion": 7,
   "curatedThroughCommit": "a93ab1fb94bb56fe6600ca68810841610d7e5702",
-  "gitVersion": "2.55.0",
   "residualRisks": [
     {
       "affectedSurfaces": [
@@ -417,26 +416,6 @@
       "id": "literal-matchers-and-oracle-supersets",
       "mitigation": "Treat matchers as fixed regression examples, inspect each compiled rejection stage, review oracle supersets explicitly, and add representative content-stage cases before generalizing candidate detection.",
       "riskClass": "over-triggered-policy"
-    },
-    {
-      "affectedSurfaces": [
-        "tvos.app",
-        "tvos.top-shelf",
-        "watchos.app",
-        "watchos.complication"
-      ],
-      "citations": [
-        {
-          "anchor": "macos-26",
-          "kind": "repository-anchor",
-          "path": ".github/workflows/ci.yml"
-        }
-      ],
-      "consequence": "The entire commit gate and CI job fail closed when a developer or runner does not provide the exact pinned Git compiler version.",
-      "evidenceGap": "Byte-identical historical patch rendering is not claimed across Git versions, including hosted fork runners and upgraded local toolchains.",
-      "id": "pinned-git-toolchain-availability",
-      "mitigation": "Keep the version explicit, update it only with reviewed artifact regeneration, and provision matching Git before any commit-gate or CI run.",
-      "riskClass": "toolchain-dependency"
     },
     {
       "affectedSurfaces": [
@@ -538,12 +517,12 @@
       "riskClass": "historical-evidence-loss"
     }
   ],
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "summary": {
     "caseCount": 8,
     "negativeNearMissCount": 4,
     "positiveCount": 4,
-    "residualRiskCount": 8
+    "residualRiskCount": 7
   },
   "surfacePolicyDigest": "b664a2a099223207144f7b75c3be98dff8f552aabf3225db0b3e4534b3eee273"
 }

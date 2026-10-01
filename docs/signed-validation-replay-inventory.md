@@ -199,8 +199,8 @@ the production manifest comparator, release gate, or surface-policy resolver.
 Each confirmed public-record incident binds its positive input to the exact
 implementation commit that is the second parent of its cited pull-request
 merge. Candidate policies use strict changed-path and diff-content regex
-matchers against those historical diffs; the compiler derives every positive
-path and patch digest rather than accepting curator-authored positive paths.
+matchers against those historical changes; the compiler derives every positive
+path and change digest rather than accepting curator-authored positive paths.
 Each incident also carries one same-surface negative near-miss as a full
 historical commit evaluated by the same policy. Near-miss boundaries derive
 their baseline evidence from the surface policy and must reduce physical
@@ -215,21 +215,24 @@ build, and neither is placement evidence.
 The compiler accepts only compact public-safe descriptors, validates exact
 pull-request citation objects (number, merge commit, and implementation commit)
 against the local repository, and requires every cited commit to be an ancestor
-of the curation cutoff. Historical diffs, repository anchors, and the surface
+of the curation cutoff. Historical changes, repository anchors, and the surface
 policy are all resolved from that cutoff rather than mutable `HEAD` or worktree
 state. It rejects absolute paths after punctuation, file URLs, standard bearer
 or basic authorization values, labeled credentials, high-confidence standalone
 provider tokens, email-like and provider account identifiers, UUIDs,
 device-specific data, and raw receipt fields. The same scan runs against
-compiled output, which keeps only derived paths and digests, never raw patches.
+compiled output, which keeps only derived paths and digests, never file contents.
 Historical citation validation requires complete Git history, so CI checks out
-with `fetch-depth: 0`. The source pins the Git compiler to `2.55.0`; fork CI
-downloads the checksum-pinned upstream source archive and builds that exact
-compiler, while every runner reports installed and required versions on a
-mismatch. The compiler uses a scrubbed environment plus explicit diff,
-signature, path-order, and attribute settings. Unsupported, over-triggered,
-unrepresented, and live-policy-drift coverage remain residual risks rather
-than invented positives. Corpus evidence expectations stay bound to the
+with `fetch-depth: 0`. The compiler reads Git objects rather than rendered
+patches, so any Git version gives the same result: each change digest covers
+the changed paths, modes, and blob object IDs from `git diff-tree`. Diff-content
+matchers run against added lines, meaning the lines a new blob holds more
+copies of than the old one, each prefixed with `+`. A line that only moves
+within a file is not added, and binary blobs contribute no lines. The compiler
+uses a scrubbed environment that ignores ambient Git configuration, replace
+objects, and lazy fetches, and it rejects repository-local grafts.
+Unsupported, over-triggered, unrepresented, and live-policy-drift coverage
+remain residual risks rather than invented positives. Corpus evidence expectations stay bound to the
 curation-cutoff policy; operators must compare live evidence semantics before
 generalizing historical replay results.
 
