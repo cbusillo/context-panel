@@ -6843,8 +6843,8 @@ struct AccountCapacityCard: View {
                                 Text("\(resets.availableCount - dates.count) reset credit expiry dates unknown")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
-                        } else if row.provider == .openAI {
-                            Text("Reset credits unknown").font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        } else if row.provider == .openAI || row.provider == .anthropic {
+                            Text("Banked resets unknown").font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
                     }
                     if row.id != rows.last?.id { Divider() }
@@ -6858,16 +6858,16 @@ struct AccountCapacityCard: View {
     }
 
     private func stateText(_ row: AccountCapacity) -> String {
-        guard row.isEnabled else { return "Off" }
-        if row.isNotConnected { return "Not connected · check Settings" }
-        switch row.status {
-        case .failure: return "Unavailable · check Settings"
+        switch row.state {
+        case .off: return "Off"
+        case .notConnected: return "Not connected · check Settings"
+        case .unavailable: return "Unavailable · check Settings"
         case .unknown: return "Unknown · check Settings"
         case .stale: return "Stale · refresh needed"
-        case .loading: return "Refreshing"
+        case .refreshing: return "Refreshing"
         case .limited: return "Limited"
-        case .close: return "Close to limit"
-        case .healthy: return "Available"
+        case .closeToLimit: return "Close to limit"
+        case .available: return "Available"
         }
     }
 

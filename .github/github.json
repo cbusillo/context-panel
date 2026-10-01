@@ -19,6 +19,7 @@
     "providerUsageAccess": "docs/provider-usage-access.md",
     "multiAccountSetup": "docs/provider-usage-access.md#multiple-local-account-entries",
     "codexSessionQuota": "docs/provider-usage-access.md#per-account-codex-session-quota",
+    "agentAccountSnapshot": "docs/provider-usage-access.md#agent-readable-account-snapshot",
     "repoSettings": "docs/repo-settings.md"
   },
   "qualityGate": {

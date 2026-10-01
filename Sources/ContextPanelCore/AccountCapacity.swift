@@ -15,6 +15,21 @@ public struct AccountCapacity: Identifiable, Sendable {
             || (report == nil && limits.isEmpty))
     }
 
+    /// Shared by the panel and the read-only agent projection.
+    public var state: AccountCapacityState {
+        guard isEnabled else { return .off }
+        if isNotConnected { return .notConnected }
+        return switch status {
+        case .failure: .unavailable
+        case .unknown: .unknown
+        case .stale: .stale
+        case .loading: .refreshing
+        case .limited: .limited
+        case .close: .closeToLimit
+        case .healthy: .available
+        }
+    }
+
     public static func rows(
         configuration: [LocalProviderAccountConfiguration],
         snapshot: UsageSnapshot,
@@ -39,8 +54,10 @@ public struct AccountCapacity: Identifiable, Sendable {
                 let limits = matchingLimits.filter { $0.accountID == id }
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
                 let expired = limits.contains { ($0.resetsAt ?? .distantFuture) <= now }
-                let stale = (report.map { now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false)
-                    || limits.contains { limit in limit.lastUpdatedAt.map { now.timeIntervalSince($0) > SnapshotFreshness.appMaximumAge } ?? false }
+                let stale = (report.map { $0.generatedAt > now.addingTimeInterval(60)
+                    || now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false)
+                    || limits.contains { limit in limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
+                        || now.timeIntervalSince($0) > SnapshotFreshness.appMaximumAge } ?? false }
                 let status: UsageStatus = !account.isEnabled ? .unknown
                     : report?.status == .failure ? .failure
                     : stale || expired ? .stale
@@ -54,6 +71,10 @@ public struct AccountCapacity: Identifiable, Sendable {
             }
         }
     }
+}
+
+public enum AccountCapacityState: String, Codable, Sendable {
+    case available, closeToLimit, limited, unknown, stale, refreshing, unavailable, notConnected, off
 }
 
 public enum AccountBurnRateEstimator {

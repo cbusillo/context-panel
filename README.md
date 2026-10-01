@@ -117,6 +117,19 @@ OpenAI accounts. The retired Gemini CLI / legacy Code Assist probe and Claude
 status-line probe have been removed. Claude limits are refreshed through the
 Context Panel-owned Claude OAuth usage connector.
 
+Agents can read the panel's saved account view without credentials:
+
+```sh
+swift run ContextPanelAccountSnapshot
+```
+
+This read-only command emits versioned JSON from the canonical App Group store.
+It includes configured accounts that are disconnected, unavailable, disabled or
+stale, per-window usage/burn/natural resets, and reported banked resets. It does
+not refresh providers or change configuration. Unknown values stay null; inspect
+each account's state and observation time before relying on its capacity. See the
+[agent snapshot contract](docs/provider-usage-access.md#agent-readable-account-snapshot).
+
 For Google Antigravity, Context Panel uses AGY's documented custom status-line
 command as an opt-in local bridge. The signed refresh agent accepts only the
 documented quota allowlist, writes a sanitized App Group snapshot, and never

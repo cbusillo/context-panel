@@ -495,6 +495,70 @@ Preferred v1 connector scope:
 
 ## Product Decisions
 
+### Anthropic account and banked-reset findings (2026-10-01)
+
+Each Claude account uses its own Context Panel OAuth connection. The existing
+**Add Claude Account** control creates an independent Keychain identity; connect
+each entry separately. Signing into Claude Code or Desktop does not connect that
+entry. The signed publisher's normalized snapshot was observed to contain one
+healthy Claude account with session and weekly utilization/natural reset times;
+its configuration had no second Claude entry. This does not verify a second
+account, and a candidate build has not yet passed signed native acceptance.
+
+Anthropic's [limit reset documentation](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset)
+places banked reset offers and their expiry in web/Desktop **Settings → Usage**.
+These offers are separate from the weekly natural reset schedule and usage
+credit balances. No supported OAuth banked-reset schema or read-only details
+endpoint was verified in this investigation. The absence of a reset summary is
+**Banked resets unknown**, including on a connected Claude account. It is not a
+zero balance. Do not infer an offer expiry from `seven_day.resets_at`, a spend
+balance, an issue comment or a sibling account. Manual observation entry remains
+an owner decision on #719; no manual balances or speculative API fields were
+added. Existing reported reset summaries retain their observation time, coverage
+and known dates.
+
+### Agent-readable account snapshot
+
+`swift run ContextPanelAccountSnapshot` emits a versioned JSON projection of
+the canonical App Group `Context Panel` store. `--storage-root <directory>`
+selects an explicit store containing `accounts.json` and
+`Snapshots/current-snapshot.json`; it is useful for fixtures or another private
+operator-selected root. The command reads saved normalized history for burn
+estimates. It requires ordinary filesystem read access; it adds no app
+entitlement and cannot bypass macOS access restrictions.
+
+Schema 1 has `readAt`, `savedAt` and `accounts`. Each row has an opaque local ID,
+provider, redacted local label, shared panel `state`, observation time, windows,
+reported usage credits and a separate `bankedResets` object. Account states are
+`available`, `closeToLimit`, `limited`, `unknown`, `stale`, `refreshing`,
+`unavailable`, `notConnected` and `off`. Every configured non-retired account is
+included; the reader does not invent unconfigured accounts. Membership and
+states use `AccountCapacity`, and burn uses `AccountBurnRateEstimator`, matching
+the All Accounts card.
+
+Windows include their own observation time, unit, used/limit quantities,
+`naturalResetAt` and nullable `burn` (units per hour, observation duration,
+sample count). Burn is null when there is insufficient history or the account
+is not current. Old/future observations and expired natural-reset windows are
+not live capacity. Banked-reset state is independent of usage-window freshness:
+the summary contains provider-reported count, coverage, observation time and
+known expiries. Missing banked data has a null summary and unknown state;
+`unknownExpiryCount` states how many dates are missing, including for older
+publishers whose complete coverage stored only the earliest expiry.
+expired or stale reported offers retain their historical quantities/dates with
+stale state. A reported zero remains distinguishable from no observation.
+
+No credentials, source paths, raw provider responses, diagnostics, account emails
+or transcript/cache payloads are exported. IDs are local opaque projections,
+not provider identifiers. The command does not access Keychain, auth files,
+bookmarks, session files or provider endpoints; it performs no writes, migration
+or refresh. It exits nonzero with a bounded diagnostic if the required files
+cannot be decoded or have unsupported schemas. Missing history means unknown
+burn, not a fabricated zero pace. JSON success proves only a saved-data read;
+consumers must check state and timestamps. The catalog skill can consume this
+contract without provider credentials. Never publish private live exports in
+issues or PRs.
+
 - Treat `unknown`, `manual`, `observed`, and `official` as distinct confidence
   levels in the data model and UI.
 - Never overload quota pressure to answer whether the next provider request can
