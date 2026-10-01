@@ -273,7 +273,8 @@ private struct CompanionRootView: View {
                             }
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            AccountOverviewPanel(overview: accountOverview(at: context.date),
+                            AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
+                                compact: horizontalSizeClass != .regular,
                                 openAccount: { accountPath.append(.account($0.id)) },
                                 openDeadlines: { accountPath.append(.deadlines) })
                         }
@@ -331,7 +332,8 @@ private struct CompanionRootView: View {
                                 openAccount: { accountPath.append(.account($0)) })
                         case let .account(id):
                             if let account = overview.accounts.first(where: { $0.id == id }) {
-                                AccountDetailPanel(account: account, overview: overview)
+                                AccountDashboardDetail(account: account, overview: overview, now: context.date,
+                                    compact: horizontalSizeClass != .regular)
                             } else { Text("Account is no longer in this snapshot.") }
                         }
                     }.padding(pagePadding)
@@ -611,8 +613,9 @@ private struct CompanionValidationGalleryPreview: View {
             case .overview:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                        AccountOverviewPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
-                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), openAccount: { _ in }, openDeadlines: {})
+                        AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                            compact: true, openAccount: { _ in }, openDeadlines: {})
                         DisclosureGroup("Settings, pace and sync details") {
                         VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         ContextPanelWidgetContentView(

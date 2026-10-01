@@ -27,6 +27,8 @@ public enum AccountTerms {
     public static let noEligibleAccount = "No account has room in every window"
     public static let addFirstAccount = "Add your first account"
     public static let unknown = "—"
+    /// A provider read that failed, where no saved account value stands in.
+    public static let notUpdating = "Not updating"
 
     /// "out Fri ~11 PM": a projection, so to the hour.
     public static func runOut(_ date: Date, now: Date) -> String { "out " + AccountPaceText.approximately(date, now: now) }
@@ -167,4 +169,23 @@ public enum AccountGlyphs {
     public static let bankedExpiry = "diamond.fill"
     public static let runOut = "exclamationmark.triangle.fill"
     public static let useNext = "arrow.right.circle.fill"
+}
+
+public extension UsageStatus {
+    /// Provider-level status in account words, so lane and account surfaces say the same thing.
+    var accountState: AccountCapacityState {
+        switch self {
+        case .healthy: .available
+        case .close: .closeToLimit
+        case .limited: .limited
+        case .stale: .stale
+        case .failure: .unavailable
+        case .loading: .refreshing
+        case .unknown: .unknown
+        }
+    }
+
+    /// Lane-level status word. Accounts showing a saved value say "Saved"; a failed read with
+    /// nothing saved says "Not updating".
+    var displayText: String { self == .failure ? AccountTerms.notUpdating : accountState.displayText }
 }

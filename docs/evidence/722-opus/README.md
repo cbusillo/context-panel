@@ -6,6 +6,39 @@ for comparison with the account-first design on
 feedback on #722: the current build went simple and lost information, and it
 is not beautiful.
 
+## One source for every surface
+
+Chris chose this direction on #722 with one condition: terms, amounts and style
+consistent across all apps and surfaces. `Sources/ContextPanelCore/AccountPresentation.swift`
+is that source:
+
+- `AccountTerms`: every word ("% left", "Tightest", "Use next", "Banked resets",
+  "out Fri ~11 PM", "measuring", "NEXT", "LAST").
+- `AccountNumbers`: whole percent left (never "used" on a glance surface) and pace as `3.6×`.
+- `AccountPaceText` (in `AccountPace.swift`): dates. Time only today, weekday and
+  time within a week, month and day beyond; projections to the hour with `~`;
+  countdowns `in 1d 0h`.
+- `AccountTone` and `AccountColorToken`: headroom tones and sRGB light/dark tokens.
+  Each UI module turns tokens into `Color` and defines no colour values of its own.
+- `AccountCapacityState.displayText`, `glyphName`, `colorToken`, and
+  `UsageStatus.accountState`: one set of status words and marks. Top Shelf, TV runway
+  and Watch lane status words now map through it: "Saved" where a saved value is shown (not
+  "Saved data" or "stale"), and "Not updating" for a failed read with nothing saved (not
+  "Needs attention" or "refresh failed").
+
+| Surface | Views | Shows |
+| --- | --- | --- |
+| Mac overview and detail | `AccountDashboardPanel`, `AccountDashboardDetail` | everything |
+| Mac and iPhone/iPad widgets | `AccountGlanceWidget` | up to six accounts; small: rings; medium: both windows; large: pace and three deadlines |
+| iPhone app | the Mac views with `compact: true`; iPad keeps the table | everything, stacked |
+| Watch app | `WatchAccountRow`, `WatchBankedLine` (WatchSupport) | percent, both windows, run-out or reset, next deadline |
+| Watch complications | `WatchAccountRectangularFace`, `WatchAccountCircularFace` (WatchSupport) | tightest account, both windows, next deadline or run-out; inline and corner keep their lane text |
+| Apple TV | `TVAccountBoard`, `TVAccountTile`, `TVAccountAnswers` (TVSupport) | everything but the week lane; fixed row heights keep the large percentages on one baseline |
+| Agent snapshot | `AgentAccountSnapshot.Display` | the same strings per account, plus `answers.tightestAccountID` |
+
+Companions omit pace when the synced payload carries no per-account burn (today it does
+not), rather than saying "measuring" while the Mac shows a number.
+
 ## Rationale
 
 The account stays the unit, as #722 agreed. What changes is how much each
@@ -86,7 +119,8 @@ the window length and reset time, so they work without history.
 
 ## Screenshots
 
-`before/` is #733's head `2109f20`; `after/` is this branch. Both come from
+`before/` is #733's head `2109f20`; `after/` is this branch. `surfaces/` adds the
+iPhone, Watch and Apple TV captures from the same fixture. Both come from
 `Tools/ContextPanelSharedViewRenderer` with the same synthetic six-account
 fixture (fixed time Thu Oct 1, 2026, 2:07 PM UTC) at 2× scale:
 

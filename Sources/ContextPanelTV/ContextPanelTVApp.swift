@@ -115,6 +115,7 @@ private struct TVRootView: View {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         TVAccountOverviewContent(
                             overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                            now: context.date,
                             presentationModeRawValue: $presentationModeRawValue,
                             isRefreshing: model.isLoading, notice: visibleNoticeMessage,
                             onRefresh: { model.reload() },
@@ -229,6 +230,7 @@ private struct TVRootView: View {
 
 struct TVAccountOverviewContent: View {
     let overview: AccountOverview
+    var now = Date()
     @Binding var presentationModeRawValue: String
     let isRefreshing: Bool
     let notice: String?
@@ -252,34 +254,22 @@ struct TVAccountOverviewContent: View {
                     Button("Details", action: openDetails)
                 }
                 if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
-                HStack(alignment: .top, spacing: 32) {
-                    if let closest = overview.closest {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Closest to limit").foregroundStyle(.secondary)
-                            Text(closest.metadata.label + " · " + closest.remainingText + " left").font(.headline)
-                        }
-                    }
-                    ForEach(Provider.allCases) { provider in
-                        if let next = overview.useNext(provider: provider) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Use next · " + provider.accountDisplayName).foregroundStyle(.secondary)
-                                Text(next.metadata.label).font(.headline)
-                            }
-                        }
-                    }
-                }
+                TVAccountAnswers(overview: overview, now: now)
                 if overview.accounts.isEmpty { Text("Add an account on your Mac, then refresh.") }
+                let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
                     ForEach(overview.accounts) { account in
-                        TVAccountOverviewCard(account: account) { openAccount(account.id) }
+                        TVAccountOverviewCard(account: account, isNext: nextIDs.contains(account.id), now: now) {
+                            openAccount(account.id)
+                        }
                     }
                 }
                 if let deadline = overview.nextDeadline {
                     Button(action: openDeadlines) {
                         HStack {
-                            Text("Next banked expiry · " + deadline.label)
+                            Text(AccountTerms.bankedResetExpires + " · " + deadline.label)
                             Spacer()
-                            Text(ContextPanelDateFormatting.accountReset(deadline.expiresAt))
+                            Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
                         }
                     }
                 } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
@@ -292,31 +282,16 @@ struct TVAccountOverviewContent: View {
 
 private struct TVAccountOverviewCard: View {
     let account: AccountOverview.Account
+    let isNext: Bool
+    let now: Date
     let open: () -> Void
     @FocusState private var isFocused: Bool
     var body: some View {
+        // Focus changes only the outline, so percentages never move.
         Button(action: open) {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(account.metadata.provider.accountDisplayName).font(.system(size: 18)).foregroundStyle(.secondary)
-                    Text(account.metadata.label).font(.system(size: 24, weight: .semibold)).lineLimit(2)
-                }.frame(height: 82, alignment: .top)
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(account.remainingText).font(.system(size: 76, weight: .semibold)).monospacedDigit()
-                    Text("left").font(.system(size: 24)).foregroundStyle(.secondary)
-                }.frame(height: 94, alignment: .top)
-                ProgressView(value: account.remainingFraction ?? 0).tint(TVTheme.providerColor(account.metadata.provider))
-                Text(account.state.displayText + (account.metadata.useLast ? " · Use last" : ""))
-                    .font(.system(size: 20)).lineLimit(1)
-                Text(account.resetDisplayText).font(.system(size: 18)).foregroundStyle(.secondary).lineLimit(2)
-                    .frame(height: 52, alignment: .top)
-                Text(account.bankedResets.map { "\(account.bankedState == .available ? "" : "Last seen · ")\($0.availableCount) banked" } ?? "Banked resets unknown")
-                    .font(.system(size: 18)).foregroundStyle(.secondary).lineLimit(1)
-            }
-            .padding(24).frame(maxWidth: .infinity, alignment: .leading)
-            .background(TVTheme.providerColor(account.metadata.provider).opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(isFocused ? Color.white : Color.white.opacity(0.16), lineWidth: isFocused ? 4 : 1))
-            .accessibilityElement(children: .ignore).accessibilityLabel(account.accessibilityText)
+            TVAccountTile(account: account, isNext: isNext, now: now)
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(isFocused ? Color.white : Color.white.opacity(0.16),
+                                                                  lineWidth: isFocused ? 4 : 1))
         }.buttonStyle(.plain).focusEffectDisabled().focused($isFocused)
     }
 }
@@ -333,13 +308,13 @@ private struct TVAccountDetailContent: View {
                     ForEach(account.windows) { window in
                         VStack(alignment: .leading, spacing: 12) {
                             Text(window.label).font(.headline)
-                            Text(window.remainingFraction.map { (window.assumption == nil ? "" : "≈ ") + "\(Int(($0 * 100).rounded()))% left" } ?? "Unknown").font(.title)
+                            Text((window.assumption == nil ? "" : "≈ ") + AccountNumbers.percentWithSign(window.remainingFraction) + " " + AccountTerms.left).font(.title)
                             Text(window.naturalResetAt.map { (window.assumption == nil ? "Reset " : "Assumed after reset ") + ContextPanelDateFormatting.accountReset($0) } ?? "Reset unknown")
                             if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
                         }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
                             .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
                     }
-                    Text(account.bankedResets.map { "\($0.availableCount) banked · \(account.bankedState == .available ? "available" : "last seen")" } ?? "Banked resets unknown")
+                    Text(account.bankedResets.map { AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) } ?? AccountTerms.bankedResets + " " + AccountTerms.unknown)
                     if (account.unknownExpiryCount ?? 0) > 0 { Text("Some banked reset dates are unknown.").foregroundStyle(.secondary) }
                 } else { Text(accountID == nil ? "Deadlines" : "Account no longer in this snapshot").font(.largeTitle) }
                 ForEach(overview.deadlines.filter { accountID == nil || $0.accountID == accountID }) { deadline in
@@ -2170,22 +2145,5 @@ private struct TVFocusButtonStyle: ButtonStyle {
 }
 
 private extension UsageStatus {
-    var tvStatusLabel: String {
-        switch self {
-        case .healthy:
-            "Available"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Stale"
-        case .unknown:
-            "Unknown"
-        case .failure:
-            "Needs attention"
-        case .loading:
-            "Refreshing"
-        }
-    }
+    var tvStatusLabel: String { displayText }
 }

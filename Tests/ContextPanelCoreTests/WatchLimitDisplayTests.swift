@@ -999,7 +999,7 @@ import Testing
     #expect(row.resetText(now: now) == ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!, compact: true))
     #expect(
         row.accessibilitySentence(direction: .remaining, now: now)
-            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, stale. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Showing saved data, last synced 2 hours ago."
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, saved. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Showing saved data, last synced 2 hours ago."
     )
 }
 
@@ -1031,7 +1031,7 @@ import Testing
     #expect(row.status == .failure)
     #expect(
         row.accessibilitySentence(direction: .remaining, now: now)
-            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, refresh failed. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Not synced."
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, not updating. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Not synced."
     )
 }
 

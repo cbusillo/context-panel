@@ -1,9 +1,11 @@
 import AppKit
 import ContextPanelCore
 import ContextPanelSettingsUI
+import ContextPanelTVSupport
 import ContextPanelWidgetUI
 import ContextPanelValidationFixtures
 import ContextPanelValidationGalleryUI
+import ContextPanelWatchSupport
 import Foundation
 import SwiftUI
 import WidgetKit
@@ -21,6 +23,19 @@ import WidgetKit
 private let canvas = CGSize(width: 1_024, height: 768)
 
 private let unsupportedPresentationStatus: Int32 = 3
+
+// Account surfaces at their real point sizes: Mac pane, iPhone 15 Pro, Apple Watch 45 mm, Apple TV.
+private let accountPresentationSizes: [String: CGSize] = [
+    "account-overview": CGSize(width: 900, height: 720),
+    "account-deadlines": CGSize(width: 900, height: 720),
+    "account-detail": CGSize(width: 900, height: 720),
+    "phone-overview": CGSize(width: 393, height: 1_520),
+    "phone-detail": CGSize(width: 393, height: 852),
+    "watch-app": CGSize(width: 198, height: 560),
+    "watch-rectangular": CGSize(width: 184, height: 74),
+    "watch-circular": CGSize(width: 76, height: 76),
+    "tv-board": CGSize(width: 1_920, height: 1_080),
+]
 
 // Pixels per point. 1 by default; review screenshots use 2 to match a Retina display.
 private let pixelScale: Int = {
@@ -48,7 +63,7 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
         index += 2
     }
     let deadlines = values["--presentation"] == "reset-deadlines"
-    let accountPresentation = ["account-overview", "account-deadlines", "account-detail"].contains(values["--presentation"] ?? "") ? values["--presentation"] : nil
+    let accountPresentation = accountPresentationSizes.keys.contains(values["--presentation"] ?? "") ? values["--presentation"] : nil
     let sixAccounts = values["--scenario"] == "six-accounts"
     let presentationValue = deadlines || accountPresentation != nil ? "widget" : values["--presentation"] ?? ""
     if let scenario = values["--scenario"], scenario != "four-offers-long-name" && scenario != "six-accounts" { fail("unsupported scenario") }
@@ -92,7 +107,7 @@ private func renderSize(route: ValidationGalleryRoute, scenario: Bool, deadlines
 @MainActor
 private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bool, accountPresentation: String?, sixAccounts: Bool) -> Data? {
     let isDark = route.appearance == .dark
-    let size = accountPresentation != nil ? CGSize(width: 900, height: 720) : renderSize(route: route, scenario: scenario, deadlines: deadlines)
+    let size = accountPresentation.flatMap { accountPresentationSizes[$0] } ?? renderSize(route: route, scenario: scenario, deadlines: deadlines)
     let view: AnyView
     if accountPresentation != nil || sixAccounts {
         let now = ContextPanelDateFormatting.date(from: "2026-10-01T14:07:00Z")!
@@ -105,6 +120,27 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
             view = AnyView(AccountDeadlinesPanel(overview: overview, openAccount: { _ in }).padding(24))
         case "account-detail":
             view = AnyView(AccountDashboardDetail(account: overview.accounts[0], overview: overview, now: now).padding(24))
+        case "phone-overview":
+            view = AnyView(AccountDashboardPanel(overview: overview, now: now, compact: true, openAccount: { _ in },
+                openDeadlines: {}).padding(16))
+        case "phone-detail":
+            view = AnyView(AccountDashboardDetail(account: overview.accounts[0], overview: overview, now: now, compact: true).padding(16))
+        case "watch-app":
+            let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
+            view = AnyView(VStack(alignment: .leading, spacing: 8) {
+                Text(AccountTerms.accounts).font(.system(size: 15, weight: .semibold))
+                if let deadline = overview.nextDeadline { WatchBankedLine(deadline: deadline, now: now) }
+                ForEach(overview.accounts) { account in
+                    WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: now)
+                        .padding(8).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }.padding(.horizontal, 6).foregroundStyle(.white))
+        case "watch-rectangular":
+            view = AnyView(WatchAccountRectangularFace(overview: overview, now: now).padding(4).foregroundStyle(.white))
+        case "watch-circular":
+            view = AnyView(WatchAccountCircularFace(overview: overview).foregroundStyle(.white))
+        case "tv-board":
+            view = AnyView(TVAccountBoard(overview: overview, now: now).padding(.horizontal, 72).padding(.vertical, 48))
         default:
             view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
                 displayPreferences: .defaultPreferences,
@@ -142,7 +178,9 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     let content = view
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .foregroundStyle(isDark ? Color.white : Color.black)
-        .background(deadlines || accountPresentation != nil ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
+        .background(accountPresentation?.hasPrefix("watch") == true ? Color.black
+            : accountPresentation == "tv-board" ? Color(.sRGB, red: 0.07, green: 0.08, blue: 0.10)
+            : deadlines || accountPresentation != nil ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
         .environment(\.colorScheme, isDark ? .dark : .light)
         // The gallery prints its fixed presentation time; pin how it is formatted so
         // the image does not depend on the host's region or time zone.

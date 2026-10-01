@@ -405,7 +405,7 @@ import Testing
     let anthropic = try #require(document.cards.first { $0.provider == .anthropic })
 
     #expect(anthropic.status == .failure)
-    #expect(anthropic.headline == "Needs attention")
+    #expect(anthropic.headline == "Not updating")
 }
 
 @Test func tvCompanionSyncCachePolicyKeepsTheNewestDocument() {

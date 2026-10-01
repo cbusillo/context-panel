@@ -588,22 +588,5 @@ struct TVTopShelfRenderer {
         }
     }
 
-    private func statusText(_ status: UsageStatus) -> String {
-        switch status {
-        case .healthy:
-            "Available"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Saved"
-        case .unknown:
-            "Unknown"
-        case .failure:
-            "Needs attention"
-        case .loading:
-            "Refreshing"
-        }
-    }
+    private func statusText(_ status: UsageStatus) -> String { status.displayText }
 }
