@@ -434,48 +434,58 @@ struct SettingsPane: View {
             if let nameInputError { Text(nameInputError).foregroundStyle(.red) }
             Section(AccountTerms.accounts) {
                 ForEach(model.settingsAccounts) { account in
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
                             ProviderBadge(provider: account.provider)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(AccountTerms.name).font(.caption).foregroundStyle(CPTheme.secondaryText)
-                                TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
-                                    .labelsHidden().accessibilityLabel("Local account name")
-                                    .focused($focusedName, equals: .account(account.id))
-                                    .onSubmit { commitName(.account(account.id)) }
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(minWidth: 220, maxWidth: .infinity)
+                            TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
+                                .labelsHidden().accessibilityLabel("Local account name")
+                                .focused($focusedName, equals: .account(account.id))
+                                .onSubmit { commitName(.account(account.id)) }
+                                .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 160, maxWidth: .infinity)
+                            HStack(spacing: 6) {
+                                Button { model.moveAccount(account.id, offset: -1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
+                                    Image(systemName: "arrow.up")
+                                }
+                                .accessibilityLabel("Move account up")
+                                .help("Move account up")
+                                .disabled(model.settingsAccounts.first?.id == account.id)
+                                Button { model.moveAccount(account.id, offset: 1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
+                                    Image(systemName: "arrow.down")
+                                }
+                                .accessibilityLabel("Move account down")
+                                .help("Move account down")
+                                .disabled(model.settingsAccounts.last?.id == account.id)
+                                Button(AccountTerms.removeAccount, role: .destructive) {
+                                    pendingRemovalID = account.id
+                                }
                             }
+                            .buttonStyle(.bordered)
+                            .fixedSize()
+                        }
+                        HStack(spacing: 20) {
                             Toggle(AccountTerms.showInWidgets, isOn: Binding(
                                 get: { account.showInWidgets ?? account.isEnabled },
                                 set: { model.setWidgetAccountVisibility(account.id, isVisible: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
+                            .toggleStyle(.checkbox)
                             .fixedSize()
-                            .toggleStyle(.switch)
-                            .controlSize(.regular)
+                            Toggle(AccountTerms.useLast, isOn: Binding(
+                                get: { account.useLast ?? false },
+                                set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                            ))
+                            .toggleStyle(.checkbox)
+                            .fixedSize()
+                            Spacer(minLength: 0)
                         }
-                        HStack(spacing: 12) {
-                            Button { model.moveAccount(account.id, offset: -1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
-                                Label("Move up", systemImage: "arrow.up")
+                        HStack(spacing: 10) {
+                            if account.connectorKind == .codexRateLimits {
+                                Button(model.hasSavedAuthorization(account) ? AccountTerms.changeCodexHome : AccountTerms.connectCodexHome) {
+                                    model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .fixedSize()
                             }
-                            .accessibilityLabel("Move account up")
-                            .disabled(model.settingsAccounts.first?.id == account.id)
-                            Button { model.moveAccount(account.id, offset: 1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
-                                Label("Move down", systemImage: "arrow.down")
-                            }
-                            .accessibilityLabel("Move account down")
-                            .disabled(model.settingsAccounts.last?.id == account.id)
-                            Button(AccountTerms.removeAccount, role: .destructive) {
-                                pendingRemovalID = account.id
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.regular)
-                        }
-                        Toggle(AccountTerms.useLast, isOn: Binding(
-                            get: { account.useLast ?? false },
-                            set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
-                        )).toggleStyle(.checkbox)
-                        HStack(spacing: 12) {
                             if !account.isEnabled {
                                 Text("Paused")
                                     .font(.system(size: 11, weight: .semibold))
@@ -558,9 +568,6 @@ struct SettingsPane: View {
                             }
                         }
                         if account.connectorKind == .codexRateLimits {
-                            Button(model.hasSavedAuthorization(account) ? AccountTerms.changeCodexHome : AccountTerms.connectCodexHome) {
-                                model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
-                            }.buttonStyle(.borderedProminent)
                             if let warning = model.codexSourceWarning(for: account) {
                                 Text(warning).font(.caption).foregroundStyle(CPTheme.statusColor(.stale))
                             }
@@ -645,7 +652,7 @@ struct SettingsPane: View {
                         }
                     }
                     .controlSize(.regular)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 6)
                 }
                 ForEach(model.retiredSettingsAccounts) { account in
                     HStack {
