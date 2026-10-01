@@ -26,6 +26,9 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
         guard let path else { return nil }
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
         let home = url.deletingLastPathComponent().lastPathComponent
+        if url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == ".codex-accounts" {
+            return .codex
+        }
         if home == ".codex-lab" || home.hasPrefix(".codex-lab-") { return .codexLab }
         if home == ".codex" || home.hasPrefix(".codex-") { return .codex }
         if home == ".code" || home.hasPrefix(".code-") { return .everyCode }

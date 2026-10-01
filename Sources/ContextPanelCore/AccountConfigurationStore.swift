@@ -196,15 +196,6 @@ public struct AccountConfigurationStore: Sendable {
                 codexClient: .codex
             ),
             LocalProviderAccountConfiguration(
-                id: "openai-codex-lab-default",
-                provider: .openAI,
-                connectorKind: .codexRateLimits,
-                displayName: "Codex Lab",
-                isEnabled: false,
-                authPath: CodexClient.codexLab.homeDirectory().appending(path: "auth_accounts.json").path,
-                codexClient: .codexLab
-            ),
-            LocalProviderAccountConfiguration(
                 id: "claude-oauth-default",
                 provider: .anthropic,
                 connectorKind: .claudeOAuthUsage,

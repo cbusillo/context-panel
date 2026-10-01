@@ -501,6 +501,9 @@ struct SettingsPane: View {
                         }
                         if account.connectorKind == .codexRateLimits {
                             HStack {
+                                Button("Select Codex Home") {
+                                    model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
+                                }
                                 Button(account.codexQuotaPath == nil ? "Select Codex Sessions" : "Change Sessions Folder") {
                                     model.authorizeCodexQuota(for: account) {
                                         refreshAfterAuthorization()
@@ -514,6 +517,8 @@ struct SettingsPane: View {
                                 Text("Session quota · " + ConnectorRedactor.redactedPath(account.codexQuotaPath ?? ""))
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                                 Text("Use a folder belonging only to this account. Shared or switched-login history cannot identify whose quota was recorded.")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                                Text("For shared session history or automatic banked resets, use Select Codex Home.")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             } else {
                             HStack {
@@ -2278,6 +2283,42 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
         accounts[index].codexQuotaPath = nil
         saveAccounts()
+    }
+
+    func authorizeCodexHome(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
+        let panel = NSOpenPanel()
+        panel.message = "Select this account's Codex home (.codex or a home inside .codex-accounts). Context Panel uses its existing quota API connector, including banked resets. Login files are never displayed or logged."
+        panel.prompt = "Connect Home"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = ContextPanelLocations.realUserHomeDirectory()
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let home = panel.url,
+                  let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+            let scoped = home.startAccessingSecurityScopedResource()
+            defer { if scoped { home.stopAccessingSecurityScopedResource() } }
+            do {
+                let updated = try CodexHomeBinding.bind(account: accounts[index], home: home, siblings: accounts)
+                guard let path = updated.authPath else { return }
+                let auth = URL(fileURLWithPath: path)
+                try bookmarkStore.createAndStoreBookmark(for: auth, path: path)
+                guard bookmarkStore.canResolveBookmark(for: path) else {
+                    errorMessage = "Codex home access could not be saved. Select it again."
+                    return
+                }
+                // Rebinding must not leave a previously imported login ahead of the
+                // newly selected source in the existing credential-first loader.
+                try credentialStore.delete(accountID: account.id)
+                accounts[index] = updated
+                saveAccounts()
+                errorMessage = nil
+                onVerified()
+            } catch {
+                errorMessage = ConnectorRedactor.safeErrorDescription(error)
+            }
+        }
     }
 
     func authorizeCodexQuota(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {

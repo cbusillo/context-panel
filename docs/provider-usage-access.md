@@ -517,6 +517,26 @@ an owner decision on #719; no manual balances or speculative API fields were
 added. Existing reported reset summaries retain their observation time, coverage
 and known dates.
 
+### Current Codex homes and OpenAI recovery
+
+In Mac Settings, **Select Codex Home** binds an account to a user-selected home
+containing `auth.json`. Select the main `.codex` home or an account-specific home
+inside `.codex-accounts`, then repeat for each additional OpenAI entry. Local
+nicknames remain independent of folder names. Paths remain configurable.
+The picker saves the existing read-only security-scoped bookmark for the auth
+file while the selected folder is accessible. It changes no entitlements.
+Rebinding clears that entry's imported credential so a previously cached login
+cannot override the newly selected source. The normal app/refresh-agent adapter
+then reads quota and automatic banked resets through the existing API routes.
+Credentials are never displayed or logged, and CLI homes/logins are unchanged.
+
+New default configuration no longer adds a Codex Lab source. Historical entries
+remain recoverable in Settings; select their current home or turn them off.
+Shared session history is not an account-attributed quota source; the three
+current homes were observed to resolve to one shared sessions directory.
+The sessions-only route remains available for genuinely separate histories,
+with explicit guidance to select a home for automatic banked-reset data.
+
 ### Agent-readable account snapshot
 
 `swift run ContextPanelAccountSnapshot` emits a versioned JSON projection of
