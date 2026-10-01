@@ -67,17 +67,10 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             negative = corpus_module._commit_change(incident["negativeNearMiss"]["commit"])
             self.assertTrue(evaluate_candidate_policy(incident["candidatePolicy"], positive)["matches"])
             self.assertFalse(evaluate_candidate_policy(incident["candidatePolicy"], negative)["matches"])
-            self.assertNotEqual(positive["patchDigest"], negative["patchDigest"])
+            self.assertNotEqual(positive["changeDigest"], negative["changeDigest"])
 
-    def test_git_version_and_scrubbed_lazy_fetch_are_enforced(self):
-        source = self.source()
-        source["gitVersion"] = "2.54.0"
-        with self.assertRaisesRegex(
-            CorpusError,
-            "installed Git version 2.55.0 does not match corpus-required version 2.54.0",
-        ):
-            self.compile_mutated(source)
-        completed = subprocess.CompletedProcess(["git", "--version"], 0, "git version 2.55.0\n", "")
+    def test_scrubbed_lazy_fetch_is_enforced(self):
+        completed = subprocess.CompletedProcess(["git", "--version"], 0, b"git version 0.0.0\n", b"")
         with mock.patch.object(corpus_module.subprocess, "run", return_value=completed) as run:
             corpus_module._git_output(["--version"])
         self.assertEqual(run.call_args.kwargs["env"]["GIT_NO_LAZY_FETCH"], "1")
@@ -91,19 +84,32 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
         for case in payload["cases"]:
             self.assertNotIn("patch", case["change"])
             self.assertTrue(case["change"]["paths"])
-            self.assertIn("patchDigest", case["change"])
+            self.assertIn("changeDigest", case["change"])
         for incident in self.source()["incidents"]:
             self.assertNotIn("positive", incident)
             self.assertNotIn("riskSignals", incident["candidatePolicy"])
 
-    def test_added_patch_lines_keep_source_content_starting_with_plus(self):
-        self.assertEqual(
-            corpus_module._added_patch_lines(
-                "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -0,0 +1 @@\n+++ value\n"
-                "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -0,0 +1 @@\n+normal\n"
-            ),
-            ["+++ value", "+normal"],
-        )
+    def test_added_lines_count_new_copies_and_skip_moves_and_binaries(self):
+        blobs = {
+            "old": b"moved\nkept\nrepeated\n",
+            "new": b"kept\n++ value\nrepeated\nmoved\nrepeated",
+            "binary": b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\n",
+        }
+        with mock.patch.object(
+            corpus_module, "_git_bytes", side_effect=lambda arguments: blobs[arguments[-1]]
+        ):
+            self.assertEqual(
+                corpus_module._added_lines(
+                    {"oldMode": "100644", "oldBlob": "old", "newMode": "100644", "newBlob": "new"}
+                ),
+                ["+++ value", "+repeated"],
+            )
+            self.assertEqual(
+                corpus_module._added_lines(
+                    {"oldMode": "000000", "oldBlob": "absent", "newMode": "100644", "newBlob": "binary"}
+                ),
+                [],
+            )
 
     def test_matcher_mutations_and_unsupported_paths_are_rejected(self):
         self.assert_invalid(
@@ -214,15 +220,10 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
                     info_attributes = clone / ".git/info/attributes"
                     info_attributes.parent.mkdir(parents=True, exist_ok=True)
                     info_attributes.write_text("*.swift -diff\n")
-                    with self.assertRaisesRegex(
-                        CorpusError,
-                        "repository-local Git attributes",
-                    ):
-                        compile_corpus(
-                            CORPUS_PATH,
-                            clone / "Config/ContextPanelSurfacePolicy.json",
-                        )
-                    info_attributes.unlink()
+                    self.assertEqual(
+                        compile_corpus(CORPUS_PATH, clone / "Config/ContextPanelSurfacePolicy.json"),
+                        baseline,
+                    )
                     grafts = clone / ".git/info/grafts"
                     grafts.write_text(f"{positive_commit} {replacement_commit}\n")
                     with self.assertRaisesRegex(
@@ -314,7 +315,7 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
         self.assertEqual(list(rejection_stages.values()).count("path-match"), 3)
         self.assertEqual(
             payload["summary"],
-            {"caseCount": 8, "negativeNearMissCount": 4, "positiveCount": 4, "residualRiskCount": 8},
+            {"caseCount": 8, "negativeNearMissCount": 4, "positiveCount": 4, "residualRiskCount": 7},
         )
         self.assertIn(
             "surface-policy-cutoff-drift",
@@ -476,6 +477,11 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             stale = Path(directory) / "compiled.json"
             stale.write_text("{}\n")
             with self.assertRaises(CorpusError):
+                check_compiled(CORPUS_PATH, SURFACE_POLICY_PATH, stale)
+            tampered = json.loads(COMPILED_PATH.read_text())
+            tampered["cases"][0]["change"]["changeDigest"] = "0" * 64
+            stale.write_bytes(render_json(tampered))
+            with self.assertRaisesRegex(CorpusError, "stale"):
                 check_compiled(CORPUS_PATH, SURFACE_POLICY_PATH, stale)
 
     def test_shared_view_accepts_gallery_or_physical_provenance_only(self):
