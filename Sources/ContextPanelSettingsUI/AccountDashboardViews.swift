@@ -44,8 +44,11 @@ public struct AccountDashboardPanel: View {
                 useNextCard
                 bankedCard
                 VStack(spacing: 10) {
-                    ForEach(overview.accounts) { account in
-                        Button { openAccount(account) } label: { compactCard(account) }.buttonStyle(.plain)
+                    ForEach(totals) { total in
+                        if total.isCombined { compactProviderCard(total) }
+                        ForEach(overview.accounts.filter { $0.metadata.provider == total.provider }) { account in
+                            Button { openAccount(account) } label: { compactCard(account) }.buttonStyle(.plain)
+                        }
                     }
                 }
                 legend
@@ -82,8 +85,11 @@ public struct AccountDashboardPanel: View {
                         .frame(width: 64, height: 64)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(account.metadata.label).font(.system(size: 13, weight: .semibold)).lineLimit(2)
-                            Text("\(account.metadata.provider.accountDisplayName) · \(account.limitingWindow?.label ?? "window")")
-                                .font(.system(size: 11)).foregroundStyle(palette.secondary)
+                            HStack(spacing: 5) {
+                                DashboardProviderMark(provider: account.metadata.provider, palette: palette, size: 13)
+                                Text("\(account.metadata.provider.accountDisplayName) · \(account.limitingWindow?.label ?? "window")")
+                            }
+                            .font(.system(size: 11)).foregroundStyle(palette.secondary)
                             if let reset = account.limitingWindow?.naturalResetAt {
                                 Text("Resets " + AccountPaceText.when(reset, now: now)).font(.system(size: 11)).monospacedDigit()
                             }
@@ -111,9 +117,14 @@ public struct AccountDashboardPanel: View {
                 ForEach(picks, id: \.1.id) { provider, account in
                     Button { openAccount(account) } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(provider.accountDisplayName).font(.system(size: 10.5, weight: .medium))
-                                .foregroundStyle(palette.secondary).frame(width: 46, alignment: .leading)
+                            HStack(spacing: 5) {
+                                DashboardProviderMark(provider: provider, palette: palette, size: 13)
+                                Text(provider.accountDisplayName).font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(palette.secondary)
+                            }
+                            .frame(width: 66, alignment: .leading)
                             Text(account.metadata.label).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                                .minimumScaleFactor(0.8)
                             Spacer(minLength: 4)
                             Text(account.remainingText).font(.system(size: 12.5, weight: .semibold)).monospacedDigit()
                         }
@@ -163,36 +174,96 @@ public struct AccountDashboardPanel: View {
     // MARK: Table
 
     private enum Column {
-        static let fiveHour: CGFloat = 112
         static let week: CGFloat = 132
+        static let fiveHour: CGFloat = 112
         static let pace: CGFloat = 96
         static let lane: CGFloat = 180
     }
 
+    private var totals: [AccountProviderTotal] { overview.providerTotals(now: now) }
+
+    private var weeklyColumns: Bool { overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 } }
+
+    /// Accounts grouped by provider, each group opened by its combined row; configured order within a group.
     private var table: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                Text("Account").frame(maxWidth: .infinity, alignment: .leading)
-                Text("5-hour").frame(width: Column.fiveHour, alignment: .leading)
-                Text("Week").frame(width: Column.week, alignment: .leading)
+                Text(AccountTerms.account).frame(maxWidth: .infinity, alignment: .leading)
+                Text(AccountTerms.longColumn(weekly: weeklyColumns)).frame(width: Column.week, alignment: .leading)
+                Text(AccountTerms.fiveHourLong).frame(width: Column.fiveHour, alignment: .leading)
                 Text(AccountTerms.pace).frame(width: Column.pace, alignment: .leading)
                 DashboardWeekAxis(now: now, palette: palette).frame(width: Column.lane)
             }
             .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(palette.tertiary)
             .padding(.horizontal, 14).padding(.vertical, 8)
-            Rectangle().fill(palette.line).frame(height: 1)
-            ForEach(overview.accounts) { account in
-                Button { openAccount(account) } label: { row(account) }.buttonStyle(.plain)
-                if account.id != overview.accounts.last?.id {
-                    Rectangle().fill(palette.line).frame(height: 1).padding(.leading, 14)
+            ForEach(totals) { total in
+                let members = overview.accounts.filter { $0.metadata.provider == total.provider }
+                VStack(spacing: 0) {
+                    if total.isCombined { providerRow(total) }
+                    ForEach(members) { account in
+                        if total.isCombined || account.id != members.first?.id {
+                            Rectangle().fill(palette.line).frame(height: 1).padding(.leading, 14)
+                        } else {
+                            Rectangle().fill(palette.line).frame(height: 1)
+                        }
+                        Button { openAccount(account) } label: { row(account, showsProvider: !total.isCombined) }.buttonStyle(.plain)
+                    }
+                }
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(palette.provider(total.provider)).frame(width: 3)
                 }
             }
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(palette.card))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.line, lineWidth: 1))
     }
 
-    private func row(_ account: AccountOverview.Account) -> some View {
+    /// One provider's combined room: the sum of its current accounts, in the same columns as the rows.
+    private func providerRow(_ total: AccountProviderTotal) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            HStack(spacing: 8) {
+                DashboardProviderMark(provider: total.provider, palette: palette, size: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(total.provider.accountDisplayName).font(.system(size: 13, weight: .bold))
+                    Text(AccountTerms.combined + " · " + AccountTerms.accountCount(total))
+                        .font(.system(size: 10.5)).foregroundStyle(palette.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            meterCell(fraction: total.longRemaining, even: total.evenPaceRemaining, bold: true,
+                      trailing: total.burnPerHour.map { AccountTerms.burn($0) } ?? "")
+                .frame(width: Column.week)
+            meterCell(fraction: total.shortRemaining, even: nil, bold: false, trailing: "").frame(width: Column.fiveHour)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(palette.paceColor(total.paceRatio))
+                Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 10.5, weight: total.runOut == nil ? .regular : .medium))
+                    .monospacedDigit().foregroundStyle(total.runOut == nil ? palette.secondary : palette.bad).lineLimit(1)
+            }
+            .frame(width: Column.pace, alignment: .leading)
+            Color.clear.frame(width: Column.lane, height: 1)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .background(palette.provider(total.provider).opacity(colorScheme == .dark ? 0.10 : 0.06))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(total.accessibilityText(now: now))
+    }
+
+    private func meterCell(fraction: Double?, even: Double?, bold: Bool, trailing: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(AccountNumbers.percent(fraction)).font(.system(size: 17, weight: bold ? .bold : .medium)).monospacedDigit()
+                    .foregroundStyle(palette.color(AccountTone.forRemaining(fraction).textToken))
+                if fraction != nil { Text("%").font(.system(size: 10, weight: .medium)).foregroundStyle(palette.tertiary) }
+                Spacer(minLength: 4)
+                Text(trailing).font(.system(size: 10.5)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
+            }
+            DashboardMeter(fraction: fraction, even: even, palette: palette, height: 5)
+        }
+    }
+
+    private func row(_ account: AccountOverview.Account, showsProvider: Bool) -> some View {
         HStack(alignment: .center, spacing: 16) {
             HStack(alignment: .top, spacing: 8) {
                 DashboardStatusMark(state: account.state, palette: palette).padding(.top, 3)
@@ -203,13 +274,16 @@ public struct AccountDashboardPanel: View {
                         if account.metadata.useLast { DashboardTag(text: AccountTerms.last, color: palette.tertiary) }
                     }
                     HStack(spacing: 5) {
-                        Text(account.metadata.provider.accountDisplayName)
+                        if showsProvider {
+                            DashboardProviderMark(provider: account.metadata.provider, palette: palette, size: 13)
+                            Text(account.metadata.provider.accountDisplayName)
+                        }
                         if account.state.needsWord {
-                            Text("·")
+                            if showsProvider { Text("·") }
                             Text(account.stateText)
                         }
                         if let count = account.bankedResets?.availableCount, count > 0 {
-                            Text("·")
+                            if account.state.needsWord || showsProvider { Text("·") }
                             Image(systemName: AccountGlyphs.bankedSmall).font(.system(size: 8.5, weight: .bold))
                                 .foregroundStyle(palette.banked)
                             Text(AccountTerms.bankedCount(count, current: account.bankedState == .available))
@@ -219,8 +293,8 @@ public struct AccountDashboardPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            windowCell(account, window: account.shortWindow).frame(width: Column.fiveHour)
             windowCell(account, window: account.longWindow).frame(width: Column.week)
+            windowCell(account, window: account.shortWindow).frame(width: Column.fiveHour)
             paceCell(account).frame(width: Column.pace, alignment: .leading)
             DashboardWeekLane(account: account, deadlines: overview.deadlines.filter { $0.accountID == account.id },
                               now: now, palette: palette)
@@ -246,8 +320,7 @@ public struct AccountDashboardPanel: View {
                     .font(.system(size: window?.assumption == nil ? 10.5 : 9.5)).monospacedDigit().foregroundStyle(palette.secondary)
                     .lineLimit(window?.assumption == nil ? 1 : 2)
             }
-            if let window { DashboardMeter(window: window, now: now, palette: palette, height: 5) }
-            else { Capsule().fill(palette.track).frame(height: 5) }
+            DashboardMeter(fraction: window?.remainingFraction, even: window?.evenPaceRemaining(now: now), palette: palette, height: 5)
         }
     }
 
@@ -265,6 +338,7 @@ public struct AccountDashboardPanel: View {
                 }
             }
             HStack(spacing: 5) {
+                DashboardProviderMark(provider: account.metadata.provider, palette: palette, size: 14)
                 Text(account.metadata.provider.accountDisplayName)
                 if account.state.needsWord { Text("·"); Text(account.stateText) }
                 if let count = account.bankedResets?.availableCount, count > 0 {
@@ -279,8 +353,8 @@ public struct AccountDashboardPanel: View {
             }
             .font(.system(size: 12.5)).foregroundStyle(palette.secondary).lineLimit(1)
             HStack(spacing: 14) {
-                windowCell(account, window: account.shortWindow)
                 windowCell(account, window: account.longWindow)
+                windowCell(account, window: account.shortWindow)
             }
             DashboardWeekLane(account: account, deadlines: overview.deadlines.filter { $0.accountID == account.id },
                               now: now, palette: palette)
@@ -288,10 +362,45 @@ public struct AccountDashboardPanel: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 12).fill(palette.card))
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12).fill(palette.provider(account.metadata.provider))
+                .frame(width: 4)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.line, lineWidth: 1))
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
+    }
+
+    /// Phone width: one provider's combined room above its account cards.
+    private func compactProviderCard(_ total: AccountProviderTotal) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                DashboardProviderMark(provider: total.provider, palette: palette, size: 20)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(total.provider.accountDisplayName).font(.system(size: 17, weight: .bold))
+                    Text(AccountTerms.combined + " · " + AccountTerms.accountCount(total))
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                }
+                Spacer(minLength: 4)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(palette.paceColor(total.paceRatio))
+                    Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 12, weight: total.runOut == nil ? .regular : .medium))
+                        .monospacedDigit().foregroundStyle(total.runOut == nil ? palette.secondary : palette.bad).lineLimit(1)
+                }
+            }
+            HStack(spacing: 14) {
+                meterCell(fraction: total.longRemaining, even: total.evenPaceRemaining, bold: true,
+                          trailing: AccountTerms.longColumn(weekly: total.longIsWeekly))
+                meterCell(fraction: total.shortRemaining, even: nil, bold: false, trailing: AccountTerms.fiveHour)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(palette.provider(total.provider).opacity(colorScheme == .dark ? 0.16 : 0.08)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(total.accessibilityText(now: now))
     }
 
     private func paceCell(_ account: AccountOverview.Account) -> some View {
@@ -364,9 +473,12 @@ public struct AccountDashboardDetail: View {
                     }
                     if account.metadata.useLast { DashboardTag(text: AccountTerms.last, color: palette.tertiary) }
                 }
-                Text("\(account.metadata.provider.accountDisplayName) · \(account.stateText)"
-                     + (account.observedAt.map { " · updated " + AccountPaceText.when($0, now: now) } ?? ""))
-                    .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                HStack(spacing: 6) {
+                    DashboardProviderMark(provider: account.metadata.provider, palette: palette, size: 15)
+                    Text("\(account.metadata.provider.accountDisplayName) · \(account.stateText)"
+                         + (account.observedAt.map { " · updated " + AccountPaceText.when($0, now: now) } ?? ""))
+                }
+                .font(.system(size: 12)).foregroundStyle(palette.secondary)
             }
             if compact {
                 ForEach(account.orderedWindows) { window in windowCard(window) }
@@ -499,6 +611,23 @@ struct DashboardPalette {
         color(AccountTone.forRemaining(window.remainingFraction).textToken)
     }
     func paceColor(_ ratio: Double?) -> Color { color(AccountTone.forPace(ratio)) }
+    func provider(_ provider: Provider) -> Color { color(provider.colorToken) }
+    var markInk: Color { color(.markInk) }
+}
+
+/// The provider's letter on its colour: identity without reproducing a logo.
+struct DashboardProviderMark: View {
+    let provider: Provider
+    let palette: DashboardPalette
+    let size: CGFloat
+
+    var body: some View {
+        Text(provider.markLetter).font(.system(size: size * 0.64, weight: .bold, design: .rounded))
+            .foregroundStyle(palette.markInk)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(palette.provider(provider)))
+            .accessibilityHidden(true)
+    }
 }
 
 struct DashboardCard<Content: View>: View {
@@ -546,20 +675,20 @@ struct DashboardStatusMark: View {
 }
 
 struct DashboardMeter: View {
-    let window: AccountOverview.Window
-    let now: Date
+    let fraction: Double?
+    let even: Double?
     let palette: DashboardPalette
     let height: CGFloat
 
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
-            let fraction = window.remainingFraction ?? 0
+            let filled = fraction ?? 0
             ZStack(alignment: .leading) {
                 Capsule().fill(palette.track).frame(height: height)
-                Capsule().fill(palette.color(forRemaining: window.remainingFraction))
-                    .frame(width: max(fraction > 0 ? height : 0, width * fraction), height: height)
-                if let even = window.evenPaceRemaining(now: now) {
+                Capsule().fill(palette.color(forRemaining: fraction))
+                    .frame(width: max(filled > 0 ? height : 0, width * filled), height: height)
+                if let even {
                     Rectangle().fill(palette.primary.opacity(0.75)).frame(width: 1.5, height: height + 6)
                         .offset(x: min(width - 1.5, max(0, width * even - 0.75)))
                 }

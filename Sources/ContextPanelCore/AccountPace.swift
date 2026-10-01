@@ -46,10 +46,14 @@ public extension AccountOverview.Window {
 }
 
 public extension AccountOverview.Account {
-    /// Windows ordered shortest first so every row reads 5h, then Week.
+    /// Windows ordered longest first so every surface reads Week, then 5h: the weekly window
+    /// decides how much work is left; the 5-hour window only paces it.
     var orderedWindows: [AccountOverview.Window] {
-        windows.sorted { ($0.duration ?? .infinity) < ($1.duration ?? .infinity) }
+        windows.sorted { ($0.duration ?? .infinity) > ($1.duration ?? .infinity) }
     }
+
+    /// The two columns every glance surface shows, in reading order: long (Week), then short (5h).
+    var glanceWindows: [AccountOverview.Window] { [longWindow, shortWindow].compactMap { $0 } }
 
     /// The short column: a window under a day long.
     var shortWindow: AccountOverview.Window? {
@@ -89,6 +93,88 @@ public extension AccountOverview.Account {
         }
         if isNext { parts.append("use next") }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// One provider's accounts added together, the way you spend them: you move work to whichever
+/// account has room, so the provider's room is the sum of its accounts' room. Each account counts
+/// equally, because providers report percentages rather than plan sizes. Only accounts with a
+/// current reading count; saved, paused and unconnected accounts are listed but not added.
+public struct AccountProviderTotal: Equatable, Sendable, Identifiable {
+    public let provider: Provider
+    public let accountCount: Int
+    public let countedCount: Int
+    /// Mean share left of each counted account's long (weekly) window, and of its 5-hour window.
+    public let longRemaining: Double?
+    public let shortRemaining: Double?
+    public let longIsWeekly: Bool
+    /// Where the combined long window would sit now at an even spend.
+    public let evenPaceRemaining: Double?
+    /// Combined observed burn against the burn that would land every account on zero at its reset.
+    public let paceRatio: Double?
+    /// Combined burn as a share of the combined room per hour, comparable with `longRemaining`.
+    public let burnPerHour: Double?
+    /// When the combined room runs out at the combined burn, if that is before the first long reset.
+    public let runOut: Date?
+    /// The first natural long-window reset among the counted accounts, which refills the pool.
+    public let firstReset: Date?
+    public var id: String { provider.rawValue }
+}
+
+public extension AccountProviderTotal {
+    /// A combined row says something only when a provider has more than one account.
+    var isCombined: Bool { accountCount > 1 }
+
+    /// Spoken summary of the combined row, in the words the row shows.
+    func accessibilityText(now: Date) -> String {
+        var parts = [provider.accountDisplayName + " " + AccountTerms.combined.lowercased(), AccountTerms.accountCount(self)]
+        if let longRemaining {
+            parts.append(AccountTerms.longColumn(weekly: longIsWeekly) + " " + AccountNumbers.percentWithSign(longRemaining) + " " + AccountTerms.left)
+        }
+        if let shortRemaining { parts.append(AccountTerms.fiveHourLong + " " + AccountNumbers.percentWithSign(shortRemaining) + " " + AccountTerms.left) }
+        if let paceRatio { parts.append("pace " + AccountPaceText.ratio(paceRatio)) }
+        parts.append(AccountTerms.combinedOutlook(self, now: now))
+        return parts.joined(separator: ", ")
+    }
+}
+
+public extension AccountOverview {
+    /// Combined room, pace and run-out per provider, in provider order, for providers with accounts.
+    func providerTotals(now: Date) -> [AccountProviderTotal] {
+        Provider.allCases.compactMap { provider in
+            let all = accounts.filter { $0.metadata.provider == provider }
+            guard !all.isEmpty else { return nil }
+            let counted = all.filter(\.isReliable)
+            let longs = counted.compactMap(\.longWindow)
+            let shorts = counted.compactMap(\.shortWindow)
+            func mean(_ values: [Double]) -> Double? { values.isEmpty ? nil : values.reduce(0, +) / Double(values.count) }
+            let longRemaining = longs.count == counted.count ? mean(longs.compactMap(\.remainingFraction)) : nil
+            let evens = longs.compactMap { $0.evenPaceRemaining(now: now) }
+            // Pace and run-out need every counted account's burn; a partial sum would understate it.
+            var pace: Double?, burn: Double?, runOut: Date?
+            let resets = longs.compactMap(\.naturalResetAt).filter { $0 > now }
+            if !longs.isEmpty, longs.count == counted.count, resets.count == longs.count,
+               longs.allSatisfy({ $0.burnFractionPerHour != nil && $0.remainingFraction != nil }) {
+                let total = longs.reduce(0) { $0 + ($1.burnFractionPerHour ?? 0) }
+                let room = longs.reduce(0) { $0 + ($1.remainingFraction ?? 0) }
+                let even = longs.reduce(0) { sum, window in
+                    sum + (window.remainingFraction ?? 0) / max(1.0 / 60, (window.naturalResetAt ?? now).timeIntervalSince(now) / 3_600)
+                }
+                burn = total / Double(longs.count)
+                pace = even > 0 ? total / even : (total > 0 ? .infinity : 0)
+                if total > 0, let first = resets.min() {
+                    let date = now.addingTimeInterval(room / total * 3_600)
+                    runOut = date < first ? date : nil
+                }
+            }
+            return AccountProviderTotal(
+                provider: provider, accountCount: all.count, countedCount: counted.count,
+                longRemaining: longRemaining,
+                shortRemaining: shorts.count == counted.count ? mean(shorts.compactMap(\.remainingFraction)) : nil,
+                longIsWeekly: longs.allSatisfy { $0.duration == 7 * 86_400 },
+                evenPaceRemaining: evens.count == longs.count ? mean(evens) : nil,
+                paceRatio: pace, burnPerHour: burn, runOut: runOut, firstReset: resets.min())
+        }
     }
 }
 

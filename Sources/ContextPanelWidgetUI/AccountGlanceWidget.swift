@@ -50,41 +50,52 @@ struct AccountGlanceWidget: View {
 
     // MARK: Small
 
+    /// One row per provider: its mark, then a ring per account (tightest % left), so which
+    /// account belongs to which provider reads without words.
     private func ringGrid(_ overview: AccountOverview) -> some View {
-        let shown = Array(overview.accounts.prefix(6))
+        let shown = Set(overview.accounts.prefix(6).map(\.id))
         let names = overview.shortLabels
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 3)
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(AccountTerms.accounts).font(.system(size: 11, weight: .semibold))
+        let groups = Provider.allCases.map { provider in overview.accounts.filter { $0.metadata.provider == provider && shown.contains($0.id) } }
+            .filter { !$0.isEmpty }
+        let ring: CGFloat = groups.count > 2 ? 27 : 31
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(AccountTerms.widgetTitle).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 if overview.accounts.count > shown.count {
                     Text("+\(overview.accounts.count - shown.count)").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(palette.secondary)
                 }
                 Spacer(minLength: 0)
-                Text(AccountTerms.percentLeft).font(.system(size: 9, weight: .medium)).foregroundStyle(palette.tertiary)
+                Text(AccountTerms.percentLeft).font(.system(size: 8.5, weight: .medium)).foregroundStyle(palette.tertiary)
             }
-            LazyVGrid(columns: columns, alignment: .center, spacing: 6) {
-                ForEach(shown) { account in
-                    VStack(spacing: 3) {
-                        ZStack {
-                            GlanceRing(fraction: account.remainingFraction, color: palette.color(for: account),
-                                       track: palette.track, lineWidth: 3.5)
-                            Text(AccountNumbers.account(account, sign: false))
-                                .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
-                        }
-                        .frame(width: 34, height: 34)
-                        .overlay(alignment: .topTrailing) {
-                            if nextIDs.contains(account.id) {
-                                Circle().fill(palette.next).frame(width: 7, height: 7)
-                                    .overlay(Circle().stroke(palette.surface, lineWidth: 1.5))
+            ForEach(groups, id: \.first!.id) { group in
+                HStack(alignment: .top, spacing: 6) {
+                    GlanceProviderMark(provider: group[0].metadata.provider, palette: palette, size: 14).padding(.top, (ring - 14) / 2)
+                    ForEach(group) { account in
+                        VStack(spacing: 1) {
+                            ZStack {
+                                GlanceRing(fraction: account.remainingFraction, color: palette.color(for: account),
+                                           track: palette.track, lineWidth: 3)
+                                Text(AccountNumbers.account(account, sign: false))
+                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded)).monospacedDigit()
+                                    .minimumScaleFactor(0.8)
+                            }
+                            .frame(width: ring, height: ring)
+                            .overlay(alignment: .topTrailing) {
+                                if nextIDs.contains(account.id) {
+                                    Circle().fill(palette.next).frame(width: 6.5, height: 6.5)
+                                        .overlay(Circle().stroke(palette.surface, lineWidth: 1.5))
+                                }
+                            }
+                            if groups.count <= 2 {
+                                Text(names[account.id] ?? account.metadata.label).font(.system(size: 8, weight: .medium)).lineLimit(1)
+                                    .foregroundStyle(palette.secondary).frame(width: ring + 8)
                             }
                         }
-                        Text(names[account.id] ?? account.metadata.label).font(.system(size: 8.5, weight: .medium)).lineLimit(1)
-                            .truncationMode(.tail).foregroundStyle(palette.secondary)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
                     }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
+                    Spacer(minLength: 0)
                 }
             }
             Spacer(minLength: 0)
@@ -102,10 +113,10 @@ struct AccountGlanceWidget: View {
     private func spotlight(_ account: AccountOverview.Account, overview: AccountOverview) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 5) {
-                GlanceStatusMark(state: account.state, palette: palette)
+                GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 12)
                 Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 0)
-                ProviderTag(provider: account.metadata.provider, palette: palette)
+                GlanceStatusMark(state: account.state, palette: palette)
             }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(account.remainingText).font(.system(size: 30, weight: .semibold, design: .rounded)).monospacedDigit()
@@ -119,7 +130,7 @@ struct AccountGlanceWidget: View {
                         Text(AccountTerms.reset(window, now: now) ?? "—")
                             .font(.system(size: 9)).monospacedDigit().foregroundStyle(palette.secondary)
                     }
-                    GlanceMeter(window: window, now: now, palette: palette, height: 4)
+                    GlanceMeter(fraction: window.remainingFraction, even: window.evenPaceRemaining(now: now), palette: palette, height: 4)
                 }
             }
             Spacer(minLength: 0)
@@ -133,11 +144,12 @@ struct AccountGlanceWidget: View {
 
     private func medium(_ overview: AccountOverview) -> some View {
         let showsDeadline = showsBanked && overview.nextDeadline != nil
+        let combined = overview.providerTotals(now: now).filter(\.isCombined)
         let rows = Array(overview.accounts.prefix(showsDeadline ? 6 : 7))
         return VStack(alignment: .leading, spacing: 0) {
-            columnHeader(title: overview.accounts.count > rows.count ? "Accounts +\(overview.accounts.count - rows.count)" : "Accounts",
-                         trailing: "Next", compact: true)
-                .padding(.bottom, 4)
+            columnHeader(title: AccountTerms.widgetTitle + (overview.accounts.count > rows.count ? " +\(overview.accounts.count - rows.count)" : ""),
+                         trailing: AccountTerms.next.capitalized, compact: true)
+                .padding(.bottom, 3)
             ForEach(rows) { account in
                 Link(destination: links.account(account.metadata.provider, id: account.id)) {
                     compactRow(account)
@@ -145,6 +157,9 @@ struct AccountGlanceWidget: View {
                 .buttonStyle(.plain)
             }
             Spacer(minLength: 0)
+            if !combined.isEmpty {
+                combinedStrip(combined).padding(.bottom, 2)
+            }
             if showsDeadline, let deadline = overview.nextDeadline {
                 Link(destination: links.deadlines) { bankedLine(deadline, compact: false, total: overview.deadlines.filter { $0.state == .available }.count) }
                     .buttonStyle(.plain)
@@ -159,9 +174,10 @@ struct AccountGlanceWidget: View {
         HStack(spacing: 6) {
             Text(title).font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
             Group {
-                Text("5h").frame(width: 44, alignment: .leading)
-                Text(overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 } ? "Week" : AccountTerms.longWindow).frame(width: 52, alignment: .leading)
-                Text(trailing).frame(width: 98, alignment: .trailing)
+                Text(AccountTerms.longColumn(weekly: overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 }))
+                    .frame(width: 52, alignment: .leading)
+                Text(AccountTerms.fiveHour).frame(width: 44, alignment: .leading)
+                Text(trailing).frame(width: 84, alignment: .trailing)
             }
             .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
         }
@@ -169,17 +185,19 @@ struct AccountGlanceWidget: View {
 
     private func compactRow(_ account: AccountOverview.Account) -> some View {
         HStack(spacing: 6) {
-            GlanceStatusMark(state: account.state, palette: palette)
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
+                GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 12)
                 Text(account.metadata.label).font(.system(size: 10.5, weight: .medium)).lineLimit(1)
+                // The provider mark leads; status is marked only when it is not the normal one.
+                if account.state != .available { GlanceStatusMark(state: account.state, palette: palette) }
                 if nextIDs.contains(account.id) { NextMark(palette: palette) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            windowCell(account, window: fiveHour(account), width: 44)
             windowCell(account, window: weekly(account), width: 52)
-            trailingTime(account).frame(width: 98, alignment: .trailing)
+            windowCell(account, window: fiveHour(account), width: 44)
+            trailingTime(account).frame(width: 84, alignment: .trailing)
         }
-        .frame(height: 17)
+        .frame(height: 15.5)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
@@ -192,8 +210,7 @@ struct AccountGlanceWidget: View {
                 .font(.system(size: 10, weight: window?.id == account.limitingWindow?.id ? .bold : .regular).monospacedDigit())
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 20, alignment: .trailing)
-            if let window { GlanceMeter(window: window, now: now, palette: palette, height: 4) }
-            else { Capsule().fill(palette.track).frame(height: 4) }
+            GlanceMeter(fraction: window?.remainingFraction, even: window?.evenPaceRemaining(now: now), palette: palette, height: 4)
         }
         .frame(width: width)
     }
@@ -215,29 +232,69 @@ struct AccountGlanceWidget: View {
         }
     }
 
+    /// Combined room per provider with more than one account: mark, week % left, and its outlook.
+    private func combinedStrip(_ totals: [AccountProviderTotal]) -> some View {
+        HStack(spacing: 10) {
+            Text(AccountTerms.combined).font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
+            ForEach(totals) { total in
+                HStack(spacing: 3) {
+                    GlanceProviderMark(provider: total.provider, palette: palette, size: 10)
+                    Text(AccountNumbers.percentWithSign(total.longRemaining)).fontWeight(.semibold).monospacedDigit()
+                        .foregroundStyle(palette.color(AccountTone.forRemaining(total.longRemaining).textToken))
+                    if total.runOut != nil {
+                        Text(AccountTerms.combinedOutlook(total, now: now)).foregroundStyle(palette.bad)
+                    } else if total.paceRatio != nil {
+                        Text(AccountPaceText.ratio(total.paceRatio)).foregroundStyle(palette.paceColor(total.paceRatio))
+                    }
+                }
+                .lineLimit(1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(total.accessibilityText(now: now))
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 9.5))
+    }
+
     // MARK: Large
 
     private func large(_ overview: AccountOverview) -> some View {
         let rows = Array(overview.accounts.prefix(6))
+        let totals = overview.providerTotals(now: now)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text(AccountTerms.accounts).font(.system(size: 12, weight: .semibold))
+                Text(AccountTerms.widgetTitle).font(.system(size: 12, weight: .semibold))
                 if overview.accounts.count > rows.count {
                     Text("+\(overview.accounts.count - rows.count)").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(palette.secondary)
                 }
                 Spacer()
-                Text("5h · Week · pace").font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
+                Text([AccountTerms.week, AccountTerms.fiveHour, AccountTerms.pace.lowercased()].joined(separator: " · "))
+                    .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
             }
             .padding(.bottom, 3)
-            ForEach(rows) { account in
-                Link(destination: links.account(account.metadata.provider, id: account.id)) {
-                    largeRow(account)
+            ForEach(totals) { total in
+                let members = rows.filter { $0.metadata.provider == total.provider }
+                if !members.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if total.isCombined {
+                            largeCombinedRow(total)
+                        }
+                        ForEach(members) { account in
+                            Link(destination: links.account(account.metadata.provider, id: account.id)) {
+                                largeRow(account, showsMark: !total.isCombined)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.leading, 5)
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 1).fill(palette.provider(total.provider)).frame(width: 2).padding(.vertical, 2)
+                    }
+                    .padding(.vertical, 1)
                 }
-                .buttonStyle(.plain)
-                if account.id != rows.last?.id { Rectangle().fill(palette.line).frame(height: 0.5) }
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: 3)
             if showsBanked, !overview.deadlines.isEmpty {
                 Link(destination: links.deadlines) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -259,9 +316,33 @@ struct AccountGlanceWidget: View {
         }
     }
 
-    private func largeRow(_ account: AccountOverview.Account) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+    /// A provider's combined room as the first line of its group.
+    private func largeCombinedRow(_ total: AccountProviderTotal) -> some View {
+        HStack(spacing: 5) {
+            GlanceProviderMark(provider: total.provider, palette: palette, size: 11)
+            Text(total.provider.accountDisplayName).font(.system(size: 10.5, weight: .bold))
+            Text(AccountNumbers.percentWithSign(total.longRemaining)).font(.system(size: 10.5, weight: .bold)).monospacedDigit()
+                .foregroundStyle(palette.color(AccountTone.forRemaining(total.longRemaining).textToken))
+            GlanceMeter(fraction: total.longRemaining, even: total.evenPaceRemaining, palette: palette, height: 3.5)
+                .frame(width: 46)
+            Text(AccountNumbers.percentWithSign(total.shortRemaining)).font(.system(size: 9)).monospacedDigit()
+                .foregroundStyle(palette.secondary)
+            Spacer(minLength: 2)
+            Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 8.5, weight: total.runOut == nil ? .regular : .semibold))
+                .foregroundStyle(total.runOut == nil ? palette.secondary : palette.bad).lineLimit(1)
+            Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(palette.paceColor(total.paceRatio)).frame(width: 30, alignment: .trailing)
+        }
+        .padding(.vertical, 3).padding(.horizontal, 4)
+        .background(RoundedRectangle(cornerRadius: 4).fill(palette.provider(total.provider).opacity(palette.dark ? 0.14 : 0.08)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(total.accessibilityText(now: now))
+    }
+
+    private func largeRow(_ account: AccountOverview.Account, showsMark: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 5) {
+                if showsMark { GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 11) }
                 GlanceStatusMark(state: account.state, palette: palette)
                 Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 if nextIDs.contains(account.id) { NextTag(palette: palette) }
@@ -282,12 +363,12 @@ struct AccountGlanceWidget: View {
                     .foregroundStyle(paceColor(account)).frame(width: 30, alignment: .trailing)
             }
             HStack(spacing: 10) {
-                largeWindowCell(account, window: fiveHour(account))
                 largeWindowCell(account, window: weekly(account))
+                largeWindowCell(account, window: fiveHour(account))
             }
             .padding(.leading, 14)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 3).padding(.leading, 4)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
@@ -300,7 +381,7 @@ struct AccountGlanceWidget: View {
                 .font(.system(size: 11, weight: window?.id == account.limitingWindow?.id ? .bold : .medium).monospacedDigit())
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 22, alignment: .trailing)
-            if let window { GlanceMeter(window: window, now: now, palette: palette, height: 3.5) }
+            if let window { GlanceMeter(fraction: window.remainingFraction, even: window.evenPaceRemaining(now: now), palette: palette, height: 3.5) }
             Text(window.flatMap { AccountTerms.reset($0, now: now) } ?? "")
                 .font(.system(size: 8)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
                 .frame(width: 86, alignment: .trailing)
@@ -369,24 +450,41 @@ struct GlancePalette {
         color(AccountTone.forRemaining(window.remainingFraction).textToken)
     }
     func paceColor(_ ratio: Double?) -> Color { color(AccountTone.forPace(ratio)) }
+    func provider(_ provider: Provider) -> Color { color(provider.colorToken) }
+    var markInk: Color { color(.markInk) }
+}
+
+/// The provider's letter on its colour, the same mark as the app.
+struct GlanceProviderMark: View {
+    let provider: Provider
+    let palette: GlancePalette
+    let size: CGFloat
+
+    var body: some View {
+        Text(provider.markLetter).font(.system(size: size * 0.66, weight: .bold, design: .rounded))
+            .foregroundStyle(palette.markInk)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(palette.provider(provider)))
+            .accessibilityHidden(true)
+    }
 }
 
 /// Remaining share as a bar, with a tick where an even spend would be now.
 struct GlanceMeter: View {
-    let window: AccountOverview.Window
-    let now: Date
+    let fraction: Double?
+    let even: Double?
     let palette: GlancePalette
     let height: CGFloat
 
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
-            let fraction = window.remainingFraction ?? 0
+            let filled = fraction ?? 0
             ZStack(alignment: .leading) {
                 Capsule().fill(palette.track)
-                Capsule().fill(palette.color(forRemaining: window.remainingFraction))
-                    .frame(width: max(fraction > 0 ? height : 0, width * fraction))
-                if let even = window.evenPaceRemaining(now: now) {
+                Capsule().fill(palette.color(forRemaining: fraction))
+                    .frame(width: max(filled > 0 ? height : 0, width * filled))
+                if let even {
                     Rectangle().fill(palette.primary.opacity(0.75))
                         .frame(width: 1.5, height: height + 4)
                         .offset(x: min(width - 1.5, max(0, width * even - 0.75)))
@@ -451,10 +549,3 @@ struct NextMark: View {
     }
 }
 
-struct ProviderTag: View {
-    let provider: Provider
-    let palette: GlancePalette
-    var body: some View {
-        Text(provider.accountDisplayName).font(.system(size: 8.5, weight: .medium)).foregroundStyle(palette.secondary)
-    }
-}

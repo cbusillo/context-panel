@@ -20,5 +20,10 @@ private func luminance(_ token: AccountColorToken, dark: Bool) -> Double {
             let first = luminance(.actionText, dark: dark), second = luminance(fill, dark: dark)
             #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
         }
+        // Provider marks: the letter on its provider's colour.
+        for provider in Provider.allCases {
+            let first = luminance(.markInk, dark: dark), second = luminance(provider.colorToken, dark: dark)
+            #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
+        }
     }
 }

@@ -26,10 +26,10 @@ private let unsupportedPresentationStatus: Int32 = 3
 
 // Account surfaces at their real point sizes: Mac pane, iPhone 15 Pro, Apple Watch 45 mm, Apple TV.
 private let accountPresentationSizes: [String: CGSize] = [
-    "account-overview": CGSize(width: 900, height: 720),
-    "account-deadlines": CGSize(width: 900, height: 720),
+    "account-overview": CGSize(width: 900, height: 880),
+    "account-deadlines": CGSize(width: 900, height: 980),
     "account-detail": CGSize(width: 900, height: 720),
-    "phone-overview": CGSize(width: 393, height: 1_520),
+    "phone-overview": CGSize(width: 393, height: 1_900),
     "phone-detail": CGSize(width: 393, height: 852),
     "watch-app": CGSize(width: 198, height: 560),
     "watch-rectangular": CGSize(width: 184, height: 74),
@@ -220,8 +220,8 @@ private func accountFixture(now: Date) -> WidgetSnapshot {
     typealias Row = (String, Provider, Int, Double, Int, Double, Double?, Double?, [Double])
     let rows: [Row] = [
         ("A deliberately long OpenAI account name", .openAI, 85, 120, 40, 2 + 10 / 60.0, 0.45, 6, [24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
-        ("work@example.invalid", .openAI, 28, 55, 12, 4, 0.4, 3, []),
-        ("Personal", .openAI, 11, 147, 0, 5, nil, nil, []),
+        ("work@example.invalid", .openAI, 28, 55, 12, 4, 0.4, 3, [26 * 24 + 3, 44 * 24 + 30 / 60.0]),
+        ("Personal", .openAI, 11, 147, 0, 5, 0.03, nil, []),
         ("Claude primary", .anthropic, 63, 138, 78, 1 + 13 / 60.0, 0.35, 15, [4 * 24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
         ("Claude backup", .anthropic, 43, 74, 5, 4 + 40 / 60.0, 0.2, 1, []),
         ("Antigravity", .google, 9, 164, 0, 5, 0.05, nil, []),

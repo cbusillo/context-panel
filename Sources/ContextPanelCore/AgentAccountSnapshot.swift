@@ -9,6 +9,30 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public let accounts: [Account]
     public let answers: Answers
     public let deadlines: [Deadline]
+    /// Each provider's combined room, pace and outlook, in the strings the app shows.
+    public let providers: [ProviderDisplay]
+
+    public struct ProviderDisplay: Encodable, Sendable {
+        public let provider: Provider
+        public let name: String
+        public let accounts: String
+        public let percentLeft: String
+        public let fiveHourPercentLeft: String
+        public let pace: String
+        public let burn: String
+        public let outlook: String
+
+        public init(total: AccountProviderTotal, now: Date) {
+            provider = total.provider
+            name = total.provider.accountDisplayName
+            accounts = AccountTerms.accountCount(total)
+            percentLeft = AccountNumbers.percentWithSign(total.longRemaining)
+            fiveHourPercentLeft = AccountNumbers.percentWithSign(total.shortRemaining)
+            pace = AccountNumbers.pace(total.paceRatio)
+            burn = AccountTerms.burn(total.burnPerHour)
+            outlook = AccountTerms.combinedOutlook(total, now: now)
+        }
+    }
 
     public struct Answers: Encodable, Sendable {
         public let closestAccountID: String?
@@ -200,6 +224,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         answers = Answers(closestAccountID: overview.closest?.id, useNext: Provider.allCases.compactMap { provider in
             overview.useNext(provider: provider).map { Recommendation(provider: provider, accountID: $0.id) }
         })
+        providers = overview.providerTotals(now: now).map { ProviderDisplay(total: $0, now: now) }
         deadlines = overview.deadlines.map {
             Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,
                      expiresAt: $0.expiresAt, observedAt: $0.observedAt, state: $0.state)
