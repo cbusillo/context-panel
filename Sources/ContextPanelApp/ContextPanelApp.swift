@@ -413,6 +413,16 @@ struct SettingsPane: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 180)
                             Spacer()
+                            Button { model.moveAccount(account.id, offset: -1); refreshAfterAuthorization() } label: {
+                                Image(systemName: "arrow.up")
+                            }
+                            .accessibilityLabel("Move account up")
+                            .disabled(model.settingsAccounts.first?.id == account.id)
+                            Button { model.moveAccount(account.id, offset: 1); refreshAfterAuthorization() } label: {
+                                Image(systemName: "arrow.down")
+                            }
+                            .accessibilityLabel("Move account down")
+                            .disabled(model.settingsAccounts.last?.id == account.id)
                             Button("Remove account", role: .destructive) {
                                 model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
                             }
@@ -583,6 +593,17 @@ struct SettingsPane: View {
                         }
                     }
                     .padding(.vertical, 4)
+                }
+                ForEach(model.retiredSettingsAccounts) { account in
+                    HStack {
+                        Text("\(account.displayName) · retired source, off")
+                            .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        Spacer()
+                        Button("Remove account", role: .destructive) {
+                            model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
+                        }
+                        .controlSize(.small)
+                    }
                 }
                 HStack {
                     Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
@@ -1457,9 +1478,24 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         AccountConfigurationDocument(updatedAt: .distantPast, accounts: accounts).settingsAccounts
     }
 
+    var retiredSettingsAccounts: [LocalProviderAccountConfiguration] {
+        accounts.filter { $0.isRetiredSource }
+    }
+
     func load() {
         let result = store.load()
         accounts = result.document.accounts
+        let retiredHome = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex-lab")
+        let prefix = retiredHome.standardizedFileURL.path + "/"
+        let stillUsed = accounts.contains { account in
+            [account.authPath, account.codexQuotaPath].compactMap { $0 }.contains {
+                NSString(string: $0).expandingTildeInPath.hasPrefix(prefix)
+            }
+        }
+        if result.status != .failure && !stillUsed {
+            do { try bookmarkStore.removeBookmarks(under: retiredHome) }
+            catch { errorMessage = "The unused Codex Lab folder permission could not be removed. Your account setup is preserved." }
+        }
         var loadedAuthorizedPaths = Set(settingsAccounts.compactMap { account -> String? in
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
@@ -1826,9 +1862,19 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         saveAccounts()
     }
 
+    func moveAccount(_ accountID: String, offset: Int) {
+        guard !isRemovingAccount, let visibleIndex = settingsAccounts.firstIndex(where: { $0.id == accountID }) else { return }
+        let destination = visibleIndex + offset
+        guard settingsAccounts.indices.contains(destination),
+              let sourceIndex = accounts.firstIndex(where: { $0.id == accountID }),
+              let destinationIndex = accounts.firstIndex(where: { $0.id == settingsAccounts[destination].id }) else { return }
+        accounts.swapAt(sourceIndex, destinationIndex)
+        saveAccounts()
+    }
+
     func renameAccount(_ accountID: String, name: String, logicalID: String? = nil) {
         guard !isRemovingAccount else { return }
-        guard !name.contains("@"), name.count <= 80,
+        guard name.count <= 80,
               let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
         if let logicalID {
             var aliases = accounts[index].accountAliases ?? [:]
@@ -2388,6 +2434,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url,
                   let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+            guard !CodexHomeBinding.isSharedSessionMismatch(account: accounts[index], sessions: url) else {
+                errorMessage = "The main Codex sessions folder mixes logins. Use Select Codex Home for this account instead."
+                return
+            }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
@@ -2758,15 +2808,17 @@ struct OverviewDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     let presentationDate: Date
+    let usesLiveClock: Bool
 
     init(
         model: ContextPanelAppModel,
         snapshot: UsageSnapshot,
-        presentationDate: Date = Date()
+        presentationDate: Date? = nil
     ) {
         self.model = model
         self.snapshot = snapshot
-        self.presentationDate = presentationDate
+        self.presentationDate = presentationDate ?? Date()
+        self.usesLiveClock = presentationDate == nil
     }
 
     private var savedSummaries: [MainLimitSummary] {
@@ -2792,7 +2844,7 @@ struct OverviewDashboard: View {
                 AccountCapacityCard(
                     rows: AccountCapacity.rows(configuration: model.configuredAccounts,
                         snapshot: snapshot, reports: model.storedSnapshot?.reports ?? [], now: presentationDate),
-                    burnRates: model.accountBurnRates, now: presentationDate
+                    burnRates: model.accountBurnRates, now: presentationDate, usesLiveClock: usesLiveClock
                 )
                 SetupStatusStrip(model: model)
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
@@ -3125,7 +3177,7 @@ private struct LimitWindowScanCell: View {
 
     private func resetCopy(_ row: KeepWorkingLimitRow) -> String {
         guard let resetsAt = row.resetsAt else { return "Reset unknown" }
-        return resetsAt.formatted(.dateTime.weekday(.wide).hour().minute())
+        return ContextPanelDateFormatting.resetDeadline(resetsAt)
     }
 }
 
@@ -3600,6 +3652,7 @@ struct ProviderDashboard: View {
                         )
                     } else {
                         ProviderAccountLimitsSection(summaries: summaries)
+                        BankedResetDeadlinesView(reports: (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider })
                     }
                     if !additionalLimits.isEmpty {
                         AdditionalLimitsSection(snapshot: snapshot, provider: provider)
@@ -3615,10 +3668,13 @@ struct ProviderDashboard: View {
     }
 
     private func scrollToFocusedAccount(using proxy: ScrollViewProxy) {
-        guard provider == .openAI, let focusedAccountID else { return }
+        guard let focusedAccountID else { return }
+        let hasBankedResets = (model.storedSnapshot?.reports ?? []).contains {
+            $0.provider == provider && $0.accountID == focusedAccountID && ($0.resetCredits?.presented(at: Date()).availableCount ?? 0) > 0
+        }
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo("openai-account:\(focusedAccountID)", anchor: .center)
+                proxy.scrollTo(hasBankedResets ? "reset-account:\(focusedAccountID)" : "openai-account:\(focusedAccountID)", anchor: .center)
             }
         }
     }
@@ -3757,7 +3813,13 @@ private struct OpenAIAccountLimitRow: View {
             if let resetCreditGuidance {
                 Divider()
                     .overlay(CPTheme.line)
-                OpenAIResetCreditRow(guidance: resetCreditGuidance, now: now)
+                BankedResetDeadlinesView(reports: [StoredProviderReport(
+                    provider: resetCreditGuidance.provider, accountID: resetCreditGuidance.accountID,
+                    configuredAccountID: resetCreditGuidance.configuredAccountID,
+                    accountName: resetCreditGuidance.accountName,
+                    generatedAt: resetCreditGuidance.resetCredits.observedAt,
+                    resetCredits: resetCreditGuidance.resetCredits, status: account.status, errorMessage: nil
+                )], limits: account.limits)
             }
         }
         .padding(10)
@@ -6221,14 +6283,11 @@ extension MainLimitSummary {
     }
 
     var resetText: String {
-        if status == .failure { return "refresh failed" }
-        if hasAssumedScheduledResetCapacity { return "assumed reset" }
         guard let resetsAt else { return "reset not reported" }
-        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
-        if resetsAt.shouldShowWidgetDateTime {
-            return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
-        }
-        return "resets \(resetsAt.widgetRelativeText)"
+        let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
+        if status == .failure { return "refresh failed · reset \(deadline)" }
+        if hasAssumedScheduledResetCapacity { return "assumed · resets \(deadline)" }
+        return "\(resetsAt < Date() ? "reset passed" : "resets") \(deadline)"
     }
 
     var previewResetConfidenceText: String {
@@ -6656,20 +6715,17 @@ extension UsageLimit {
 
     func previewResetConfidenceText(relativeTo presentationDate: Date) -> String {
         if isAssumedAfterScheduledReset {
-            return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
+            return resetText(relativeTo: presentationDate)
         }
         return "\(resetText(relativeTo: presentationDate)) · \(confidence.previewText)"
     }
 
     func resetText(relativeTo presentationDate: Date) -> String {
-        if status == .failure { return "refresh failed" }
-        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else { return "reset not reported" }
-        if resetsAt < presentationDate.addingTimeInterval(-60) { return "reset passed" }
-        if resetsAt.shouldShowWidgetDateTime(relativeTo: presentationDate) {
-            return "resets \(resetsAt.widgetRelativeText(relativeTo: presentationDate)) · \(resetsAt.widgetDateTimeText)"
-        }
-        return "resets \(resetsAt.widgetRelativeText(relativeTo: presentationDate))"
+        let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
+        if status == .failure { return "refresh failed · reset \(deadline)" }
+        if isAssumedAfterScheduledReset { return "assumed · resets \(deadline)" }
+        return "\(resetsAt < presentationDate ? "reset passed" : "resets") \(deadline)"
     }
 
     private var assumptionPrefix: String {
@@ -6832,16 +6888,11 @@ extension Date {
     var widgetDateTimeWithRelativeText: String {
         let relative = widgetRelativeText
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if shouldShowWidgetDateTime {
-            return "\(widgetDateTimeText) (\(compactRelative))"
-        }
-        return compactRelative
+        return "\(widgetDateTimeText) (\(compactRelative))"
     }
 
     var widgetDateTimeText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE h:mm a"
-        return formatter.string(from: self)
+        ContextPanelDateFormatting.resetDeadline(self, compact: true)
     }
 
     var accessibilityResetText: String {
@@ -6903,8 +6954,19 @@ struct AccountCapacityCard: View {
     let rows: [AccountCapacity]
     let burnRates: [String: [String: ObservedBurnRate]]
     let now: Date
+    var usesLiveClock = true
 
     var body: some View {
+        if usesLiveClock {
+            TimelineView(.explicit([now] + rows.compactMap(\.report).resetCreditTransitionDates(after: now))) { context in
+                content(at: context.date)
+            }
+        } else {
+            content(at: now)
+        }
+    }
+
+    private func content(at date: Date) -> some View {
         DetailCard(title: "All Accounts") {
             VStack(alignment: .leading, spacing: 16) {
                 if rows.isEmpty {
@@ -6939,7 +7001,7 @@ struct AccountCapacityCard: View {
                             Text(creditText(credits) + " · expiry not reported")
                                 .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
-                        if let resets = row.report?.resetCredits {
+                        if let resets = row.report?.resetCredits?.presented(at: date) {
                             Text("\(resets.availableCount) reset credits · observed \(dateText(resets.observedAt))")
                                 .font(.caption)
                             let dates = resets.knownExpiries.isEmpty
@@ -6963,7 +7025,7 @@ struct AccountCapacityCard: View {
     }
 
     private func dateText(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
+        ContextPanelDateFormatting.resetDeadline(date)
     }
 
     private func stateText(_ row: AccountCapacity) -> String {

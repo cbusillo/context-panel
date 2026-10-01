@@ -249,6 +249,25 @@ public struct AccountConfigurationStore: Sendable {
         let originalDocument = document
         var document = ClaudeAccountMigration.migrateAccountConfiguration(document, now: now)
         var changed = document != originalDocument
+        for index in document.accounts.indices where document.accounts[index].connectorKind == .codexRateLimits {
+            let account = document.accounts[index]
+            if let path = account.codexQuotaPath,
+               CodexHomeBinding.isSharedSessionMismatch(account: account,
+                   sessions: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)) {
+                document.accounts[index].codexQuotaPath = nil
+                changed = true
+            }
+            if account.codexClient == .codexLab, let authPath = account.authPath {
+                let home = URL(fileURLWithPath: NSString(string: authPath).expandingTildeInPath)
+                    .deletingLastPathComponent().standardizedFileURL
+                let currentMain = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex").standardizedFileURL
+                let accountHomes = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex-accounts").standardizedFileURL
+                if home.path == currentMain.path || home.deletingLastPathComponent().path == accountHomes.path {
+                    document.accounts[index].codexClient = .codex
+                    changed = true
+                }
+            }
+        }
         document.accounts = document.accounts.map { account in
             if account.id == GoogleAccountMigration.oldAccountID, account.connectorKind == .googleAntigravityQuota {
                 changed = true
@@ -378,6 +397,9 @@ public enum AccountConnectorFactory {
         CodexSessionQuotaConnector(account: account) { now in
             let path = NSString(string: account.codexQuotaPath ?? "").expandingTildeInPath
             let read: (URL) throws -> CodexSessionQuotaObservation? = { root in
+                guard !CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: root) else {
+                    throw CodexSessionQuotaError.sharedDirectory
+                }
                 let canonical = root.resolvingSymlinksInPath().standardizedFileURL
                 for sibling in document.accounts where sibling.isEnabled && sibling.id != account.id {
                     guard let siblingPath = sibling.codexQuotaPath else { continue }

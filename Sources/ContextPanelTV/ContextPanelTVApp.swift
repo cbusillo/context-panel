@@ -119,7 +119,8 @@ private struct TVRootView: View {
                 noticeMessage: visibleNoticeMessage,
                 presentationDate: nil,
                 detailActionMode: .navigation,
-                onRefresh: { model.reload() }
+                onRefresh: { model.reload() },
+                snapshotReports: model.snapshot.reports
             )
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
@@ -203,6 +204,7 @@ struct TVRunwayContent: View {
     let presentationDate: Date?
     let detailActionMode: TVDetailActionMode
     let onRefresh: () -> Void
+    var snapshotReports: [StoredProviderReport] = []
 
     private var presentationMode: TVPresentationMode {
         TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
@@ -236,6 +238,9 @@ struct TVRunwayContent: View {
                                 mode: presentationMode,
                                 detailActionMode: detailActionMode
                             )
+                            if presentationMode == .fullDetail, !snapshotReports.isEmpty {
+                                TVBankedResetDeadlinesView(reports: snapshotReports, presentationDate: presentationDate)
+                            }
                         }
                     }
                     .padding(.bottom, noticeMessage == nil ? 48 : 160)

@@ -273,14 +273,14 @@ import Testing
         limits: [weekly],
         now: now
     ))
-    let elapsedGuidance = try #require(ResetCreditGuidanceAdvisor.guidance(
+    let elapsedGuidance = ResetCreditGuidanceAdvisor.guidance(
         report: elapsed,
         limits: [weekly],
         now: now
-    ))
+    )
 
     #expect(inconsistentGuidance.state == .refresh(.inconsistentObservation))
-    #expect(elapsedGuidance.state == .refresh(.expiryElapsed))
+    #expect(elapsedGuidance == nil)
 }
 
 @Test func resetCreditGuidanceCopyRemainsAdvisoryAndReadOnly() throws {

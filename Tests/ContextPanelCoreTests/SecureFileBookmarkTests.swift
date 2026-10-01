@@ -218,3 +218,21 @@ private final class BookmarkWriteErrorRecorder: @unchecked Sendable {
     }
 }
 #endif
+
+@Test func removingRetiredFolderBookmarksPreservesNeighborGrantsAndFiles() throws {
+    let root = try secureBookmarkTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let retired = root.appending(path: ".codex-lab")
+    let neighbor = root.appending(path: ".codex-lab-other")
+    let files = [retired.appending(path: "auth.json"), neighbor.appending(path: "auth.json")]
+    let store = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    for file in files {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0xff]).write(to: file)
+        try store.createAndStoreBookmark(for: file, path: file.path)
+    }
+    try store.removeBookmarks(under: retired)
+    #expect(!store.hasStoredBookmark(for: files[0].path))
+    #expect(store.hasStoredBookmark(for: files[1].path))
+    for file in files { #expect(try Data(contentsOf: file) == Data([0xff])) }
+}

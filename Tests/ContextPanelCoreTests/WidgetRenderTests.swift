@@ -352,6 +352,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     ]
     for (family, width, height, minimumPixels) in scenarios {
         let headerRows = family == .systemMedium ? 10..<35 : 125..<155
+        let resetRows = family == .systemMedium ? 125..<164 : headerRows
         let view = ContextPanelWidgetContentView(
             family: family,
             snapshot: snapshot,
@@ -367,10 +368,9 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         let image = try #require(renderedImage(from: view, width: width, height: height))
         #expect(nonBackgroundPixelCount(in: image) > minimumPixels)
         #expect(pixelCount(in: image, near: (74, 122, 91), rows: headerRows) > 20)
-        #expect(pixelCount(in: image, near: (138, 106, 42), rows: headerRows, columns: 250..<344) > 20)
+        #expect(pixelCount(in: image, near: (138, 106, 42), rows: resetRows) > 20)
         if family == .systemMedium {
             #expect(pixelCount(in: image, near: (74, 122, 91), rows: headerRows, columns: 195..<225) > 5)
-            #expect(pixelCount(in: image, near: (138, 106, 42), rows: headerRows, columns: 275..<295) > 5)
         }
     }
 
@@ -397,7 +397,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
 
         let constrainedImage = try #require(renderedImage(from: constrainedView, width: 320, height: 164))
         #expect(pixelCount(in: constrainedImage, near: cacheTone, rows: 10..<35) > 5)
-        #expect(pixelCount(in: constrainedImage, near: (138, 106, 42), rows: 10..<35) > 20)
+        #expect(pixelCount(in: constrainedImage, near: (138, 106, 42), rows: 125..<164) > 20)
     }
 
     let considerBeforeSnapshot = resetCreditRenderSnapshot(
@@ -424,7 +424,7 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     let considerBeforeImage = try #require(renderedImage(from: considerBeforeView, width: 344, height: 164))
     #expect(nonBackgroundPixelCount(in: considerBeforeImage) > 2_500)
     #expect(pixelCount(in: considerBeforeImage, near: (74, 122, 91), rows: 10..<35) > 20)
-    #expect(pixelCount(in: considerBeforeImage, near: (138, 106, 42), rows: 10..<35, columns: 250..<344) > 5)
+    #expect(pixelCount(in: considerBeforeImage, near: (138, 106, 42), rows: 125..<164) > 5)
 
     let neutralSnapshot = resetCreditRenderSnapshot(
         now: now,

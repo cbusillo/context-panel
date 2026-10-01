@@ -77,8 +77,6 @@ public extension LocalProviderAccountConfiguration {
 public extension AccountConfigurationDocument {
     /// Presentation only: keep the complete stored document when saving settings.
     var settingsAccounts: [LocalProviderAccountConfiguration] {
-        let available = accounts.filter { !$0.isRetiredSource }
-        return available.filter { $0.effectiveCodexClient == .codexLab }
-            + available.filter { $0.effectiveCodexClient != .codexLab }
+        accounts.filter { !$0.isRetiredSource }
     }
 }

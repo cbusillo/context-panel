@@ -108,6 +108,9 @@ let package = Package(
         .executableTarget(
             name: "ContextPanelSharedViewRenderer",
             dependencies: [
+                "ContextPanelCore",
+                "ContextPanelWidgetUI",
+                "ContextPanelSettingsUI",
                 "ContextPanelValidationFixtures",
                 "ContextPanelValidationGalleryUI",
             ],

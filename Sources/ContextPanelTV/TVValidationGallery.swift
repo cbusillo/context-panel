@@ -208,7 +208,8 @@ struct TVValidationGalleryView: View {
                 noticeMessage: context.result.errorMessage,
                 presentationDate: context.presentationDate,
                 detailActionMode: .readOnly,
-                onRefresh: {}
+                onRefresh: {},
+                snapshotReports: context.snapshot.reports
             )
             .accessibilityElement(children: .contain)
 

@@ -351,6 +351,9 @@ private struct CompanionRootView: View {
             }
 
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
+            if !model.snapshot.reports.isEmpty {
+                BankedResetDeadlinesView(reports: model.snapshot.reports)
+            }
             CompanionSyncStatusView(result: model.result)
         }
         .frame(
@@ -590,6 +593,9 @@ private struct CompanionValidationGalleryPreview: View {
                             CompanionKeepWorkingCard(forecast: forecast)
                         }
                         CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                        if !context.snapshot.reports.isEmpty {
+                            BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate)
+                        }
                         CompanionSyncStatusView(result: result)
                     }
                     .padding(18)

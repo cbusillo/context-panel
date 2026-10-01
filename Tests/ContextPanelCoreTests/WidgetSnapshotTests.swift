@@ -169,7 +169,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         #expect(limit.presentationAssumption == .scheduledReset)
         #expect(summary.widgetRemainingHeadline == "≈100% left")
         #expect(summary.widgetUsageText == "≈0% used")
-        #expect(summary.widgetResetConfidenceText == "assumed after reset")
+        #expect(summary.widgetResetConfidenceText(presentationDate: now) == summary.widgetResetText(presentationDate: now))
         let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: widget.state)
         #expect(accessibilityValue.contains("approximately 100% left"))
         #expect(accessibilityValue.contains("Assumed after scheduled reset"))
@@ -1848,7 +1848,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "5h")
+    #expect(summary.resetCountdownText(now: now) == "5h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func resetCountdownKeepsNearlyDayLongWindowsCompact() {
@@ -1874,7 +1874,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "24h")
+    #expect(summary.resetCountdownText(now: now) == "24h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func widgetResetTextRoundsFiveHourWindowUp() {
@@ -1901,7 +1901,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         generatedAt: now
     )
 
-    #expect(summary.widgetResetText == "5h")
+    #expect(summary.widgetResetText == ContextPanelDateFormatting.resetDeadline(reset, compact: true))
 }
 
 @Test func anthropicWidgetSnapshotSurfacesConnectedUnknownOAuthStatusWithoutMainLimit() {

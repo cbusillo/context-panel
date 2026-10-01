@@ -73,3 +73,42 @@ private final class BindingDeletionRecorder: @unchecked Sendable {
     }
     #expect(CodexClient.inferred(fromAuthPath: homes[1].appending(path: "auth.json").path) == .codex)
 }
+
+@Test func aSeparateCodexHomeCannotReadTheMainSharedSessions() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let main = root.appending(path: ".codex")
+    let other = root.appending(path: ".codex-accounts/fixture")
+    try FileManager.default.createDirectory(at: main.appending(path: "sessions"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: other.appending(path: "sessions"), withDestinationURL: main.appending(path: "sessions"))
+    var account = LocalProviderAccountConfiguration(id: "local", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Fixture", authPath: other.appending(path: "auth.json").path)
+    #expect(CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: main.appending(path: "sessions"), mainHome: main))
+    #expect(CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: other.appending(path: "sessions"), mainHome: main))
+    #expect(!CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: root.appending(path: "private-sessions"), mainHome: main))
+    account.authPath = main.appending(path: "auth.json").path
+    #expect(!CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: main.appending(path: "sessions"), mainHome: main))
+}
+
+@Test func loadingCurrentHomesRepairsObsoleteClientAndSharedQuotaOverride() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let home = ContextPanelLocations.realUserHomeDirectory()
+    let main = LocalProviderAccountConfiguration(id: "main", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Main", authPath: home.appending(path: ".codex/auth.json").path,
+        codexClient: .codexLab)
+    let separate = LocalProviderAccountConfiguration(id: "separate", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Separate", authPath: home.appending(path: ".codex-accounts/fixture/auth.json").path,
+        codexClient: .codex, codexQuotaPath: home.appending(path: ".codex/sessions").path)
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try store.save(AccountConfigurationDocument(updatedAt: .distantPast, accounts: [main, separate]))
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let loaded = store.load(now: now).document
+    #expect(loaded.accounts[0].codexClient == .codex)
+    #expect(loaded.accounts[0].authPath == main.authPath)
+    #expect(loaded.accounts[1].codexQuotaPath == nil)
+    #expect(loaded.accounts[1].authPath == separate.authPath)
+    #expect(loaded.accounts.map(\.id) == [main.id, separate.id])
+    #expect(store.load(now: now).document == loaded)
+}

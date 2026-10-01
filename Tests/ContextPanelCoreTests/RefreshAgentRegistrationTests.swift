@@ -637,3 +637,19 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     #expect(stateStore.reconciledBuild == "build-1")
     #expect(stateStore.repairedBuild == "build-1")
 }
+
+@MainActor
+@Test func refreshAgentRepairDoesNotTrustOldSuccessWhenTheEnabledAgentIsGone() async {
+    let service = ScriptedRefreshAgentRegistrationService(status: .enabled,
+        registrationSteps: [.succeed(.enabled)])
+    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    stateStore.markReconciled(build: "build-1")
+    stateStore.markRepaired(build: "build-1")
+    let coordinator = RefreshAgentRegistrationCoordinator(service: service, stateStore: stateStore,
+        policy: immediateRepairPolicy, currentBuild: { "build-1" }, isAgentRunning: { false }, sleep: { _ in })
+    let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
+    #expect(outcome == .repaired(attempts: 1))
+    #expect(service.unregisterCount == 1)
+    #expect(service.registerCount == 1)
+}

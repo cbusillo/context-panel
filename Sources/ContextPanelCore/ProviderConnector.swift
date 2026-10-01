@@ -116,6 +116,27 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
             coverage: .countOnly
         )
     }
+
+    /// An expired entitlement disappears; this never redeems a reset or changes utilization.
+    public func presented(at now: Date) -> Self {
+        let dates = knownExpiries.isEmpty ? earliestKnownExpiry.map { [$0] } ?? [] : knownExpiries
+        let expired = dates.filter { $0 <= now }
+        guard !expired.isEmpty else { return self }
+        let future = dates.filter { $0 > now }
+        let remaining = max(0, availableCount - expired.count)
+        let coverage: ProviderResetCreditCoverage = future.count == remaining ? .complete : (future.isEmpty ? .countOnly : .partial)
+        return Self(availableCount: remaining, observedAt: observedAt, coverage: coverage, knownExpiries: future)
+    }
+}
+
+public extension Collection where Element == StoredProviderReport {
+    func resetCreditTransitionDates(after now: Date) -> [Date] {
+        Array(Set(flatMap { report -> [Date] in
+            guard let summary = report.resetCredits else { return [] }
+            return summary.knownExpiries.isEmpty
+                ? summary.earliestKnownExpiry.map { [$0] } ?? [] : summary.knownExpiries
+        }.filter { $0 > now })).sorted()
+    }
 }
 
 /// Only normalized credit quantities cross the adapter boundary.

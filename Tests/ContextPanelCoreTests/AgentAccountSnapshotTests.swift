@@ -80,7 +80,9 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(row.windows.first?.naturalResetAt != reset.earliestKnownExpiry)
     let later = AgentAccountSnapshot(configuration: config, stored: stored, history: [], now: agentNow.addingTimeInterval(3_601))
     #expect(later.accounts.first?.bankedResets.state == .stale)
-    #expect(later.accounts.first?.bankedResets.summary?.availableCount == reset.availableCount)
+    #expect(later.accounts.first?.bankedResets.summary?.availableCount == reset.availableCount - reset.knownExpiries.count)
+    #expect(later.accounts.first?.bankedResets.summary?.knownExpiries.isEmpty == true)
+    #expect(later.accounts.first?.windows.first?.used == row.windows.first?.used)
 }
 
 @Test func agentSnapshotJSONExcludesRawDiagnosticsPathsAndIdentityAndMakesUnknownsExplicit() throws {

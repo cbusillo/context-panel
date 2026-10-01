@@ -116,7 +116,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
 
     public func resetCountdownText(now: Date) -> String? {
         guard let resetsAt, resetsAt >= now.addingTimeInterval(-60) else { return nil }
-        return Self.compactResetDistance(until: resetsAt, now: now)
+        return "\(Self.compactResetDistance(until: resetsAt, now: now)) · \(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
     }
 
     public var primaryLimit: UsageLimit? {

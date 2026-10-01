@@ -152,7 +152,7 @@ public struct CodexSessionQuotaConnector: ProviderConnector {
             }
         } catch CodexSessionQuotaError.sharedDirectory {
             status = .failure
-            message = "This session folder is assigned to multiple accounts. Select an account-specific source; shared history cannot identify the login."
+            message = "This session folder is shared across logins or multiple accounts. Use Select Codex Home or an account-specific sessions folder; shared history cannot identify the login."
         } catch {
             status = .failure
             message = "The selected session quota directory cannot be read. Select it again in Settings."

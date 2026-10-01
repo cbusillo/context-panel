@@ -114,7 +114,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         accounts = AccountCapacity.rows(configuration: configuration.accounts,
             snapshot: presented, reports: stored.reports, now: now).map { row in
             let current = [.available, .closeToLimit, .limited].contains(row.state)
-            let summary = row.report?.resetCredits
+            let summary = row.report?.resetCredits?.presented(at: now)
             let resetState: AccountCapacityState
             if !row.isEnabled { resetState = .off }
             else if row.isNotConnected { resetState = .notConnected }

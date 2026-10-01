@@ -289,10 +289,7 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
 
     public func resetDisplayText(now: Date = Date()) -> String? {
         guard let resetsAt = accessState.resetsAt else { return nil }
-        if Calendar.current.isDate(resetsAt, inSameDayAs: now) {
-            return resetsAt.formatted(date: .omitted, time: .shortened)
-        }
-        return resetsAt.formatted(date: .abbreviated, time: .shortened)
+        return ContextPanelDateFormatting.resetDeadline(resetsAt)
     }
 
     public func resetAccessibilityText(now: Date = Date()) -> String? {

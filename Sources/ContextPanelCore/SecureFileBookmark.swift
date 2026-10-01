@@ -201,6 +201,21 @@ public struct SecureFileBookmarkStore: Sendable {
         }
     }
 
+    /// Removes grants only, without reading or changing the referenced files.
+    public func removeBookmarks(under directory: URL) throws {
+        let root = directory.standardizedFileURL.path
+        try withStoreLock {
+            var all = try loadAllForUpdate()
+            let paths = all.keys.filter { path in
+                let normalized = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
+                return normalized == root || normalized.hasPrefix(root + "/")
+            }
+            guard !paths.isEmpty else { return }
+            for path in paths { all.removeValue(forKey: path) }
+            try save(all)
+        }
+    }
+
     public func remove(for path: String) throws {
         try withStoreLock {
             var all = try loadAllForUpdate()
@@ -429,6 +444,8 @@ public struct SecureFileBookmarkStore: Sendable {
     public func readData(for path: String) throws -> Data? { nil }
 
     public func accessSummary() -> SecureFileBookmarkAccessSummary { SecureFileBookmarkAccessSummary() }
+
+    public func removeBookmarks(under directory: URL) throws {}
 
     public func remove(for path: String) throws {}
 }

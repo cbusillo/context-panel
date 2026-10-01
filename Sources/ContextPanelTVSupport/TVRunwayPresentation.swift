@@ -391,7 +391,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         capacityRatio = summary.remainingCapacityRatio
         resetText = mode == .countsOnly
             ? nil
-            : assumesScheduledReset ? "Assumed after reset" : summary.resetCountdownText(now: now)
+            : assumesScheduledReset ? "Assumed · \(summary.resetsAt.map { ContextPanelDateFormatting.resetDeadline($0, compact: true) } ?? "reset unknown")" : summary.resetCountdownText(now: now)
         accessibilityResetText = mode == .countsOnly
             ? nil
             : assumesScheduledReset
@@ -445,7 +445,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         capacityRatio = limit.remainingCapacityRatio
         resetText = mode == .countsOnly
             ? nil
-            : assumesScheduledReset ? "Assumed after reset" : Self.compactResetText(until: limit.resetsAt, now: now)
+            : assumesScheduledReset ? "Assumed · \(limit.resetsAt.map { ContextPanelDateFormatting.resetDeadline($0, compact: true) } ?? "reset unknown")" : Self.compactResetText(until: limit.resetsAt, now: now)
         accessibilityResetText = mode == .countsOnly
             ? nil
             : assumesScheduledReset
@@ -738,35 +738,12 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
 
     fileprivate static func compactResetText(until resetDate: Date?, now: Date) -> String? {
         guard let resetDate, resetDate >= now.addingTimeInterval(-60) else { return nil }
-        let minutes = max(Int(ceil(resetDate.timeIntervalSince(now) / 60)), 0)
-        if minutes < 60 {
-            return "Resets in \(minutes)m"
-        }
-        let hours = Int(ceil(Double(minutes) / 60))
-        if hours < 24 {
-            return "Resets in \(hours)h"
-        }
-        let days = hours / 24
-        let remainingHours = hours % 24
-        return remainingHours == 0 ? "Resets in \(days)d" : "Resets in \(days)d \(remainingHours)h"
+        return "Resets \(ContextPanelDateFormatting.resetDeadline(resetDate, compact: true))"
     }
 
     fileprivate static func accessibilityResetText(until resetDate: Date?, now: Date) -> String? {
         guard let resetDate, resetDate >= now.addingTimeInterval(-60) else { return nil }
-        let minutes = max(Int(ceil(resetDate.timeIntervalSince(now) / 60)), 0)
-        if minutes < 60 {
-            return "Resets in \(minutes) \(minutes == 1 ? "minute" : "minutes")"
-        }
-        let hours = Int(ceil(Double(minutes) / 60))
-        if hours < 24 {
-            return "Resets in \(hours) \(hours == 1 ? "hour" : "hours")"
-        }
-        let days = hours / 24
-        let remainingHours = hours % 24
-        let dayText = "\(days) \(days == 1 ? "day" : "days")"
-        guard remainingHours > 0 else { return "Resets in \(dayText)" }
-        let hourText = "\(remainingHours) \(remainingHours == 1 ? "hour" : "hours")"
-        return "Resets in \(dayText), \(hourText)"
+        return "Resets \(ContextPanelDateFormatting.resetDeadline(resetDate))"
     }
 }
 
@@ -829,7 +806,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
             ? exactCapacity.map { "\(assumesScheduledReset ? "≈" : "")\($0)" }
             : nil
         resetText = assumesScheduledReset
-            ? "Assumed after reset"
+            ? "Assumed · \(limit.resetsAt.map { ContextPanelDateFormatting.resetDeadline($0, compact: true) } ?? "reset unknown")"
             : TVRunwayLane.compactResetText(until: limit.resetsAt, now: now)
         accessibilityResetText = assumesScheduledReset
             ? UsagePresentationAssumption.scheduledReset.accessibilityText

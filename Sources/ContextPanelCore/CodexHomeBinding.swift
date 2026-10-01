@@ -17,6 +17,19 @@ public enum CodexHomeSourceState: Equatable, Sendable {
 }
 
 public enum CodexHomeBinding {
+    /// The main Codex history can mix logins, so it cannot override a different home.
+    public static func isSharedSessionMismatch(
+        account: LocalProviderAccountConfiguration, sessions: URL,
+        mainHome: URL = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex")
+    ) -> Bool {
+        guard let path = account.authPath else { return false }
+        let auth = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+        let selected = sessions.resolvingSymlinksInPath().standardizedFileURL
+        let shared = mainHome.appending(path: "sessions").resolvingSymlinksInPath().standardizedFileURL
+        let boundHome = auth.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        return selected.path == shared.path && boundHome.path != mainHome.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
     public static func sourceState(
         account: LocalProviderAccountConfiguration, authFileAvailable: Bool, hasSavedLogin: Bool
     ) -> CodexHomeSourceState {
