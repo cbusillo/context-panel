@@ -12,7 +12,20 @@ public enum CodexHomeBindingError: LocalizedError {
 }
 
 /// Only filesystem metadata is inspected. Credential contents remain in the existing adapter.
+public enum CodexHomeSourceState: Equatable, Sendable {
+    case sessionHistory, unconfigured, available, unavailable, unavailableUsingSavedLogin
+}
+
 public enum CodexHomeBinding {
+    public static func sourceState(
+        account: LocalProviderAccountConfiguration, authFileAvailable: Bool, hasSavedLogin: Bool
+    ) -> CodexHomeSourceState {
+        if account.codexQuotaPath != nil { return .sessionHistory }
+        guard account.effectiveAuthPath != nil else { return .unconfigured }
+        if authFileAvailable { return .available }
+        return hasSavedLogin ? .unavailableUsingSavedLogin : .unavailable
+    }
+
     public static func commit(
         accountID: String, home: URL, accountStore: AccountConfigurationStore,
         bookmarkStore: SecureFileBookmarkStore, deleteImportedCredential: @Sendable (String) throws -> Void,

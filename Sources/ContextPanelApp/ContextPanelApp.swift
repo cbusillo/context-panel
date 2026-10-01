@@ -413,6 +413,11 @@ struct SettingsPane: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 180)
                             Spacer()
+                            Button("Remove account", role: .destructive) {
+                                model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                             Toggle("", isOn: Binding(
                                 get: { account.isEnabled },
                                 set: { model.setAccount(account.id, isEnabled: $0) }
@@ -582,8 +587,10 @@ struct SettingsPane: View {
                 HStack {
                     Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
                     Button("Add Claude Account") { model.addAccount(provider: .anthropic) }
+                    Button("Add Antigravity Account") { model.addAccount(provider: .google) }
+                        .disabled(model.settingsAccounts.contains { $0.provider == .google })
                 }
-                Text("Use a local nickname. Each OpenAI entry reads its selected sessions folder or existing auth file; each Claude entry has its own Context Panel connection. Turn off entries you no longer use.")
+                Text("Use a local nickname. Turn off entries you no longer use, or remove their panel setup. Remove account keeps saved credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
             }
@@ -1796,6 +1803,13 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func addAccount(provider: Provider) {
+        if provider == .google {
+            guard !settingsAccounts.contains(where: { $0.provider == .google }),
+                  let account = AccountConfigurationStore.defaultDocument().accounts.first(where: { $0.provider == .google }) else { return }
+            accounts.append(account)
+            saveAccounts()
+            return
+        }
         guard provider == .openAI || provider == .anthropic else { return }
         accounts.append(LocalProviderAccountConfiguration(
             id: "local-" + UUID().uuidString.lowercased(), provider: provider,
@@ -1818,6 +1832,24 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accounts[index].displayName = name
         }
         saveAccounts()
+    }
+
+    func removeAccount(_ accountID: String, onRemoved: @escaping () -> Void) {
+        Task { @MainActor in
+            do {
+                guard let document = try await store.removeAccount(id: accountID) else {
+                    errorMessage = "Another refresh is running. Try removing the account again in a moment."
+                    return
+                }
+                if pendingClaudeOAuth?.accountID == accountID { cancelClaudeOAuth() }
+                accounts = document.accounts
+                errorMessage = nil
+                reloadContextPanelWidgetTimeline()
+                onRemoved()
+            } catch {
+                errorMessage = ConnectorRedactor.safeErrorDescription(error)
+            }
+        }
     }
 
     func setAuthPath(_ accountID: String, path: String) {
@@ -2396,6 +2428,20 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
+        if account.connectorKind == .codexRateLimits, account.codexQuotaPath == nil,
+           let path = account.effectiveAuthPath {
+            let expanded = NSString(string: path).expandingTildeInPath
+            let available = (try? bookmarkStore.withResolvedURL(for: expanded) { url in
+                (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            }) == true
+            switch CodexHomeBinding.sourceState(account: account, authFileAvailable: available, hasSavedLogin: hasImportedCredential(for: account)) {
+            case .unavailableUsingSavedLogin:
+                return "Configured source unavailable; reading saved login. Select Codex Home to reconnect the source."
+            case .unavailable:
+                return "Configured source unavailable. Select Codex Home to connect this account."
+            default: break
+            }
+        }
         let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
     }

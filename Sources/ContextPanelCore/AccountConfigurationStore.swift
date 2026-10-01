@@ -138,6 +138,11 @@ public struct AccountConfigurationLoadResult: Equatable, Sendable {
     }
 }
 
+public enum AccountConfigurationMutationError: LocalizedError {
+    case unreadableConfiguration
+    public var errorDescription: String? { "Account setup could not be read. Restore it before removing an account." }
+}
+
 public struct AccountConfigurationStore: Sendable {
     public let configurationURL: URL
     public let fallbackConfigurationURL: URL?
@@ -183,6 +188,22 @@ public struct AccountConfigurationStore: Sendable {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try Self.makeEncoder().encode(document)
         try data.write(to: configurationURL, options: [.atomic])
+    }
+
+    /// Removes panel membership only. No credential store, bookmark store or provider home is accessed.
+    public func removeAccount(
+        id: String, lock: SnapshotRefreshLock = .appDefault(), now: Date = Date()
+    ) async throws -> AccountConfigurationDocument? {
+        try await lock.withLock {
+            let result = load(now: now)
+            guard result.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+            var document = result.document
+            guard document.accounts.contains(where: { $0.id == id }) else { return document }
+            document.accounts.removeAll { $0.id == id }
+            document.updatedAt = now
+            try save(document)
+            return document
+        }
     }
 
     public static func defaultDocument(now: Date = Date()) -> AccountConfigurationDocument {

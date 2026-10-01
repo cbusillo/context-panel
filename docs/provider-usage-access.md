@@ -538,6 +538,20 @@ and known dates.
 
 ### Current Codex homes and OpenAI recovery
 
+In **Settings → Accounts**, each entry has an enable switch and **Remove account**.
+Removal changes only panel configuration membership, under the shared refresh
+lock; it does not delete Keychain credentials, bookmarks, CLI logins or home
+folders. A busy refresh asks the user to retry. Removed entries stay removed after
+reloading, and the next full refresh drops their live lanes while history remains.
+Use Add OpenAI Account, Add Claude Account or Add Antigravity Account to set up a
+replacement. Antigravity has one configured bridge source at a time.
+
+An imported login can continue supplying current API quotas after its original
+auth file disappears. Settings explicitly marks an unavailable configured source
+and distinguishes use of a saved login from a readable source. Rebinding is
+required to receive subsequent changes to that home; valid cached quota data is
+not evidence that the missing folder is readable.
+
 In Mac Settings, **Select Codex Home** binds an account to a user-selected home
 containing `auth.json`. Select the main `.codex` home or an account-specific home
 inside `.codex-accounts`, then repeat for each additional OpenAI entry. Local
