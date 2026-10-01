@@ -268,3 +268,15 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     #expect(assumed.useNext(provider: .google) == nil)
     #expect(assumed.accounts.first?.windows.first?.assumption != nil)
 }
+
+@Test func accountWindowNamesPreserveModelAndPeriodContext() throws {
+    let model = "Synthetic review bucket", period = "Synthetic week"
+    let limit = UsageLimit(provider: .openAI, accountID: "a", configuredAccountID: "a", accountName: "Provider identity",
+        label: "Quota", windowLabel: period, modelLabel: model, unit: .percent, used: 10, limit: 100,
+        lastUpdatedAt: overviewNow)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: overviewNow, limits: [limit]), reports: [],
+        metadata: [overviewMetadata("a")], now: overviewNow)
+    let window = try #require(overview.accounts.first?.windows.first)
+    #expect(window.label.contains(model))
+    #expect(window.label.contains(period))
+}
