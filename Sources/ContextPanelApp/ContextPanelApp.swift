@@ -865,16 +865,10 @@ struct SettingsPane: View {
         }
         .frame(width: 720)
         .frame(minHeight: 600)
-        .confirmationDialog(AccountTerms.removeAccountEverywhereTitle, isPresented: Binding(
+        .sheet(isPresented: Binding(
             get: { pendingRemovalID != nil }, set: { if !$0 { pendingRemovalID = nil } }
-        ), titleVisibility: .visible) {
-            Button(AccountTerms.removeAccountEverywhere, role: .destructive) {
-                if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
-                pendingRemovalID = nil
-            }
-            Button(AccountTerms.cancel, role: .cancel) { pendingRemovalID = nil }
-        } message: {
-            Text(AccountTerms.removalExplanation)
+        )) {
+            removalConfirmation
         }
         .sheet(isPresented: $showsAddAccount) {
             AddAccountSheet(model: model, onAdded: refreshAfterAuthorization)
@@ -906,6 +900,25 @@ struct SettingsPane: View {
         ) { _ in
             model.reloadBackgroundRefreshRegistrationDiagnostic()
         }
+    }
+
+    private var removalConfirmation: some View {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(AccountTerms.removeAccountEverywhereTitle).font(.headline)
+                Text(AccountTerms.removalExplanation).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button(AccountTerms.cancel) { pendingRemovalID = nil }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button(AccountTerms.removeAccountEverywhere) {
+                        if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
+                        pendingRemovalID = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(CPTheme.token(.destructiveFill))
+                    .foregroundStyle(CPTheme.token(.actionText))
+                }
+            }
+            .padding(24).frame(width: 420)
     }
 
     private func nameBinding(_ field: SettingsNameField, saved: String) -> Binding<String> {
@@ -6449,7 +6462,7 @@ enum CPTheme {
     static func stroke(cornerRadius: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(line, lineWidth: 1)
     }
-    private static func token(_ token: AccountColorToken) -> Color {
+    static func token(_ token: AccountColorToken) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             let rgb = token.rgb(dark: dark)

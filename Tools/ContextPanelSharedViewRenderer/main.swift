@@ -117,7 +117,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         case "account-overview":
             view = AnyView(AccountDashboardPanel(overview: overview, now: now, openAccount: { _ in }, openDeadlines: {}).padding(24))
         case "account-deadlines":
-            view = AnyView(AccountDeadlinesPanel(overview: overview, openAccount: { _ in }).padding(24))
+            view = AnyView(AccountDeadlinesPanel(overview: overview, now: now, openAccount: { _ in }).padding(24))
         case "account-detail":
             view = AnyView(AccountDashboardDetail(account: overview.accounts[0], overview: overview, now: now).padding(24))
         case "phone-overview":

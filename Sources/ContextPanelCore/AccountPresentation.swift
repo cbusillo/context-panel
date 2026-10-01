@@ -14,7 +14,7 @@ public enum AccountTerms {
     public static let removeAccount = "Remove account"
     public static let removeAccountEverywhere = "Remove account everywhere"
     public static let removeAccountEverywhereTitle = "Remove account everywhere?"
-    public static let removalExplanation = "This lane will disappear from all Macs and companions after their next successful sync. Credentials, home folders and history stay on each Mac."
+    public static let removalExplanation = "This account and any lanes from its setup will disappear from all Macs and companions after their next successful sync. Credentials, home folders and history stay on each Mac."
     public static let resumeUpdates = "Resume updates"
     public static let addAccount = "Add account"
     public static let addAccountMenu = "Add account…"
@@ -35,15 +35,26 @@ public enum AccountTerms {
     public static let lastSeen = "last seen"
     public static let resets = "Resets"
     public static let pace = "Pace"
+    public static let longWindow = "Long"
     public static let measuring = "measuring"
     public static let underPace = "under pace"
     public static let onPace = "on pace"
     public static let updated = "Updated"
     public static let nextSevenDays = "Next 7 days"
     public static let noCurrentReading = "No current reading"
-    public static let noEligibleAccount = "No account has room in every window"
+    public static let noEligibleAccount = "No eligible account for Use next"
     public static let addFirstAccount = "Add your first account"
     public static let unknown = "—"
+    public static func accountTiming(_ account: AccountOverview.Account, now: Date) -> String {
+        if [.stale, .unavailable].contains(account.state) {
+            return account.stateText + (account.windows.isEmpty ? "" : account.observedAt.map { " " + AccountPaceText.when($0, now: now) } ?? "")
+        }
+        guard account.isReliable else { return account.stateText }
+        return account.limitingWindow.flatMap { reset($0, now: now) }.map { resets + " " + $0 } ?? account.stateText
+    }
+    public static func deadlineLabel(_ deadline: AccountOverview.Deadline) -> String {
+        deadline.label + (deadline.state == .available ? "" : " · " + lastSeen)
+    }
     /// A provider read that failed, where no saved account value stands in.
     public static let notUpdating = "Not updating"
 
@@ -57,7 +68,7 @@ public enum AccountTerms {
 
     /// A window's reset, "Assumed" when the scheduled reset passed without a new reading.
     public static func reset(_ window: AccountOverview.Window, now: Date) -> String? {
-        window.naturalResetAt.map { (window.assumption == nil ? "" : "Assumed · ") + AccountPaceText.when($0, now: now) }
+        window.naturalResetAt.map { (window.assumption == nil ? "" : "Assumed ") + AccountPaceText.when($0, now: now) }
     }
 
     /// Short window column name.
@@ -140,7 +151,7 @@ public enum AccountTone: String, Codable, Sendable {
 public enum AccountColorToken: String, CaseIterable, Sendable {
     case surface, card, primary, secondary, tertiary, line, track
     case fill, available, low, critical, saved, banked, next
-    case openAI, anthropic, google, actionFill, actionText, watchSurface
+    case openAI, anthropic, google, actionFill, actionText, watchSurface, destructiveFill
 
     public func rgb(dark: Bool) -> (red: Double, green: Double, blue: Double) {
         let pair: ((Double, Double, Double), (Double, Double, Double)) = switch self {
@@ -162,6 +173,7 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .openAI: ((56, 92, 126), (107, 164, 218))
         case .anthropic: ((139, 102, 51), (220, 174, 103))
         case .google: ((35, 116, 106), (83, 183, 168))
+        case .destructiveFill: ((170, 35, 30), (157, 45, 40))
         case .actionFill: ((36, 99, 209), (40, 88, 171))
         case .actionText: ((255, 255, 255), (255, 255, 255))
         }

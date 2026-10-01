@@ -61,19 +61,19 @@ public struct TVAccountAnswers: View {
             }
             TVCard(title: AccountTerms.bankedResets) {
                 VStack(alignment: .leading, spacing: 10) {
-                    if let first = overview.nextDeadline {
+                    if let first = overview.deadlines.first {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Image(systemName: AccountGlyphs.banked).foregroundStyle(TVTokens.color(.banked))
                             Text(AccountPaceText.when(first.expiresAt, now: now)).font(.system(size: 36, weight: .semibold))
                                 .monospacedDigit()
                             Text(AccountPaceText.countdown(to: first.expiresAt, now: now)).foregroundStyle(TVTokens.color(.secondary))
                         }
-                        Text(first.label).foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
+                        Text(AccountTerms.deadlineLabel(first)).foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
                         ForEach(overview.deadlines.dropFirst().prefix(2)) { deadline in
                             HStack {
                                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
                                     .frame(width: 200, alignment: .leading)
-                                Text(deadline.label).foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
+                                Text(AccountTerms.deadlineLabel(deadline)).foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
                             }
                         }
                     } else {

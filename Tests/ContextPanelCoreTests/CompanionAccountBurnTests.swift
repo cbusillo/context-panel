@@ -70,3 +70,10 @@ private func burnFixture(at date: Date, used: Int, rate: Double?, failed: Bool =
     #expect(estimate.sampleCount == rate.sampleCount)
     #expect(document.accountDisplayMetadata?.first?.id == AccountDisplayMetadata.safeID(.google, transported.companionAccountID))
 }
+
+@Test func republishingTheSameObservationWithoutRatesKeepsItsObservedCompanionPace() {
+    let measured = burnFixture(at: burnNow, used: 20, rate: 2)
+    let setupOnly = burnFixture(at: burnNow, used: 20, rate: nil)
+    let retained = setupOnly.mergingForRemotePublish(existing: measured, now: burnNow)
+    #expect(retained.accountBurnRates == measured.accountBurnRates)
+}

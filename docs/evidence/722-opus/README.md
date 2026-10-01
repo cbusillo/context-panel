@@ -146,3 +146,11 @@ Widgets use `--presentation widget --scenario six-accounts` with
 
 They are shared SwiftUI views rendered headlessly, not captures of the
 installed app or a placed widget.
+
+## Integration review follow-up
+
+Anthropic Claude Opus 5.5 reviewed the integration read-only. Four medium findings were corrected: republishing the same observation keeps its measured burn; glance views preserve assumed-reset qualifiers; next-week same-weekday resets use month/day; and saved banked deadlines retain last-seen labels without disappearing or duplicating. Behavioral regressions cover the merge, date and saved-label contracts.
+
+Additional consistency fixes keep matching email local parts distinct, share Top Shelf timing/state words and Deadlines colors/dates, preserve VoiceOver qualifiers, anchor observed burn to its source snapshot across readers, and hide fallback/assumed burn from agent numeric fields. The native removal sheet uses shared action colors with contrast checks, rather than the OS dialog’s red-on-red presentation. The earlier transport proposal’s exact fields are limitID, unitsPerHour, observedDurationHours and sampleCount; dates remain on matching limits.
+
+The provider-state mark and the window-pressure color intentionally convey different facts: an account may be Available while one window has less than 25% left. Watch/TV minimum bar fills are visual affordances; exact numeric text is authoritative. The estimated small-iPhone overflow finding remains unverified until matching-device acceptance; these headless captures use the documented family dimensions. Unverified multi-Mac pooling and copied-publisher identity remain explicit unanswered Owner questions. No merge, release or physical acceptance is claimed.

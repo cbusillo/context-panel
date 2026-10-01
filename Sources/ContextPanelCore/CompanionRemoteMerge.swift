@@ -76,6 +76,8 @@ public extension CompanionSyncDocument {
             let rates: [String: ObservedBurnRate]?
             if new[key]?.semanticSelectionData == selected.semanticSelectionData {
                 rates = incoming.accountBurnRates?[key.companionAccountID]
+                    ?? (old[key]?.semanticSelectionData == selected.semanticSelectionData
+                        ? existing?.accountBurnRates?[key.companionAccountID] : nil)
             } else if old[key]?.semanticSelectionData == selected.semanticSelectionData {
                 rates = existing?.accountBurnRates?[key.companionAccountID]
             } else { rates = nil }

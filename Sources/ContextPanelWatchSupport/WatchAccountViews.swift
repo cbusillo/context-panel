@@ -38,7 +38,7 @@ public struct WatchAccountRow: View {
                 if let runOut = account.earliestRunOut(now: now) {
                     Text(AccountTerms.runOut(runOut.date, now: now)).foregroundStyle(WatchTokens.color(.critical))
                 } else if account.state.needsWord {
-                    Text(savedText(account)).foregroundStyle(WatchTokens.color(account.state.colorToken))
+                    Text(savedText(account, now: now)).foregroundStyle(WatchTokens.color(account.state.colorToken))
                 } else if let window = account.limitingWindow, let reset = AccountTerms.reset(window, now: now) {
                     Text(AccountTerms.resets + " " + reset).foregroundStyle(WatchTokens.color(.secondary))
                 }
@@ -112,7 +112,7 @@ public struct WatchAccountRectangularFace: View {
 
     private func footer(_ account: AccountOverview.Account) -> String {
         if let runOut = account.earliestRunOut(now: now) { return AccountTerms.runOut(runOut.date, now: now) }
-        if account.state.needsWord { return savedText(account) }
+        if account.state.needsWord { return savedText(account, now: now) }
         if let deadline = overview.nextDeadline { return "◆ " + AccountPaceText.when(deadline.expiresAt, now: now) }
         return account.limitingWindow.flatMap { AccountTerms.reset($0, now: now) }.map { AccountTerms.resets + " " + $0 } ?? ""
     }
@@ -134,7 +134,7 @@ public struct WatchAccountCircularFace: View {
                             style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            Text(AccountNumbers.percent(account?.remainingFraction))
+            Text(account.map { AccountNumbers.account($0, sign: false) } ?? AccountTerms.unknown)
                 .font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit()
         }
         .padding(3)
@@ -177,11 +177,11 @@ struct WatchMeter: View {
 }
 
 /// "Saved 6:04 PM" for saved values, otherwise the state word.
-func savedText(_ account: AccountOverview.Account) -> String {
+func savedText(_ account: AccountOverview.Account, now: Date) -> String {
     guard [.stale, .unavailable].contains(account.state), !account.windows.isEmpty, let observed = account.observedAt else {
         return account.stateText
     }
-    return account.stateText + " " + AccountPaceText.when(observed, now: Date())
+    return account.stateText + " " + AccountPaceText.when(observed, now: now)
 }
 
 /// The watch is always dark.

@@ -96,7 +96,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
                 }
                 return TVTopShelfCard(id: account.id, provider: account.metadata.provider,
                     title: account.metadata.label, headline: account.remainingText + " left",
-                    detail: account.state.displayText + " · " + account.resetDisplayText,
+                    detail: AccountTerms.accountTiming(account, now: now),
                     status: status,
                     remainingPercent: account.remainingFraction.map { Int(($0 * 100).rounded()) },
                     actionURLString: TVAppRoute.account(account.metadata.provider, account.id).url.absoluteString)

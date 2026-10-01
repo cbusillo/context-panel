@@ -16,7 +16,9 @@ private func luminance(_ token: AccountColorToken, dark: Bool) -> Double {
                 #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
             }
         }
-        let first = luminance(.actionText, dark: dark), second = luminance(.actionFill, dark: dark)
-        #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
+        for fill in [AccountColorToken.actionFill, .destructiveFill] {
+            let first = luminance(.actionText, dark: dark), second = luminance(fill, dark: dark)
+            #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
+        }
     }
 }

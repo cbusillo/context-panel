@@ -191,7 +191,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         savedAt = stored.savedAt
         let presented = stored.snapshot.presented(at: now)
         let rates = AccountBurnRateEstimator.observedBurnRates(
-            current: presented, history: history, now: now
+            current: stored.snapshot, history: history, now: now
         )
         let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
             metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
@@ -233,7 +233,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 limitingWindowID: shared?.limitingWindow?.id,
                 observedAt: row.limits.compactMap(\.lastUpdatedAt).min() ?? row.report?.generatedAt,
                 windows: row.limits.map { limit in
-                    let burn = current ? rates[row.id]?[limit.id] : nil
+                    let estimate = current && limit.presentationAssumption == nil ? rates[row.id]?[limit.id] : nil
+                    let burn = estimate.flatMap { $0.sampleCount > 0 ? $0 : nil }
                     return Window(
                         id: ConnectorRedactor.localAccountID(provider: row.provider, stableID: limit.id),
                         label: ConnectorRedactor.safeErrorDescription(limit.label),

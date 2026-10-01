@@ -99,7 +99,8 @@ public enum AccountBurnRateEstimator {
             }
             let rates = MainLimitBurnRateEstimator.observedBurnRates(
                 current: UsageSnapshot(generatedAt: current.generatedAt, limits: [limit]),
-                history: accountHistory, now: now
+                // Keep one observation’s pace stable between refreshes on all readers.
+                history: accountHistory, now: min(now, current.generatedAt)
             )
             if let rate = rates.values.first {
                 result[accountID, default: [:]][limit.id] = rate

@@ -21,7 +21,7 @@ public struct AccountDashboardPanel: View {
         self.openDeadlines = openDeadlines
     }
 
-    /// Companions receive no per-account burn yet; they omit pace rather than say "measuring".
+    /// Legacy companion payloads without observed account burn omit pace.
     private var hasBurn: Bool { AccountOverview.Account.hasBurn(in: overview) }
 
     private var palette: DashboardPalette { DashboardPalette(dark: colorScheme == .dark) }
@@ -131,7 +131,7 @@ public struct AccountDashboardPanel: View {
                       palette: palette) {
             Button(action: openDeadlines) {
                 VStack(alignment: .leading, spacing: 5) {
-                    if let first = overview.nextDeadline {
+                    if let first = overview.deadlines.first {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: AccountGlyphs.banked).foregroundStyle(palette.banked)
                             Text(AccountPaceText.when(first.expiresAt, now: now))
@@ -139,13 +139,13 @@ public struct AccountDashboardPanel: View {
                             Text(AccountPaceText.countdown(to: first.expiresAt, now: now))
                                 .font(.system(size: 11)).foregroundStyle(palette.secondary)
                         }
-                        Text(first.label + (first.state == .available ? "" : " · last seen"))
+                        Text(AccountTerms.deadlineLabel(first))
                             .font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                         ForEach(overview.deadlines.dropFirst().prefix(2)) { deadline in
                             HStack(spacing: 6) {
                                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
                                     .frame(width: 104, alignment: .leading)
-                                Text(deadline.label).foregroundStyle(palette.secondary).lineLimit(1)
+                                Text(AccountTerms.deadlineLabel(deadline)).foregroundStyle(palette.secondary).lineLimit(1)
                             }
                             .font(.system(size: 11))
                         }
@@ -359,9 +359,9 @@ public struct AccountDashboardDetail: View {
                     DashboardStatusMark(state: account.state, palette: palette)
                     Text(account.metadata.label).font(.system(size: 24, weight: .semibold)).lineLimit(2)
                     if Provider.allCases.contains(where: { overview.useNext(provider: $0)?.id == account.id }) {
-                        DashboardTag(text: "USE NEXT", color: palette.next)
+                        DashboardTag(text: AccountTerms.next, color: palette.next)
                     }
-                    if account.metadata.useLast { DashboardTag(text: "USE LAST", color: palette.tertiary) }
+                    if account.metadata.useLast { DashboardTag(text: AccountTerms.last, color: palette.tertiary) }
                 }
                 Text("\(account.metadata.provider.accountDisplayName) · \(account.stateText)"
                      + (account.observedAt.map { " · updated " + AccountPaceText.when($0, now: now) } ?? ""))
@@ -438,7 +438,7 @@ public struct AccountDashboardDetail: View {
     private var bankedCard: some View {
         let deadlines = overview.deadlines.filter { $0.accountID == account.id }
         return DashboardCard(title: AccountTerms.bankedResets, trailing: account.bankedResets.map {
-            "\($0.availableCount) \(account.bankedState == .available ? "available" : "last seen")" },
+            AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) },
                              fillsHeight: false, palette: palette) {
             VStack(alignment: .leading, spacing: 6) {
                 if account.bankedResets == nil {

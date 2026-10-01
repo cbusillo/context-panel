@@ -78,9 +78,9 @@ public extension AccountOverview.Account {
     func glanceAccessibilityText(now: Date, isNext: Bool) -> String {
         var parts = [accessibilityText]
         for window in orderedWindows {
-            guard let fraction = window.remainingFraction else { continue }
-            var part = "\(window.label) \(Int((fraction * 100).rounded())) percent left"
-            if let reset = window.naturalResetAt { part += ", resets \(ContextPanelDateFormatting.accountReset(reset, compact: true))" }
+            guard window.remainingFraction != nil else { continue }
+            var part = window.label + " " + AccountNumbers.window(window) + " " + AccountTerms.left
+            if let reset = AccountTerms.reset(window, now: now) { part += ", " + AccountTerms.resets + " " + reset }
             parts.append(part)
         }
         if let ratio = paceRatio(now: now) { parts.append("pace \(AccountPaceText.ratio(ratio))") }
@@ -133,7 +133,8 @@ public enum AccountPaceText {
         time.locale = locale
         time.timeZone = timeZone
         if calendar.isDate(date, inSameDayAs: now) { return date.formatted(time) }
-        var day = date.timeIntervalSince(now) < 7 * 86_400 - 3_600
+        let sameWeekday = calendar.component(.weekday, from: date) == calendar.component(.weekday, from: now)
+        var day = !sameWeekday && abs(date.timeIntervalSince(now)) < 7 * 86_400
             ? Date.FormatStyle.dateTime.weekday(.abbreviated) : Date.FormatStyle.dateTime.month(.abbreviated).day()
         day.locale = locale
         day.timeZone = timeZone
@@ -156,6 +157,10 @@ public extension AccountOverview {
             let others = accounts.filter { $0.id != account.id }.map { Set($0.metadata.label.split(separator: " ").map(String.init)) }
             let distinct = words.filter { word in !others.contains { $0.contains(word) } }
             result[account.id] = distinct.isEmpty || words.count == 1 ? label : distinct.joined(separator: " ")
+        }
+        let counts = Dictionary(grouping: result.values, by: { $0 }).mapValues(\.count)
+        for account in accounts where counts[result[account.id] ?? "", default: 0] > 1 {
+            result[account.id] = account.metadata.label
         }
         return result
     }

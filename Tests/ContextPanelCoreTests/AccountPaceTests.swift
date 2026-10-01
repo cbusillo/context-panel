@@ -65,3 +65,26 @@ private func paceOverview(weeklyUsed: Int = 85, weeklyResetHours: Double = 120, 
         metadata: metadata, now: paceNow)
     #expect(overview.shortLabels == ["id0": "primary", "id1": "backup", "id2": "work"])
 }
+
+@Test func nextWeeksSameWeekdayHasAnUnambiguousLocalCalendarDate() {
+    let zone = TimeZone(secondsFromGMT: 0)!
+    let calendar = Calendar(identifier: .gregorian)
+    let now = ContextPanelDateFormatting.date(from: "2026-10-07T10:00:00Z")!
+    let reset = ContextPanelDateFormatting.date(from: "2026-10-14T08:30:00Z")!
+    let result = AccountPaceText.when(reset, now: now, calendar: calendar, locale: Locale(identifier: "en_US_POSIX"), timeZone: zone)
+    #expect(result.contains("Oct 14"))
+    #expect(result.contains("8:30"))
+    #expect(!result.contains("Wed"))
+}
+@Test func compactEmailNamesRetainTheDomainWhenLocalPartsCollide() {
+    let metadata = ["chris@work.invalid", "chris@home.invalid"].enumerated().map {
+        AccountDisplayMetadata(id: "id\($0.offset)", configurationID: "id\($0.offset)", provider: .openAI, label: $0.element)
+    }
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: paceNow, limits: []), reports: [], metadata: metadata, now: paceNow)
+    #expect(Set(overview.shortLabels.values).count == 2)
+}
+
+@Test func savedBankedDeadlinesKeepTheirLastSeenQualifier() {
+    let deadline = AccountOverview.Deadline(accountID: "a", provider: .openAI, label: "Synthetic", expiresAt: paceNow.addingTimeInterval(60), observedAt: paceNow, state: .stale, ordinal: 0)
+    #expect(AccountTerms.deadlineLabel(deadline) == deadline.label + " · " + AccountTerms.lastSeen)
+}

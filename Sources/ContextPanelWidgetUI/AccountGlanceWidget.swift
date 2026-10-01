@@ -70,7 +70,7 @@ struct AccountGlanceWidget: View {
                         ZStack {
                             GlanceRing(fraction: account.remainingFraction, color: palette.color(for: account),
                                        track: palette.track, lineWidth: 3.5)
-                            Text(AccountNumbers.percent(account.remainingFraction))
+                            Text(AccountNumbers.account(account, sign: false))
                                 .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
                         }
                         .frame(width: 34, height: 34)
@@ -116,7 +116,7 @@ struct AccountGlanceWidget: View {
                     HStack(spacing: 4) {
                         Text(window.shortLabel).font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.secondary)
                         Spacer(minLength: 0)
-                        Text(window.naturalResetAt.map { AccountPaceText.when($0, now: now) } ?? "—")
+                        Text(AccountTerms.reset(window, now: now) ?? "—")
                             .font(.system(size: 9)).monospacedDigit().foregroundStyle(palette.secondary)
                     }
                     GlanceMeter(window: window, now: now, palette: palette, height: 4)
@@ -160,7 +160,7 @@ struct AccountGlanceWidget: View {
             Text(title).font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
             Group {
                 Text("5h").frame(width: 44, alignment: .leading)
-                Text("Week").frame(width: 52, alignment: .leading)
+                Text(overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 } ? "Week" : AccountTerms.longWindow).frame(width: 52, alignment: .leading)
                 Text(trailing).frame(width: 70, alignment: .trailing)
             }
             .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
@@ -207,10 +207,10 @@ struct AccountGlanceWidget: View {
             }
             .font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.bad).lineLimit(1)
         } else if [.stale, .unavailable].contains(account.state) {
-            Text(account.observedAt.map { "Saved " + AccountPaceText.when($0, now: now) } ?? "Saved")
+            Text(AccountTerms.accountTiming(account, now: now))
                 .font(.system(size: 9.5)).foregroundStyle(palette.stale).lineLimit(1)
         } else {
-            Text(account.limitingWindow?.naturalResetAt.map { AccountPaceText.when($0, now: now) } ?? account.state.displayText)
+            Text(account.limitingWindow.flatMap { AccountTerms.reset($0, now: now) } ?? account.state.displayText)
                 .font(.system(size: 9.5)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
         }
     }
@@ -248,7 +248,7 @@ struct AccountGlanceWidget: View {
                                     .frame(width: 84, alignment: .leading)
                                 Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).monospacedDigit()
                                     .foregroundStyle(palette.secondary).frame(width: 52, alignment: .leading)
-                                Text(deadline.label).foregroundStyle(palette.secondary).lineLimit(1)
+                                Text(AccountTerms.deadlineLabel(deadline)).foregroundStyle(palette.secondary).lineLimit(1)
                             }
                         }
                     }
@@ -301,7 +301,7 @@ struct AccountGlanceWidget: View {
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 22, alignment: .trailing)
             if let window { GlanceMeter(window: window, now: now, palette: palette, height: 3.5) }
-            Text(window?.naturalResetAt.map { AccountPaceText.when($0, now: now) } ?? "")
+            Text(window.flatMap { AccountTerms.reset($0, now: now) } ?? "")
                 .font(.system(size: 8)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
                 .frame(width: 58, alignment: .trailing)
         }

@@ -159,3 +159,15 @@ func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
     #expect(rates["claude"]?[current.limits[0].id]?.unitsPerHour == 4)
     #expect(rates["claude"]?[current.limits[1].id]?.unitsPerHour == 40)
 }
+
+@Test func anObservedAccountsBurnDoesNotChangeAsTheSameSnapshotIsReadLater() {
+    let history = [(hours: -7.0, used: 0), (-5.0, 5), (-4.0, 10), (0.0, 20)].map { sample in
+        let at = capacityNow.addingTimeInterval(sample.hours * 3600)
+        let limit = capacityLimit("a", used: sample.used, at: at)
+        return StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: [limit]), reports: [])
+    }
+    let current = history.last!.snapshot
+    let first = AccountBurnRateEstimator.observedBurnRates(current: current, history: history, now: capacityNow)
+    #expect(first["a"]?[current.limits[0].id]?.sampleCount ?? 0 > 0)
+    #expect(first == AccountBurnRateEstimator.observedBurnRates(current: current, history: history, now: capacityNow.addingTimeInterval(2 * 3600)))
+}
