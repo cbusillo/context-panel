@@ -91,11 +91,13 @@ public struct TVAccountTile: View {
     let account: AccountOverview.Account
     let isNext: Bool
     let now: Date
+    let showsPace: Bool
 
-    public init(account: AccountOverview.Account, isNext: Bool, now: Date) {
+    public init(account: AccountOverview.Account, isNext: Bool, now: Date, showsPace: Bool = true) {
         self.account = account
         self.isNext = isNext
         self.now = now
+        self.showsPace = showsPace
     }
 
     public var body: some View {
@@ -112,19 +114,25 @@ public struct TVAccountTile: View {
             }
             .frame(height: 36)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(AccountNumbers.percent(account.remainingFraction))
+                Text(AccountNumbers.account(account, sign: false))
                     .font(.system(size: 84, weight: .semibold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(TVTokens.color(AccountTone.forAccount(account).textToken))
                 Text(AccountTerms.percentLeft).font(.system(size: 24)).foregroundStyle(TVTokens.color(.secondary))
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(AccountNumbers.pace(account.paceRatio(now: now))).font(.system(size: 30, weight: .semibold))
-                        .monospacedDigit().foregroundStyle(TVTokens.color(AccountTone.forPace(account.paceRatio(now: now))))
-                    Text(account.earliestRunOut(now: now).map { AccountTerms.runOut($0.date, now: now) }
-                         ?? (account.state.needsWord ? account.state.displayText : AccountTerms.paceWord(account.paceRatio(now: now))))
-                        .font(.system(size: 20))
-                        .foregroundStyle(TVTokens.color(account.earliestRunOut(now: now) == nil ? .secondary : .critical))
+                    if showsPace {
+                        Text(AccountNumbers.pace(account.paceRatio(now: now))).font(.system(size: 30, weight: .semibold))
+                            .monospacedDigit().foregroundStyle(TVTokens.color(AccountTone.forPace(account.paceRatio(now: now))))
+                    }
+                    if let runOut = account.earliestRunOut(now: now) {
+                        Text(AccountTerms.runOut(runOut.date, now: now)).foregroundStyle(TVTokens.color(.critical))
+                    } else if account.state.needsWord {
+                        Text(account.stateText).foregroundStyle(TVTokens.color(account.state.colorToken))
+                    } else if showsPace {
+                        Text(AccountTerms.paceWord(account.paceRatio(now: now))).foregroundStyle(TVTokens.color(.secondary))
+                    }
                 }
+                .font(.system(size: 20))
             }
             .frame(height: 100)
             HStack(spacing: 24) {
@@ -175,7 +183,8 @@ public struct TVAccountBoard: View {
             TVAccountAnswers(overview: overview, now: now)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
                 ForEach(overview.accounts) { account in
-                    TVAccountTile(account: account, isNext: nextIDs.contains(account.id), now: now)
+                    TVAccountTile(account: account, isNext: nextIDs.contains(account.id), now: now,
+                                  showsPace: AccountOverview.Account.hasBurn(in: overview))
                 }
             }
         }
@@ -216,10 +225,10 @@ struct TVMeter: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(window.shortLabel).foregroundStyle(TVTokens.color(.secondary))
-                Text(AccountNumbers.percentWithSign(window.remainingFraction)).fontWeight(.semibold)
+                Text(AccountNumbers.window(window)).fontWeight(.semibold)
                     .foregroundStyle(TVTokens.color(AccountTone.forRemaining(window.remainingFraction).textToken))
                 Spacer(minLength: 4)
-                Text(window.naturalResetAt.map { AccountPaceText.when($0, now: now) } ?? "")
+                Text(AccountTerms.reset(window, now: now) ?? "")
                     .foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
             }
             .font(.system(size: 20)).monospacedDigit()

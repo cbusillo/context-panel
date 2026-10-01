@@ -38,6 +38,11 @@ public enum AccountTerms {
         "\(count) \(banked)" + (current ? "" : ", \(lastSeen)")
     }
 
+    /// A window's reset, "Assumed" when the scheduled reset passed without a new reading.
+    public static func reset(_ window: AccountOverview.Window, now: Date) -> String? {
+        window.naturalResetAt.map { (window.assumption == nil ? "" : "Assumed · ") + AccountPaceText.when($0, now: now) }
+    }
+
     /// Short window column name.
     public static func windowShortName(_ window: AccountOverview.Window) -> String { window.shortLabel }
 
@@ -62,6 +67,19 @@ public enum AccountNumbers {
     }
 
     public static func pace(_ ratio: Double?) -> String { AccountPaceText.ratio(ratio) }
+
+    /// A window's percent left, keeping "≈" when capacity is assumed after a scheduled reset.
+    public static func window(_ window: AccountOverview.Window, sign: Bool = true) -> String {
+        guard window.remainingFraction != nil else { return AccountTerms.unknown }
+        return (window.assumption == nil ? "" : "≈ ") + (sign ? percentWithSign(window.remainingFraction) : percent(window.remainingFraction))
+    }
+
+    /// An account's tightest percent left, with the same qualifier.
+    public static func account(_ account: AccountOverview.Account, sign: Bool = true) -> String {
+        guard account.remainingFraction != nil else { return AccountTerms.unknown }
+        let approximate = account.windows.contains { $0.assumption != nil } ? "≈ " : ""
+        return approximate + (sign ? percentWithSign(account.remainingFraction) : percent(account.remainingFraction))
+    }
 }
 
 /// How much headroom a window or account has. Bars, rings and numbers take their colour from this.
@@ -133,6 +151,18 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .track: dark ? 0.13 : 0.09
         default: 1
         }
+    }
+}
+
+public extension AccountOverview.Account {
+    /// The state word for this account: "Not updating" when a read failed and nothing was ever saved.
+    var stateText: String {
+        state == .unavailable && windows.isEmpty ? AccountTerms.notUpdating : state.displayText
+    }
+
+    /// Pace exists only where some account has observed burn; companions get none from the payload today.
+    static func hasBurn(in overview: AccountOverview) -> Bool {
+        overview.accounts.contains { $0.windows.contains { $0.burnFractionPerHour != nil } }
     }
 }
 

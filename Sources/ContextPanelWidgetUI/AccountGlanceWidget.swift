@@ -188,7 +188,7 @@ struct AccountGlanceWidget: View {
 
     private func windowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?, width: CGFloat) -> some View {
         HStack(spacing: 4) {
-            Text(AccountNumbers.percent(window?.remainingFraction))
+            Text(window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
                 .font(.system(size: 10, weight: window?.id == account.limitingWindow?.id ? .bold : .regular).monospacedDigit())
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 20, alignment: .trailing)
@@ -296,7 +296,7 @@ struct AccountGlanceWidget: View {
 
     private func largeWindowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?) -> some View {
         HStack(spacing: 4) {
-            Text(AccountNumbers.percent(window?.remainingFraction))
+            Text(window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
                 .font(.system(size: 11, weight: window?.id == account.limitingWindow?.id ? .bold : .medium).monospacedDigit())
                 .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 .frame(width: 22, alignment: .trailing)

@@ -109,6 +109,21 @@ show a `+N` overflow count. Not changed: 8–9 pt secondary text in the medium
 and large widgets (the density trade-off is the point of this comparison), and
 the row mark versus bar colour difference (explained above).
 
+A second read-only review by OpenAI gpt-6.1-sol checked consistency across surfaces
+after the extension. It found seven gaps. Six were fixed:
+
+- The "≈" and "Assumed ·" qualifiers now reach Watch, TV, widgets and the agent
+  `display` block (`AccountNumbers.window/account`, `AccountTerms.reset`).
+- The Watch complication says "Saved 6:04 PM" for saved values.
+- TV omits pace when no account has synced burn.
+- A non-weekly long window shows its own label in the Mac table.
+- A failed first read says "Not updating" (`Account.stateText`), not "Saved".
+- Detail pages use the shared date format.
+
+Left open: Top Shelf still tints a headline by provider and draws its status colours with
+its own UIKit values. It is a follow-up on #722, because Top Shelf draws through
+CoreGraphics rather than SwiftUI.
+
 ## Data
 
 No new provider reads. Pace uses the per-account burn the app already

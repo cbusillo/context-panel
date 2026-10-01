@@ -231,7 +231,7 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     for account in overview.accounts {
         let display = try #require(export.accounts.first { $0.id == account.id }?.display)
         #expect(display.percentLeft == account.remainingText)
-        #expect(display.state == account.state.displayText)
+        #expect(display.state == account.stateText)
         #expect(display.pace == AccountNumbers.pace(account.paceRatio(now: agentNow)))
         #expect(display.runOut == account.earliestRunOut(now: agentNow).map { AccountTerms.runOut($0.date, now: agentNow) })
     }

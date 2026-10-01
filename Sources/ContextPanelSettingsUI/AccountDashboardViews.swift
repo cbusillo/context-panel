@@ -22,7 +22,7 @@ public struct AccountDashboardPanel: View {
     }
 
     /// Companions receive no per-account burn yet; they omit pace rather than say "measuring".
-    private var hasBurn: Bool { overview.accounts.contains { $0.windows.contains { $0.burnFractionPerHour != nil } } }
+    private var hasBurn: Bool { AccountOverview.Account.hasBurn(in: overview) }
 
     private var palette: DashboardPalette { DashboardPalette(dark: colorScheme == .dark) }
     private var nextIDs: Set<String> { Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id }) }
@@ -206,7 +206,7 @@ public struct AccountDashboardPanel: View {
                         Text(account.metadata.provider.accountDisplayName)
                         if account.state.needsWord {
                             Text("·")
-                            Text(account.state.displayText)
+                            Text(account.stateText)
                         }
                         if let count = account.bankedResets?.availableCount, count > 0 {
                             Text("·")
@@ -235,12 +235,14 @@ public struct AccountDashboardPanel: View {
     private func windowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text(AccountNumbers.percent(window?.remainingFraction))
+                Text(window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
                     .font(.system(size: 17, weight: window?.id == account.limitingWindow?.id ? .bold : .medium))
                     .monospacedDigit().foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
                 Text("%").font(.system(size: 10, weight: .medium)).foregroundStyle(palette.tertiary)
                 Spacer(minLength: 4)
-                Text(window?.naturalResetAt.map { AccountPaceText.when($0, now: now) } ?? "")
+                Text(window.map { w in
+                    (w.duration == 5 * 3_600 || w.duration == 7 * 86_400 ? "" : w.shortLabel + " · ") + (AccountTerms.reset(w, now: now) ?? "")
+                } ?? "")
                     .font(.system(size: 10.5)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
             }
             if let window { DashboardMeter(window: window, now: now, palette: palette, height: 5) }
@@ -263,7 +265,7 @@ public struct AccountDashboardPanel: View {
             }
             HStack(spacing: 5) {
                 Text(account.metadata.provider.accountDisplayName)
-                if account.state.needsWord { Text("·"); Text(account.state.displayText) }
+                if account.state.needsWord { Text("·"); Text(account.stateText) }
                 if let count = account.bankedResets?.availableCount, count > 0 {
                     Text("·")
                     Image(systemName: AccountGlyphs.bankedSmall).font(.system(size: 10, weight: .bold)).foregroundStyle(palette.banked)
@@ -346,7 +348,7 @@ public struct AccountDashboardDetail: View {
         self.compact = compact
     }
 
-    private var hasBurn: Bool { overview.accounts.contains { $0.windows.contains { $0.burnFractionPerHour != nil } } }
+    private var hasBurn: Bool { AccountOverview.Account.hasBurn(in: overview) }
 
     private var palette: DashboardPalette { DashboardPalette(dark: colorScheme == .dark) }
 
@@ -361,7 +363,7 @@ public struct AccountDashboardDetail: View {
                     }
                     if account.metadata.useLast { DashboardTag(text: "USE LAST", color: palette.tertiary) }
                 }
-                Text("\(account.metadata.provider.accountDisplayName) · \(account.state.displayText)"
+                Text("\(account.metadata.provider.accountDisplayName) · \(account.stateText)"
                      + (account.observedAt.map { " · updated " + AccountPaceText.when($0, now: now) } ?? ""))
                     .font(.system(size: 12)).foregroundStyle(palette.secondary)
             }
@@ -394,16 +396,16 @@ public struct AccountDashboardDetail: View {
                                   track: palette.track, lineWidth: 8, evenPace: window.evenPaceRemaining(now: now),
                                   tick: palette.primary)
                     VStack(spacing: -2) {
-                        Text(AccountNumbers.percent(window.remainingFraction))
+                        Text(AccountNumbers.window(window, sign: false))
                             .font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
                         Text(AccountTerms.percentLeft).font(.system(size: 10, weight: .medium)).foregroundStyle(palette.secondary)
                     }
                 }
                 .frame(width: 96, height: 96)
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 5) {
-                    fact("Resets", window.naturalResetAt.map {
-                        ContextPanelDateFormatting.accountReset($0, compact: true) + "  " + AccountPaceText.countdown(to: $0, now: now)
-                    } ?? "Unknown")
+                    fact(AccountTerms.resets, AccountTerms.reset(window, now: now).map {
+                        $0 + "  " + AccountPaceText.countdown(to: window.naturalResetAt ?? now, now: now)
+                    } ?? AccountTerms.unknown)
                     if let used = window.used, let limit = window.limit {
                         fact("Used", window.unit == .percent && limit == 100 ? "\(used)%" : "\(used) of \(limit) \(window.unit.rawValue)")
                     }
@@ -445,7 +447,7 @@ public struct AccountDashboardDetail: View {
                 ForEach(deadlines) { deadline in
                     HStack(spacing: 10) {
                         Image(systemName: AccountGlyphs.bankedExpiry).font(.system(size: 9)).foregroundStyle(palette.banked)
-                        Text("Expires " + ContextPanelDateFormatting.accountReset(deadline.expiresAt)).monospacedDigit()
+                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
                         if deadline.state != .available {
                             Text("last seen " + AccountPaceText.when(deadline.observedAt, now: now))
                                 .foregroundStyle(palette.stale)

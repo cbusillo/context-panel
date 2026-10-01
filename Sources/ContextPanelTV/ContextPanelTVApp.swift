@@ -259,7 +259,8 @@ struct TVAccountOverviewContent: View {
                 let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
                     ForEach(overview.accounts) { account in
-                        TVAccountOverviewCard(account: account, isNext: nextIDs.contains(account.id), now: now) {
+                        TVAccountOverviewCard(account: account, isNext: nextIDs.contains(account.id), now: now,
+                                              showsPace: AccountOverview.Account.hasBurn(in: overview)) {
                             openAccount(account.id)
                         }
                     }
@@ -284,12 +285,13 @@ private struct TVAccountOverviewCard: View {
     let account: AccountOverview.Account
     let isNext: Bool
     let now: Date
+    let showsPace: Bool
     let open: () -> Void
     @FocusState private var isFocused: Bool
     var body: some View {
         // Focus changes only the outline, so percentages never move.
         Button(action: open) {
-            TVAccountTile(account: account, isNext: isNext, now: now)
+            TVAccountTile(account: account, isNext: isNext, now: now, showsPace: showsPace)
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(isFocused ? Color.white : Color.white.opacity(0.16),
                                                                   lineWidth: isFocused ? 4 : 1))
         }.buttonStyle(.plain).focusEffectDisabled().focused($isFocused)
@@ -308,8 +310,8 @@ private struct TVAccountDetailContent: View {
                     ForEach(account.windows) { window in
                         VStack(alignment: .leading, spacing: 12) {
                             Text(window.label).font(.headline)
-                            Text((window.assumption == nil ? "" : "≈ ") + AccountNumbers.percentWithSign(window.remainingFraction) + " " + AccountTerms.left).font(.title)
-                            Text(window.naturalResetAt.map { (window.assumption == nil ? "Reset " : "Assumed after reset ") + ContextPanelDateFormatting.accountReset($0) } ?? "Reset unknown")
+                            Text(AccountNumbers.window(window) + " " + AccountTerms.left).font(.title)
+                            Text(AccountTerms.reset(window, now: Date()).map { AccountTerms.resets + " " + $0 } ?? AccountTerms.resets + " " + AccountTerms.unknown)
                             if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
                         }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
                             .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
@@ -320,7 +322,7 @@ private struct TVAccountDetailContent: View {
                 ForEach(overview.deadlines.filter { accountID == nil || $0.accountID == accountID }) { deadline in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(deadline.label + " · " + deadline.provider.accountDisplayName).font(.headline)
-                        Text("Expires " + ContextPanelDateFormatting.accountReset(deadline.expiresAt))
+                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: Date()))
                         if deadline.state != .available { Text("Last seen " + ContextPanelDateFormatting.accountReset(deadline.observedAt)).foregroundStyle(.secondary) }
                     }
                 }

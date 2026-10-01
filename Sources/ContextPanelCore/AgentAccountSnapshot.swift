@@ -100,10 +100,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
 
         public init(account: AccountOverview.Account, isNext: Bool, now: Date) {
             provider = account.metadata.provider.accountDisplayName
-            state = account.state.displayText
+            state = account.stateText
             percentLeft = account.remainingText
             tightestWindow = account.limitingWindow?.label
-            resets = account.limitingWindow?.naturalResetAt.map { AccountPaceText.when($0, now: now) }
+            resets = account.limitingWindow.flatMap { AccountTerms.reset($0, now: now) }
             let ratio = account.paceRatio(now: now)
             pace = AccountNumbers.pace(ratio)
             paceWord = AccountTerms.paceWord(ratio)
@@ -112,8 +112,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 ? AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) : nil }
             useNext = isNext
             windows = account.orderedWindows.map { window in
-                WindowDisplay(id: window.id, name: window.shortLabel, percentLeft: AccountNumbers.percentWithSign(window.remainingFraction),
-                    resets: window.naturalResetAt.map { AccountPaceText.when($0, now: now) },
+                WindowDisplay(id: window.id, name: window.shortLabel, percentLeft: AccountNumbers.window(window),
+                    resets: AccountTerms.reset(window, now: now),
                     evenPacePercentLeft: window.evenPaceRemaining(now: now).map(AccountNumbers.percentWithSign))
             }
         }

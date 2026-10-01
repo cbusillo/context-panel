@@ -25,7 +25,7 @@ public struct WatchAccountRow: View {
                     Image(systemName: AccountGlyphs.useNext).font(.system(size: 10)).foregroundStyle(WatchTokens.color(.next))
                 }
                 Spacer(minLength: 2)
-                Text(AccountNumbers.percentWithSign(account.remainingFraction))
+                Text(AccountNumbers.account(account))
                     .font(.system(size: 17, weight: .semibold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(WatchTokens.color(AccountTone.forAccount(account).textToken))
             }
@@ -38,10 +38,9 @@ public struct WatchAccountRow: View {
                 if let runOut = account.earliestRunOut(now: now) {
                     Text(AccountTerms.runOut(runOut.date, now: now)).foregroundStyle(WatchTokens.color(.critical))
                 } else if account.state.needsWord {
-                    Text(account.state.displayText).foregroundStyle(WatchTokens.color(account.state.colorToken))
-                } else if let reset = account.limitingWindow?.naturalResetAt {
-                    Text(AccountTerms.resets + " " + AccountPaceText.when(reset, now: now))
-                        .foregroundStyle(WatchTokens.color(.secondary))
+                    Text(savedText(account)).foregroundStyle(WatchTokens.color(account.state.colorToken))
+                } else if let window = account.limitingWindow, let reset = AccountTerms.reset(window, now: now) {
+                    Text(AccountTerms.resets + " " + reset).foregroundStyle(WatchTokens.color(.secondary))
                 }
             }
             .font(.system(size: 12)).monospacedDigit().lineLimit(1)
@@ -94,7 +93,7 @@ public struct WatchAccountRectangularFace: View {
                     Image(systemName: account.state.glyphName).font(.system(size: 8, weight: .bold))
                     Text(account.metadata.label).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     Spacer(minLength: 2)
-                    Text(AccountNumbers.percentWithSign(account.remainingFraction))
+                    Text(AccountNumbers.account(account))
                         .font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
                 }
                 HStack(spacing: 4) {
@@ -113,8 +112,9 @@ public struct WatchAccountRectangularFace: View {
 
     private func footer(_ account: AccountOverview.Account) -> String {
         if let runOut = account.earliestRunOut(now: now) { return AccountTerms.runOut(runOut.date, now: now) }
+        if account.state.needsWord { return savedText(account) }
         if let deadline = overview.nextDeadline { return "◆ " + AccountPaceText.when(deadline.expiresAt, now: now) }
-        return account.limitingWindow?.naturalResetAt.map { AccountTerms.resets + " " + AccountPaceText.when($0, now: now) } ?? ""
+        return account.limitingWindow.flatMap { AccountTerms.reset($0, now: now) }.map { AccountTerms.resets + " " + $0 } ?? ""
     }
 }
 
@@ -152,7 +152,7 @@ struct WatchMeter: View {
             if showsLabel {
                 HStack(spacing: 2) {
                     Text(window.shortLabel).foregroundStyle(WatchTokens.color(.secondary))
-                    Text(AccountNumbers.percent(window.remainingFraction))
+                    Text(AccountNumbers.window(window, sign: false))
                         .foregroundStyle(WatchTokens.color(AccountTone.forRemaining(window.remainingFraction).textToken))
                 }
                 .font(.system(size: 10, weight: .medium)).monospacedDigit()
@@ -174,6 +174,14 @@ struct WatchMeter: View {
         .frame(maxWidth: .infinity)
         .accessibilityHidden(true)
     }
+}
+
+/// "Saved 6:04 PM" for saved values, otherwise the state word.
+func savedText(_ account: AccountOverview.Account) -> String {
+    guard [.stale, .unavailable].contains(account.state), !account.windows.isEmpty, let observed = account.observedAt else {
+        return account.stateText
+    }
+    return account.stateText + " " + AccountPaceText.when(observed, now: Date())
 }
 
 /// The watch is always dark.
