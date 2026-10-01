@@ -428,11 +428,15 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             ProviderBadge(provider: account.provider)
-                            TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
-                            .focused($focusedName, equals: .account(account.id))
-                            .onSubmit { commitName(.account(account.id)) }
-                            .textFieldStyle(.roundedBorder)
-                            .frame(minWidth: 180, maxWidth: .infinity)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Name").font(.caption).foregroundStyle(CPTheme.secondaryText)
+                                TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
+                                    .labelsHidden().accessibilityLabel("Local account name")
+                                    .focused($focusedName, equals: .account(account.id))
+                                    .onSubmit { commitName(.account(account.id)) }
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(minWidth: 220, maxWidth: .infinity)
+                            }
                             Toggle("Show in widgets", isOn: Binding(
                                 get: { account.showInWidgets ?? account.isEnabled },
                                 set: { model.setWidgetAccountVisibility(account.id, isVisible: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
@@ -590,8 +594,6 @@ struct SettingsPane: View {
                                 .onSubmit { commitName(.alias(account.id, id)) }
                                 .textFieldStyle(.roundedBorder)
                             }
-                        }
-                        }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
@@ -616,6 +618,12 @@ struct SettingsPane: View {
                                         .controlSize(.regular)
                                 }
                             }
+                        }
+                        }
+                        }
+                        if account.connectorKind != .codexRateLimits {
+                            Text(model.detailText(for: account)).font(.system(size: 11))
+                                .foregroundStyle(CPTheme.secondaryText).lineLimit(2)
                         }
                         if let refreshSummary = model.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot) {
                             Text(refreshSummary.text)
