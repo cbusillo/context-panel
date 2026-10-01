@@ -28,8 +28,14 @@ publishers cannot revive the lane. Re-adding creates a new membership. Historica
 to global decisions. Shared built-in configuration IDs are not deletion keys:
 the observed provider lane identifies a default login, preserving another Mac's different login. Unread built-in defaults use a persistent random publisher
 identity to distinguish their setup memberships; old anonymous placeholders are
-retired during migration, with duplicate-account checks. Local credential keys
-and observed companion identities do not change. Deletion markers bind to the resolved CloudKit user scope. Credentials,
+retired during migration, with duplicate-account checks. Local credential keys and verified Codex login identities do not change.
+Setup-derived Claude/AGY/session/failure identities are publisher-qualified in
+metadata, usage, status and cache aliases; old unidentified wire rows are retired.
+Identity creation/migration is coordinated across app/widget/helper processes.
+Removals made while the CloudKit user cannot be resolved remain pending until
+that user resolves, without discarding existing markers or publishing to another
+user. Copying a complete setup file retains its publisher membership; independent
+clone renewal remains a follow-up outside this active single-publisher setup. Deletion markers bind to the resolved CloudKit user scope. Credentials,
 bookmarks, home folders and local history remain. Configured but never-connected
 rows from another Mac survive until explicitly removed. Older builds must be
 updated to consume the deletion markers; their next remote publish is still filtered

@@ -29,15 +29,23 @@ public struct CompanionSnapshot: Codable, Equatable, Sendable {
         self.promptCacheSummaries = promptCacheSummaries
     }
 
-    public init(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date()) {
+    public init(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date(), configuration: [LocalProviderAccountConfiguration] = [], publisherID: String? = nil) {
         self.init(
             generatedAt: storedSnapshot.snapshot.generatedAt,
             publishedAt: publishedAt,
-            limits: storedSnapshot.snapshot.limits.map(CompanionLimit.init(limit:)),
-            providerStatuses: storedSnapshot.reports.map(CompanionProviderStatus.init(report:)),
+            limits: storedSnapshot.snapshot.limits.map { limit in
+                CompanionLimit(limit: limit, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
+                    provider: limit.provider, rawID: limit.accountID, configuredID: limit.configuredAccountID,
+                    configuration: configuration, publisherID: publisherID))
+            },
+            providerStatuses: storedSnapshot.reports.map { report in
+                CompanionProviderStatus(report: report, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
+                    provider: report.provider, rawID: report.accountID, configuredID: report.configuredAccountID,
+                    configuration: configuration, publisherID: publisherID))
+            },
             promptCacheSummaries: CompanionPromptCacheSummary.summaries(
                 observations: storedSnapshot.promptCacheObservations,
-                accountAliases: CompanionPromptCacheAccountAliases(storedSnapshot: storedSnapshot)
+                accountAliases: CompanionPromptCacheAccountAliases(storedSnapshot: storedSnapshot, configuration: configuration, publisherID: publisherID)
             )
         )
     }
@@ -1181,11 +1189,15 @@ public struct CompanionSyncPublisher: Sendable {
         if let scope, let accountConfigurationURL {
             let store = AccountConfigurationStore(configurationURL: accountConfigurationURL)
             let result = store.load(now: publishedAt)
-            if result.status == .healthy, result.document.removalUserScope == nil,
-               !result.document.globalRemovedDisplayIDs.isEmpty {
+            if result.status == .healthy, !result.document.globalRemovedDisplayIDs.isEmpty {
                 var configuration = result.document
+                if let previous = configuration.removalUserScope, previous != scope {
+                    configuration.removedDisplayIDs = []
+                }
+                configuration.removedDisplayIDs = Array(Set(configuration.removedDisplayIDs ?? []).union(configuration.pendingRemovedDisplayIDs ?? [])).sorted()
+                configuration.pendingRemovedDisplayIDs = nil
                 configuration.removalUserScope = scope
-                try? store.save(configuration)
+                if configuration != result.document { try? store.save(configuration) }
             }
         }
         let document = makeDocument(
@@ -1222,8 +1234,8 @@ public struct CompanionSyncPublisher: Sendable {
             }
         }
         return CompanionSyncDocument(
-            storedSnapshot: storedSnapshot,
-            publishedAt: publishedAt,
+            snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
+                configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID),
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettingsStore.load(),
@@ -1232,7 +1244,10 @@ public struct CompanionSyncPublisher: Sendable {
                 AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt, publisherID: $0.publisherID)
             },
             removedDisplayIDs: configuration.flatMap { configuration in
-                guard configuration.removalUserScope == nil || removalUserScope == nil || configuration.removalUserScope == removalUserScope else { return nil }
+                if remoteStore != nil {
+                    guard let removalUserScope, configuration.removalUserScope == removalUserScope else { return nil }
+                    return configuration.removedDisplayIDs
+                }
                 return configuration.globalRemovedDisplayIDs
             }
         )
@@ -1279,12 +1294,14 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
     public let freshnessMode: UsageFreshnessMode?
     public let status: UsageStatus
 
-    public init(limit: UsageLimit) {
+    public init(limit: UsageLimit) { self.init(limit: limit, identityConfiguredAccountID: nil) }
+
+    public init(limit: UsageLimit, identityConfiguredAccountID: String?) {
         provider = limit.provider
         companionAccountID = CompanionAccountIdentity.id(
             provider: limit.provider,
             accountID: limit.accountID,
-            configuredAccountID: limit.configuredAccountID
+            configuredAccountID: identityConfiguredAccountID ?? limit.configuredAccountID
         )
         accountName = CompanionAccountIdentity.displayName(limit.accountName)
         label = limit.label
@@ -1344,12 +1361,14 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         case resetCredits
     }
 
-    public init(report: StoredProviderReport) {
+    public init(report: StoredProviderReport) { self.init(report: report, identityConfiguredAccountID: nil) }
+
+    public init(report: StoredProviderReport, identityConfiguredAccountID: String?) {
         provider = report.provider
         companionAccountID = CompanionAccountIdentity.id(
             provider: report.provider,
             accountID: report.accountID,
-            configuredAccountID: report.configuredAccountID
+            configuredAccountID: identityConfiguredAccountID ?? report.configuredAccountID
         )
         accountName = CompanionAccountIdentity.displayName(report.accountName)
         generatedAt = report.generatedAt
@@ -1578,7 +1597,7 @@ private struct CompanionPromptCacheGroup: Hashable {
 private struct CompanionPromptCacheAccountAliases: Sendable {
     private let configuredAccountIDsByRawKey: [ProviderAccountKey: String]
 
-    init(storedSnapshot: StoredUsageSnapshot? = nil) {
+    init(storedSnapshot: StoredUsageSnapshot? = nil, configuration: [LocalProviderAccountConfiguration] = [], publisherID: String? = nil) {
         guard let storedSnapshot else {
             configuredAccountIDsByRawKey = [:]
             return
@@ -1586,11 +1605,11 @@ private struct CompanionPromptCacheAccountAliases: Sendable {
 
         var aliases: [ProviderAccountKey: String] = [:]
         for limit in storedSnapshot.snapshot.limits {
-            guard let configuredAccountID = limit.configuredAccountID else { continue }
+            guard let configuredAccountID = AccountDisplayMetadata.companionIdentityOverride(provider: limit.provider, rawID: limit.accountID, configuredID: limit.configuredAccountID, configuration: configuration, publisherID: publisherID) ?? limit.configuredAccountID else { continue }
             aliases[ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)] = configuredAccountID
         }
         for report in storedSnapshot.reports {
-            guard let configuredAccountID = report.configuredAccountID else { continue }
+            guard let configuredAccountID = AccountDisplayMetadata.companionIdentityOverride(provider: report.provider, rawID: report.accountID, configuredID: report.configuredAccountID, configuration: configuration, publisherID: publisherID) ?? report.configuredAccountID else { continue }
             aliases[ProviderAccountKey(provider: report.provider, accountID: report.accountID)] = configuredAccountID
         }
         configuredAccountIDsByRawKey = aliases
@@ -1639,9 +1658,12 @@ public extension AccountDisplayMetadata {
             }?.id ?? entry.id
             let setup = configuration.first { safeID($0.provider, $0.id) == entry.configurationID }
             let placeholderID = setup.map { companionMembershipKey($0, publisherID: publisherID) } ?? rawID
+            let identity = limit == nil && report == nil ? nil : companionIdentityOverride(provider: entry.provider, rawID: rawID,
+                configuredID: limit?.configuredAccountID ?? report?.configuredAccountID,
+                configuration: configuration, publisherID: publisherID) ?? limit?.configuredAccountID ?? report?.configuredAccountID
             let companionID = CompanionAccountIdentity.id(provider: entry.provider,
                 accountID: limit == nil && report == nil ? placeholderID : rawID,
-                configuredAccountID: limit?.configuredAccountID ?? report?.configuredAccountID)
+                configuredAccountID: identity)
             return Self(id: safeID(entry.provider, companionID),
                         configurationID: setup.map { companionConfigurationID($0, publisherID: publisherID) } ?? entry.configurationID,
                         provider: entry.provider, label: entry.label, isEnabled: entry.isEnabled,
@@ -1658,5 +1680,28 @@ public extension AccountDisplayMetadata {
     }
     static func companionConfigurationID(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
         safeID(account.provider, companionMembershipKey(account, publisherID: publisherID))
+    }
+}
+
+public extension AccountDisplayMetadata {
+    /// Source-derived IDs identify a setup, not a provider login. Scope built-in defaults by publisher.
+    static func companionIdentityOverride(provider: Provider, rawID: String, configuredID: String?,
+        configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> String? {
+        guard let publisherID, let setup = configuration.first(where: {
+            $0.provider == provider && ($0.id == configuredID || $0.id == rawID || $0.providerReportAccountIDs.contains(rawID))
+        }), setup.isSharedDefaultMembership else { return nil }
+        let sourceDerived = provider != .openAI || rawID == setup.id
+            || rawID == ConnectorRedactor.localAccountID(provider: provider, stableID: setup.id)
+            || setup.providerReportAccountIDs.contains(rawID)
+        return sourceDerived ? companionMembershipKey(setup, publisherID: publisherID) : nil
+    }
+
+    static func legacyUnidentifiedDisplayIDs(_ setup: LocalProviderAccountConfiguration) -> [String] {
+        let sourceIDs = Set(setup.providerReportAccountIDs + [ConnectorRedactor.localAccountID(provider: setup.provider, stableID: setup.id)])
+        return sourceIDs.flatMap { raw in
+            [nil, setup.id].map { configured in
+                safeID(setup.provider, CompanionAccountIdentity.id(provider: setup.provider, accountID: raw, configuredAccountID: configured))
+            }
+        }
     }
 }

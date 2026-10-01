@@ -87,7 +87,10 @@ public extension CompanionSyncDocument {
             guard let (key, selected) = retainedByID[entry.id] else {
                 // Explicit global tombstones distinguish removal from a different Mac
                 // publishing its own setup. Never-observed rows remain visible.
-                if !allObservedIDs.contains(entry.id), !observedConfigurations.contains(entry.configurationID) { result.append(entry) }
+                if !allObservedIDs.contains(entry.id), !observedConfigurations.contains(entry.configurationID),
+                   primary.contains(where: { $0.id == entry.id }) || !primary.contains(where: { $0.configurationID == entry.configurationID }) {
+                    result.append(entry)
+                }
                 continue
             }
             let older = existing?.accountDisplayMetadata?.first { $0.id == entry.id }
