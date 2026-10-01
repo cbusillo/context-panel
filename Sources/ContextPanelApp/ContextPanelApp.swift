@@ -6283,7 +6283,7 @@ extension MainLimitSummary {
     }
 
     var resetText: String {
-        guard let resetsAt else { return "reset not reported" }
+        guard let resetsAt else { return hasAssumedScheduledResetCapacity ? "assumed reset · date unknown" : "reset not reported" }
         let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
         if status == .failure { return "refresh failed · reset \(deadline)" }
         if hasAssumedScheduledResetCapacity { return "assumed · resets \(deadline)" }
@@ -6292,7 +6292,7 @@ extension MainLimitSummary {
 
     var previewResetConfidenceText: String {
         if hasAssumedScheduledResetCapacity {
-            return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
+            return resetText
         }
         return "\(resetText) · \(confidence.previewText)"
     }

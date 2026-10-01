@@ -119,7 +119,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     public func resetText(now: Date) -> String? {
-        if isAssumedAfterScheduledReset { return "assumed reset" }
+        if isAssumedAfterScheduledReset { return resetsAt.map { "Assumed · " + ContextPanelDateFormatting.resetDeadline($0, compact: true) } ?? "assumed reset · date unknown" }
         guard let resetsAt else { return nil }
         return Self.compactResetText(until: resetsAt, now: now)
     }
@@ -576,27 +576,12 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     private func resetAccessibilityText(now: Date) -> String {
-        if isAssumedAfterScheduledReset { return "Scheduled reset passed." }
-        guard let resetsAt else { return "Reset time unknown." }
-        let seconds = Int(resetsAt.timeIntervalSince(now))
-        if seconds < -60 { return "Reset just passed." }
-        if seconds < 60 { return "Resets now." }
-        let minutes = max((seconds + 59) / 60, 1)
-        if minutes < 60 {
-            return "Resets in \(minutes) \(minutes == 1 ? "minute" : "minutes")."
+        guard let resetsAt else {
+            return isAssumedAfterScheduledReset ? "Scheduled reset assumed; date unknown." : "Reset time unknown."
         }
-        let hours = max((minutes + 59) / 60, 1)
-        if hours <= 24 {
-            return "Resets in \(hours) \(hours == 1 ? "hour" : "hours")."
-        }
-        let days = max(hours / 24, 1)
-        let remainingHours = hours % 24
-        guard remainingHours > 0 else {
-            return "Resets in \(days) \(days == 1 ? "day" : "days")."
-        }
-        let dayText = "\(days) \(days == 1 ? "day" : "days")"
-        let hourText = "\(remainingHours) \(remainingHours == 1 ? "hour" : "hours")"
-        return "Resets in \(dayText) and \(hourText)."
+        let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
+        if isAssumedAfterScheduledReset { return "Scheduled reset assumed at \(deadline)." }
+        return resetsAt <= now ? "Reset passed at \(deadline)." : "Resets at \(deadline)."
     }
 
     private func freshnessAccessibilityText(now: Date) -> String {
@@ -612,16 +597,8 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     private static func compactResetText(until date: Date, now: Date) -> String {
-        let seconds = Int(date.timeIntervalSince(now))
-        if seconds < -60 { return "passed" }
-        if seconds < 60 { return "now" }
-        let minutes = max((seconds + 59) / 60, 1)
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = max((minutes + 59) / 60, 1)
-        if hours <= 24 { return "\(hours)h" }
-        let days = hours / 24
-        let remainingHours = hours % 24
-        return remainingHours == 0 ? "\(days)d" : "\(days)d \(remainingHours)h"
+        let deadline = ContextPanelDateFormatting.resetDeadline(date, compact: true)
+        return date <= now ? "Passed \(deadline)" : deadline
     }
 
     private static func accessibilityAgeText(since date: Date, now: Date) -> String {

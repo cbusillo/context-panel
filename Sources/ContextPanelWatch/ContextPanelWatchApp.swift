@@ -604,7 +604,7 @@ private struct WatchLimitRow: View {
                     Text(limit.context)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(resetText)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }

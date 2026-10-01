@@ -2394,3 +2394,16 @@ private func widgetSnapshotTemporaryDirectory() throws -> URL {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
 }
+
+@Test func aPassedWidgetResetKeepsItsLocalDateAndMinute() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(-1)
+    let limit = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local",
+        label: "Weekly", unit: .percent, used: 40, limit: 100, resetsAt: reset, confidence: .observed)
+    let deadline = ContextPanelDateFormatting.resetDeadline(reset, compact: true)
+    #expect(limit.widgetResetText(presentationDate: now) == "Passed \(deadline)")
+    let assumed = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local",
+        label: "Weekly", unit: .percent, used: 0, limit: 100, resetsAt: reset,
+        confidence: .estimated, presentationAssumption: .scheduledReset)
+    #expect(assumed.widgetResetText(presentationDate: now) == "Assumed · \(deadline)")
+}

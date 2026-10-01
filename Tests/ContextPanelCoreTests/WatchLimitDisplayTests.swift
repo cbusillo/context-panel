@@ -32,7 +32,7 @@ import Testing
     #expect(abs(usedRatio - 0.3333) < 0.001)
     #expect(
         tightest.accessibilitySentence(direction: .remaining, now: snapshot.generatedAt)
-            == "OpenAI, Weekly, 3 accounts. 67 percent remaining, available. Resets in 7 days. Synced just now."
+            == "OpenAI, Weekly, 3 accounts. 67 percent remaining, available. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Synced just now."
     )
 
     #expect(tightest.id == "summary:openai:weekly")
@@ -273,10 +273,10 @@ import Testing
     #expect(row.remainingInlineText == "85% left")
     #expect(row.usedPressure.ratio == 0.15)
     #expect(row.remainingCapacity.ratio == 0.85)
-    #expect(row.resetText(now: snapshot.generatedAt) == "7d")
+    #expect(row.resetText(now: snapshot.generatedAt) == ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!, compact: true))
     #expect(
         row.accessibilitySentence(direction: .used, now: snapshot.generatedAt)
-            == "OpenAI, Weekly, 1 account. 15 percent used, available. Resets in 7 days. Synced just now."
+            == "OpenAI, Weekly, 1 account. 15 percent used, available. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Synced just now."
     )
 }
 
@@ -996,10 +996,10 @@ import Testing
     #expect(row.compactCircularQuantity == "65")
     #expect(row.remainingComplicationText == "65 left · saved")
     #expect(row.status == .stale)
-    #expect(row.resetText(now: now) == "2h")
+    #expect(row.resetText(now: now) == ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!, compact: true))
     #expect(
         row.accessibilitySentence(direction: .remaining, now: now)
-            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, stale. Resets in 2 hours. Showing saved data, last synced 2 hours ago."
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, stale. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Showing saved data, last synced 2 hours ago."
     )
 }
 
@@ -1031,7 +1031,7 @@ import Testing
     #expect(row.status == .failure)
     #expect(
         row.accessibilitySentence(direction: .remaining, now: now)
-            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, refresh failed. Resets in 2 hours. Not synced."
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, refresh failed. Resets at \(ContextPanelDateFormatting.resetDeadline(snapshot.limits[0].resetsAt!)). Not synced."
     )
 }
 
@@ -1066,7 +1066,7 @@ import Testing
     #expect(row.usedText == "≈0%")
     #expect(row.remainingText == "≈100%")
     #expect(row.compactCircularQuantity == "≈100")
-    #expect(row.resetText(now: now) == "assumed reset")
+    #expect(row.resetText(now: now) == "assumed reset · date unknown")
     let accessibilitySentence = row.accessibilitySentence(direction: .remaining, now: now)
     #expect(accessibilitySentence.contains("approximately 100 percent remaining"))
     #expect(accessibilitySentence.contains("Assumed after scheduled reset"))
@@ -1120,4 +1120,16 @@ private func googleWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimi
         resetsAt: Date(timeIntervalSince1970: 1_800_604_800),
         confidence: .observed
     )
+}
+
+@Test func watchPassedResetRetainsDateInVisibleAndAccessibleText() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(-1)
+    let limit = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local", label: "Weekly",
+        windowLabel: "weekly", unit: .percent, used: 40, limit: 100, resetsAt: reset,
+        lastUpdatedAt: now, confidence: .observed)
+    let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: [limit], status: .healthy, message: "Synced")
+    let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
+    #expect(row.resetText(now: now) == "Passed \(ContextPanelDateFormatting.resetDeadline(reset, compact: true))")
+    #expect(row.accessibilitySentence(direction: .remaining, now: now).contains("Reset passed at \(ContextPanelDateFormatting.resetDeadline(reset))."))
 }

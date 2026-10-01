@@ -535,3 +535,14 @@ private func presentationTestTemporaryDirectory() throws -> URL {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     return root
 }
+
+@Test func assumedAppResetPreservesTheKnownLocalDeadline() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(3_600)
+    let limit = UsageLimit(provider: .google, accountID: "local", accountName: "Local", label: "Gemini Weekly",
+        windowLabel: "weekly", modelLabel: "Gemini", unit: .percent, used: 0, limit: 100,
+        resetsAt: reset, lastUpdatedAt: now, confidence: .estimated, presentationAssumption: .scheduledReset)
+    let summary = try #require(UsageSnapshot(generatedAt: now, limits: [limit]).mainLimitSummaries.first)
+    #expect(summary.previewResetConfidenceText.contains(ContextPanelDateFormatting.resetDeadline(reset)))
+    #expect(summary.previewResetConfidenceText.contains("assumed"))
+}

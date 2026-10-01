@@ -1988,15 +1988,14 @@ extension UsageLimit {
     }
 
     func widgetResetText(presentationDate: Date) -> String? {
-        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else {
+            if isAssumedAfterScheduledReset { return "assumed reset · date unknown" }
             if status == .failure { return "refresh failed" }
             return provider == .anthropic ? nil : "unknown reset"
         }
-        if resetsAt < presentationDate.addingTimeInterval(-60) {
-            return "reset passed"
-        }
-        return resetsAt.widgetCompactResetText(relativeTo: presentationDate)
+        let deadline = resetsAt.widgetCompactResetText(relativeTo: presentationDate)
+        if isAssumedAfterScheduledReset { return "Assumed · \(deadline)" }
+        return resetsAt <= presentationDate ? "Passed \(deadline)" : deadline
     }
 
     var widgetResetConfidenceText: String? {
