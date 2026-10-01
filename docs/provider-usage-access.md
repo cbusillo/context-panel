@@ -601,7 +601,7 @@ setting is edited). An unsaved default configuration deliberately fails closed;
 the reader does not invent default accounts or persist them.
 
 Schema 1 has `readAt`, `savedAt` and `accounts`. Each row has an opaque local ID,
-provider, redacted local label, shared panel `state`, observation time, windows,
+provider, typed local label (including email-like names), shared panel `state`, observation time, windows,
 and a stable opaque `configurationID` for the configured source. The row `id`
 identifies its current logical lane and can change when a connection first
 establishes the account or a catalog source gains or loses members. Track the
@@ -630,8 +630,10 @@ publishers whose complete coverage stored only the earliest expiry.
 expired or stale reported offers retain their historical quantities/dates with
 stale state. A reported zero remains distinguishable from no observation.
 
-No credentials, source paths, raw provider responses, diagnostics, account emails
-or transcript/cache payloads are exported. IDs are local opaque projections,
+No credentials, source paths, raw provider responses, diagnostics, credential-derived
+account identity or transcript/cache payloads are exported. Explicitly typed local
+names and aliases retain email addresses under the Owner decision on #719;
+secret/path patterns in those labels and provider-derived window labels remain redacted. IDs are local opaque projections,
 not provider identifiers. The command does not access Keychain, auth files,
 bookmarks, session files or provider endpoints; it performs no writes, migration
 or refresh. It exits nonzero with a bounded diagnostic if the required files

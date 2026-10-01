@@ -292,6 +292,10 @@ public enum EvidenceRedactor {
     ]
 
     public static func redact(_ value: String) -> String {
+        redact(value, preservingTypedEmail: false)
+    }
+
+    public static func redact(_ value: String, preservingTypedEmail: Bool) -> String {
         var redacted = markingUnsafeControlScalars(in: value)
         if redacted.contains(controlMarker) {
             for (pattern, replacement) in controlAwareRedactionPatterns {
@@ -304,6 +308,7 @@ public enum EvidenceRedactor {
         }
         redacted = redacted.replacingOccurrences(of: controlMarker, with: "")
         for (pattern, replacement) in redactionPatterns {
+            if preservingTypedEmail && replacement == "[email redacted]" { continue }
             redacted = redacted.replacingOccurrences(
                 of: pattern,
                 with: replacement,

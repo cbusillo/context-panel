@@ -403,7 +403,7 @@ struct SettingsPane: View {
 
             Section("Accounts") {
                 ForEach(model.settingsAccounts) { account in
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             ProviderBadge(provider: account.provider)
                             TextField("Local account name", text: Binding(
@@ -411,15 +411,23 @@ struct SettingsPane: View {
                                 set: { model.renameAccount(account.id, name: $0) }
                             ))
                             .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 180)
-                            Spacer()
+                            .frame(minWidth: 180, maxWidth: .infinity)
+                            Toggle("Enabled", isOn: Binding(
+                                get: { account.isEnabled },
+                                set: { model.setAccount(account.id, isEnabled: $0) }
+                            ))
+                            .fixedSize()
+                            .toggleStyle(.switch)
+                            .controlSize(.regular)
+                        }
+                        HStack(spacing: 12) {
                             Button { model.moveAccount(account.id, offset: -1); refreshAfterAuthorization() } label: {
-                                Image(systemName: "arrow.up")
+                                Label("Move up", systemImage: "arrow.up")
                             }
                             .accessibilityLabel("Move account up")
                             .disabled(model.settingsAccounts.first?.id == account.id)
                             Button { model.moveAccount(account.id, offset: 1); refreshAfterAuthorization() } label: {
-                                Image(systemName: "arrow.down")
+                                Label("Move down", systemImage: "arrow.down")
                             }
                             .accessibilityLabel("Move account down")
                             .disabled(model.settingsAccounts.last?.id == account.id)
@@ -427,14 +435,9 @@ struct SettingsPane: View {
                                 model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
                             }
                             .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            Toggle("", isOn: Binding(
-                                get: { account.isEnabled },
-                                set: { model.setAccount(account.id, isEnabled: $0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .controlSize(.mini)
+                            .controlSize(.regular)
+                        }
+                        HStack(spacing: 12) {
                             if !account.isEnabled {
                                 Text("Off")
                                     .font(.system(size: 11, weight: .semibold))
@@ -451,20 +454,20 @@ struct SettingsPane: View {
                                     if model.hasSavedAuthorization(account) {
                                         Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                         Button("Forget", role: .destructive) {
                                             model.forgetAntigravityBridgeData()
                                             refreshAfterAuthorization()
                                         }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                     } else {
                                         Button("Copy Setup") { model.copyAntigravityBridgeSetupCommand() }
                                             .buttonStyle(.borderedProminent)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                         Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                     }
                                 }
                             } else if model.hasSavedAuthorization(account) {
@@ -479,14 +482,14 @@ struct SettingsPane: View {
                                     if model.canAuthorizeAuthFile(for: account) {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                     } else if model.canManageOAuth(for: account) {
                                         Button("Reconnect") { reconnectOAuth(for: account) }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                         Button("Disconnect", role: .destructive) { disconnectOAuth(for: account) }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                     }
                                 }
                             } else if model.hasLegacyAuthorization(account) {
@@ -496,17 +499,17 @@ struct SettingsPane: View {
                                         .foregroundStyle(CPTheme.statusColor(.stale))
                                     Button("Update") { authorizeAuthFile(for: account) }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 }
                             } else if model.needsAuthorization(account) {
                                 if model.canAuthorizeAuthFile(for: account) {
                                     Button("Select File") { authorizeAuthFile(for: account) }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 } else if account.connectorKind == .claudeOAuthUsage {
                                     Button("Connect") { model.authorizeClaudeOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 }
                             } else {
                                 Text(account.isEnabled ? "Enabled" : "Disabled")
@@ -577,11 +580,11 @@ struct SettingsPane: View {
                                         .foregroundStyle(CPTheme.statusColor(.healthy))
                                     Button("Change") { authorizePromptCacheUsage(for: account) }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 } else if model.needsPromptCacheUsageAuthorization(account) {
                                     Button("Enable Cache Stats") { authorizePromptCacheUsage(for: account) }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 }
                             }
                         }
@@ -592,7 +595,8 @@ struct SettingsPane: View {
                                 .lineLimit(2)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .controlSize(.regular)
+                    .padding(.vertical, 10)
                 }
                 ForEach(model.retiredSettingsAccounts) { account in
                     HStack {
@@ -602,7 +606,7 @@ struct SettingsPane: View {
                         Button("Remove account", role: .destructive) {
                             model.removeAccount(account.id, onRemoved: refreshAfterAuthorization)
                         }
-                        .controlSize(.small)
+                        .controlSize(.regular)
                     }
                 }
                 HStack {

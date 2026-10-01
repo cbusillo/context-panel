@@ -129,7 +129,9 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 id: ConnectorRedactor.localAccountID(provider: row.provider, stableID: row.id),
                 configurationID: ConnectorRedactor.localAccountID(provider: row.provider, stableID: row.configuredAccountID),
                 provider: row.provider,
-                label: ConnectorRedactor.safeErrorDescription(row.name),
+                // AccountCapacity names come only from configured local names/aliases.
+                // Provider-derived identity and diagnostic labels keep ordinary redaction.
+                label: ConnectorRedactor.safeErrorDescription(row.name, preservingTypedEmail: true),
                 state: row.state,
                 observedAt: row.limits.compactMap(\.lastUpdatedAt).min() ?? row.report?.generatedAt,
                 windows: row.limits.map { limit in

@@ -463,7 +463,11 @@ public enum ConnectorRedactor {
     }
 
     public static func safeErrorDescription(_ value: String) -> String {
-        EvidenceRedactor.redact(value)
+        safeErrorDescription(value, preservingTypedEmail: false)
+    }
+
+    public static func safeErrorDescription(_ value: String, preservingTypedEmail: Bool) -> String {
+        EvidenceRedactor.redact(value, preservingTypedEmail: preservingTypedEmail)
             .replacingOccurrences(
                 of: #"https?://[^\s]+"#,
                 with: "[url redacted]",

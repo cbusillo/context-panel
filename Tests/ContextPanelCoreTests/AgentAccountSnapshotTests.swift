@@ -85,12 +85,12 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(later.accounts.first?.windows.first?.used == row.windows.first?.used)
 }
 
-@Test func agentSnapshotJSONExcludesRawDiagnosticsPathsAndIdentityAndMakesUnknownsExplicit() throws {
+@Test func agentSnapshotJSONKeepsTypedEmailButExcludesRawDiagnosticsPathsAndProviderIdentity() throws {
     var account = agentConfiguration("person@example.invalid")
     account.displayName = "Local person@example.invalid /private/source auth"
     let stored = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow, limits: []),
         reports: [StoredProviderReport(provider: .openAI, accountID: account.id, configuredAccountID: account.id,
-            accountName: "Ignored", generatedAt: agentNow, status: .failure,
+            accountName: "credential-derived@example.invalid", generatedAt: agentNow, status: .failure,
             errorMessage: "Bearer private-secret; raw response")])
     let export = AgentAccountSnapshot(configuration: AccountConfigurationDocument(updatedAt: agentNow, accounts: [account]),
         stored: stored, history: [], now: agentNow)
@@ -98,7 +98,9 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     encoder.dateEncodingStrategy = .iso8601
     let data = try encoder.encode(export)
     let json = try #require(String(data: data, encoding: .utf8))
-    #expect(!json.contains("person@example.invalid"))
+    #expect(export.accounts.first?.label.contains("person@example.invalid") == true)
+    #expect(export.accounts.first?.id.contains("person@example.invalid") == false)
+    #expect(!json.contains("credential-derived@example.invalid"))
     #expect(!json.contains("/private/"))
     #expect(!json.contains("private-secret"))
     #expect(!json.contains("raw response"))
@@ -191,4 +193,22 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(!FileManager.default.fileExists(atPath: root.appending(path: "file-bookmarks.json").path))
     try Data("malformed".utf8).write(to: root.appending(path: "Snapshots/current-snapshot.json"))
     #expect(throws: AgentAccountSnapshotReadError.self) { try AgentAccountSnapshot.read(rootDirectory: root, now: agentNow) }
+}
+
+@Test func agentTypedLabelKeepsEmailButStillRedactsSecretsAndProviderWindowIdentity() throws {
+    var account = agentConfiguration("a")
+    account.displayName = "Typed@example.invalid"
+    account.accountAliases = ["a": "Alias@example.invalid token=private-secret"]
+    var limit = agentLimit("a", used: 20, at: agentNow)
+    limit = UsageLimit(provider: limit.provider, accountID: limit.accountID, configuredAccountID: "a",
+        accountName: "provider@example.invalid", label: "provider@example.invalid", unit: .percent,
+        used: limit.used, limit: limit.limit, lastUpdatedAt: agentNow)
+    let stored = StoredUsageSnapshot(savedAt: agentNow,
+        snapshot: UsageSnapshot(generatedAt: agentNow, limits: [limit]))
+    let row = try #require(AgentAccountSnapshot(configuration: AccountConfigurationDocument(updatedAt: agentNow, accounts: [account]),
+        stored: stored, history: [], now: agentNow).accounts.first)
+    #expect(row.label.contains("Alias@example.invalid"))
+    #expect(!row.label.contains("private-secret"))
+    #expect(row.windows.first?.label.contains("provider@example.invalid") == false)
+    #expect(ConnectorRedactor.safeErrorDescription("Typed@example.invalid").contains("Typed@example.invalid") == false)
 }
