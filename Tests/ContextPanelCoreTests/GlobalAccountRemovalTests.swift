@@ -18,7 +18,7 @@ private func removalFixture(_ id: String, observed: Bool) -> (LocalProviderAccou
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
-    let (account, stored, offline) = removalFixture("old", observed: true)
+    let (account, stored, offline) = removalFixture("local-old", observed: true)
     try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account]))
     let removed = try #require(try await store.removeAccount(id: account.id,
         lock: SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock")), now: removalNow, storedSnapshot: stored))
@@ -81,4 +81,55 @@ private func removalFixture(_ id: String, observed: Bool) -> (LocalProviderAccou
         try await publisher.receiveGlobalRemovals(accountStore: store, storedSnapshot: stored, now: removalNow)
         #expect(store.load(now: removalNow).document.accounts.isEmpty == shouldRemove)
     }
+}
+
+@Test func defaultRemovalDoesNotRemoveDifferentLoginOrGlobalizeHistoricalLocalRemoval() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let account = LocalProviderAccountConfiguration(id: "openai-codex-default", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Default", authPath: "/synthetic/auth.json")
+    func usage(_ login: String) -> StoredUsageSnapshot {
+        StoredUsageSnapshot(savedAt: removalNow, snapshot: UsageSnapshot(generatedAt: removalNow, limits: [
+            UsageLimit(provider: .openAI, accountID: login, configuredAccountID: account.id, accountName: "Provider identity",
+                       label: "Weekly", unit: .percent, used: 25, limit: 100, lastUpdatedAt: removalNow)]), reports: [])
+    }
+    let first = usage("login-a"), other = usage("login-b")
+    try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account], removedAccountIDs: ["historical-local-removal"]))
+    #expect(store.load(now: removalNow).document.globalRemovedDisplayIDs.isEmpty)
+    let deleted = try #require(try await store.removeAccount(id: account.id,
+        lock: SnapshotRefreshLock(lockURL: root.appending(path: "lock")), now: removalNow, storedSnapshot: first))
+    try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account]))
+    try store.applyGlobalRemovals(deleted.globalRemovedDisplayIDs, storedSnapshot: other, now: removalNow)
+    #expect(store.load(now: removalNow).document.accounts == [account])
+    try store.applyGlobalRemovals(deleted.globalRemovedDisplayIDs, storedSnapshot: first, now: removalNow)
+    #expect(store.load(now: removalNow).document.accounts.isEmpty)
+}
+
+@Test func connectingAnAccountReplacesItsNeverObservedCompanionRow() throws {
+    let (account, _, disconnected) = removalFixture("local-new", observed: false)
+    let (_, connectedStored, _) = removalFixture("local-new", observed: true)
+    let connected = CompanionSyncDocument(storedSnapshot: connectedStored, publishedAt: removalNow.addingTimeInterval(5),
+        accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: [account], stored: connectedStored, now: removalNow))
+    for merged in [connected.mergingForRemotePublish(existing: disconnected, now: removalNow),
+                   disconnected.mergingForRemotePublish(existing: connected, now: removalNow)] {
+        #expect(merged.accountDisplayMetadata?.count == 1)
+        #expect(merged.accountDisplayMetadata?.first?.id == connected.accountDisplayMetadata?.first?.id)
+    }
+}
+
+@Test func syncedDeletionMarkersDoNotCarryIntoAnotherCloudKitUser() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let first = try #require(CompanionCloudKitUserScope(rawValue: String(repeating: "a", count: 64)))
+    let second = try #require(CompanionCloudKitUserScope(rawValue: String(repeating: "b", count: 64)))
+    let (account, stored, _) = removalFixture("local-current", observed: true)
+    try store.save(AccountConfigurationDocument(updatedAt: removalNow, accounts: [account],
+        removedDisplayIDs: ["opaque-old-deletion"], removalUserScope: first))
+    try store.applyGlobalRemovals([], storedSnapshot: stored, now: removalNow, userScope: second)
+    let changed = store.load(now: removalNow).document
+    #expect(changed.accounts == [account])
+    #expect(changed.globalRemovedDisplayIDs.isEmpty)
+    #expect(changed.removalUserScope == second)
 }

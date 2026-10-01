@@ -79,6 +79,7 @@ public extension CompanionSyncDocument {
         })
         let primary = settingsDocument.accountDisplayMetadata ?? []
         let secondary = settingsDocument == incoming ? existing?.accountDisplayMetadata ?? [] : incoming.accountDisplayMetadata ?? []
+        let observedConfigurations = Set((primary + secondary).filter { retainedByID[$0.id] != nil }.map(\.configurationID))
         var seen = Set<String>()
         var result: [AccountDisplayMetadata] = []
         for entry in primary + secondary {
@@ -86,7 +87,7 @@ public extension CompanionSyncDocument {
             guard let (key, selected) = retainedByID[entry.id] else {
                 // Explicit global tombstones distinguish removal from a different Mac
                 // publishing its own setup. Never-observed rows remain visible.
-                if !allObservedIDs.contains(entry.id) { result.append(entry) }
+                if !allObservedIDs.contains(entry.id), !observedConfigurations.contains(entry.configurationID) { result.append(entry) }
                 continue
             }
             let older = existing?.accountDisplayMetadata?.first { $0.id == entry.id }

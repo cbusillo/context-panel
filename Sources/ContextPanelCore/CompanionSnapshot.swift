@@ -1177,10 +1177,22 @@ public struct CompanionSyncPublisher: Sendable {
         publishedAt: Date = Date(),
         observedBurnRates: [String: ObservedBurnRate] = [:]
     ) async -> CompanionSyncSaveResult {
+        let scope = await remoteStore?.currentUserScope()
+        if let scope, let accountConfigurationURL {
+            let store = AccountConfigurationStore(configurationURL: accountConfigurationURL)
+            let result = store.load(now: publishedAt)
+            if result.status == .healthy, result.document.removalUserScope == nil,
+               !result.document.globalRemovedDisplayIDs.isEmpty {
+                var configuration = result.document
+                configuration.removalUserScope = scope
+                try? store.save(configuration)
+            }
+        }
         let document = makeDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
-            observedBurnRates: observedBurnRates
+            observedBurnRates: observedBurnRates,
+            removalUserScope: scope
         )
         var result = publish(document: document)
         if let remoteStore {
@@ -1195,13 +1207,14 @@ public struct CompanionSyncPublisher: Sendable {
         let remote = await remoteStore.load(now: now)
         guard remote.outcome.succeeded, let document = remote.result.document,
               let scope = await remoteStore.currentUserScope(), document.cloudKitUserScope == scope else { return }
-        try accountStore.applyGlobalRemovals(document.removedDisplayIDs ?? [], storedSnapshot: storedSnapshot, now: now)
+        try accountStore.applyGlobalRemovals(document.removedDisplayIDs ?? [], storedSnapshot: storedSnapshot, now: now, userScope: scope)
     }
 
     private func makeDocument(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date,
-        observedBurnRates: [String: ObservedBurnRate]
+        observedBurnRates: [String: ObservedBurnRate],
+        removalUserScope: CompanionCloudKitUserScope? = nil
     ) -> CompanionSyncDocument {
         let configuration = accountConfigurationURL.flatMap { url in
             (try? Data(contentsOf: url)).flatMap {
@@ -1214,10 +1227,14 @@ public struct CompanionSyncPublisher: Sendable {
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettingsStore.load(),
+            cloudKitUserScope: removalUserScope,
             accountDisplayMetadata: configuration.map {
                 AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt)
             },
-            removedDisplayIDs: configuration?.globalRemovedDisplayIDs
+            removedDisplayIDs: configuration.flatMap { configuration in
+                guard configuration.removalUserScope == nil || removalUserScope == nil || configuration.removalUserScope == removalUserScope else { return nil }
+                return configuration.globalRemovedDisplayIDs
+            }
         )
     }
 
