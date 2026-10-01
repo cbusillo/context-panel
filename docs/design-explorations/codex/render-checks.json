@@ -1,0 +1,122 @@
+[
+  {
+    "file": "mac-deadlines-dark.html",
+    "viewport": [
+      1120,
+      900
+    ],
+    "scroll": [
+      1120,
+      900
+    ],
+    "outside": []
+  },
+  {
+    "file": "mac-deadlines-light.html",
+    "viewport": [
+      1120,
+      900
+    ],
+    "scroll": [
+      1120,
+      900
+    ],
+    "outside": []
+  },
+  {
+    "file": "mac-overview-dark.html",
+    "viewport": [
+      1120,
+      900
+    ],
+    "scroll": [
+      1120,
+      900
+    ],
+    "outside": []
+  },
+  {
+    "file": "mac-overview-light.html",
+    "viewport": [
+      1120,
+      900
+    ],
+    "scroll": [
+      1120,
+      900
+    ],
+    "outside": []
+  },
+  {
+    "file": "widget-large-dark.html",
+    "viewport": [
+      360,
+      376
+    ],
+    "scroll": [
+      360,
+      376
+    ],
+    "outside": []
+  },
+  {
+    "file": "widget-large-light.html",
+    "viewport": [
+      360,
+      376
+    ],
+    "scroll": [
+      360,
+      376
+    ],
+    "outside": []
+  },
+  {
+    "file": "widget-medium-dark.html",
+    "viewport": [
+      360,
+      172
+    ],
+    "scroll": [
+      360,
+      172
+    ],
+    "outside": []
+  },
+  {
+    "file": "widget-medium-light.html",
+    "viewport": [
+      360,
+      172
+    ],
+    "scroll": [
+      360,
+      172
+    ],
+    "outside": []
+  },
+  {
+    "file": "widget-small-dark.html",
+    "viewport": [
+      172,
+      172
+    ],
+    "scroll": [
+      172,
+      172
+    ],
+    "outside": []
+  },
+  {
+    "file": "widget-small-light.html",
+    "viewport": [
+      172,
+      172
+    ],
+    "scroll": [
+      172,
+      172
+    ],
+    "outside": []
+  }
+]

@@ -1,0 +1,88 @@
+{
+  "source": "PR #737, 373b61902862072dc16a11a0df5327ff8d709275, Tools/ContextPanelSharedViewRenderer/main.swift:accountFixture",
+  "presentationTime": "2026-10-01T14:07:00.000Z",
+  "timeZone": "UTC",
+  "accounts": [
+    {
+      "name": "A deliberately long OpenAI account name",
+      "provider": "OpenAI",
+      "weeklyUsed": 85,
+      "weeklyResetHours": 120,
+      "fiveHourUsed": 40,
+      "fiveHourResetHours": 2.1666666666666665,
+      "weeklyBurnPerHour": 0.45,
+      "fiveHourBurnPerHour": 6,
+      "bankedExpiryHours": [
+        24.333333333333332,
+        288.9166666666667
+      ],
+      "useLast": false
+    },
+    {
+      "name": "work@example.invalid",
+      "provider": "OpenAI",
+      "weeklyUsed": 28,
+      "weeklyResetHours": 55,
+      "fiveHourUsed": 12,
+      "fiveHourResetHours": 4,
+      "weeklyBurnPerHour": 0.4,
+      "fiveHourBurnPerHour": 3,
+      "bankedExpiryHours": [
+        627,
+        1056.5
+      ],
+      "useLast": false
+    },
+    {
+      "name": "Personal",
+      "provider": "OpenAI",
+      "weeklyUsed": 11,
+      "weeklyResetHours": 147,
+      "fiveHourUsed": 0,
+      "fiveHourResetHours": 5,
+      "weeklyBurnPerHour": 0.03,
+      "fiveHourBurnPerHour": null,
+      "bankedExpiryHours": [],
+      "useLast": true
+    },
+    {
+      "name": "Claude primary",
+      "provider": "Claude",
+      "weeklyUsed": 63,
+      "weeklyResetHours": 138,
+      "fiveHourUsed": 78,
+      "fiveHourResetHours": 1.2166666666666668,
+      "weeklyBurnPerHour": 0.35,
+      "fiveHourBurnPerHour": 15,
+      "bankedExpiryHours": [
+        96.33333333333333,
+        288.9166666666667
+      ],
+      "useLast": false
+    },
+    {
+      "name": "Claude backup",
+      "provider": "Claude",
+      "weeklyUsed": 43,
+      "weeklyResetHours": 74,
+      "fiveHourUsed": 5,
+      "fiveHourResetHours": 4.666666666666667,
+      "weeklyBurnPerHour": 0.2,
+      "fiveHourBurnPerHour": 1,
+      "bankedExpiryHours": [],
+      "useLast": false
+    },
+    {
+      "name": "Antigravity",
+      "provider": "Google",
+      "weeklyUsed": 9,
+      "weeklyResetHours": 164,
+      "fiveHourUsed": 0,
+      "fiveHourResetHours": 5,
+      "weeklyBurnPerHour": 0.05,
+      "fiveHourBurnPerHour": null,
+      "bankedExpiryHours": [],
+      "useLast": false
+    }
+  ]
+}
