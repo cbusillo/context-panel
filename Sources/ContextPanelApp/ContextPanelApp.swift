@@ -6286,7 +6286,7 @@ extension MainLimitSummary {
         guard let resetsAt else { return hasAssumedScheduledResetCapacity ? "assumed reset · date unknown" : "reset not reported" }
         let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
         if status == .failure { return "refresh failed · reset \(deadline)" }
-        if hasAssumedScheduledResetCapacity { return "assumed · resets \(deadline)" }
+        if hasAssumedScheduledResetCapacity { return "assumed after reset \(deadline)" }
         return "\(resetsAt < Date() ? "reset passed" : "resets") \(deadline)"
     }
 
@@ -6722,7 +6722,7 @@ extension UsageLimit {
         guard let resetsAt else { return "reset not reported" }
         let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
         if status == .failure { return "refresh failed · reset \(deadline)" }
-        if isAssumedAfterScheduledReset { return "assumed · resets \(deadline)" }
+        if isAssumedAfterScheduledReset { return "assumed after reset \(deadline)" }
         return "\(resetsAt < presentationDate ? "reset passed" : "resets") \(deadline)"
     }
 
@@ -6978,7 +6978,7 @@ struct AccountCapacityCard: View {
                                 Text(usageText(limit)).monospacedDigit()
                                 Spacer()
                                 Text(burnText(row: row, limit: limit)).monospacedDigit()
-                                Text(limit.resetsAt.map { "Resets \(dateText($0))" } ?? "Reset unknown")
+                                Text(limit.resetText(relativeTo: date))
                                     .frame(minWidth: 180, alignment: .trailing)
                             }
                             .font(.caption)
@@ -7031,7 +7031,8 @@ struct AccountCapacityCard: View {
 
     private func usageText(_ limit: UsageLimit) -> String {
         guard let used = limit.used, let total = limit.limit else { return "Usage unknown" }
-        return limit.unit == .percent ? "\(used)% used" : "\(used) / \(total) used"
+        let prefix = limit.isAssumedAfterScheduledReset ? "≈" : ""
+        return limit.unit == .percent ? "\(prefix)\(used)% used" : "\(prefix)\(used) / \(total) used"
     }
 
     private func burnText(row: AccountCapacity, limit: UsageLimit) -> String {

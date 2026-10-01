@@ -395,7 +395,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         accessibilityResetText = mode == .countsOnly
             ? nil
             : assumesScheduledReset
-                ? UsagePresentationAssumption.scheduledReset.accessibilityText
+                ? Self.assumedResetAccessibilityText(until: summary.resetsAt)
                 : Self.accessibilityResetText(until: summary.resetsAt, now: now)
         let exactCapacity = Self.exactCapacityText(
             remaining: summary.remaining,
@@ -449,7 +449,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         accessibilityResetText = mode == .countsOnly
             ? nil
             : assumesScheduledReset
-                ? UsagePresentationAssumption.scheduledReset.accessibilityText
+                ? Self.assumedResetAccessibilityText(until: limit.resetsAt)
                 : Self.accessibilityResetText(until: limit.resetsAt, now: now)
         let exactCapacity = Self.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
         exactCapacityText = mode == .fullDetail
@@ -741,6 +741,11 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         return "Resets \(ContextPanelDateFormatting.resetDeadline(resetDate, compact: true))"
     }
 
+    fileprivate static func assumedResetAccessibilityText(until date: Date?) -> String {
+        UsagePresentationAssumption.scheduledReset.accessibilityText
+            + (date.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown")
+    }
+
     fileprivate static func accessibilityResetText(until resetDate: Date?, now: Date) -> String? {
         guard let resetDate, resetDate >= now.addingTimeInterval(-60) else { return nil }
         return "Resets \(ContextPanelDateFormatting.resetDeadline(resetDate))"
@@ -809,7 +814,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
             ? "Assumed · \(limit.resetsAt.map { ContextPanelDateFormatting.resetDeadline($0, compact: true) } ?? "reset unknown")"
             : TVRunwayLane.compactResetText(until: limit.resetsAt, now: now)
         accessibilityResetText = assumesScheduledReset
-            ? UsagePresentationAssumption.scheduledReset.accessibilityText
+            ? TVRunwayLane.assumedResetAccessibilityText(until: limit.resetsAt)
             : TVRunwayLane.accessibilityResetText(until: limit.resetsAt, now: now)
     }
 

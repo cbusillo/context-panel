@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import Testing
 import ContextPanelWatchSupport
+import ContextPanelTVSupport
 @testable import ContextPanelWidgetUI
 
 @testable import ContextPanelApp
@@ -575,4 +576,9 @@ private func presentationTestTemporaryDirectory() throws -> URL {
     let watch = try #require(WatchLimitDisplay.rows(from: widget, maximumCount: 1).first)
     #expect(watch.resetText(now: now)?.contains(compact) == true)
     #expect(watch.accessibilitySentence(direction: .remaining, now: now).contains(full))
+    #expect(presented.resetText(relativeTo: now).contains("assumed after reset"))
+    let tv = TVRunwayPresentation(snapshot: widget, mode: .fullDetail, now: now)
+    let lane = try #require(tv.sections.first?.lanes.first { $0.isAssumedAfterScheduledReset })
+    #expect(lane.accessibilityResetText?.contains(full) == true)
+    #expect(lane.metrics.allSatisfy { $0.accessibilityResetText?.contains(full) == true })
 }
