@@ -1237,7 +1237,7 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                         }
                     }
                     .buttonStyle(.borderless)
-                    .disabled(!isEditable || preferences.usesAccountRows)
+                    .disabled(!isEditable)
                 }
                 Text(displayPreferencesScopeText)
                     .font(.footnote)
@@ -1249,7 +1249,7 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                         Text("Windows").tag(false)
                     }.pickerStyle(.segmented).disabled(!isEditable || onLayoutChange == nil)
                     if preferences.usesAccountRows {
-                        Text("Choose Windows to select or reorder limits. Accounts follows your Mac’s account visibility.")
+                        Text(accountLayoutScopeText)
                             .font(.footnote).foregroundStyle(palette.secondaryText)
                     }
                     WidgetMainLimitSettingsStack(
@@ -1270,7 +1270,7 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                         onVisibilityChange: onVisibilityChange,
                         onMove: onMove
                     )
-                    .disabled(!isEditable || preferences.usesAccountRows)
+                    .disabled(!isEditable)
                 } else {
                     ProgressView("Loading display settings…")
                         .frame(maxWidth: .infinity, minHeight: 80)
@@ -1283,6 +1283,15 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                 }
             }
         }
+    }
+
+    private var accountLayoutScopeText: String {
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            return "Widgets show accounts. These limits still choose what Apple Watch shows."
+        }
+        #endif
+        return "Widgets show accounts. These limit choices apply when you choose Windows."
     }
 
     private var displayPreferencesScopeText: String {
