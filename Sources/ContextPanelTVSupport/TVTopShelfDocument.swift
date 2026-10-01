@@ -259,22 +259,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
     }
 
     private static func statusLabel(_ status: UsageStatus) -> String {
-        switch status {
-        case .healthy:
-            "Available"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Saved data"
-        case .unknown:
-            "Unknown"
-        case .failure:
-            "Needs attention"
-        case .loading:
-            "Refreshing"
-        }
+        status.displayText
     }
 
     private static func compactAge(since date: Date, now: Date) -> String {

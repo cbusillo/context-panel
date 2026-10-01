@@ -4,6 +4,14 @@ The implementation branch is `work/722-account-design-implementation`, stacked
 on #720 source `1942caa`. #723 remains the original design record. #722 authorizes
 this independent source work while #720's installed hand test waits for Chris.
 
+## Chosen design integration
+
+Chris selected #735 on #722. Its source diff is incorporated on #733 without merging either comparison PR, preserving the later functional fixes. AccountPresentation and AccountPaceText supply shared words, numbers, dates and colors; the chosen dense dashboard and fixed-height TV tiles replace the first visual pass. Top Shelf and account Settings use the shared terms/tokens. Model-specific window names retain both model context and period.
+
+The optional sanitized companion `accountBurnRates` maps opaque transported account/window IDs to observed estimates (limitID, unitsPerHour, observedDurationHours, sampleCount). It follows only the exact retained account observation, excludes sample-free fallback estimates, and is pruned with removed lanes. Legacy payloads omit companion pace. No credential, path, hostname, raw provider response, entitlement or CloudKit server field is added.
+
+Two owner questions remain open: copied setups sharing publisher identity, and suppressing pooled recommendations across unverified multi-Mac feeds. These are not claimed resolved by this design integration.
+
 ## Shared behavior
 
 `AccountOverview` is the common account projection for the Mac app, widgets,

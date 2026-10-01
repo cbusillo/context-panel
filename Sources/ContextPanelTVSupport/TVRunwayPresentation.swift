@@ -854,24 +854,7 @@ private extension UsageStatus {
         }
     }
 
-    var tvDisplayName: String {
-        switch self {
-        case .healthy:
-            "Available"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Stale"
-        case .unknown:
-            "Unknown"
-        case .failure:
-            "Needs attention"
-        case .loading:
-            "Refreshing"
-        }
-    }
+    var tvDisplayName: String { displayText }
 }
 
 private extension UsageUnit {

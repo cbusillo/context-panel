@@ -298,11 +298,21 @@ struct ContextPanelWatchWidgetView: View {
         )
     }
 
+    /// The shared account faces, when the Mac publishes account metadata.
+    private var accountOverview: AccountOverview? {
+        guard entry.snapshot.accountDisplayMetadata != nil else { return nil }
+        let overview = entry.snapshot.accountOverview(now: presentationDate, widgetsOnly: true,
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+        return overview.accounts.isEmpty ? nil : overview
+    }
+
     var body: some View {
         switch family {
         case .accessoryCircular:
             if let alert = compactContent.providerAccessFallback {
                 WatchCircularProviderAccessComplication(alert: alert, presentationDate: presentationDate)
+            } else if let accounts = accountOverview {
+                WatchAccountCircularFace(overview: accounts)
             } else {
                 WatchCircularComplication(
                     limit: compactContent.limits.first,
@@ -313,6 +323,8 @@ struct ContextPanelWatchWidgetView: View {
         case .accessoryRectangular:
             if let alert = rectangularContent.providerAccessFallback {
                 WatchRectangularProviderAccessComplication(alert: alert, presentationDate: presentationDate)
+            } else if let accounts = accountOverview {
+                WatchAccountRectangularFace(overview: accounts, now: presentationDate)
             } else {
                 WatchRectangularComplication(
                     limits: rectangularContent.limits,

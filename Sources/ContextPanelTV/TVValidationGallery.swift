@@ -211,7 +211,7 @@ struct TVValidationGalleryView: View {
         case .runway:
             if presentationMode == .fullDetail {
                 TVAccountOverviewContent(overview: accountSnapshot.accountOverview(now: context.presentationDate,
-                    maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
                     presentationModeRawValue: $presentationModeRawValue, isRefreshing: state == .loading,
                     notice: context.snapshot.syncErrorMessage, onRefresh: {}, openAccount: { _ in },
                     openDeadlines: {}, openDetails: {})

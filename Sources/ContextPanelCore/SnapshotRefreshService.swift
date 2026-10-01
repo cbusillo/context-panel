@@ -723,7 +723,9 @@ public struct SnapshotRefreshService: Sendable {
                     observedBurnRates: companionObservedBurnRates(
                         storedSnapshot: storedSnapshot,
                         savedAt: savedAt
-                    )
+                    ),
+                    accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: storedSnapshot.snapshot,
+                        history: stores.primary.loadHistory(query: SnapshotStoreQuery(since: savedAt.addingTimeInterval(-24 * 3_600))), now: savedAt)
                 )
             } else {
                 nil

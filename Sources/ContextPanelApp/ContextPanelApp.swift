@@ -389,9 +389,17 @@ struct AppRoot: View {
     }
 }
 
-private enum SettingsTab: String, CaseIterable, Identifiable {
-    case accounts = "Accounts", updates = "Updates", alerts = "Alerts", display = "Display"
-    var id: String { rawValue }
+private enum SettingsTab: CaseIterable, Identifiable {
+    case accounts, updates, alerts, display
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .accounts: AccountTerms.accounts
+        case .updates: AccountTerms.updates
+        case .alerts: AccountTerms.alerts
+        case .display: AccountTerms.display
+        }
+    }
 }
 private enum SettingsNameField: Hashable {
     case account(String)
@@ -414,8 +422,8 @@ struct SettingsPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Settings", selection: $tab) {
-                ForEach(SettingsTab.allCases) { Text($0.rawValue).tag($0) }
+            Picker(AccountTerms.settings, selection: $tab) {
+                ForEach(SettingsTab.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented).padding(16)
             Form {
             if tab == .display && focusedDestination == .cacheStats {
@@ -424,13 +432,13 @@ struct SettingsPane: View {
 
             if tab == .accounts {
             if let nameInputError { Text(nameInputError).foregroundStyle(.red) }
-            Section("Accounts") {
+            Section(AccountTerms.accounts) {
                 ForEach(model.settingsAccounts) { account in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             ProviderBadge(provider: account.provider)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Name").font(.caption).foregroundStyle(CPTheme.secondaryText)
+                                Text(AccountTerms.name).font(.caption).foregroundStyle(CPTheme.secondaryText)
                                 TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
                                     .labelsHidden().accessibilityLabel("Local account name")
                                     .focused($focusedName, equals: .account(account.id))
@@ -438,7 +446,7 @@ struct SettingsPane: View {
                                     .textFieldStyle(.roundedBorder)
                                     .frame(minWidth: 220, maxWidth: .infinity)
                             }
-                            Toggle("Show in widgets", isOn: Binding(
+                            Toggle(AccountTerms.showInWidgets, isOn: Binding(
                                 get: { account.showInWidgets ?? account.isEnabled },
                                 set: { model.setWidgetAccountVisibility(account.id, isVisible: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
@@ -457,13 +465,13 @@ struct SettingsPane: View {
                             }
                             .accessibilityLabel("Move account down")
                             .disabled(model.settingsAccounts.last?.id == account.id)
-                            Button("Remove account", role: .destructive) {
+                            Button(AccountTerms.removeAccount, role: .destructive) {
                                 pendingRemovalID = account.id
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.regular)
                         }
-                        Toggle("Use last", isOn: Binding(
+                        Toggle(AccountTerms.useLast, isOn: Binding(
                             get: { account.useLast ?? false },
                             set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                         )).toggleStyle(.checkbox)
@@ -472,7 +480,7 @@ struct SettingsPane: View {
                                 Text("Paused")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.tertiaryText)
-                                Button("Resume updates") { model.setAccount(account.id, isEnabled: true); refreshAfterAuthorization() }
+                                Button(AccountTerms.resumeUpdates) { model.setAccount(account.id, isEnabled: true); refreshAfterAuthorization() }
                             } else if account.connectorKind == .googleAntigravityQuota {
                                 let authorizationSummary = model.authorizationSummary(
                                     for: account,
@@ -550,13 +558,13 @@ struct SettingsPane: View {
                             }
                         }
                         if account.connectorKind == .codexRateLimits {
-                            Button(model.hasSavedAuthorization(account) ? "Change Codex home" : "Connect Codex home") {
+                            Button(model.hasSavedAuthorization(account) ? AccountTerms.changeCodexHome : AccountTerms.connectCodexHome) {
                                 model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
                             }.buttonStyle(.borderedProminent)
                             if let warning = model.codexSourceWarning(for: account) {
                                 Text(warning).font(.caption).foregroundStyle(CPTheme.statusColor(.stale))
                             }
-                            DisclosureGroup("Advanced") {
+                            DisclosureGroup(AccountTerms.advanced) {
                             HStack {
                                 Button(account.codexQuotaPath == nil ? "Select Codex Sessions" : "Change Sessions Folder") {
                                     model.authorizeCodexQuota(for: account) {
@@ -644,13 +652,13 @@ struct SettingsPane: View {
                         Text("\(account.displayName) · retired source, off")
                             .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         Spacer()
-                        Button("Remove account", role: .destructive) {
+                        Button(AccountTerms.removeAccount, role: .destructive) {
                             pendingRemovalID = account.id
                         }
                         .controlSize(.regular)
                     }
                 }
-                Button("Add account") { showsAddAccount = true }.buttonStyle(.borderedProminent)
+                Button(AccountTerms.addAccount) { showsAddAccount = true }.buttonStyle(.borderedProminent)
                 Text("Hidden accounts still update and warn. Use last excludes an account from Use next. Remove account removes this lane on all Macs and companions after sync, keeping credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
@@ -857,16 +865,16 @@ struct SettingsPane: View {
         }
         .frame(width: 720)
         .frame(minHeight: 600)
-        .confirmationDialog("Remove account everywhere?", isPresented: Binding(
+        .confirmationDialog(AccountTerms.removeAccountEverywhereTitle, isPresented: Binding(
             get: { pendingRemovalID != nil }, set: { if !$0 { pendingRemovalID = nil } }
         ), titleVisibility: .visible) {
-            Button("Remove account everywhere", role: .destructive) {
+            Button(AccountTerms.removeAccountEverywhere, role: .destructive) {
                 if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
                 pendingRemovalID = nil
             }
-            Button("Cancel", role: .cancel) { pendingRemovalID = nil }
+            Button(AccountTerms.cancel, role: .cancel) { pendingRemovalID = nil }
         } message: {
-            Text("This lane will disappear from all Macs and companions after their next successful sync. Credentials, home folders and history stay on each Mac.")
+            Text(AccountTerms.removalExplanation)
         }
         .sheet(isPresented: $showsAddAccount) {
             AddAccountSheet(model: model, onAdded: refreshAfterAuthorization)
@@ -2898,7 +2906,7 @@ struct AccountsSidebar: View {
                         .tag(AppNavigationSelection.reconnect)
                 }
             }
-            Section("Accounts") {
+            Section(AccountTerms.accounts) {
                 ForEach(model.accountOverview(at: Date()).accounts) { account in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(account.metadata.label).font(.system(size: 13, weight: .medium)).lineLimit(2)
@@ -3096,7 +3104,7 @@ struct OverviewDashboard: View {
             let now = presentationDate ?? context.date
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    AccountOverviewPanel(overview: model.accountOverview(at: now), openAccount: { account in
+                    AccountDashboardPanel(overview: model.accountOverview(at: now), now: now, openAccount: { account in
                         model.navigate(to: .providerAccount(account.metadata.provider, account.id))
                     }, openDeadlines: { model.navigate(to: .deadlines) })
                     DisclosureGroup("Pace, cache and window details") {
@@ -3134,7 +3142,7 @@ struct AccountDashboard: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
-                        AccountDetailPanel(account: account, overview: overview)
+                        AccountDashboardDetail(account: account, overview: overview, now: context.date)
                     } else {
                         Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
                     }
@@ -5752,7 +5760,8 @@ final class ContextPanelAppModel: ObservableObject {
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
-            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now)
+            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
+            accountBurnRates: accountBurnRates)
     }
 
     func rawAccountID(for safeID: String) -> String? {
@@ -6423,98 +6432,28 @@ private func resetCreditAccessibilityText(_ summary: ProviderResetCreditSurfaceS
 }
 
 enum CPTheme {
-    static let background = adaptiveColor(
-        light: NSColor(red: 244 / 255, green: 244 / 255, blue: 245 / 255, alpha: 1),
-        dark: NSColor(red: 22 / 255, green: 23 / 255, blue: 25 / 255, alpha: 1)
-    )
-    static let surface = adaptiveColor(
-        light: .white,
-        dark: NSColor(red: 34 / 255, green: 35 / 255, blue: 38 / 255, alpha: 1)
-    )
-    static let surface2 = adaptiveColor(
-        light: NSColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
-        dark: NSColor(red: 43 / 255, green: 44 / 255, blue: 48 / 255, alpha: 1)
-    )
-    static let line = adaptiveColor(
-        light: NSColor.black.withAlphaComponent(0.07),
-        dark: NSColor.white.withAlphaComponent(0.10)
-    )
-    static let primaryText = adaptiveColor(
-        light: NSColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
-        dark: NSColor(red: 238 / 255, green: 239 / 255, blue: 241 / 255, alpha: 1)
-    )
-    static let secondaryText = adaptiveColor(
-        light: NSColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
-        dark: NSColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
-    )
-    static let tertiaryText = adaptiveColor(
-        light: NSColor(red: 105 / 255, green: 105 / 255, blue: 113 / 255, alpha: 1),
-        dark: NSColor(red: 151 / 255, green: 154 / 255, blue: 164 / 255, alpha: 1)
-    )
-    static let accent = adaptiveColor(
-        light: NSColor(red: 74 / 255, green: 91 / 255, blue: 122 / 255, alpha: 1),
-        dark: NSColor(red: 137 / 255, green: 161 / 255, blue: 211 / 255, alpha: 1)
-    )
+    static let background = token(.surface)
+    static let surface = token(.card)
+    static let surface2 = token(.surface)
+    static let line = token(.line)
+    static let primaryText = token(.primary)
+    static let secondaryText = token(.secondary)
+    static let tertiaryText = token(.tertiary)
+    static let accent = token(.actionFill)
 
     static func providerColor(_ provider: Provider) -> Color {
-        switch provider {
-        case .openAI:
-            adaptiveColor(
-                light: NSColor(red: 56 / 255, green: 92 / 255, blue: 126 / 255, alpha: 1),
-                dark: NSColor(red: 107 / 255, green: 164 / 255, blue: 218 / 255, alpha: 1)
-            )
-        case .anthropic:
-            adaptiveColor(
-                light: NSColor(red: 139 / 255, green: 102 / 255, blue: 51 / 255, alpha: 1),
-                dark: NSColor(red: 220 / 255, green: 174 / 255, blue: 103 / 255, alpha: 1)
-            )
-        case .google:
-            adaptiveColor(
-                light: NSColor(red: 35 / 255, green: 116 / 255, blue: 106 / 255, alpha: 1),
-                dark: NSColor(red: 83 / 255, green: 183 / 255, blue: 168 / 255, alpha: 1)
-            )
-        }
+        let selected: AccountColorToken = switch provider { case .openAI: .openAI; case .anthropic: .anthropic; case .google: .google }
+        return token(selected)
     }
-
-    static func statusColor(_ status: UsageStatus) -> Color {
-        switch status {
-        case .healthy:
-            adaptiveColor(
-                light: NSColor(red: 61 / 255, green: 111 / 255, blue: 78 / 255, alpha: 1),
-                dark: NSColor(red: 102 / 255, green: 181 / 255, blue: 132 / 255, alpha: 1)
-            )
-        case .close:
-            adaptiveColor(
-                light: NSColor(red: 125 / 255, green: 91 / 255, blue: 26 / 255, alpha: 1),
-                dark: NSColor(red: 217 / 255, green: 173 / 255, blue: 81 / 255, alpha: 1)
-            )
-        case .limited, .failure:
-            adaptiveColor(
-                light: NSColor(red: 132 / 255, green: 62 / 255, blue: 62 / 255, alpha: 1),
-                dark: NSColor(red: 220 / 255, green: 119 / 255, blue: 119 / 255, alpha: 1)
-            )
-        case .stale:
-            adaptiveColor(
-                light: NSColor(red: 112 / 255, green: 84 / 255, blue: 57 / 255, alpha: 1),
-                dark: NSColor(red: 194 / 255, green: 158 / 255, blue: 117 / 255, alpha: 1)
-            )
-        case .unknown, .loading:
-            adaptiveColor(
-                light: NSColor(red: 90 / 255, green: 90 / 255, blue: 99 / 255, alpha: 1),
-                dark: NSColor(red: 170 / 255, green: 173 / 255, blue: 182 / 255, alpha: 1)
-            )
-        }
-    }
-
+    static func statusColor(_ status: UsageStatus) -> Color { token(status.accountState.colorToken) }
     static func stroke(cornerRadius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .stroke(line, lineWidth: 1)
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(line, lineWidth: 1)
     }
-
-    private static func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
+    private static func token(_ token: AccountColorToken) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            let best = appearance.bestMatch(from: [.darkAqua, .aqua])
-            return best == .darkAqua ? dark : light
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let rgb = token.rgb(dark: dark)
+            return NSColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: token.opacity(dark: dark))
         })
     }
 }

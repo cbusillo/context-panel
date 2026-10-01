@@ -111,8 +111,10 @@ let package = Package(
                 "ContextPanelCore",
                 "ContextPanelWidgetUI",
                 "ContextPanelSettingsUI",
+                "ContextPanelTVSupport",
                 "ContextPanelValidationFixtures",
                 "ContextPanelValidationGalleryUI",
+                "ContextPanelWatchSupport",
             ],
             path: "Tools/ContextPanelSharedViewRenderer"
         ),

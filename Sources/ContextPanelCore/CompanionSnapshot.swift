@@ -63,6 +63,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let cloudKitUserScope: CompanionCloudKitUserScope?
     public let accountDisplayMetadata: [AccountDisplayMetadata]?
     public let removedDisplayIDs: [String]?
+    public let accountBurnRates: [String: [String: ObservedBurnRate]]?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -74,6 +75,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case cloudKitUserScope
         case accountDisplayMetadata
         case removedDisplayIDs
+        case accountBurnRates
     }
 
     public init(
@@ -84,7 +86,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
         cloudKitUserScope: CompanionCloudKitUserScope? = nil,
         accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
-        removedDisplayIDs: [String]? = nil
+        removedDisplayIDs: [String]? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
@@ -95,6 +98,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         self.cloudKitUserScope = cloudKitUserScope
         self.accountDisplayMetadata = accountDisplayMetadata
         self.removedDisplayIDs = removedDisplayIDs
+        self.accountBurnRates = accountBurnRates
     }
 
     public init(
@@ -106,7 +110,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
         cloudKitUserScope: CompanionCloudKitUserScope? = nil,
         accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
-        removedDisplayIDs: [String]? = nil
+        removedDisplayIDs: [String]? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
@@ -116,7 +121,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             accountRetentionStates: accountRetentionStates,
             cloudKitUserScope: cloudKitUserScope,
             accountDisplayMetadata: accountDisplayMetadata,
-            removedDisplayIDs: removedDisplayIDs
+            removedDisplayIDs: removedDisplayIDs,
+            accountBurnRates: accountBurnRates
         )
     }
 
@@ -136,6 +142,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         )
         accountDisplayMetadata = try container.decodeIfPresent([AccountDisplayMetadata].self, forKey: .accountDisplayMetadata)
         removedDisplayIDs = try container.decodeIfPresent([String].self, forKey: .removedDisplayIDs)
+        accountBurnRates = try container.decodeIfPresent([String: [String: ObservedBurnRate]].self, forKey: .accountBurnRates)
         cloudKitUserScope = try container.decodeIfPresent(
             CompanionCloudKitUserScope.self,
             forKey: .cloudKitUserScope
@@ -151,7 +158,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             accountRetentionStates: accountRetentionStates,
             cloudKitUserScope: scope,
             accountDisplayMetadata: accountDisplayMetadata,
-            removedDisplayIDs: removedDisplayIDs
+            removedDisplayIDs: removedDisplayIDs,
+            accountBurnRates: accountBurnRates
         )
     }
 }
@@ -1163,12 +1171,14 @@ public struct CompanionSyncPublisher: Sendable {
     public func publish(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date = Date(),
-        observedBurnRates: [String: ObservedBurnRate] = [:]
+        observedBurnRates: [String: ObservedBurnRate] = [:],
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     ) -> CompanionSyncSaveResult {
         publish(document: makeDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
-            observedBurnRates: observedBurnRates
+            observedBurnRates: observedBurnRates,
+            accountBurnRates: accountBurnRates
         ))
     }
 
@@ -1183,7 +1193,8 @@ public struct CompanionSyncPublisher: Sendable {
     public func publishAll(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date = Date(),
-        observedBurnRates: [String: ObservedBurnRate] = [:]
+        observedBurnRates: [String: ObservedBurnRate] = [:],
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     ) async -> CompanionSyncSaveResult {
         let scope = await remoteStore?.currentUserScope()
         if let scope, let accountConfigurationURL {
@@ -1204,7 +1215,8 @@ public struct CompanionSyncPublisher: Sendable {
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
             observedBurnRates: observedBurnRates,
-            removalUserScope: scope
+            removalUserScope: scope,
+            accountBurnRates: accountBurnRates
         )
         var result = publish(document: document)
         if let remoteStore {
@@ -1226,16 +1238,26 @@ public struct CompanionSyncPublisher: Sendable {
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date,
         observedBurnRates: [String: ObservedBurnRate],
-        removalUserScope: CompanionCloudKitUserScope? = nil
+        removalUserScope: CompanionCloudKitUserScope? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     ) -> CompanionSyncDocument {
         let configuration = accountConfigurationURL.flatMap { url in
             (try? Data(contentsOf: url)).flatMap {
                 try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
             }
         }
+        let snapshot = CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
+            configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)
+        var transportedRates: [String: [String: ObservedBurnRate]] = [:]
+        for (local, transported) in zip(storedSnapshot.snapshot.limits, snapshot.limits) {
+            guard let rate = accountBurnRates[local.accountID]?[local.id], rate.sampleCount > 0 else { continue }
+            let limitID = transported.usageLimit.id
+            transportedRates[transported.companionAccountID, default: [:]][limitID] = ObservedBurnRate(
+                limitID: limitID, unitsPerHour: rate.unitsPerHour,
+                observedDurationHours: rate.observedDurationHours, sampleCount: rate.sampleCount)
+        }
         return CompanionSyncDocument(
-            snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
-                configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID),
+            snapshot: snapshot,
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettingsStore.load(),
@@ -1249,7 +1271,8 @@ public struct CompanionSyncPublisher: Sendable {
                     return configuration.removedDisplayIDs
                 }
                 return configuration.globalRemovedDisplayIDs
-            }
+            },
+            accountBurnRates: transportedRates.isEmpty ? nil : transportedRates
         )
     }
 

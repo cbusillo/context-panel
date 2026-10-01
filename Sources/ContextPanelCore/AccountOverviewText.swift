@@ -21,10 +21,9 @@ public extension AccountCapacityState {
 
 public extension AccountOverview.Account {
     var remainingText: String {
-        guard let fraction = remainingFraction else { return "—" }
+        guard remainingFraction != nil else { return AccountTerms.unknown }
         let approximate = windows.contains { $0.assumption != nil } ? "≈ " : ""
-        if fraction > 0, fraction < 0.01 { return approximate + "<1%" }
-        return approximate + "\(Int((fraction * 100).rounded()))%"
+        return approximate + AccountNumbers.percentWithSign(remainingFraction)
     }
     var resetDisplayText: String {
         if [.stale, .unavailable].contains(state) {

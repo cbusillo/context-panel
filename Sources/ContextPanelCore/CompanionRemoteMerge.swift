@@ -60,8 +60,32 @@ public extension CompanionSyncDocument {
             accountDisplayMetadata: mergedAccountDisplayMetadata(existing: existingDocument,
                 incoming: incomingDocument, retainedSnapshot: retained.snapshot, settingsDocument: settingsDocument),
             removedDisplayIDs: existingDocument?.removedDisplayIDs == nil && incomingDocument.removedDisplayIDs == nil ? nil
-                : Array(Set(existingDocument?.removedDisplayIDs ?? []).union(incomingDocument.removedDisplayIDs ?? [])).sorted()
+                : Array(Set(existingDocument?.removedDisplayIDs ?? []).union(incomingDocument.removedDisplayIDs ?? [])).sorted(),
+            accountBurnRates: mergedAccountBurnRates(existing: existingDocument, incoming: incomingDocument, retainedSnapshot: retained.snapshot)
         ).applyingGlobalRemovals()
+    }
+
+    private func mergedAccountBurnRates(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
+        retainedSnapshot: CompanionSnapshot) -> [String: [String: ObservedBurnRate]]? {
+        guard existing?.accountBurnRates != nil || incoming.accountBurnRates != nil else { return nil }
+        let retained = companionRemoteAccountData(in: retainedSnapshot)
+        let old = existing.map { companionRemoteAccountData(in: $0.snapshot) } ?? [:]
+        let new = companionRemoteAccountData(in: incoming.snapshot)
+        var result: [String: [String: ObservedBurnRate]] = [:]
+        for (key, selected) in retained {
+            let rates: [String: ObservedBurnRate]?
+            if new[key]?.semanticSelectionData == selected.semanticSelectionData {
+                rates = incoming.accountBurnRates?[key.companionAccountID]
+            } else if old[key]?.semanticSelectionData == selected.semanticSelectionData {
+                rates = existing?.accountBurnRates?[key.companionAccountID]
+            } else { rates = nil }
+            for limit in selected.limits {
+                let id = limit.usageLimit.id
+                guard let rate = rates?[id], rate.limitID == id, rate.sampleCount > 0 else { continue }
+                result[key.companionAccountID, default: [:]][id] = rate
+            }
+        }
+        return result
     }
 
     private func mergedAccountDisplayMetadata(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
@@ -148,7 +172,8 @@ private extension CompanionSyncDocument {
             accountRetentionStates: accountRetentionStates,
             cloudKitUserScope: cloudKitUserScope,
             accountDisplayMetadata: accountDisplayMetadata,
-            removedDisplayIDs: removedDisplayIDs
+            removedDisplayIDs: removedDisplayIDs,
+            accountBurnRates: accountBurnRates
         )
     }
 

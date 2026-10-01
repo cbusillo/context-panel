@@ -556,24 +556,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         }
     }
 
-    private var statusText: String {
-        switch status {
-        case .healthy:
-            "available"
-        case .close:
-            "close to limit"
-        case .limited:
-            "limited"
-        case .stale:
-            "stale"
-        case .unknown:
-            "unknown"
-        case .failure:
-            "refresh failed"
-        case .loading:
-            "refreshing"
-        }
-    }
+    private var statusText: String { status.displayText.lowercased() }
 
     private func resetAccessibilityText(now: Date) -> String {
         guard let resetsAt else {

@@ -279,4 +279,15 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     let window = try #require(overview.accounts.first?.windows.first)
     #expect(window.label.contains(model))
     #expect(window.label.contains(period))
+    #expect(window.shortLabel.contains(model))
+}
+
+@Test func modelNameDoesNotInventAQuotaWindowLength() throws {
+    let limit = UsageLimit(provider: .openAI, accountID: "a", configuredAccountID: "a", accountName: "Provider identity",
+        label: "Quota", windowLabel: "4-hour", modelLabel: "Daily review model", unit: .percent, used: 10, limit: 100,
+        lastUpdatedAt: overviewNow)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: overviewNow, limits: [limit]), reports: [],
+        metadata: [overviewMetadata("a")], now: overviewNow)
+    let window = try #require(overview.accounts.first?.windows.first)
+    #expect(window.duration == nil)
 }

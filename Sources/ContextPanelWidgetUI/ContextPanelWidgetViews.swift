@@ -143,7 +143,7 @@ public struct ContextPanelWidgetContentView: View {
     @ViewBuilder
     private var content: some View {
         if displayPreferences.usesAccountRows {
-            AccountRowsWidget(family: family, snapshot: snapshot, links: links,
+            AccountGlanceWidget(family: family, snapshot: snapshot, links: links,
                 now: presentationDate, maximumAge: resetCreditMaximumAge,
                 showsBanked: showsResetCreditSurfaces)
         } else if snapshot.shouldShowSetupPlaceholder {

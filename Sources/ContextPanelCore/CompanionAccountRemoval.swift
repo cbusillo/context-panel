@@ -30,6 +30,15 @@ public extension CompanionSyncDocument {
             cloudKitUserScope: cloudKitUserScope,
             accountDisplayMetadata: accountDisplayMetadata?.filter {
                 !removedRows.contains($0.id) && !removed.contains($0.configurationID)
-            }, removedDisplayIDs: removed.sorted())
+            }, removedDisplayIDs: removed.sorted(), accountBurnRates: accountBurnRates.map { rates in
+                var retained: [String: [String: ObservedBurnRate]] = [:]
+                for limit in filtered.limits {
+                    let id = limit.usageLimit.id
+                    if let rate = rates[limit.companionAccountID]?[id] {
+                        retained[limit.companionAccountID, default: [:]][id] = rate
+                    }
+                }
+                return retained
+            })
     }
 }
