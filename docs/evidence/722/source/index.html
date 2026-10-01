@@ -1,0 +1,453 @@
+<title>Context Panel Design Pass</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,560&display=swap">
+<style>
+/* Layout: a review sheet. Each page gets a short "who needs what" table, the confusions found today, then
+   the proposed mockup at real point size in light and dark side by side. Page chrome is quiet so the native
+   mockups (system font, macOS colors) carry the look. */
+:root {
+  --paper: #f3f4f2; --sheet: #ffffff; --ink: #1d2124; --muted: #5d666c; --rule: #d9ddd9; --pin: #2f6f6a;
+  --f-display: "Fraunces", Georgia, serif; --f-body: "IBM Plex Sans", system-ui, sans-serif; --f-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #15181a; --sheet: #1d2124; --ink: #e8ebe9; --muted: #9aa3a8; --rule: #30373b; --pin: #7cc2b9; color-scheme: dark } }
+:root[data-theme="dark"] { --paper: #15181a; --sheet: #1d2124; --ink: #e8ebe9; --muted: #9aa3a8; --rule: #30373b; --pin: #7cc2b9; color-scheme: dark }
+body { background: var(--paper); color: var(--ink); font: 15px/1.55 var(--f-body); margin: 0; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 80px; }
+h1 { font: 560 40px/1.1 var(--f-display); margin: 0 0 6px; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 560 26px/1.2 var(--f-display); margin: 0 0 4px; text-wrap: balance; }
+h3 { font: 600 13px/1.3 var(--f-body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 18px 0 8px; }
+p { max-width: 70ch; margin: 0 0 10px; }
+.lede { color: var(--muted); font-size: 17px; max-width: 72ch; }
+.meta { font: 12px/1.4 var(--f-mono); color: var(--muted); }
+section.page { background: var(--sheet); border: 1px solid var(--rule); border-radius: 14px; padding: 24px; margin-top: 28px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.cols > * { min-width: 0; }
+table.vp { width: 100%; border-collapse: collapse; font: inherit; font-size: 14px; color: inherit; }
+table.vp td, table.vp th { text-align: left; vertical-align: top; padding: 7px 10px 7px 0; border-top: 1px solid var(--rule); }
+table.vp th { width: 9.5em; font-weight: 600; white-space: nowrap; }
+ul.conf { margin: 0; padding-left: 1.1em; } ul.conf li { margin: 0 0 6px; }
+.stage { overflow-x: auto; margin-top: 14px; padding-bottom: 6px; }
+.pair { display: flex; gap: 20px; align-items: flex-start; width: max-content; }
+.cap { font: 12px/1.4 var(--f-mono); color: var(--muted); margin: 6px 0 0; }
+.vpkey { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 18px; }
+.vpkey div { border-top: 2px solid var(--pin); padding-top: 8px; font-size: 14px; }
+.vpkey b { display: block; }
+.decide { border-left: 3px solid var(--pin); padding: 4px 0 4px 14px; margin: 12px 0; }
+a { color: var(--pin); }
+
+/* ---------- Mockup system: native-looking, independent of page theme ---------- */
+.m { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased; color: var(--t); position: relative; overflow: hidden; box-sizing: border-box; }
+.m *, .m *::before { box-sizing: border-box; }
+.lt { --bg: #ececec; --win: #f6f6f6; --card: #ffffff; --t: #1d1d1f; --t2: #6e6e73; --t3: #8e8e93; --sep: rgba(0,0,0,.09);
+  --track: rgba(0,0,0,.08); --ok: #2f9e5b; --close: #c47a00; --lim: #d63b30; --stale: #a3907a; --bank: #6b52c8; --bank-bg: rgba(107,82,200,.10);
+  --sel: #0a63d8; --selt: #fff; --side: #e4e4e6; --oai: #2b2f33; --ant: #b5603c; --goo: #2f6fd6; --wbg: #fbfbfb; --urgent-bg: rgba(196,122,0,.12); }
+.dk { --bg: #1b1b1d; --win: #232325; --card: #2c2c2e; --t: #f2f2f7; --t2: #a1a1a8; --t3: #7c7c83; --sep: rgba(255,255,255,.10);
+  --track: rgba(255,255,255,.12); --ok: #45c47a; --close: #f2a63a; --lim: #ff6b5e; --stale: #a89a88; --bank: #a592ff; --bank-bg: rgba(165,146,255,.16);
+  --sel: #2f7ff0; --selt: #fff; --side: #29292c; --oai: #e8e8ed; --ant: #e48a63; --goo: #72a4ff; --wbg: #262628; --urgent-bg: rgba(242,166,58,.16); }
+.m .tag { font: 600 10px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em; padding: 3px 5px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.m .tag.oai { color: var(--oai); } .m .tag.ant { color: var(--ant); } .m .tag.goo { color: var(--goo); }
+.m .t2 { color: var(--t2); } .m .t3 { color: var(--t3); }
+.m .bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.m .bar > i { display: block; height: 100%; border-radius: 3px; }
+.m .bar.thin { height: 4px; }
+.m .bar.unk { background: repeating-linear-gradient(135deg, var(--track) 0 4px, transparent 4px 8px); }
+.m .s-ok { color: var(--ok); } .m .s-close { color: var(--close); } .m .s-lim { color: var(--lim); } .m .s-stale { color: var(--stale); } .m .s-unk { color: var(--t3); }
+.m .f-ok { background: var(--ok); } .m .f-close { background: var(--close); } .m .f-lim { background: var(--lim); } .m .f-stale { background: var(--stale); }
+.m .bank { color: var(--bank); }
+.m .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.m .chip.bank { background: var(--bank-bg); }
+.m .chip.urgent { background: var(--urgent-bg); color: var(--close); }
+.m .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.m .grow { flex: 1; min-width: 0; }
+.m .ell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m .num { font-weight: 650; letter-spacing: -.01em; }
+.m .eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--t3); }
+.m .link-zone { outline: 1.5px dashed transparent; outline-offset: 1px; border-radius: 8px; }
+.show-zones .m .link-zone { outline-color: rgba(10,99,216,.55); }
+.m svg.sh { width: 10px; height: 10px; flex: none; }
+
+/* widget shell */
+.widget { border-radius: 22px; background: var(--wbg); box-shadow: 0 0 0 .5px var(--sep), 0 6px 18px rgba(0,0,0,.10); }
+.desk { padding: 16px; border-radius: 16px; }
+.desk.lt { background: linear-gradient(135deg, #c9d6df, #e7ddd3); }
+.desk.dk { background: linear-gradient(135deg, #1f2a33, #2c2620); }
+.phone.desk.lt { background: linear-gradient(160deg, #b8cbe0, #e9d8cf); }
+.phone.desk.dk { background: linear-gradient(160deg, #10202f, #2b1f1a); }
+
+/* mac window */
+.win { border-radius: 12px; background: var(--win); box-shadow: 0 0 0 .5px var(--sep), 0 18px 40px rgba(0,0,0,.18); display: flex; flex-direction: column; }
+.titlebar { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px; flex: none; }
+.lights { display: flex; gap: 8px; } .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.sidebar { width: 220px; background: var(--side); padding: 6px 10px; flex: none; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.sidebar .it { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; min-width: 0; }
+.sidebar .it.on { background: var(--sel); color: var(--selt); }
+.sidebar .it.on .t2, .sidebar .it.on .t3, .sidebar .it.on .s-ok, .sidebar .it.on .s-close, .sidebar .it.on .s-lim { color: rgba(255,255,255,.85); }
+.sidebar .grp { font-size: 11px; font-weight: 600; color: var(--t3); padding: 10px 8px 3px; }
+.btn { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; padding: 4px 11px; border-radius: 6px; background: var(--card); box-shadow: 0 0 0 .5px var(--sep), 0 1px 1px rgba(0,0,0,.06); white-space: nowrap; color: var(--t); }
+.btn.pri { background: var(--sel); color: #fff; box-shadow: none; }
+.btn.warn { color: var(--lim); }
+.card { background: var(--card); border-radius: 10px; box-shadow: 0 0 0 .5px var(--sep); }
+.tbl { width: 100%; border-collapse: collapse; font: inherit; font-size: 12.5px; color: inherit; }
+.tbl th { font-size: 11px; font-weight: 600; color: var(--t3); text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--sep); white-space: nowrap; }
+.tbl td { padding: 9px 10px; border-bottom: 1px solid var(--sep); vertical-align: middle; white-space: nowrap; }
+.tbl tr:last-child td { border-bottom: none; }
+.field { border-radius: 6px; background: var(--card); box-shadow: inset 0 0 0 1px var(--sep); padding: 4px 8px; font-size: 13px; }
+.seg { display: inline-flex; background: var(--track); border-radius: 7px; padding: 2px; font-size: 12px; }
+.seg span { padding: 3px 12px; border-radius: 5px; } .seg span.on { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+.tl { position: relative; height: 100%; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <p class="meta">cbusillo/context-panel #722 · first design pass · GODESIGN-CP722-D0 · 2026-10-01</p>
+  <h1>Context Panel, page by page</h1>
+  <p class="lede">Every page today groups limits by time window and pools accounts ("Weekly · 3 accounts"), so no surface answers the first question: which of my accounts is closest, when does it reset, and which banked reset runs out next. This pass makes the account the unit everywhere and gives each page one job.</p>
+  <div class="vpkey">
+    <div><b>Chris, many accounts</b>Closest account, every reset to the minute, next banked expiry, which account to use next.</div>
+    <div><b>One or two accounts</b>Set up without instructions. Am I fine, or about to hit a limit?</div>
+    <div><b>Across the room · headset</b>Big type, few numbers, status by color and shape.</div>
+    <div><b>On the go</b>One line per account and the next deadline.</div>
+    <div><b>An agent</b>The same facts as JSON, never disagreeing with the UI.</div>
+  </div>
+  <p class="meta" style="margin-top:16px">Mockups use made-up accounts (work@, home@, ops@example.com) and a fixed time: Thu Oct 1, 2026, 9:12 PM. Sizes are real points. Dashed blue outlines show click areas. <label><input type="checkbox" id="zones" checked> show click areas</label></p>
+  <div id="pages"></div>
+</div>
+
+<script>
+const NOW = new Date(2026, 9, 1, 21, 12);
+const d = (mo, day, h, mi) => new Date(2026, mo - 1, day, h, mi);
+// Saved order = user's order in Settings. used = percent used of that window.
+const ACC = [
+  { id: "work", p: "oai", name: "work@example.com", short: "work@", status: "ok",
+    win: [{ k: "Weekly", used: 71, reset: d(10,3,12,58) }, { k: "5-hour", used: 22, reset: d(10,1,23,40) }],
+    banked: [d(10,3,22,35), d(10,5,0,20), d(10,22,16,51), d(10,29,15,3)] },
+  { id: "home", p: "oai", name: "home@example.com", short: "home@", status: "ok",
+    win: [{ k: "Weekly", used: 13, reset: d(10,3,17,58) }, { k: "5-hour", used: 4, reset: d(10,2,0,5) }],
+    banked: [d(10,5,0,20), d(10,22,16,57), d(10,29,15,9)] },
+  { id: "ops", p: "oai", name: "operations-shared@example.com", short: "ops@", status: "close",
+    win: [{ k: "Weekly", used: 90, reset: d(10,3,17,58) }, { k: "5-hour", used: 61, reset: d(10,1,22,48) }],
+    banked: [d(10,2,22,27), d(10,5,0,20), d(10,22,16,47), d(10,29,15,1)], note: "Use last" },
+  { id: "cwork", p: "ant", name: "work@example.com", short: "work@", status: "ok",
+    win: [{ k: "Weekly", used: 28, reset: d(10,7,4,0) }, { k: "5-hour", used: 6, reset: d(10,2,0,20) }],
+    banked: null },
+  { id: "chome", p: "ant", name: "home@example.com", short: "home@", status: "ok",
+    win: [{ k: "Weekly", used: 0, reset: d(10,4,9,0) }, { k: "5-hour", used: 0, reset: null }],
+    banked: null },
+  { id: "goo", p: "goo", name: "Gemini", short: "Gemini", status: "stale", seen: d(10,1,18,4),
+    win: [{ k: "Daily", used: 31, reset: d(10,2,17,0) }], banked: [] },
+];
+const PN = { oai: "OpenAI", ant: "Claude", goo: "Google" };
+const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"], MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const hm = t => { let h = t.getHours(), m = t.getMinutes(), ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12; return `${h}:${String(m).padStart(2,"0")} ${ap}`; };
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+const day = t => sameDay(t, NOW) ? "Today" : WD[t.getDay()];
+const when = t => t ? `${day(t)} ${hm(t)}` : "—";
+const whenLong = t => `${WD[t.getDay()]} ${MO[t.getMonth()]} ${t.getDate()}, ${hm(t)}`;
+const until = t => { const m = Math.round((t - NOW) / 60000); if (m < 60) return `in ${m} min`; const h = Math.floor(m / 60); if (h < 10) return `in ${h} h ${m % 60} min`.replace(" 0 min",""); if (h < 48) return `in ${h} h`; return `in ${Math.floor(h/24)} d ${h%24} h`.replace(" 0 h",""); };
+const left = w => 100 - w.used;
+const main = a => a.win[0];
+const stOf = a => a.status === "stale" ? "stale" : (left(main(a)) <= 5 ? "lim" : left(main(a)) <= 25 ? "close" : "ok");
+const word = s => ({ ok: "Available", close: "Close to limit", lim: "Limited", stale: "Not updating", unk: "Unknown" })[s];
+const nextBank = a => a.banked && a.banked.length ? a.banked.filter(t => t > NOW).sort((x, y) => x - y)[0] : null;
+const urgent = t => t && (t - NOW) < 48 * 3600e3;
+const allBanked = () => ACC.flatMap(a => (a.banked || []).filter(t => t > NOW).map(t => ({ a, t }))).sort((x, y) => x.t - y.t);
+const closest = () => ACC.filter(a => a.status !== "stale").sort((x, y) => left(main(x)) - left(main(y)))[0];
+const useNext = () => ACC.filter(a => a.status !== "stale" && a.note !== "Use last" && a.p === "oai").sort((x, y) => left(main(y)) - left(main(x)))[0];
+
+// status shape: circle ok, triangle close, octagon limited, hollow clock stale, dashed unknown
+const shape = (s, sz = 10) => {
+  const c = `var(--${s === "lim" ? "lim" : s})`;
+  if (s === "ok") return `<svg class="sh" style="width:${sz}px;height:${sz}px" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="${c}"/></svg>`;
+  if (s === "close") return `<svg class="sh" style="width:${sz}px;height:${sz}px" viewBox="0 0 10 10"><path d="M5 .8 9.5 9H.5Z" fill="${c}"/></svg>`;
+  if (s === "lim") return `<svg class="sh" style="width:${sz}px;height:${sz}px" viewBox="0 0 10 10"><path d="M3.2.6h3.6l2.6 2.6v3.6L6.8 9.4H3.2L.6 6.8V3.2Z" fill="${c}"/></svg>`;
+  if (s === "stale") return `<svg class="sh" style="width:${sz}px;height:${sz}px" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="none" stroke="${c}" stroke-width="1.4"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="${c}" stroke-width="1.2"/></svg>`;
+  return `<svg class="sh" style="width:${sz}px;height:${sz}px" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="none" stroke="var(--t3)" stroke-width="1.2" stroke-dasharray="2 1.6"/></svg>`;
+};
+const bankGlyph = (sz = 11) => `<svg style="width:${sz}px;height:${sz}px;flex:none" viewBox="0 0 12 12"><path d="M6 1.2a4.8 4.8 0 1 1-4.5 3.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M1 1.6v3h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const tag = p => `<span class="tag ${p}">${PN[p]}</span>`;
+const bar = (a, w, thin) => { const s = stOf(a); if (w.used == null) return `<div class="bar unk${thin ? " thin" : ""}"></div>`; return `<div class="bar${thin ? " thin" : ""}"><i class="f-${s === "stale" ? "stale" : s}" style="width:${left(w)}%"></i></div>`; };
+const pct = (a, w) => a.status === "stale" ? `<span class="s-stale">${left(w)}% left</span>` : `${left(w)}% left`;
+
+/* ---------------- Mockups ---------------- */
+const M = {};
+
+M.macSmall = th => { const c = closest(), w = main(c), nb = allBanked()[0];
+  return `<div class="m ${th} widget link-zone" style="width:164px;height:164px;padding:12px 13px;display:flex;flex-direction:column;gap:4px">
+    <div class="row" style="gap:5px">${shape(stOf(c))}<span class="eyebrow" style="color:var(--${stOf(c)})">Closest</span><span class="grow"></span><span class="t3" style="font-size:10px">${PN[c.p]}</span></div>
+    <div style="font-size:13px;font-weight:600" class="ell">${c.short}</div>
+    <div class="row" style="align-items:baseline;gap:4px"><span class="num" style="font-size:28px;line-height:1">${left(w)}%</span><span class="t2" style="font-size:12px">left</span></div>
+    <div style="width:100%">${bar(c, w)}</div>
+    <div class="t2" style="font-size:10.5px">Resets ${when(w.reset)}</div>
+    <div style="margin-top:auto;border-top:1px solid var(--sep);padding-top:5px;font-size:10.5px;line-height:1.3">
+      <div class="row ${urgent(nb.t) ? "s-close" : "bank"}" style="gap:4px;font-weight:600">${bankGlyph(10)}${nb.a.short} banked ends</div>
+      <div style="font-weight:650;font-size:12px">${when(nb.t)}</div></div></div>`; };
+
+M.macMedium = th => { const nb = allBanked()[0]; const rows = ACC.slice(0, 5);
+  return `<div class="m ${th} widget" style="width:344px;height:164px;padding:11px 14px 10px;display:flex;flex-direction:column;gap:3px">
+    <div class="row link-zone" style="font-size:11px;padding:1px 2px;margin:0 -2px 2px"><span class="chip ${urgent(nb.t) ? "urgent" : "bank"}">${bankGlyph(10)}${nb.a.short} banked reset ends ${when(nb.t)}</span><span class="t2 ell grow" style="text-align:right">${until(nb.t)}</span></div>
+    ${rows.map(a => { const w = main(a), s = stOf(a); return `<div class="row link-zone" style="height:23px;font-size:12px;padding:0 2px;margin:0 -2px">
+      ${shape(s)}<span class="tag ${a.p}" style="font-size:8.5px;padding:2px 3px">${a.p === "oai" ? "OpenAI" : a.p === "ant" ? "Claude" : "Google"}</span>
+      <span class="ell" style="width:62px;font-weight:600">${a.short}</span>
+      <div class="grow">${bar(a, w, true)}</div>
+      <span class="num" style="width:40px;text-align:right">${left(w)}%</span>
+      <span class="t2" style="width:84px;text-align:right;font-size:11px">${when(w.reset)}</span></div>`; }).join("")}
+    <div class="t3" style="font-size:9.5px;text-align:right;margin-top:auto">% left · natural reset</div>
+    </div>`; };
+
+M.macLarge = th => { const u = useNext();
+  return `<div class="m ${th} widget" style="width:344px;height:344px;padding:12px 14px;display:flex;flex-direction:column;gap:2px">
+    <div class="row link-zone" style="font-size:12px;padding:2px;margin:-2px -2px 4px"><span class="eyebrow">Use next</span><b>${u.short}</b><span class="t3">${PN[u.p]}</span><span class="grow"></span><span class="num">${left(main(u))}% left</span></div>
+    ${ACC.map(a => { const w = main(a), s = stOf(a), nbk = nextBank(a);
+      const sub = a.status === "stale" ? `Not updating since ${hm(a.seen)}` :
+        `Resets ${when(w.reset)}` + (a.banked === null ? ` · banked unknown` : nbk ? ` · <span class="${urgent(nbk) ? "s-close" : "bank"}">${a.banked.length} banked, next ${when(nbk)}</span>` : "");
+      return `<div class="link-zone" style="padding:4px 2px;margin:0 -2px;border-top:1px solid var(--sep)">
+      <div class="row" style="font-size:12.5px">${shape(s)}<span class="ell grow" style="font-weight:600">${a.name} <span class="t3" style="font-weight:400;font-size:11px">${PN[a.p]}</span></span><div style="width:64px">${bar(a, w, true)}</div><span class="num" style="width:34px;text-align:right">${a.status === "stale" ? `<span class="s-stale">${left(w)}%</span>` : left(w) + "%"}</span></div>
+      <div class="t2 ell" style="font-size:10.5px;margin:2px 0 0 18px">${sub}</div></div>`; }).join("")}
+    <div class="t3" style="font-size:9.5px;text-align:right;margin-top:auto">% left of the weekly limit (Gemini: daily)</div>
+    </div>`; };
+
+M.macXL = th => { const bl = allBanked();
+  // seven-day lane chart
+  const span = 7 * 24 * 3600e3, x = t => Math.max(0, Math.min(1, (t - NOW) / span)) * 100;
+  const days = [...Array(8)].map((_, i) => { const t = new Date(NOW); t.setHours(0,0,0,0); t.setDate(t.getDate() + i); return t; });
+  return `<div class="m ${th} widget" style="width:715px;height:344px;padding:10px 16px;display:grid;grid-template-columns:300px 1fr;gap:18px">
+    <div style="display:flex;flex-direction:column;padding-top:22px">${M._rows(ACC, 50)}</div>
+    <div style="display:flex;flex-direction:column;min-width:0">
+      <div class="row" style="font-size:12px;height:22px"><span class="eyebrow">Next 7 days</span><span class="grow"></span><span class="t3" style="font-size:10px">● natural reset &nbsp; <span class="bank">◆ banked reset ends</span></span></div>
+      <div style="position:relative;flex:1">
+        ${days.slice(1).map(t => `<div style="position:absolute;top:0;bottom:16px;left:${x(t)}%;border-left:1px dashed var(--sep)"></div><div class="t3" style="position:absolute;bottom:0;left:${x(t)}%;font-size:9.5px;transform:translateX(-50%)">${WD[t.getDay()]}</div>`).join("")}
+        ${ACC.map((a, i) => `<div class="link-zone" style="position:absolute;left:0;right:0;top:${i * 50}px;height:30px">
+          <div style="position:absolute;top:14px;left:0;right:0;border-top:1px solid var(--sep)"></div>
+          ${a.win.filter(w => w.reset).map(w => `<div title="${w.k}" style="position:absolute;top:10px;left:calc(${x(w.reset)}% - 4px);width:8px;height:8px;border-radius:50%;background:var(--${stOf(a) === "stale" ? "stale" : "t2"});opacity:${w.k === "5-hour" ? .45 : 1}"></div>`).join("")}
+          ${(a.banked || []).filter(t => t - NOW < span).map(t => `<div style="position:absolute;top:8px;left:calc(${x(t)}% - 6px);width:12px;height:12px;transform:rotate(45deg) scale(.8);background:var(--${urgent(t) ? "close" : "bank"})"></div><div style="position:absolute;top:-3px;left:calc(${x(t)}% + 8px);font-size:9.5px;white-space:nowrap" class="${urgent(t) ? "s-close" : "bank"}">${hm(t)}</div>`).join("")}
+        </div>`).join("")}
+      </div></div></div>`; };
+
+M._rows = (list, h) => list.map(a => { const w = main(a), s = stOf(a);
+  return `<div class="link-zone" style="padding:4px 2px;${h ? `height:${h}px` : ""}">
+   <div class="row" style="font-size:12.5px">${shape(s)}<span class="ell grow" style="font-weight:600">${a.short} <span class="t3" style="font-weight:400">${PN[a.p]}</span></span><span class="num">${pct(a, w)}</span></div>
+   <div style="margin:3px 0 0 18px">${bar(a, w, true)}</div>
+   <div class="t2 ell" style="font-size:10.5px;margin:2px 0 0 18px">${a.status === "stale" ? `Last updated ${hm(a.seen)}` : `Resets ${when(w.reset)}`}</div></div>`; }).join("");
+
+// Mac app shell
+const sidebar = sel => `<div class="sidebar">
+  <div class="it ${sel === "ov" ? "on" : ""}">◎ <span class="grow">Overview</span></div>
+  <div class="it ${sel === "dl" ? "on" : ""}"><span class="bank">${bankGlyph(12)}</span><span class="grow">Deadlines</span><span class="t3">${allBanked().length}</span></div>
+  <div class="grp">Accounts</div>
+  ${ACC.map(a => `<div class="it ${sel === a.id ? "on" : ""}">${shape(stOf(a))}<span class="ell grow">${a.short} <span class="t3">${PN[a.p]}</span></span><span class="t2" style="font-size:12px">${left(main(a))}%</span></div>`).join("")}
+  <div style="margin-top:auto" class="t3"><div style="font-size:11px;padding:6px 8px">Updated 2 min ago</div></div></div>`;
+const win = (th, w, h, sel, body, title = "Context Panel") => `<div class="m ${th} win" style="width:${w}px;height:${h}px">
+  <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span style="font-size:13px;font-weight:600;margin-left:14px">${title}</span><span class="grow"></span><span class="btn">↻ Refresh</span></div>
+  <div style="display:flex;flex:1;min-height:0">${sidebar(sel)}<div style="flex:1;min-width:0;padding:18px 22px;overflow:hidden;background:var(--win)">${body}</div></div></div>`;
+
+M.overview = th => { const c = closest(), nb = allBanked()[0], u = useNext();
+  const cell = (eb, big, sub, s) => `<div class="card link-zone" style="padding:12px 14px;min-width:0"><div class="eyebrow" style="${s ? `color:var(--${s})` : ""}">${eb}</div><div style="font-size:19px;font-weight:650;margin:4px 0 2px" class="ell">${big}</div><div class="t2 ell" style="font-size:12px">${sub}</div></div>`;
+  const body = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+    ${cell(`${shape("close")} Closest to limit`, `${c.short} · ${left(main(c))}% left`, `${PN[c.p]} weekly · resets ${when(main(c).reset)}`, "close")}
+    ${cell(`<span class="bank">${bankGlyph(10)}</span> Next banked reset ends`, `${whenLong(nb.t)}`, `${nb.a.short} ${PN[nb.a.p]} · ${until(nb.t)}`)}
+    ${cell("Use next", `${u.short} · ${left(main(u))}% left`, `Most room · ${u.name}`)}</div>
+    <div class="card" style="margin-top:12px;padding:2px 0"><table class="tbl"><thead><tr><th>Account</th><th>Weekly</th><th>5-hour</th><th>Natural reset</th><th>Banked resets</th></tr></thead><tbody>
+    ${ACC.map(a => { const w = main(a), f = a.win[1], nbk = nextBank(a), s = stOf(a); return `<tr class="link-zone">
+      <td><div class="row">${shape(s)}<span class="tag ${a.p}">${PN[a.p]}</span><b class="ell" style="max-width:150px">${a.name}</b></div>${a.note ? `<div class="t3" style="font-size:11px;margin-left:18px">${a.note}</div>` : ""}</td>
+      <td><div class="row"><div style="width:80px">${bar(a, w, true)}</div><span class="num" style="width:62px;text-align:right">${pct(a, w)}</span></div></td>
+      <td class="t2">${f ? (f.reset ? `${left(f)}% left` : "Not started") : "—"}</td>
+      <td>${a.status === "stale" ? `<span class="s-stale">Not updating since ${hm(a.seen)}</span>` : when(w.reset)}</td>
+      <td>${a.banked === null ? `<span class="t3">Unknown</span>` : nbk ? `<span class="chip ${urgent(nbk) ? "urgent" : "bank"}">${a.banked.length} · ${when(nbk)}</span>` : `<span class="t3">None</span>`}</td></tr>`; }).join("")}
+    </tbody></table></div>
+    <div class="t3" style="font-size:11px;margin-top:8px">Rows follow your order in Settings. Click a row for the account. Times are your local time.</div>`;
+  return win(th, 1080, 720, "ov", body); };
+
+M.deadlines = th => { const bl = allBanked();
+  const body = `<div style="font-size:20px;font-weight:700">Deadlines</div><div class="t2" style="font-size:12.5px;margin:2px 0 12px">Every reset you could lose, soonest first. A banked reset is gone when its time passes.</div>
+   <div class="card" style="padding:2px 0"><table class="tbl"><thead><tr><th>Ends</th><th></th><th>Account</th><th>Kind</th></tr></thead><tbody>
+   ${bl.map(({ a, t }) => `<tr class="link-zone"><td><b>${whenLong(t)}</b></td><td><span class="chip ${urgent(t) ? "urgent" : "bank"}">${until(t)}</span></td><td><div class="row">${tag(a.p)}<span>${a.name}</span></div></td><td class="t2">Banked reset</td></tr>`).join("")}
+   <tr><td class="t3" colspan="4">Claude accounts: banked resets not reported yet · shown as Unknown, not zero</td></tr></tbody></table></div>`;
+  return win(th, 1080, 820, "dl", body); };
+
+M.detail = th => { const a = ACC[0], w = a.win[0], f = a.win[1];
+  const spark = [12,18,22,30,35,41,48,55,61,66,71].map((v, i, arr) => `${i * (100 / (arr.length - 1))},${40 - v * .5}`).join(" ");
+  const inst = (win, big) => `<div class="card" style="padding:14px 16px;min-width:0"><div class="row"><span class="eyebrow">${win.k}</span><span class="grow"></span>${shape(stOf(a))}<span style="font-size:11.5px">${word(stOf(a))}</span></div>
+    <div class="row" style="align-items:baseline;gap:6px;margin:6px 0"><span class="num" style="font-size:${big ? 40 : 30}px;line-height:1">${left(win)}%</span><span class="t2">left</span><span class="grow"></span><span class="t3" style="font-size:12px">${win.used}% used</span></div>
+    ${bar(a, win)}<div style="font-size:12.5px;margin-top:8px">Resets <b>${whenLong(win.reset)}</b> <span class="t2">· ${until(win.reset)}</span></div>
+    ${big ? `<div class="t2" style="font-size:12px;margin-top:3px">At your recent pace this lasts until the reset.</div>` : ""}</div>`;
+  const body = `<div class="row" style="gap:10px">${tag(a.p)}<span style="font-size:20px;font-weight:700">${a.name}</span><span class="grow"></span><span class="btn">Edit in Settings…</span></div>
+    <div class="t2" style="font-size:12px;margin:4px 0 12px">Signed in from ~/.codex-accounts/${a.name} · checked 2 min ago</div>
+    <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:10px">${inst(w, true)}${inst(f)}</div>
+    <div class="card" style="margin-top:10px;padding:12px 16px"><div class="row"><span class="bank">${bankGlyph(12)}</span><b style="font-size:13px">Banked resets · ${a.banked.length}</b><span class="grow"></span><span class="t3" style="font-size:11.5px">Use them in Codex. Context Panel never spends one.</span></div>
+      ${a.banked.map(t => `<div class="row" style="font-size:12.5px;padding:6px 0;border-top:1px solid var(--sep);margin-top:6px"><span style="width:200px">Ends <b>${whenLong(t)}</b></span><span class="chip ${urgent(t) ? "urgent" : "bank"}">${until(t)}</span></div>`).join("")}</div>
+    <div class="card" style="margin-top:10px;padding:10px 16px"><div class="row"><span class="eyebrow">Weekly use, this window</span><span class="grow"></span><span class="t3" style="font-size:11px">Sat → now</span></div>
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" style="width:100%;height:44px;display:block"><polyline points="${spark}" fill="none" stroke="var(--close)" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg></div>`;
+  return win(th, 1080, 720, "work", body); };
+
+// Settings
+const settingsShell = (th, w, h, tab, body) => `<div class="m ${th} win" style="width:${w}px;height:${h}px">
+  <div class="titlebar" style="justify-content:center;position:relative"><div class="lights" style="position:absolute;left:14px"><i></i><i></i><i></i></div><span style="font-size:13px;font-weight:600">Settings</span></div>
+  <div style="display:flex;justify-content:center;gap:4px;padding:0 0 10px;border-bottom:1px solid var(--sep);font-size:11.5px">
+   ${["Accounts","Updates","Alerts","Display"].map(t => `<div style="padding:4px 12px;border-radius:6px;${t === tab ? "background:var(--track);font-weight:600" : ""}">${t}</div>`).join("")}</div>
+  <div style="flex:1;padding:16px 22px;overflow:hidden">${body}</div></div>`;
+
+M.settingsAccounts = th => {
+  const rows = [
+    { a: ACC[0], st: "ok", line: "Signed in from ~/.codex-accounts/work@example.com · checked 2 min ago" },
+    { a: ACC[1], st: "ok", line: "Signed in from ~/.codex-accounts/home@example.com · checked 2 min ago", open: true },
+    { a: ACC[2], st: "ok", line: "Signed in from ~/.codex · checked 2 min ago" },
+    { a: ACC[3], st: "ok", line: "Signed in with Claude in the browser · checked 2 min ago" },
+    { a: ACC[4], st: "ok", line: "Signed in with Claude in the browser · checked 2 min ago" },
+    { a: { p: "oai", name: "Codex Lab", short: "Codex Lab" }, st: "lim", line: "Its folder ~/.codex-lab no longer exists. This account is not updating.", fix: true },
+  ];
+  const body = `<div class="row" style="margin-bottom:8px"><span style="font-size:13px;font-weight:600">Accounts</span><span class="t3" style="font-size:11.5px">· drag to reorder; widgets and the overview follow this order</span><span class="grow"></span><span class="btn pri">＋ Add Account…</span></div>
+   <div class="card" style="padding:0 0">${rows.map(r => `<div style="padding:9px 12px;border-bottom:1px solid var(--sep)${r.fix ? ";background:var(--urgent-bg)" : ""}">
+     <div class="row"><span class="t3" style="cursor:grab;font-size:14px">⋮⋮</span>${shape(r.st)}${tag(r.a.p)}<b class="ell" style="font-size:13px">${r.a.name}</b><span class="grow"></span>
+       ${r.fix ? `<span class="btn">Choose Folder…</span><span class="btn warn">Remove</span>` : `<span class="t2" style="font-size:12px">${r.open ? "▾" : "▸"}</span>`}</div>
+     <div class="${r.fix ? "s-lim" : "t2"} ell" style="font-size:11.5px;margin:3px 0 0 36px">${r.line}</div>
+     ${r.open ? `<div style="margin:10px 0 2px 36px;display:grid;grid-template-columns:110px 1fr;gap:8px 10px;align-items:center;font-size:12.5px">
+        <span class="t2" style="text-align:right">Name</span><span class="field">home@example.com</span>
+        <span class="t2" style="text-align:right">Sign-in folder</span><div class="row"><span class="field grow ell">~/.codex-accounts/home@example.com</span><span class="btn">Change…</span></div>
+        <span class="t2" style="text-align:right">Show in widgets</span><div class="row"><span style="width:28px;height:16px;border-radius:8px;background:var(--ok);position:relative;display:inline-block"><i style="position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></i></span><span class="t3" style="font-size:11.5px">Hidden accounts still update and still warn you.</span></div>
+        <span></span><div class="row"><span class="btn warn">Remove Account…</span><span class="t3" style="font-size:11.5px">Leaves your sign-in and folders untouched.</span></div></div>` : ""}
+   </div>`).join("")}</div>`;
+  return settingsShell(th, 720, 700, "Accounts", body); };
+
+M.addSheet = th => {
+  const cands = [
+    { path: "~/.codex", who: "Your main Codex sign-in", added: "Added as ops@" },
+    { path: "~/.codex-accounts/work@example.com", who: "", added: "Added" },
+    { path: "~/.codex-accounts/home@example.com", who: "", added: "" , sel: true },
+    { path: "~/.codex-accounts/new@example.com", who: "", added: "" },
+  ];
+  return `<div class="m ${th} win" style="width:520px;height:440px;padding:20px 22px;gap:0">
+    <div style="font-size:15px;font-weight:700">Add an account</div>
+    <div class="row" style="gap:6px;margin:12px 0 14px"><span class="seg"><span class="on">OpenAI</span><span>Claude</span><span>Google</span></span></div>
+    <div style="font-size:12.5px;margin-bottom:8px">Context Panel found these Codex sign-ins on this Mac. Pick the account to add.</div>
+    <div class="card">${cands.map(c => `<div class="row" style="padding:8px 12px;border-bottom:1px solid var(--sep);font-size:12.5px;${c.added ? "opacity:.5" : ""}">
+       <span style="width:14px;height:14px;border-radius:50%;flex:none;${c.sel ? "background:var(--sel);box-shadow:inset 0 0 0 4px var(--sel), inset 0 0 0 7px #fff" : "box-shadow:inset 0 0 0 1px var(--t3)"}"></span>
+       <div class="grow"><div class="ell">${c.path}</div>${c.who ? `<div class="t3" style="font-size:11px">${c.who}</div>` : ""}</div><span class="t3" style="font-size:11.5px">${c.added}</span></div>`).join("")}
+       <div style="padding:8px 12px;font-size:12.5px;color:var(--sel)">Choose another folder…</div></div>
+    <div style="display:grid;grid-template-columns:70px 1fr;gap:8px;align-items:center;margin-top:14px;font-size:12.5px"><span class="t2">Name</span><span class="field">home@example.com</span></div>
+    <div class="t3" style="font-size:11.5px;margin-top:6px">Reads usage and banked resets with this sign-in. Nothing is copied out of the folder.</div>
+    <div class="row" style="margin-top:auto;padding-top:12px;justify-content:flex-end;gap:8px"><span class="btn">Cancel</span><span class="btn pri">Add Account</span></div></div>`; };
+
+M.updates = th => {
+  const body = `<div class="card" style="padding:14px 16px;background:var(--urgent-bg)"><div class="row">${shape("lim", 14)}<b style="font-size:14px">Background updates stopped at 2:19 AM</b></div>
+     <div style="font-size:12.5px;margin:6px 0 10px 22px">macOS is not letting the Context Panel helper run, so the widget and your other devices show old numbers until you open the app.</div>
+     <div class="row" style="margin-left:22px"><span class="btn pri">Fix Background Updates</span><span class="t2" style="font-size:11.5px">Restarts the helper. If macOS asks, allow Context Panel in Login Items.</span></div></div>
+   <div class="eyebrow" style="margin:18px 0 6px">After the fix</div>
+   <div class="card" style="padding:12px 16px"><div class="row">${shape("ok", 12)}<b style="font-size:13px">Updating in the background</b><span class="grow"></span><span class="t2" style="font-size:12px">Last update 9:10 PM</span></div>
+     <div style="display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center;margin-top:12px;font-size:12.5px"><span class="t2">Check every</span><span class="seg"><span>5 min</span><span>10 min</span><span class="on">15 min</span><span>30 min</span><span>1 hour</span></span></div>
+     <div class="t3" style="font-size:11.5px;margin-top:10px">Your iPhone, Apple TV and Vision Pro get each update through iCloud.</div></div>`;
+  return settingsShell(th, 720, 420, "Updates", body); };
+
+// iPhone
+M.phone = th => { const nb = allBanked()[0];
+  return `<div class="m ${th}" style="width:393px;height:852px;border-radius:48px;background:var(--bg);padding:58px 16px 20px;box-shadow:0 0 0 10px #111,0 20px 40px rgba(0,0,0,.25)">
+   <div class="row" style="position:absolute;top:16px;left:34px;right:30px;font-size:15px;font-weight:600"><span>9:12</span><span class="grow"></span><span style="font-size:12px">●●● 􀙇 ▮</span></div>
+   <div class="row"><span style="font-size:32px;font-weight:700">Accounts</span><span class="grow"></span><span class="btn" style="border-radius:50%;width:34px;height:34px;justify-content:center">↻</span></div>
+   <div class="t2" style="font-size:13px;margin:2px 0 14px">From your Mac · 3 min ago</div>
+   <div class="card link-zone" style="padding:14px;margin-bottom:14px;background:var(--urgent-bg)"><div class="row s-close" style="font-size:12px;font-weight:600">${bankGlyph(12)} NEXT DEADLINE</div>
+     <div style="font-size:20px;font-weight:700;margin:4px 0 2px">${whenLong(nb.t)}</div><div class="t2" style="font-size:14px">Banked reset on ${nb.a.short} ${PN[nb.a.p]} ends · ${until(nb.t)}</div></div>
+   <div class="card" style="padding:0 14px">${ACC.map(a => { const w = main(a), s = stOf(a), nbk = nextBank(a); return `<div class="link-zone" style="padding:11px 0;border-bottom:1px solid var(--sep)">
+     <div class="row" style="font-size:16px">${shape(s, 11)}<b class="ell grow">${a.short} <span class="t3" style="font-weight:400;font-size:14px">${PN[a.p]}</span></b><span class="num">${pct(a, w)}</span></div>
+     <div style="margin:6px 0 4px 19px">${bar(a, w)}</div>
+     <div class="t2 ell" style="font-size:13px;margin-left:19px">${a.status === "stale" ? `Not updating since ${hm(a.seen)}` : `Resets ${when(w.reset)}`}${nbk ? ` · <span class="${urgent(nbk) ? "s-close" : "bank"}">banked ends ${when(nbk)}</span>` : a.banked === null ? " · banked unknown" : ""}</div></div>`; }).join("")}</div></div>`; };
+
+M.phoneSmall = th => { const nb = allBanked()[0], c = closest(), w = main(c);
+  return `<div class="m ${th} widget link-zone" style="width:158px;height:158px;padding:13px;display:flex;flex-direction:column;gap:5px;border-radius:22px">
+   <div class="row s-close" style="font-size:10.5px;font-weight:600;gap:4px">${bankGlyph(10)}NEXT DEADLINE</div>
+   <div style="font-size:19px;font-weight:700;line-height:1.1">${hm(nb.t)}</div><div class="t2" style="font-size:11.5px;margin-top:-3px">${day(nb.t)} · ${nb.a.short} banked</div>
+   <div style="margin-top:auto;border-top:1px solid var(--sep);padding-top:6px"><div class="row" style="font-size:11.5px">${shape(stOf(c))}<b>${c.short}</b><span class="grow"></span><span class="num">${left(w)}%</span></div>
+   <div style="margin-top:4px">${bar(c, w, true)}</div></div></div>`; };
+
+M.phoneMedium = th => { const nb = allBanked()[0];
+  return `<div class="m ${th} widget" style="width:338px;height:158px;padding:11px 13px;display:flex;flex-direction:column;gap:2px;border-radius:22px">
+    <div class="row link-zone" style="font-size:11px;margin-bottom:2px"><span class="chip urgent">${bankGlyph(10)}${when(nb.t)}</span><span class="t2 ell">${nb.a.short} banked reset ends</span></div>
+    ${ACC.slice(0, 5).map(a => { const w = main(a), s = stOf(a); return `<div class="row link-zone" style="height:22px;font-size:12px">${shape(s)}<b class="ell" style="width:56px">${a.short}</b><span class="t3" style="font-size:9.5px;width:34px">${PN[a.p]}</span><div class="grow">${bar(a, w, true)}</div><span class="num" style="width:34px;text-align:right">${left(w)}%</span><span class="t2" style="font-size:10px;width:78px;text-align:right;white-space:nowrap">${when(w.reset)}</span></div>`; }).join("")}</div>`; };
+
+// Apple TV 1920x1080
+M.tv = th => { const nb = allBanked()[0];
+  return `<div class="m ${th}" style="width:1920px;height:1080px;background:var(--bg);padding:80px 90px;display:flex;flex-direction:column">
+   <div class="row" style="align-items:flex-end"><div><div style="font-size:38px;font-weight:600" class="t2">Context Panel</div>
+     <div style="font-size:64px;font-weight:700;margin-top:6px">Next deadline <span class="s-close">${when(nb.t)}</span></div>
+     <div class="t2" style="font-size:36px;margin-top:6px">Banked reset on ${nb.a.short} ${PN[nb.a.p]} ends ${until(nb.t)}</div></div><span class="grow"></span><div class="t2" style="font-size:28px;text-align:right">Updated 3 min ago</div></div>
+   <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:28px;margin-top:70px">
+   ${ACC.map((a, i) => { const w = main(a), s = stOf(a); return `<div class="card link-zone" style="padding:30px 26px;border-radius:26px;${i === 2 ? "transform:scale(1.06);box-shadow:0 20px 50px rgba(0,0,0,.35)" : ""}">
+     <div class="row" style="gap:12px">${shape(s, 30)}<span style="font-size:26px;font-weight:600" class="t2">${PN[a.p]}</span></div>
+     <div style="font-size:34px;font-weight:700;margin-top:12px" class="ell">${a.short}</div>
+     <div class="num ${s === "stale" ? "s-stale" : ""}" style="font-size:96px;line-height:1.05;margin-top:22px">${left(w)}<span style="font-size:48px">%</span></div>
+     <div class="t2" style="font-size:26px">left</div>
+     <div class="bar" style="height:12px;border-radius:6px;margin:22px 0 18px"><i class="f-${s === "stale" ? "stale" : s}" style="width:${left(w)}%"></i></div>
+     <div style="font-size:26px">${s === "stale" ? `<span class="s-stale">Not updating</span>` : `Resets<br><b>${when(w.reset)}</b>`}</div></div>`; }).join("")}
+   </div></div>`; };
+
+// Vision Pro window 1280x720
+M.vision = th => { const nb = allBanked()[0];
+  return `<div class="m ${th}" style="width:1280px;height:720px;border-radius:46px;padding:44px 52px;background:${th === "lt" ? "rgba(236,238,242,.92)" : "rgba(40,42,48,.88)"};box-shadow:0 30px 80px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.25)">
+   <div class="row"><span style="font-size:34px;font-weight:700">Accounts</span><span class="grow"></span><span class="chip urgent" style="font-size:20px;padding:8px 18px">${bankGlyph(18)} ${nb.a.short} banked reset ends ${when(nb.t)}</span></div>
+   <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:30px">
+   ${ACC.map(a => { const w = main(a), s = stOf(a); return `<div class="card link-zone" style="padding:22px 24px;border-radius:28px;background:${th === "lt" ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.07)"}">
+     <div class="row" style="font-size:20px;gap:10px">${shape(s, 18)}<b class="ell grow">${a.short}</b><span class="t2">${PN[a.p]}</span></div>
+     <div class="row" style="align-items:baseline;gap:8px;margin:14px 0 10px"><span class="num ${s === "stale" ? "s-stale" : ""}" style="font-size:64px;line-height:1">${left(w)}%</span><span class="t2" style="font-size:20px">left</span></div>
+     <div class="bar" style="height:10px;border-radius:5px"><i class="f-${s === "stale" ? "stale" : s}" style="width:${left(w)}%"></i></div>
+     <div class="t2" style="font-size:18px;margin-top:12px">${s === "stale" ? "Not updating" : `Resets ${when(w.reset)}`}</div></div>`; }).join("")}</div></div>`; };
+
+/* ---------------- Page content ---------------- */
+const PAGES = [
+ { id: "widgets-mac", title: "Mac widgets", before: ["widget-small-before", "widget-medium-before", "widget-large-before"],
+   vp: { "Many accounts": "Which account is closest, and the next banked expiry to the minute. Rows for each account, not each window.", "One or two": "One number and whether it's fine. A single account fills the small widget.", "Agent": "None. Widgets read the same snapshot the agent JSON comes from." },
+   conf: ["Rows are windows with accounts pooled: \"OAI Weekly · 2 accounts\". You can't see which account is at 90%.", "\"47% left\" hero next to rows that say \"54% used\": two directions in one glance.", "Small widget truncates its top label to \"O… 1w…\". Codes OAI/ANT/GOO and 1w/5h need decoding.", "\"Measuring recent use\", \"Pace unknown\", \"over pace\", \"Lasts past reset\" compete with the numbers.", "Resets show as \"2d 20h\" or \"54m\" without a clock time in most rows.", "Each widget is one click target that opens the overview. In medium and large, only the small reset tag and cache pill are separate links."],
+   shots: [["macSmall", "Small · 164×164 pt · one click target (opens the closest account)"], ["macMedium", "Medium · 344×164 pt · each row opens that account; the chip opens Deadlines"], ["macLarge", "Large · 344×344 pt · every account, each row clickable"], ["macXL", "iPad extra large · 715×344 pt (macOS has no extra-large widget) · accounts plus a 7-day deadline lane"]] },
+ { id: "overview", title: "Overview (Mac app)", before: ["mac-app-before"],
+   vp: { "Many accounts": "Three answers on top: closest to limit, next banked deadline, use next. Then one row per account in saved order.", "One or two": "The same page with two rows reads as a status page. No setup jargon.", "Agent": "Each cell maps to a snapshot field (closest, nextDeadline, useNext)." },
+   conf: ["The headline is marketing copy (\"Know whether you can keep working\").", "\"Fast mode limited\", Snapshot cache, History 6714 entries: internals on the first screen.", "Sidebar lists windows (\"5-hour · 3 accounts\") instead of accounts, so there's nowhere to click for one account.", "The dial says \"left\", the sidebar and limit rows say \"used\", the scan grid shows remaining: three conventions on one screen.", "Which limits the Overview shows is set by the widget's Main Limits setting, so a widget preference hides app content.", "\"resets in 22h · observed\" without a clock time; banked resets only appear as a tag count."],
+   shots: [["overview", "Overview · 1080×720 pt (the app's minimum window) · each row and answer card opens its account"]] },
+ { id: "all-accounts", title: "All Accounts and Deadlines", before: [],
+   vp: { "Many accounts": "Every banked expiry across all accounts, soonest first, with date and minute.", "One or two": "Usually one or two lines. Shown only if there is anything to lose.", "Agent": "Same list as the snapshot's bankedResets array, same order." },
+   conf: ["All Accounts duplicates the Overview rows in another shape, and the full deadline list sits inside one account's detail.", "Claude's missing banked data looks like \"none\" unless the copy says Unknown."],
+   decide: "Proposal: the Overview table replaces the separate All Accounts list, and a new Deadlines page holds every banked expiry. This retires a page, so it goes to Chris as a question.",
+   shots: [["deadlines", "Deadlines · 1080×820 pt (window enlarged to show all 11) · each row opens its account"]] },
+ { id: "detail", title: "Account detail", before: [],
+   vp: { "Many accounts": "This account's weekly and 5-hour, exact resets, every banked expiry with a countdown, where it signs in from.", "One or two": "Same page. Plain status word next to the number.", "Agent": "Same fields as one account object in the snapshot." },
+   conf: ["Detail is per provider, not per account. Jumping to one account works only for OpenAI; Claude and Google accounts have no page of their own.", "Reset-credit guidance uses its own vocabulary (\"Hold for now\").", "Where the data comes from (folder or sign-in) is only visible in Settings."],
+   shots: [["detail", "Account detail · 1080×720 pt"]] },
+ { id: "settings", title: "Settings → Accounts", before: [],
+   vp: { "Many accounts": "Reorder by drag; names with @; see at a glance which entry is broken and fix or remove it in place.", "One or two": "Add Account finds the Codex sign-ins on the Mac and lists them. Claude is one Sign in button.", "Agent": "Only order and names reach the snapshot. Paths and credentials never do." },
+   conf: ["Several buttons point at the same thing: Select Codex Home, Select Codex Sessions, Use auth file, Select File, Connect Home.", "Picking the shared ~/.codex/sessions folder silently showed another account's numbers.", "An enable switch but no Remove (fixed in #720), so old Codex Lab rows stayed and still looked current.", "Couldn't type @ in names; no reordering (both fixed in #720 with up/down buttons).", "Renaming saves and reloads every widget on each keystroke.", "Settings is one long 560-pt form: accounts, diagnostics, background refresh, warnings, webhooks and widget limits in a single scroll.", "Similar actions use different words: Reconnect, Disconnect, Change, Update, Select File, Connect, Copy Remove, Forget. Google is also called Antigravity/AGY."],
+   shots: [["settingsAccounts", "Accounts · 720×700 pt · one row expanded; a broken row shows its fix in place"], ["addSheet", "Add Account sheet · 520×440 pt · OpenAI, with sign-ins found on this Mac"]] },
+ { id: "updates", title: "Settings → Background updates", before: [],
+   vp: { "Many accounts": "Is it updating? If not, one button that fixes it.", "One or two": "Same. No login-item vocabulary.", "Agent": "Snapshot carries observedAt per account, so stale shows the same everywhere." },
+   conf: ["Recovering tonight meant turning a toggle off and on, then finding Login Items in System Settings.", "The app showed fresh-looking numbers while the helper couldn't launch."],
+   shots: [["updates", "Updates · 720×420 pt · broken state with its fix, then the healthy state"]] },
+ { id: "iphone", title: "iPhone app and widgets", before: ["iphone-before"],
+   vp: { "On the go": "One line per account and the next deadline at the top.", "One or two": "Two lines and a deadline card, nothing else.", "Agent": "None." },
+   conf: ["Same pooled rows and codes as the Mac.", "\"Fast mode limited\", cache percentages, \"under pace\" on a phone.", "Sync card takes a third of the screen to say it synced.", "Every widget link opens the overview, even ones labelled as account actions."],
+   shots: [["phone", "iPhone app · 393×852 pt"], ["phoneSmall", "Small widget · 158×158 pt · one target"], ["phoneMedium", "Medium widget · 338×158 pt · each row opens its account"]] },
+ { id: "tv", title: "Apple TV", before: ["tv-before"],
+   vp: { "Across the room": "One deadline in big type, then one tile per account: shape, number, reset day and time." },
+   conf: ["Cards are per provider (\"OpenAI · 3 accounts\"), so the closest account is hidden.", "\"Runway is getting tight\" plus three status words in three colors.", "Relative times (\"5d 4h\") without a day and time."],
+   shots: [["tv", "Apple TV · 1920×1080 pt · focus on ops@"]] },
+ { id: "vision", title: "Vision Pro", before: ["vision-before"],
+   vp: { "In a headset": "A calm window: deadline chip and account tiles. Shapes carry status." },
+   conf: ["The iPad layout with the same pooled rows and small type.", "Appearance pickers for the app and widgets sit in the main scroll."],
+   shots: [["vision", "Vision Pro window · 1280×720 pt"]] },
+];
+
+const root = document.getElementById("pages");
+root.innerHTML = PAGES.map(p => `<section class="page" id="${p.id}">
+  <h2>${p.title}</h2>
+  <div class="cols">
+    <div><h3>What each viewpoint needs</h3><table class="vp">${Object.entries(p.vp).map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("")}</table></div>
+    <div><h3>Confusing today</h3><ul class="conf">${p.conf.map(c => `<li>${c}</li>`).join("")}</ul></div>
+  </div>
+  ${p.decide ? `<p class="decide">${p.decide}</p>` : ""}
+  ${p.before.length ? `<h3>Before</h3><div class="stage"><div class="pair">${p.before.map(b => `<figure style="margin:0"><img src="before/${b}.png" alt="${p.title} today" style="max-width:none;height:${b.startsWith("tv") ? 300 : b.startsWith("iphone") ? 520 : b.startsWith("vision") ? 320 : b.startsWith("mac") ? 380 : "auto"}${b.startsWith("widget") ? ";width:auto" : ""}" data-before></figure>`).join("")}</div></div>` : ""}
+  <h3>Proposed</h3>
+  ${p.shots.map(([fn, cap]) => `<div class="stage"><div class="pair">
+     <div data-shot="${fn}-light" class="${fn === "macSmall" || fn.startsWith("mac") && fn !== "macXL" || fn.startsWith("phone") && fn !== "phone" ? "desk lt" + (fn.startsWith("phone") ? " phone" : "") : ""}" style="${fn === "tv" ? "zoom:.4" : fn === "vision" ? "zoom:.6" : ""}">${M[fn]("lt")}</div>
+     <div data-shot="${fn}-dark" class="${fn === "macSmall" || fn.startsWith("mac") && fn !== "macXL" || fn.startsWith("phone") && fn !== "phone" ? "desk dk" + (fn.startsWith("phone") ? " phone" : "") : ""}" style="${fn === "tv" ? "zoom:.4" : fn === "vision" ? "zoom:.6" : ""}">${M[fn]("dk")}</div>
+   </div><p class="cap">${cap}${fn === "tv" ? " · shown at 40% here" : fn === "vision" ? " · shown at 60% here" : ""} · light, dark</p></div>`).join("")}
+</section>`).join("");
+const z = document.getElementById("zones");
+const setZ = () => document.body.classList.toggle("show-zones", z.checked); z.addEventListener("change", setZ); setZ();
+</script>
