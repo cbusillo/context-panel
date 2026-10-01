@@ -421,12 +421,12 @@ struct SettingsPane: View {
                             .controlSize(.regular)
                         }
                         HStack(spacing: 12) {
-                            Button { model.moveAccount(account.id, offset: -1); refreshAfterAuthorization() } label: {
+                            Button { model.moveAccount(account.id, offset: -1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
                                 Label("Move up", systemImage: "arrow.up")
                             }
                             .accessibilityLabel("Move account up")
                             .disabled(model.settingsAccounts.first?.id == account.id)
-                            Button { model.moveAccount(account.id, offset: 1); refreshAfterAuthorization() } label: {
+                            Button { model.moveAccount(account.id, offset: 1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
                                 Label("Move down", systemImage: "arrow.down")
                             }
                             .accessibilityLabel("Move account down")
@@ -609,12 +609,15 @@ struct SettingsPane: View {
                         .controlSize(.regular)
                     }
                 }
-                HStack {
-                    Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
-                    Button("Add Claude Account") { model.addAccount(provider: .anthropic) }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Button("Add OpenAI Account") { model.addAccount(provider: .openAI) }
+                        Button("Add Claude Account") { model.addAccount(provider: .anthropic) }
+                    }
                     Button("Add Antigravity Account") { model.addAccount(provider: .google) }
                         .disabled(model.settingsAccounts.contains { $0.provider == .google })
                 }
+                .controlSize(.regular)
                 Text("Use a local nickname. Turn off entries you no longer use, or remove their panel setup. Remove account keeps saved credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
