@@ -125,7 +125,6 @@ func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
     let restored = try JSONDecoder().decode(ProviderResetCreditSummary.self, from: JSONSerialization.data(withJSONObject: legacy))
     #expect(restored.knownExpiries.isEmpty)
     #expect(restored.earliestKnownExpiry == summary.earliestKnownExpiry)
-    #expect(decoded.preservingCountAfterRefreshFailure.knownExpiries.isEmpty)
 }
 
 @Test func accountCapacitySourceFailureKeepsMembersWithoutInventingAnotherAccount() {

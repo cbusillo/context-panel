@@ -407,8 +407,8 @@ import Testing
     #expect(report.status == .failure)
     #expect(resetCredits.availableCount == 1)
     #expect(resetCredits.observedAt == observedAt)
-    #expect(resetCredits.coverage == .countOnly)
-    #expect(resetCredits.earliestKnownExpiry == nil)
+    #expect(resetCredits.coverage == .complete)
+    #expect(resetCredits.earliestKnownExpiry == initialReport.resetCredits?.earliestKnownExpiry)
     #expect(account.status == .failure)
     #expect(shouldShowProviderNavigation(
         provider: .openAI,

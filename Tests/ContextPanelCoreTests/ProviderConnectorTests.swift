@@ -196,7 +196,8 @@ import Testing
 
     #expect(report.status == .failure)
     #expect((summary.availableCount, summary.observedAt) == (1, now))
-    #expect((summary.coverage, summary.earliestKnownExpiry) == (.countOnly, nil))
+    #expect(summary.coverage == .complete)
+    #expect(summary.earliestKnownExpiry == (try Date("2027-02-01T00:00:00Z", strategy: .iso8601)))
 }
 
 @Test func providerRuntimeDeduplicatesSameProviderAccountID() async throws {

@@ -253,7 +253,7 @@ public struct AccountConfigurationStore: Sendable {
             let account = document.accounts[index]
             if let path = account.codexQuotaPath,
                CodexHomeBinding.isSharedSessionMismatch(account: account,
-                   sessions: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)) {
+                   sessions: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath), siblings: document.accounts) {
                 document.accounts[index].codexQuotaPath = nil
                 changed = true
             }
@@ -397,7 +397,7 @@ public enum AccountConnectorFactory {
         CodexSessionQuotaConnector(account: account) { now in
             let path = NSString(string: account.codexQuotaPath ?? "").expandingTildeInPath
             let read: (URL) throws -> CodexSessionQuotaObservation? = { root in
-                guard !CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: root) else {
+                guard !CodexHomeBinding.isSharedSessionMismatch(account: account, sessions: root, siblings: document.accounts) else {
                     throw CodexSessionQuotaError.sharedDirectory
                 }
                 let canonical = root.resolvingSymlinksInPath().standardizedFileURL

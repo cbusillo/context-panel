@@ -122,7 +122,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             else if let summary {
                 let age = now.timeIntervalSince(summary.observedAt)
                 let expired = summary.availableCount > 0 && summary.earliestKnownExpiry.map { $0 <= now } == true
-                resetState = age < -60 || age > SnapshotFreshness.appMaximumAge || expired ? .stale : .available
+                resetState = age < -60 || age > SnapshotFreshness.appMaximumAge || expired
+                    || abs((row.report?.generatedAt ?? summary.observedAt).timeIntervalSince(summary.observedAt)) > 1 ? .stale : .available
             } else { resetState = .unknown }
             return Account(
                 id: ConnectorRedactor.localAccountID(provider: row.provider, stableID: row.id),

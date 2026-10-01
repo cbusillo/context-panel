@@ -911,13 +911,12 @@ public struct JSONSnapshotStore: Sendable {
                 .filter { $0.provider == report.provider && $0.accountID == report.accountID }
                 .compactMap(\.resetCredits)
                 .reduce(nil as ProviderResetCreditSummary?, ProviderResetCreditSummary.preferred)
-            guard report.status == .failure,
-                  report.resetCredits == nil,
+            guard report.resetCredits == nil,
                   let previousResetCredits
             else {
                 return storedReport
             }
-            return storedReport.withResetCredits(previousResetCredits.preservingCountAfterRefreshFailure)
+            return storedReport.withResetCredits(previousResetCredits.presented(at: savedAt))
         }
         let mergedReports = preservedReports + refreshedReports
         let preservedPromptCacheObservations = current?.promptCacheObservations.filter { observation in

@@ -112,3 +112,21 @@ private final class BindingDeletionRecorder: @unchecked Sendable {
     #expect(loaded.accounts.map(\.id) == [main.id, separate.id])
     #expect(store.load(now: now).document == loaded)
 }
+
+@Test func sharedSessionValidationRejectsAnUnboundOrSiblingHome() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let main = root.appending(path: ".codex")
+    let one = root.appending(path: "one")
+    let two = root.appending(path: "two")
+    let unbound = LocalProviderAccountConfiguration(id: "unbound", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Unbound")
+    #expect(CodexHomeBinding.isSharedSessionMismatch(account: unbound, sessions: main.appending(path: "sessions"), mainHome: main))
+    let a = LocalProviderAccountConfiguration(id: "one", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "One", authPath: one.appending(path: "auth.json").path)
+    var b = LocalProviderAccountConfiguration(id: "two", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Two", authPath: two.appending(path: "auth.json").path)
+    #expect(CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: two.appending(path: "sessions"), siblings: [a,b], mainHome: main))
+    #expect(!CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: one.appending(path: "sessions"), siblings: [a,b], mainHome: main))
+    b.isEnabled = false
+    #expect(!CodexHomeBinding.isSharedSessionMismatch(account: a, sessions: two.appending(path: "sessions"), siblings: [a,b], mainHome: main))
+}

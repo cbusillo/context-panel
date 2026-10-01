@@ -104,6 +104,8 @@ public struct ContextPanelWidgetContentView: View {
 
     private var widgetDestination: URL? {
         guard family == .systemSmall, showsResetCreditSurfaces,
+              snapshot.widgetProblemText(presentationDate: presentationDate) == nil,
+              snapshot.widgetDeepLinkURL(links: links) == links.overview,
               let deadline = snapshot.resetCreditSurfaceSummary(now: presentationDate, maximumAge: resetCreditMaximumAge)?.primaryDeadlineGuidance else {
             return snapshot.widgetDeepLinkURL(links: links)
         }

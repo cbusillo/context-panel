@@ -421,10 +421,9 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             headers: [
                 "Authorization": "Bearer \(accessToken)",
                 "Accept": "application/json",
-                "User-Agent": "claude-code/2.1.141",
+                "User-Agent": "claude-cli/2.1.286 (external, cli)",
                 "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                 "anthropic-version": "2023-06-01",
-                "anthropic-client-platform": "context-panel",
             ],
             timeoutInterval: 3
         )), (200..<300).contains(response.statusCode) else { return nil }

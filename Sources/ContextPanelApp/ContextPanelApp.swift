@@ -2434,7 +2434,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url,
                   let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
-            guard !CodexHomeBinding.isSharedSessionMismatch(account: accounts[index], sessions: url) else {
+            guard !CodexHomeBinding.isSharedSessionMismatch(account: accounts[index], sessions: url, siblings: accounts) else {
                 errorMessage = "The main Codex sessions folder mixes logins. Use Select Codex Home for this account instead."
                 return
             }
@@ -7007,7 +7007,7 @@ struct AccountCapacityCard: View {
                             let dates = resets.knownExpiries.isEmpty
                                 ? resets.earliestKnownExpiry.map { [$0] } ?? [] : resets.knownExpiries
                             ForEach(Array(dates.enumerated()), id: \.offset) { _, date in
-                                Text("Reset credit \(date <= now ? "expired" : "expires") \(dateText(date))")
+                                Text("Reset credit expires \(dateText(date))")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                             if dates.count < resets.availableCount {

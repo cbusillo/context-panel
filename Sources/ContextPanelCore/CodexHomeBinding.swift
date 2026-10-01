@@ -20,14 +20,23 @@ public enum CodexHomeBinding {
     /// The main Codex history can mix logins, so it cannot override a different home.
     public static func isSharedSessionMismatch(
         account: LocalProviderAccountConfiguration, sessions: URL,
+        siblings: [LocalProviderAccountConfiguration] = [],
         mainHome: URL = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex")
     ) -> Bool {
-        guard let path = account.authPath else { return false }
-        let auth = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
-        let selected = sessions.resolvingSymlinksInPath().standardizedFileURL
-        let shared = mainHome.appending(path: "sessions").resolvingSymlinksInPath().standardizedFileURL
-        let boundHome = auth.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-        return selected.path == shared.path && boundHome.path != mainHome.resolvingSymlinksInPath().standardizedFileURL.path
+        let selected = sessions.resolvingSymlinksInPath().standardizedFileURL.path
+        let shared = mainHome.appending(path: "sessions").resolvingSymlinksInPath().standardizedFileURL.path
+        let boundHome = account.authPath.map { path in
+            URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+                .deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        if selected == shared && boundHome != mainHome.resolvingSymlinksInPath().standardizedFileURL.path { return true }
+        return siblings.contains { sibling in
+            guard sibling.id != account.id, sibling.isEnabled, sibling.provider == .openAI,
+                  let path = sibling.authPath else { return false }
+            let home = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).deletingLastPathComponent()
+            guard home.resolvingSymlinksInPath().standardizedFileURL.path != boundHome else { return false }
+            return home.appending(path: "sessions").resolvingSymlinksInPath().standardizedFileURL.path == selected
+        }
     }
 
     public static func sourceState(

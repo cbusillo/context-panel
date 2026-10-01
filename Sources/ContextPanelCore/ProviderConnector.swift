@@ -109,14 +109,6 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         return (lhs.earliestKnownExpiry ?? .distantFuture) <= (rhs.earliestKnownExpiry ?? .distantFuture) ? lhs : rhs
     }
 
-    var preservingCountAfterRefreshFailure: Self {
-        Self(
-            availableCount: availableCount,
-            observedAt: observedAt,
-            coverage: .countOnly
-        )
-    }
-
     /// An expired entitlement disappears; this never redeems a reset or changes utilization.
     public func presented(at now: Date) -> Self {
         let dates = knownExpiries.isEmpty ? earliestKnownExpiry.map { [$0] } ?? [] : knownExpiries

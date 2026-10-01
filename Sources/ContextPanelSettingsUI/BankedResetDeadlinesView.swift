@@ -43,7 +43,7 @@ public struct BankedResetDeadlinesView: View {
                                 Text("\(summary.availableCount - dates.count) expiry dates unknown")
                                     .foregroundStyle(.secondary)
                             }
-                            if report.status == .failure || now.timeIntervalSince(summary.observedAt) > SnapshotFreshness.companionProviderMaximumAge {
+                            if report.status == .failure || abs(report.generatedAt.timeIntervalSince(summary.observedAt)) > 1 || now.timeIntervalSince(summary.observedAt) > SnapshotFreshness.companionProviderMaximumAge {
                                 Text("Last observed · refresh the Mac for current inventory")
                                     .foregroundStyle(.secondary)
                             }

@@ -461,7 +461,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 accountName: localName,
                 generatedAt: now,
                 limits: [],
-                resetCredits: observedResetCredits?.preservingCountAfterRefreshFailure,
+                resetCredits: observedResetCredits?.presented(at: now),
                 status: .failure,
                 errorMessage: error.localizedDescription
             )
