@@ -159,3 +159,19 @@ func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
     #expect(rates["claude"]?[current.limits[0].id]?.unitsPerHour == 4)
     #expect(rates["claude"]?[current.limits[1].id]?.unitsPerHour == 40)
 }
+
+@Test func antigravityCapacityStaysCurrentWhileAGYIsIdle() throws {
+    // AGY observations arrive while the tool runs; idle time alone is not stale.
+    let observedAt = capacityNow.addingTimeInterval(-2 * 3_600)
+    let config = LocalProviderAccountConfiguration(id: "google-antigravity-default", provider: .google,
+        connectorKind: .googleAntigravityQuota, displayName: "Gemini", isEnabled: true, authPath: nil)
+    let report = StoredProviderReport(provider: .google, accountID: "google-x", configuredAccountID: config.id,
+        accountName: "Gemini", generatedAt: observedAt, status: .healthy, errorMessage: nil)
+    let limit = UsageLimit(id: "google:google-x:agy:gemini-weekly", provider: .google, accountID: "google-x",
+        configuredAccountID: config.id, accountName: "Gemini", label: "Gemini Weekly", unit: .percent,
+        used: 4, limit: 100, resetsAt: capacityNow.addingTimeInterval(86_400), lastUpdatedAt: observedAt,
+        confidence: .observed, freshnessMode: .eventDriven)
+    let row = try #require(AccountCapacity.rows(configuration: [config],
+        snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [limit]), reports: [report], now: capacityNow).first)
+    #expect(row.state == .available)
+}
