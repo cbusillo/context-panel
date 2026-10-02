@@ -612,22 +612,6 @@ struct DashboardPalette {
     }
     func paceColor(_ ratio: Double?) -> Color { color(AccountTone.forPace(ratio)) }
     func provider(_ provider: Provider) -> Color { color(provider.colorToken) }
-    var markInk: Color { color(.markInk) }
-}
-
-/// The provider's letter on its colour: identity without reproducing a logo.
-struct DashboardProviderMark: View {
-    let provider: Provider
-    let palette: DashboardPalette
-    let size: CGFloat
-
-    var body: some View {
-        Text(provider.markLetter).font(.system(size: size * 0.64, weight: .bold, design: .rounded))
-            .foregroundStyle(palette.markInk)
-            .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(palette.provider(provider)))
-            .accessibilityHidden(true)
-    }
 }
 
 struct DashboardCard<Content: View>: View {
@@ -650,55 +634,6 @@ struct DashboardCard<Content: View>: View {
         .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(palette.card))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.line, lineWidth: 1))
-    }
-}
-
-struct DashboardTag: View {
-    let text: String
-    let color: Color
-    var body: some View {
-        Text(text).font(.system(size: 8.5, weight: .heavy)).tracking(0.5).foregroundStyle(color)
-            .padding(.horizontal, 4).padding(.vertical, 1.5)
-            .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1))
-    }
-}
-
-struct DashboardStatusMark: View {
-    let state: AccountCapacityState
-    let palette: DashboardPalette
-
-    var body: some View {
-        Image(systemName: state.glyphName).font(.system(size: 9, weight: .bold))
-            .foregroundStyle(palette.color(state.colorToken))
-            .frame(width: 11).accessibilityHidden(true)
-    }
-}
-
-struct DashboardMeter: View {
-    let fraction: Double?
-    let even: Double?
-    let palette: DashboardPalette
-    let height: CGFloat
-    /// Overrides the headroom colour, for saved readings.
-    var fillToken: AccountColorToken? = nil
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let filled = fraction ?? 0
-            ZStack(alignment: .leading) {
-                Capsule().fill(palette.track).frame(height: height)
-                Capsule().fill(fillToken.map { palette.color($0) } ?? palette.color(forRemaining: fraction))
-                    .frame(width: max(filled > 0 ? height : 0, width * filled), height: height)
-                if let even {
-                    Rectangle().fill(palette.primary.opacity(0.75)).frame(width: 1.5, height: height + 6)
-                        .offset(x: min(width - 1.5, max(0, width * even - 0.75)))
-                }
-            }
-            .frame(height: height + 6)
-        }
-        .frame(height: height + 6)
-        .accessibilityHidden(true)
     }
 }
 
@@ -727,81 +662,6 @@ struct DashboardRing: View {
             }
         }
         .padding(lineWidth / 2)
-    }
-}
-
-struct DashboardWeekAxis: View {
-    let now: Date
-    let palette: DashboardPalette
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                ForEach(0..<7, id: \.self) { day in
-                    let start = Calendar.current.startOfDay(for: now).addingTimeInterval(Double(day + 1) * 86_400)
-                    let x = proxy.size.width * start.timeIntervalSince(now) / (7 * 86_400)
-                    if x < proxy.size.width - 14 {
-                        Text(start.formatted(.dateTime.weekday(.short)))
-                            .font(.system(size: 10, weight: .medium)).foregroundStyle(palette.tertiary)
-                            .fixedSize()
-                            .offset(x: x + 3)
-                    }
-                }
-            }
-        }
-        .frame(height: 13)
-    }
-}
-
-/// Now to seven days: the bar runs to the weekly reset, turns red where this pace would run out first,
-/// and diamonds mark banked expiries.
-struct DashboardWeekLane: View {
-    let account: AccountOverview.Account
-    let deadlines: [AccountOverview.Deadline]
-    let now: Date
-    let palette: DashboardPalette
-    private let span: TimeInterval = 7 * 86_400
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let height = proxy.size.height
-            let long = account.longWindow
-            let reset = long?.naturalResetAt
-            let runOut = account.isReliable ? long?.projectedRunOut(now: now) : nil
-            ZStack(alignment: .leading) {
-                ForEach(0..<7, id: \.self) { day in
-                    let start = Calendar.current.startOfDay(for: now).addingTimeInterval(Double(day + 1) * 86_400)
-                    Rectangle().fill(palette.line).frame(width: 1, height: height)
-                        .offset(x: x(start, width))
-                }
-                Capsule().fill(palette.track).frame(width: width, height: 3)
-                if let reset {
-                    Capsule().fill(palette.color(for: account).opacity(0.9)).frame(width: max(3, x(reset, width)), height: 5)
-                    if let runOut {
-                        Capsule().fill(palette.bad).frame(width: max(3, x(reset, width) - x(runOut, width)), height: 5)
-                            .offset(x: x(runOut, width))
-                    }
-                    if reset.timeIntervalSince(now) <= span {
-                        Rectangle().fill(palette.primary).frame(width: 2, height: height)
-                            .offset(x: x(reset, width) - 1)
-                    }
-                }
-                ForEach(deadlines.filter { $0.expiresAt.timeIntervalSince(now) <= span }) { deadline in
-                    Image(systemName: AccountGlyphs.bankedExpiry).font(.system(size: height * 0.72))
-                        .foregroundStyle(palette.banked)
-                        .background(Image(systemName: AccountGlyphs.bankedExpiry).font(.system(size: height * 0.72 + 3))
-                            .foregroundStyle(palette.card))
-                        .offset(x: x(deadline.expiresAt, width) - height * 0.36)
-                }
-            }
-            .frame(width: width, height: height)
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func x(_ date: Date, _ width: CGFloat) -> CGFloat {
-        width * min(1, max(0, date.timeIntervalSince(now) / span))
     }
 }
 

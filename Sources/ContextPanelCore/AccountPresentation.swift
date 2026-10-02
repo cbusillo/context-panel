@@ -365,7 +365,7 @@ public enum AccountTone: String, Codable, Sendable {
 public enum AccountColorToken: String, CaseIterable, Sendable {
     case surface, card, primary, secondary, tertiary, line, track
     case fill, available, low, critical, saved, banked, next, nextSurface
-    case openAI, anthropic, google, markInk, actionFill, actionText, watchSurface, destructiveFill
+    case openAI, anthropic, google, actionFill, actionText, watchSurface, destructiveFill
 
     public func rgb(dark: Bool) -> (red: Double, green: Double, blue: Double) {
         let pair: ((Double, Double, Double), (Double, Double, Double)) = switch self {
@@ -392,7 +392,6 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .openAI: ((12, 112, 98), (60, 196, 174))
         case .anthropic: ((150, 88, 20), (227, 166, 92))
         case .google: ((106, 75, 214), (184, 168, 255))
-        case .markInk: ((255, 255, 255), (24, 25, 28)) // HORIZON-TRANSITION: removed once no view draws letter marks
         case .destructiveFill: ((170, 35, 30), (157, 45, 40))
         case .actionFill: ((36, 99, 209), (40, 88, 171))
         case .actionText: ((255, 255, 255), (255, 255, 255))
@@ -450,9 +449,6 @@ public extension AccountCapacityState {
 }
 
 public extension Provider {
-    // HORIZON-TRANSITION: removed once no view draws letter marks.
-    var markLetter: String { String(accountDisplayName.prefix(1)) }
-
     var colorToken: AccountColorToken {
         switch self {
         case .openAI: .openAI

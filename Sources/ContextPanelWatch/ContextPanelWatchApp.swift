@@ -149,11 +149,13 @@ struct WatchUsageContent: View {
         if snapshot.accountDisplayMetadata != nil, !accounts.accounts.isEmpty {
             let nextIDs = Set(Provider.allCases.compactMap { accounts.useNext(provider: $0)?.id })
             Section(AccountTerms.accounts) {
+                WatchAccountHeadline(overview: accounts, now: presentationDate)
                 if let deadline = accounts.nextDeadline {
                     WatchBankedLine(deadline: deadline, now: presentationDate)
                 }
                 ForEach(accounts.accounts) { account in
-                    WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: presentationDate)
+                    WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: presentationDate,
+                                    deadlines: accounts.deadlines.filter { $0.accountID == account.id })
                 }
             }
         } else if displayLimits.isEmpty {

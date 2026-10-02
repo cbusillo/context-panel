@@ -129,9 +129,11 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
             let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
             view = AnyView(VStack(alignment: .leading, spacing: 8) {
                 Text(AccountTerms.accounts).font(.system(size: 15, weight: .semibold))
+                WatchAccountHeadline(overview: overview, now: now)
                 if let deadline = overview.nextDeadline { WatchBankedLine(deadline: deadline, now: now) }
                 ForEach(overview.accounts) { account in
-                    WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: now)
+                    WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: now,
+                                    deadlines: overview.deadlines.filter { $0.accountID == account.id })
                         .padding(8).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                 }
             }.padding(.horizontal, 6).foregroundStyle(.white))
