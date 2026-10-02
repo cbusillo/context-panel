@@ -3010,7 +3010,6 @@ struct AccountsSidebar: View {
                         .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityElement(children: .ignore)
                         .accessibilityLabel(spokenHeader)
                         .accessibilityHint("Opens provider usage, limits and history")
                         .tag(AppNavigationSelection.provider(provider))
