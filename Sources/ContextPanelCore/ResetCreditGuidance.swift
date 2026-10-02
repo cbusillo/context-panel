@@ -50,8 +50,7 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     }
 
     public var countText: String {
-        let noun = resetCredits.availableCount == 1 ? "reset credit" : "reset credits"
-        return "\(resetCredits.availableCount) \(noun)"
+        AccountTerms.bankedResetCount(resetCredits.availableCount)
     }
 
     public var recommendationTitle: String {
@@ -143,6 +142,7 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
 public struct ProviderResetCreditSurfaceSummary: Equatable, Sendable {
     public let provider: Provider
     public let accountCount: Int
+    public let includesMultipleProviders: Bool
     public let isLastSeenOnly: Bool
     public let primaryActionableGuidance: ProviderResetCreditGuidance?
     public let primaryDeadlineGuidance: ProviderResetCreditGuidance?
@@ -152,7 +152,8 @@ public struct ProviderResetCreditSurfaceSummary: Equatable, Sendable {
     }
 
     public var providerAccountCountText: String {
-        accountCount == 1
+        if includesMultipleProviders { return accountCountText }
+        return accountCount == 1
             ? "1 \(provider.displayName) account"
             : "\(accountCount) \(provider.displayName) accounts"
     }
@@ -276,6 +277,7 @@ public enum ResetCreditSurfaceAdvisor {
         return ProviderResetCreditSurfaceSummary(
             provider: displayed.first?.provider ?? .openAI,
             accountCount: displayed.count,
+            includesMultipleProviders: Set(displayed.map(\.provider)).count > 1,
             isLastSeenOnly: isLastSeenOnly,
             primaryActionableGuidance: ResetCreditGuidanceAdvisor.primaryActionableGuidance(
                 reports: reports,

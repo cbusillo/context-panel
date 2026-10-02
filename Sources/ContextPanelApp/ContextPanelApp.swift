@@ -1263,6 +1263,7 @@ struct ClaudeOAuthCodeSheet: View {
                 .foregroundStyle(CPTheme.secondaryText)
             if let url = model.pendingClaudeOAuthAuthorizationURL {
                 Link("Open Claude authorization", destination: url)
+                    .foregroundStyle(CPTheme.accentText)
                     .font(.system(size: 12, weight: .medium))
                 Text(url.absoluteString)
                     .font(.system(size: 10, design: .monospaced))
@@ -4252,7 +4253,7 @@ private struct OpenAIResetCreditRow: View {
                 .frame(width: 18, height: 18)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Reset credits")
+                    Text(AccountTerms.bankedResets)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(CPTheme.secondaryText)
                     Spacer(minLength: 8)
@@ -4944,7 +4945,7 @@ struct LargeWidgetPreview: View {
                 HStack {
                     Text(snapshot.fastModeForecast.copy)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(CPTheme.accent)
+                        .foregroundStyle(CPTheme.accentText)
                         .lineLimit(1)
                     Spacer()
                     Text(snapshot.nearestResetText)
@@ -6395,7 +6396,7 @@ private struct ResetCreditAvailabilityTag: View {
     @State private var isHovering = false
 
     private var tone: Color {
-        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.accent
+        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.banked
     }
 
     private var destination: URL {
@@ -6415,7 +6416,7 @@ private struct ResetCreditAvailabilityTag: View {
             .foregroundStyle(tone)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(tone.opacity(isHovering ? 0.15 : 0.08))
+            .background(tone.opacity(isHovering ? 0.05 : 0.03))
             .clipShape(Capsule())
             .overlay {
                 Capsule()
@@ -6426,7 +6427,7 @@ private struct ResetCreditAvailabilityTag: View {
         .buttonStyle(.plain)
         .help(resetCreditHelpText(summary))
         .accessibilityLabel(resetCreditAccessibilityText(summary))
-        .accessibilityHint("Opens OpenAI detail in Context Panel")
+        .accessibilityHint("Opens \(summary.provider.displayName) detail in Context Panel")
         .onHover { isHovering in
             self.isHovering = isHovering
             (isHovering ? NSCursor.pointingHand : NSCursor.arrow).set()
@@ -6435,20 +6436,20 @@ private struct ResetCreditAvailabilityTag: View {
 }
 
 private func resetCreditTagText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
-    let prefix = summary.isLastSeenOnly ? "Reset credits last seen" : "Reset credits"
+    let prefix = AccountTerms.bankedResets + (summary.isLastSeenOnly ? " " + AccountTerms.lastSeen : "")
     return "\(prefix) · \(summary.accountCountText)"
 }
 
 private func resetCreditHelpText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
     summary.isLastSeenOnly
-        ? "Reset credits were last seen on \(summary.accountCountText)."
-        : "Reset credits are available on \(summary.accountCountText)."
+        ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.accountCountText)."
+        : "\(AccountTerms.bankedResets) are available on \(summary.accountCountText)."
 }
 
 private func resetCreditAccessibilityText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
     summary.isLastSeenOnly
-        ? "Reset credits were last seen on \(summary.providerAccountCountText)."
-        : "Reset credits are available on \(summary.providerAccountCountText)."
+        ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.providerAccountCountText)."
+        : "\(AccountTerms.bankedResets) are available on \(summary.providerAccountCountText)."
 }
 
 enum CPTheme {
@@ -6460,6 +6461,8 @@ enum CPTheme {
     static let secondaryText = token(.secondary)
     static let tertiaryText = token(.tertiary)
     static let accent = token(.actionFill)
+    static let accentText = token(.next)
+    static let banked = token(.banked)
 
     static func providerColor(_ provider: Provider) -> Color {
         let selected: AccountColorToken = switch provider { case .openAI: .openAI; case .anthropic: .anthropic; case .google: .google }
@@ -7311,20 +7314,22 @@ struct AccountCapacityCard: View {
                                 .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
                         if let resets = row.report?.resetCredits?.presented(at: date) {
-                            Text("\(resets.availableCount) reset credits · observed \(dateText(resets.observedAt))")
+                            Text(AccountTerms.bankedResets + ": \(resets.availableCount) · observed \(dateText(resets.observedAt))")
                                 .font(.caption)
                             let dates = resets.knownExpiries.isEmpty
                                 ? resets.earliestKnownExpiry.map { [$0] } ?? [] : resets.knownExpiries
                             ForEach(Array(dates.enumerated()), id: \.offset) { _, date in
-                                Text("Reset credit expires \(dateText(date))")
+                                Text(AccountTerms.bankedResetExpires + " \(dateText(date))")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                             if dates.count < resets.availableCount {
-                                Text("\(resets.availableCount - dates.count) reset credit expiry dates unknown")
+                                Text(AccountTerms.bankedResetCount(resets.availableCount - dates.count) + " · expiry dates unknown")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                         } else if row.provider == .openAI || row.provider == .anthropic {
-                            Text("Banked resets unknown").font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            Text(AccountTerms.bankedResets + " " + AccountTerms.unknown)
+                                .accessibilityLabel(AccountTerms.bankedResets + " unknown")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
                     }
                     if row.id != rows.last?.id { Divider() }

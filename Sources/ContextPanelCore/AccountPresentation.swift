@@ -34,6 +34,7 @@ public enum AccountTerms {
     public static let next = "NEXT"
     public static let last = "LAST"
     public static let bankedResets = "Banked resets"
+    public static let bankedReset = "Banked reset"
     public static let bankedResetExpires = "Banked reset expires"
     public static let banked = "banked"
     public static let lastSeen = "last seen"
@@ -291,6 +292,10 @@ public enum AccountTerms {
 
     /// "out Fri ~11 PM": a projection, so to the hour.
     public static func runOut(_ date: Date, now: Date) -> String { "out " + AccountPaceText.approximately(date, now: now) }
+
+    public static func bankedResetCount(_ count: Int) -> String {
+        "\(count) " + (count == 1 ? bankedReset : bankedResets).lowercased()
+    }
 
     /// "2 banked" or "2 banked, last seen".
     public static func bankedCount(_ count: Int, current: Bool) -> String {
