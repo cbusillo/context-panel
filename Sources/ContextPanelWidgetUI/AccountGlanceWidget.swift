@@ -68,10 +68,9 @@ struct AccountGlanceWidget: View {
                             palette: palette)
     }
 
-    /// Red only for "runs out before reset"; the saved colour for readings that are not current.
+    /// Calm outcome words: the headline's lead is a widget's one alarm (`AccountAlarm`).
     private func outcomeColor(_ account: AccountOverview.Account, _ horizon: AccountHorizon) -> Color {
-        if horizon.runsOutBeforeReset { return palette.bad }
-        return horizon.isCurrent ? palette.secondary : palette.color(AccountTone.forAccount(account).textToken)
+        palette.color(AccountAlarm.outcomeToken(account, horizon))
     }
 
     private func headline(_ overview: AccountOverview) -> (lead: String, rest: String, short: Bool) {
@@ -109,7 +108,7 @@ struct AccountGlanceWidget: View {
                 }
                 Text(headline.lead)
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(headline.short ? palette.bad : palette.secondary)
+                    .foregroundStyle(headline.short ? palette.bad : palette.primary)
                     .lineLimit(1).fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .ignore)
@@ -132,7 +131,7 @@ struct AccountGlanceWidget: View {
                     Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold)
                     Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).foregroundStyle(palette.secondary)
                 }
-                .font(.system(size: 9.5)).monospacedDigit().lineLimit(1).padding(.bottom, 2)
+                .font(.system(size: AccountTextSize.glanceMinimum)).monospacedDigit().lineLimit(1).padding(.bottom, 2)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Banked reset for \(deadline.label) expires \(ContextPanelDateFormatting.accountReset(deadline.expiresAt))")
             }
@@ -153,7 +152,7 @@ struct AccountGlanceWidget: View {
             if roomy {
                 horizonView(account, horizon, in: overview).frame(height: 9).padding(.top, 2)
                 Text(AccountTerms.outcomeShort(account, horizon, now: now))
-                    .font(.system(size: 9.5, weight: horizon.runsOutBeforeReset ? .semibold : .regular))
+                    .font(.system(size: AccountTextSize.glanceMinimum))
                     .foregroundStyle(outcomeColor(account, horizon)).lineLimit(1)
             }
         }
@@ -167,8 +166,8 @@ struct AccountGlanceWidget: View {
 
     // MARK: Medium
 
-    /// A calm "use next" card per provider: name in its hue, the account, its week left, its horizon and
-    /// the provider's outlook, which is red only when one of its accounts runs out before its reset.
+    /// A calm "use next" card per provider, tinted with its hue: name, the account, its week left, its horizon and
+    /// that account's own outcome; when other accounts of the provider run out, a calm "1 other runs out" under it.
     private func medium(_ overview: AccountOverview) -> some View {
         let picks = picks(overview)
         let totals = overview.providerTotals(now: now)
@@ -177,7 +176,7 @@ struct AccountGlanceWidget: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(AccountTerms.widgetTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1).layoutPriority(1)
                 Spacer(minLength: 4)
-                (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.secondary)
+                (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.primary)
                  + Text(headline.rest.isEmpty ? "" : " " + headline.rest).foregroundStyle(palette.secondary))
                     .font(.system(size: 10.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
             }
@@ -198,15 +197,15 @@ struct AccountGlanceWidget: View {
     private func mediumCard(_ provider: Provider, account: AccountOverview.Account?, total: AccountProviderTotal?,
                             overview: AccountOverview) -> some View {
         let horizon = account?.horizon(now: now)
-        let summary = total.map { AccountTerms.providerSummary($0, now: now) }
-        // Red "1 of 3 runs out before reset" when some account here runs short; else the pick's spare.
-        let outlook: (text: String, short: Bool)? = if let summary, summary.isShort {
-            (summary.outlook, true)
-        } else if let account, let horizon, horizon.isCurrent {
-            (AccountTerms.outcomeShort(account, horizon, now: now), false)
+        // The shown account's own outcome; the provider's other run-outs are said apart from it, so a card
+        // never reads as its account being in trouble. The header's lead is the widget's one alarm.
+        let own: String? = if let account, let horizon {
+            horizon.isCurrent ? AccountTerms.outcomeShort(account, horizon, now: now) : account.stateText
         } else {
-            summary.map { ($0.outlook, false) }
+            total.map { AccountTerms.providerSummary($0, now: now).outlook }
         }
+        // Only beside a shown account: with none, the provider outlook above already says it.
+        let others = account == nil ? nil : total.flatMap { AccountTerms.othersRunOut($0, shownRunsOut: horizon?.runsOutBeforeReset == true) }
         return VStack(alignment: .leading, spacing: 0) {
             Text(provider.accountDisplayName).font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(palette.provider(provider)).lineLimit(1)
@@ -223,16 +222,20 @@ struct AccountGlanceWidget: View {
                 Text(AccountTerms.noEligibleAccount).font(.system(size: 10)).foregroundStyle(palette.secondary)
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
             }
-            if let outlook {
-                Text(outlook.text).font(.system(size: 9.5, weight: outlook.short ? .semibold : .regular))
-                    .foregroundStyle(outlook.short ? palette.bad : palette.secondary)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true).padding(.top, 3)
+            if let own {
+                Text(own).font(.system(size: AccountTextSize.glanceMinimum, weight: .medium))
+                    .foregroundStyle(account.map { outcomeColor($0, horizon ?? $0.horizon(now: now)) } ?? palette.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.9).padding(.top, 3)
+            }
+            if let others {
+                Text(others).font(.system(size: AccountTextSize.glanceMinimum)).foregroundStyle(palette.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.9)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 7).padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.nextSurface))
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.color(provider.surfaceToken)))
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([account.map { $0.glanceAccessibilityText(now: now, isNext: true) }
@@ -272,7 +275,7 @@ struct AccountGlanceWidget: View {
                 Text(total.provider.accountDisplayName).font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(palette.provider(total.provider))
                 Spacer(minLength: 2)
-                Text(groupFacts(total)).font(.system(size: 9)).foregroundStyle(palette.secondary).lineLimit(1)
+                Text(groupFacts(total)).font(.system(size: AccountTextSize.glanceMinimum)).foregroundStyle(palette.secondary).lineLimit(1)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(total.accessibilityText(now: now))
@@ -317,19 +320,19 @@ struct AccountGlanceWidget: View {
             horizonView(account, horizon, in: overview).frame(width: 50, height: 13)
             VStack(alignment: .trailing, spacing: 0) {
                 Text(AccountTerms.outcomeShort(account, horizon, now: now))
-                    .font(.system(size: 9.5, weight: horizon.runsOutBeforeReset ? .semibold : .regular))
+                    .font(.system(size: AccountTextSize.glanceMinimum, weight: .medium))
                     .foregroundStyle(outcomeColor(account, horizon))
                 if horizon.isCurrent, let reset = horizon.window.flatMap({ AccountTerms.reset($0, now: now) }) {
                     ViewThatFits(in: .horizontal) {
                         Text(AccountTerms.resets + " " + reset)
                         Text(reset)
                     }
-                    .font(.system(size: 9)).foregroundStyle(palette.tertiary)
+                    .font(.system(size: AccountTextSize.glanceMinimum)).foregroundStyle(palette.secondary)
                 }
             }
             .monospacedDigit().lineLimit(1).frame(width: 93, alignment: .trailing)
         }
-        .padding(.vertical, 2.5)
+        .padding(.vertical, 1.5)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: next))
@@ -348,10 +351,10 @@ struct AccountGlanceWidget: View {
         }
         let tag: Text? = next
             ? Text(AccountTerms.next.lowercased()).fontWeight(.semibold).foregroundStyle(palette.provider(account.metadata.provider))
-            : account.metadata.useLast ? Text(AccountTerms.useLast.lowercased()).foregroundStyle(palette.tertiary) : nil
+            : account.metadata.useLast ? Text(AccountTerms.useLast.lowercased()).foregroundStyle(palette.secondary) : nil
         let rest = Text((tag == nil || facts.isEmpty ? "" : " · ") + facts.joined(separator: " · ")).foregroundStyle(palette.secondary)
         return (tag.map { $0 + rest } ?? rest)
-            .font(.system(size: 9)).monospacedDigit().lineLimit(1).fixedSize()
+            .font(.system(size: AccountTextSize.glanceMinimum)).monospacedDigit().lineLimit(1).fixedSize()
     }
 
     /// The single callout: a banked reset that lapses before its account runs out; else the next banked expiry.
@@ -369,9 +372,9 @@ struct AccountGlanceWidget: View {
                             .foregroundStyle(palette.secondary))
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    if others > 0 { Text("+\(others)").foregroundStyle(palette.tertiary) }
+                    if others > 0 { Text("+\(others)").foregroundStyle(palette.secondary) }
                 }
-                .font(.system(size: 9.5))
+                .font(.system(size: AccountTextSize.glanceMinimum))
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
@@ -402,7 +405,6 @@ struct GlancePalette {
     var bad: Color { color(.critical) }
     var stale: Color { color(.saved) }
     var banked: Color { color(.banked) }
-    var nextSurface: Color { color(.nextSurface) }
 
     func provider(_ provider: Provider) -> Color { color(provider.colorToken) }
 }

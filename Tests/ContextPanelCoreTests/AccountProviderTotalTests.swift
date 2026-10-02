@@ -195,3 +195,39 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(AccountTerms.headline(headline).lead != "Your account lasts to its reset.")
     #expect(AccountTerms.outcome(account, account.horizon(now: totalsNow), now: totalsNow).title == AccountTerms.resetUnknown)
 }
+
+// Horizon polish (#722 owner decision 2026-10-02): one alarm, provider-scoped widget warning, plain words.
+
+@Test func horizonKeepsRowsAndProviderLinesCalmSoTheCalloutIsTheOneAlarm() throws {
+    let overview = totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 40, 50, 0.1, 0)])
+    let short = try #require(overview.runningShort(now: totalsNow).first)
+    #expect(AccountAlarm.outcomeToken(short.account, short.horizon) == .primary)
+    #expect(AccountAlarm.providerOutlookToken != AccountAlarm.token)
+    for account in overview.accounts {
+        #expect(AccountAlarm.outcomeToken(account, account.horizon(now: totalsNow)) != AccountAlarm.token)
+    }
+    // On the account's page the window fact is red only when the week's outcome is not already the alarm.
+    #expect(!AccountAlarm.windowRunOutIsAlarm(short.horizon))
+    let lasting = try #require(overview.accounts.first { !$0.horizon(now: totalsNow).runsOutBeforeReset })
+    #expect(AccountAlarm.windowRunOutIsAlarm(lasting.horizon(now: totalsNow)))
+}
+
+@Test func widgetCardSaysOtherRunOutsApartFromTheShownAccount() throws {
+    let total = try #require(totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 40, 50, 0.1, 0)])
+        .providerTotals(now: totalsNow).first)
+    #expect(AccountTerms.othersRunOut(total, shownRunsOut: false) == "1 other runs out")
+    #expect(AccountTerms.othersRunOut(total, shownRunsOut: true) == nil)
+    let two = try #require(totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 85, 100, 1.0, 0), ("c", .openAI, 10, 50, 0.1, 0)])
+        .providerTotals(now: totalsNow).first)
+    #expect(AccountTerms.othersRunOut(two, shownRunsOut: false) == "2 others run out")
+}
+
+@Test func burnIsSaidInPlainWordsPerDay() throws {
+    #expect(AccountTerms.burn(0.003) == "~7% a day")
+    #expect(AccountTerms.burn(0.0001) == "<1% a day")
+    #expect(AccountTerms.burn(0.06, windowDuration: 5 * 3_600) == "~6% an hour")
+    let total = try #require(totalsOverview([("a", .openAI, 20, 100, 0.5, 0), ("b", .openAI, 40, 100, 0.5, 0)])
+        .providerTotals(now: totalsNow).first)
+    let facts = AccountTerms.providerSummary(total, now: totalsNow).facts
+    #expect(!facts.contains("%/h") && facts.contains("a day"))
+}

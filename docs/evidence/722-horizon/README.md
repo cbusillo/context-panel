@@ -20,11 +20,16 @@ files only: `Sources/ContextPanelCore/AccountPresentation.swift` (words, colours
   gives every surface the same shape as fractions, so the Mac, widgets, iPhone, Watch, TV and Deadlines
   draw one picture at different sizes.
 - **Red means one thing:** an account runs out before its reset. It is drawn as the hatched gap between
-  the run-out and the reset, and written as "Runs out Fri ~11 PM" / "Empty 3½ days until it resets Tue 2:07 PM".
+  the run-out and the reset, and written in red in one place per surface (`AccountAlarm`): the callout on the
+  overview, iPhone and TV; the outcome on an account's own page; the headline's lead on widgets and the Watch.
+  Rows, cards and provider lines say "Runs out Fri ~11 PM" / "Empty 3½ days until it resets Tue 2:07 PM" calmly.
 - **Provider identity:** name plus its own hue (teal OpenAI, ochre Claude, violet Google), no letter badges.
-  Every provider hue meets 4.5:1 as text on `surface`, `card` and the new `nextSurface` (tested).
-- **From Clear Skies:** the calm "use next" card surface (`nextSurface`) and the single "Runs out before
-  reset" callout, which also says when a banked reset lapses before the account runs out.
+  Each "use next" card is a calm tint of its provider's hue (`Provider.surfaceToken`). Primary and secondary
+  text and every provider hue meet 4.5:1 on `surface`, `card` and each provider surface, light and dark (tested).
+- **From Clear Skies:** the calm "use next" card and the single "Runs out before reset" callout, which also
+  says when a banked reset lapses before the account runs out.
+- **Readable words:** at least 12 pt in the app and iPhone, 10 pt on widgets and the Watch (`AccountTextSize`),
+  in primary or secondary; tertiary grey is only for marks such as "%".
 - **Agent snapshot:** additive `headline` (lead, rest, counts, `runsOutBeforeResetAccountIDs`), per-account
   `display.outcome/outcomeDetail/outcomeShort/runsOutBeforeReset/runsOutAt/spareFraction`, and per-provider
   `summary/summaryOutlook`. A test checks they equal what the views show.
@@ -40,12 +45,13 @@ files only: `Sources/ContextPanelCore/AccountPresentation.swift` (words, colours
 | NEXT / LAST pills, letter marks | "Use next" / "Use last" as words; provider name in its hue. |
 | Combined 5-hour %, combined pace per provider | Agent snapshot `providers[]` keeps them; views show "% left on average · burn · N of M run out". |
 | Deadlines tiles and 30-day timeline | One day-by-day agenda plus a week map; counts and next expiry in its summary line. |
-| Medium widget: every account's row, banked line | Use-next card per provider; risk is the red provider outlook. |
+| Medium widget: every account's row, banked line | Use-next card per provider with that account's own outcome; "1 other runs out" under it when another account of the provider does. |
 | Large widget: 5h meters, 3-line deadline list | 5h as text; one banked callout with "+N". |
 | Exact minutes on projections | "~11 PM"; real resets and banked expiries keep exact minutes. |
 
-Kept on purpose against the Horizon README: combined burn per provider ("0.3%/h"), because Chris asked
-for combined usage, run-out and burn per provider on the f8d024c build.
+Kept on purpose against the Horizon README: combined burn per provider, because Chris asked for combined
+usage, run-out and burn per provider on the f8d024c build. It reads "uses ~7% a day" (a 5-hour window on
+account detail says "~6% an hour"), not "0.3%/h".
 
 Not changed: the Use next rule (most room, every window has room, respects Use last). Horizon's README
 also skips accounts that run out first; in this fixture the result is the same.
@@ -55,4 +61,7 @@ also skips accounts that run out first; in this fixture the result is the same.
 `after/` comes from `Tools/ContextPanelSharedViewRenderer` at 2× with the shared six-account fixture
 (Thu Oct 1 2026, 2:07 PM). The before set is #737's head `373b619`, committed in `docs/evidence/722-d1/after/`.
 These are headless shared-view renders, not the installed app or placed widgets. The Deadlines canvas is
-now 900×1060.
+now 900×1060, and the iPhone overview canvas is 393×1960 so the legend fits at the larger text sizes.
+
+The polish pass (owner decision on #722, 2026-10-02) re-rendered every file in `after/`; the pre-polish set is
+this folder at `c730660`.
