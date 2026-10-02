@@ -287,7 +287,7 @@ public struct AccountDashboardPanel: View {
 
     private func nameBlock(_ account: AccountOverview.Account) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            (Text(account.metadata.label).font(.system(size: compact ? 15 : 13.5, weight: .semibold))
+            (Text(account.metadata.label).font(.system(size: compact ? 15 : AccountTextSize.appMinimum, weight: .semibold))
              + tags(account))
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
             meta(account)
