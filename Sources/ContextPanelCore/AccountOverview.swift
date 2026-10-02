@@ -63,6 +63,7 @@ public struct AccountOverview: Equatable, Sendable {
         public var burnFractionPerHour: Double? = nil
         public var modelLabel: String? = nil
         public var periodLabel: String? = nil
+        public var status: UsageStatus = .unknown
     }
 
     public struct Account: Equatable, Sendable, Identifiable {
@@ -72,6 +73,8 @@ public struct AccountOverview: Equatable, Sendable {
         public let bankedResets: ProviderResetCreditSummary?
         public let bankedState: AccountCapacityState
         public let observedAt: Date?
+        public var providerPlan: String? = nil
+        public var bankedAdvice: BankedAdvice? = nil
         public var id: String { metadata.id }
         public var limitingWindow: Window? {
             guard !windows.isEmpty, windows.allSatisfy({ $0.remainingFraction != nil }) else { return nil }
@@ -90,6 +93,11 @@ public struct AccountOverview: Equatable, Sendable {
             bankedResets.map { max(0, $0.availableCount - ($0.knownExpiries.isEmpty
                 ? ($0.earliestKnownExpiry == nil ? 0 : 1) : $0.knownExpiries.count)) }
         }
+    }
+
+    public struct BankedAdvice: Equatable, Sendable {
+        public let title: String
+        public let detail: String
     }
 
     public struct Deadline: Equatable, Sendable, Identifiable {
@@ -156,7 +164,7 @@ public struct AccountOverview: Equatable, Sendable {
                        burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
-                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) })
+                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) }, status: limit.status)
             }
             let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt
             let ageSensitive = limits.isEmpty || limits.contains { !$0.usesEventDrivenFreshness }
@@ -192,8 +200,20 @@ public struct AccountOverview: Equatable, Sendable {
                     || banked.observedAt > now.addingTimeInterval(60)
                     || abs((report?.generatedAt ?? banked.observedAt).timeIntervalSince(banked.observedAt)) > 1 ? .stale : .available
             } else { bankedState = state == .notConnected ? .notConnected : .unknown }
+            let planParts = (report?.accountName ?? limits.first?.accountName ?? "").split(separator: "·")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let notedPlan = limits.lazy.compactMap { limit -> String? in
+                guard let note = limit.note, note.lowercased().hasPrefix("plan:") else { return nil }
+                let value = note.dropFirst("plan:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value.capitalized
+            }.first
+            let plan = entry.provider == .openAI
+                ? (planParts.count > 1 ? planParts.dropFirst().joined(separator: " · ") : notedPlan)
+                    .map { ConnectorRedactor.safeErrorDescription($0) } : nil
+            let advice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
+                .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
             return Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
-                           bankedState: bankedState, observedAt: observed)
+                           bankedState: bankedState, observedAt: observed, providerPlan: plan, bankedAdvice: advice)
         }
         deadlines = accounts.flatMap { account -> [Deadline] in
             guard account.metadata.isEnabled, let summary = account.bankedResets else { return [] }

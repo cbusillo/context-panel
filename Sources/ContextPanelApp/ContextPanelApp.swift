@@ -4008,68 +4008,79 @@ struct ProviderDashboard: View {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 22) {
                     if showsHorizon {
+                        let overview = model.accountOverview(at: now).filtered(to: provider)
                         AccountDashboardPanel(
-                            overview: model.accountOverview(at: now).filtered(to: provider),
+                            overview: overview,
                             now: now,
+                            accountDetails: { account in
+                                AnyView(AccountDashboardDetail(account: account, overview: overview, now: now,
+                                    showsHeader: false, showsHorizon: false))
+                            },
                             openAccount: { account in
                                 model.navigate(to: .providerAccount(account.metadata.provider, account.id))
                             },
                             openDeadlines: { model.navigate(to: .deadlines) }
                         )
-                    }
-                    HStack(spacing: 8) {
-                        StatusMark(status: overallStatus, size: 8)
-                            .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)
-                            .help("Overall provider status: " + overallStatus.accessibilityStatusText)
-                        Text(provider.accountDisplayName + " · \(summaries.count) main windows · \(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
-                            .font(.system(size: 12))
-                            .foregroundStyle(CPTheme.secondaryText)
-                        if provider == .openAI, let resets = ResetCreditSurfaceAdvisor.appSummary(
-                            reports: model.storedSnapshot?.reports ?? [],
-                            limits: summaries.flatMap(\.limits), now: now) {
-                            ResetCreditAvailabilityTag(summary: resets)
-                        }
+                        providerHistoryLinks
+                        ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
                         if model.storeStatus != .healthy {
                             TagLabel(model.storeStatus.previewStatusText.capitalized)
                         }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    ProviderAccessAlertsSection(
-                        alerts: model.providerAccessAlerts.filter { $0.provider == provider }
-                    )
-                    SectionHeader(title: "Window details", trailing: "\(summaries.count) windows")
-                    VStack(spacing: 10) {
-                        ForEach(summaries) { summary in
-                            Button {
-                                if let openLimit { openLimit(summary.id) }
-                                else { selectedLimit = summary }
-                            } label: {
-                                MainLimitRow(
-                                    summary: summary,
-                                    status: providerStatusIncludingAccessAlerts(
-                                        provider: provider,
-                                        baseStatuses: [summary.status],
-                                        alerts: model.providerAccessAlerts
-                                    )
-                                )
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Opens limit history and forecast")
-                        }
-                    }
-                    if provider == .openAI {
-                        OpenAIAccountLimitsSection(
-                            summaries: summaries,
-                            reports: model.storedSnapshot?.reports ?? [],
-                            now: now
-                        )
                     } else {
-                        ProviderAccountLimitsSection(summaries: summaries)
-                        BankedResetDeadlinesView(reports: (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider })
-                    }
-                    if !additionalLimits.isEmpty {
-                        AdditionalLimitsSection(snapshot: snapshot, provider: provider)
+                        HStack(spacing: 8) {
+                            StatusMark(status: overallStatus, size: 8)
+                                .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)
+                                .help("Overall provider status: " + overallStatus.accessibilityStatusText)
+                            Text(provider.accountDisplayName + " · \(summaries.count) main windows · \(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
+                                .font(.system(size: 12))
+                                .foregroundStyle(CPTheme.secondaryText)
+                            if provider == .openAI, let resets = ResetCreditSurfaceAdvisor.appSummary(
+                                reports: model.storedSnapshot?.reports ?? [],
+                                limits: summaries.flatMap(\.limits), now: now) {
+                                ResetCreditAvailabilityTag(summary: resets)
+                            }
+                            if model.storeStatus != .healthy {
+                                TagLabel(model.storeStatus.previewStatusText.capitalized)
+                            }
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        ProviderAccessAlertsSection(
+                            alerts: model.providerAccessAlerts.filter { $0.provider == provider }
+                        )
+                        SectionHeader(title: "Window details", trailing: "\(summaries.count) windows")
+                        VStack(spacing: 10) {
+                            ForEach(summaries) { summary in
+                                Button {
+                                    if let openLimit { openLimit(summary.id) }
+                                    else { selectedLimit = summary }
+                                } label: {
+                                    MainLimitRow(
+                                        summary: summary,
+                                        status: providerStatusIncludingAccessAlerts(
+                                            provider: provider,
+                                            baseStatuses: [summary.status],
+                                            alerts: model.providerAccessAlerts
+                                        )
+                                    )
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint("Opens limit history and forecast")
+                            }
+                        }
+                        if provider == .openAI {
+                            OpenAIAccountLimitsSection(
+                                summaries: summaries,
+                                reports: model.storedSnapshot?.reports ?? [],
+                                now: now
+                            )
+                        } else {
+                            ProviderAccountLimitsSection(summaries: summaries)
+                            BankedResetDeadlinesView(reports: (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider })
+                        }
+                        if !additionalLimits.isEmpty {
+                            AdditionalLimitsSection(snapshot: snapshot, provider: provider)
+                        }
                     }
                 }
                 .padding(24)
@@ -4082,6 +4093,38 @@ struct ProviderDashboard: View {
             }
             .onAppear { scrollToFocusedAccount(using: proxy) }
             .onChange(of: focusedAccountID) { _, _ in scrollToFocusedAccount(using: proxy) }
+        }
+    }
+
+    private var providerHistoryLinks: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History · pooled windows")
+                .font(.system(size: 12)).foregroundStyle(CPTheme.secondaryText)
+            HStack(spacing: 12) {
+                ForEach(summaries.sorted { lhs, rhs in
+                    if (lhs.window == .weekly) != (rhs.window == .weekly) { return lhs.window == .weekly }
+                    return lhs.previewWindowName < rhs.previewWindowName
+                }) { summary in
+                    Button {
+                        if let openLimit { openLimit(summary.id) }
+                        else { selectedLimit = summary }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Label(summary.previewWindowName + " history", systemImage: "chart.xyaxis.line")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("\(summary.accountCount) reported account windows · " + summary.previewUsageText)
+                                .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .background(CPTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(CPTheme.stroke(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(summary.previewWindowName + " pooled window history, " + summary.quantitativeAccessibilityLabel)
+                    .accessibilityHint("Opens limit history and forecast")
+                    .help(summary.previewResetConfidenceText)
+                }
+            }
         }
     }
 

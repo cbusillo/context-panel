@@ -184,3 +184,62 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
     #expect(selected.useNext(provider: .openAI) == nil)
     #expect(selected.accounts.first?.horizon(now: detailNow) == mixed.accounts.first { $0.metadata.provider == .google }?.horizon(now: detailNow))
 }
+
+@Test func horizonDetailsRetainQuotaReadingAndBankedAdvisorFields() throws {
+    let plan = "example-plan"
+    let input = UsageLimit(provider: .openAI, accountID: "parity", accountName: "Original · " + plan,
+        label: "Weekly", windowLabel: "Weekly", unit: .requests, used: 7, limit: nil,
+        resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow,
+        confidence: .manual, statusOverride: .close)
+    let credits = ProviderResetCreditSummary(availableCount: 3, observedAt: detailNow,
+        coverage: .partial, knownExpiries: [detailNow.addingTimeInterval(300), detailNow.addingTimeInterval(300)])
+    let report = StoredProviderReport(provider: input.provider, accountID: input.accountID,
+        configuredAccountID: input.accountID, accountName: input.accountName, generatedAt: detailNow,
+        resetCredits: credits, status: .healthy, errorMessage: nil)
+    let snapshot = UsageSnapshot(generatedAt: detailNow, limits: [input])
+    let overview = AccountOverview(snapshot: snapshot, reports: [report], now: detailNow)
+    let account = try #require(overview.accounts.first)
+    let window = try #require(account.windows.first)
+    #expect(window.used == input.used)
+    #expect(window.limit == input.limit)
+    #expect(window.unit == input.unit)
+    #expect(window.observedAt == input.lastUpdatedAt)
+    #expect(window.naturalResetAt == input.resetsAt)
+    #expect(window.confidence == input.confidence)
+    #expect(window.status == input.status)
+    #expect(account.providerPlan == plan)
+    #expect(account.bankedResets == credits.presented(at: detailNow))
+    #expect(account.unknownExpiryCount == 1)
+    let advisor = try #require(ResetCreditGuidanceAdvisor.guidance(report: report, limits: [input], now: detailNow))
+    #expect(account.bankedAdvice?.title == advisor.recommendationTitle)
+    #expect(account.bankedAdvice?.detail == advisor.recommendationDetail(now: detailNow))
+}
+
+@MainActor
+@Test func foldedProviderQuotaDetailsFitWithoutRepeatingTheHorizon() throws {
+    let overview = detailOverview(windowCount: 4)
+    let account = try #require(overview.accounts.first)
+    let full = ImageRenderer(content: AccountDashboardDetail(account: account, overview: overview, now: detailNow)
+        .padding(16).frame(width: 780))
+    let folded = ImageRenderer(content: AccountDashboardDetail(account: account, overview: overview, now: detailNow,
+        showsHeader: false, showsHorizon: false).padding(16).frame(width: 780))
+    let fullImage = try #require(full.cgImage)
+    let foldedImage = try #require(folded.cgImage)
+    #expect(foldedImage.width == fullImage.width)
+    #expect(foldedImage.height + 100 < fullImage.height)
+    if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
+        let bytes = try #require(NSBitmapImageRep(cgImage: foldedImage).representation(using: .png, properties: [:]))
+        try bytes.write(to: URL(fileURLWithPath: output).appendingPathComponent("provider-folded-windows.png"))
+    }
+}
+
+@Test func horizonPlanLabelRetainsTheExistingQuotaNoteFallback() throws {
+    let plan = "team"
+    let input = UsageLimit(provider: .openAI, accountID: "plan-note", accountName: "Typed name",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 10, limit: 100,
+        resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow, note: "plan: " + plan)
+    let snapshot = UsageSnapshot(generatedAt: detailNow, limits: [input])
+    let account = try #require(AccountOverview(snapshot: snapshot, reports: [], now: detailNow).accounts.first)
+    let original = try #require(OpenAIAccountLimitSummary.accounts(from: snapshot.mainLimitSummaries, reports: []).first)
+    #expect(account.providerPlan == original.planText)
+}

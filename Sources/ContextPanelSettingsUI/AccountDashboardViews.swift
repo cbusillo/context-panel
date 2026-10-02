@@ -11,13 +11,16 @@ public struct AccountDashboardPanel: View {
     let openAccount: (AccountOverview.Account) -> Void
     let openDeadlines: () -> Void
     let compact: Bool
+    let accountDetails: ((AccountOverview.Account) -> AnyView)?
 
     /// `compact` stacks everything into one column, for phone widths.
     public init(overview: AccountOverview, now: Date, compact: Bool = false,
+                accountDetails: ((AccountOverview.Account) -> AnyView)? = nil,
                 openAccount: @escaping (AccountOverview.Account) -> Void, openDeadlines: @escaping () -> Void) {
         self.overview = overview
         self.now = now
         self.compact = compact
+        self.accountDetails = accountDetails
         self.openAccount = openAccount
         self.openDeadlines = openDeadlines
     }
@@ -218,12 +221,25 @@ public struct AccountDashboardPanel: View {
                 groupHeader(total).padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
                 ForEach(overview.accounts.filter { $0.metadata.provider == total.provider }) { account in
                     Button { openAccount(account) } label: { row(account) }.buttonStyle(.plain)
+                    foldedDetails(account)
                 }
             }
         }
         .padding(.bottom, 6)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.card))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(palette.line, lineWidth: 1))
+    }
+
+    @ViewBuilder private func foldedDetails(_ account: AccountOverview.Account) -> some View {
+        if let accountDetails {
+            DisclosureGroup("Windows and banked resets") {
+                accountDetails(account).padding(.top, 10)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(palette.secondary)
+            .padding(.horizontal, 16).padding(.bottom, 12)
+            .accessibilityLabel("Windows and banked resets for " + account.metadata.label)
+        }
     }
 
     private func groupHeader(_ total: AccountProviderTotal) -> some View {
@@ -352,6 +368,7 @@ public struct AccountDashboardPanel: View {
                     ForEach(overview.accounts.filter { $0.metadata.provider == total.provider }) { account in
                         Rectangle().fill(palette.line).frame(height: 1).padding(.leading, 14)
                         Button { openAccount(account) } label: { compactRow(account) }.buttonStyle(.plain)
+                        foldedDetails(account)
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.card))
@@ -430,12 +447,17 @@ public struct AccountDashboardDetail: View {
     let overview: AccountOverview
     let now: Date
     let compact: Bool
+    let showsHeader: Bool
+    let showsHorizon: Bool
 
-    public init(account: AccountOverview.Account, overview: AccountOverview, now: Date, compact: Bool = false) {
+    public init(account: AccountOverview.Account, overview: AccountOverview, now: Date, compact: Bool = false,
+                showsHeader: Bool = true, showsHorizon: Bool = true) {
         self.account = account
         self.overview = overview
         self.now = now
         self.compact = compact
+        self.showsHeader = showsHeader
+        self.showsHorizon = showsHorizon
     }
 
     private var hasBurn: Bool { AccountOverview.Account.hasBurn(in: overview) }
@@ -444,17 +466,22 @@ public struct AccountDashboardDetail: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(account.metadata.label).font(.system(size: 24, weight: .semibold)).lineLimit(2)
-                (Text(account.metadata.provider.accountDisplayName).fontWeight(.semibold)
-                    .foregroundColor(palette.provider(account.metadata.provider))
-                 + Text(" · \(account.stateText)" + (account.observedAt.map { " · updated " + AccountPaceText.when($0, now: now) } ?? ""))
-                 + (Provider.allCases.contains(where: { overview.useNext(provider: $0)?.id == account.id })
-                    ? Text(" · " + AccountTerms.useNext).fontWeight(.semibold).foregroundColor(palette.provider(account.metadata.provider)) : Text(""))
-                 + (account.metadata.useLast ? Text(" · " + AccountTerms.useLast) : Text("")))
-                    .font(.system(size: 12)).foregroundStyle(palette.secondary)
+            if showsHeader {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(account.metadata.label).font(.system(size: 24, weight: .semibold)).lineLimit(2)
+                    (Text(account.metadata.provider.accountDisplayName).fontWeight(.semibold)
+                        .foregroundColor(palette.provider(account.metadata.provider))
+                     + Text(" · \(account.stateText)" + (account.observedAt.map { " · updated " + AccountPaceText.when($0, now: now) } ?? ""))
+                     + (Provider.allCases.contains(where: { overview.useNext(provider: $0)?.id == account.id })
+                        ? Text(" · " + AccountTerms.useNext).fontWeight(.semibold).foregroundColor(palette.provider(account.metadata.provider)) : Text(""))
+                     + (account.metadata.useLast ? Text(" · " + AccountTerms.useLast) : Text("")))
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                }
             }
-            horizonCard
+            if let plan = account.providerPlan {
+                Text("Plan · " + plan).font(.system(size: 12)).foregroundStyle(palette.secondary)
+            }
+            if showsHorizon { horizonCard }
             if compact {
                 ForEach(account.orderedWindows) { window in windowCard(window) }
             } else {
@@ -506,9 +533,13 @@ public struct AccountDashboardDetail: View {
                                   track: palette.track, lineWidth: 8, evenPace: window.evenPaceRemaining(now: now),
                                   tick: palette.primary)
                     VStack(spacing: -2) {
-                        Text(AccountNumbers.window(window, sign: false))
+                        Text(window.remainingFraction == nil
+                             ? window.used.map(String.init) ?? AccountNumbers.window(window, sign: false)
+                             : AccountNumbers.window(window, sign: false))
                             .font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
-                        Text(AccountTerms.percentLeft).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+                        Text(window.remainingFraction == nil && window.used != nil
+                             ? window.unit.rawValue + " used" : AccountTerms.percentLeft)
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
                     }
                 }
                 .frame(width: 96, height: 96)
@@ -516,8 +547,17 @@ public struct AccountDashboardDetail: View {
                     fact(AccountTerms.resets, AccountTerms.reset(window, now: now).map {
                         $0 + "  " + AccountPaceText.countdown(to: window.naturalResetAt ?? now, now: now)
                     } ?? AccountTerms.unknown)
-                    if let used = window.used, let limit = window.limit {
-                        fact("Used", window.unit == .percent && limit == 100 ? "\(used)%" : "\(used) of \(limit) \(window.unit.rawValue)")
+                    if let used = window.used {
+                        fact("Used", window.limit.map { window.unit == .percent && $0 == 100
+                            ? "\(used)%" : "\(used) of \($0) \(window.unit.rawValue)" }
+                            ?? "\(used) \(window.unit.rawValue)")
+                    } else if let limit = window.limit {
+                        fact("Limit", "\(limit) \(window.unit.rawValue)")
+                    }
+                    fact("Status", window.status.displayText)
+                    fact("Reading", window.assumption?.displayText ?? window.confidence.rawValue.capitalized)
+                    if let observed = window.observedAt {
+                        fact("Observed", ContextPanelDateFormatting.accountReset(observed))
                     }
                     if let even = window.evenPaceRemaining(now: now) {
                         fact("Even pace", AccountNumbers.percentWithSign(even) + " left now")
@@ -548,24 +588,35 @@ public struct AccountDashboardDetail: View {
     }
 
     private var bankedCard: some View {
-        let deadlines = overview.deadlines.filter { $0.accountID == account.id }
+        let inventory = account.bankedResets
+        let dates = inventory.map { value in
+            (value.knownExpiries.isEmpty ? value.earliestKnownExpiry.map { [$0] } ?? [] : value.knownExpiries)
+                .filter { $0 > now }
+        }.map(Array.init) ?? []
         return DashboardCard(title: AccountTerms.bankedResets, trailing: account.bankedResets.map {
             AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) },
                              fillsHeight: false, palette: palette) {
             VStack(alignment: .leading, spacing: 6) {
-                if account.bankedResets == nil {
+                if let inventory = account.bankedResets {
+                    Text("Observed " + ContextPanelDateFormatting.accountReset(inventory.observedAt))
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                    if account.bankedState != .available {
+                        Text("Last observed · refresh the Mac for current inventory")
+                            .font(.system(size: 12)).foregroundStyle(palette.stale)
+                    }
+                } else {
                     Text("Unknown for this account").foregroundStyle(palette.secondary)
                 }
-                ForEach(deadlines) { deadline in
+                if let advice = account.bankedAdvice {
+                    Text(advice.title).font(.system(size: 12, weight: .semibold))
+                    Text(advice.detail).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                }
+                ForEach(Array(dates.enumerated()), id: \.offset) { _, expiry in
                     HStack(spacing: 10) {
                         Image(systemName: AccountGlyphs.bankedExpiry).font(.system(size: 9)).foregroundStyle(palette.banked)
-                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
-                        if deadline.state != .available {
-                            Text("last seen " + AccountPaceText.when(deadline.observedAt, now: now))
-                                .foregroundStyle(palette.stale)
-                        }
+                        Text("Expires " + AccountPaceText.when(expiry, now: now)).monospacedDigit()
                         Spacer()
-                        Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).monospacedDigit()
+                        Text(AccountPaceText.countdown(to: expiry, now: now)).monospacedDigit()
                             .foregroundStyle(palette.secondary)
                     }
                     .font(.system(size: 12.5))
