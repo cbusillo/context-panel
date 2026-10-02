@@ -13,7 +13,7 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     for (id, provider, used, resetHours, burn, age) in rows {
         let observed = totalsNow.addingTimeInterval(-age * 3_600)
         let weekly = UsageLimit(provider: provider, accountID: id, accountName: id, label: "Weekly", windowLabel: "Weekly",
-            unit: .percent, used: used, limit: 100, resetsAt: totalsNow.addingTimeInterval(resetHours * 3_600),
+            unit: .percent, used: used, limit: 100, resetsAt: resetHours.isFinite ? totalsNow.addingTimeInterval(resetHours * 3_600) : nil,
             lastUpdatedAt: observed, confidence: .observed)
         let fiveHour = UsageLimit(provider: provider, accountID: id, accountName: id, label: "5-hour", windowLabel: "5-hour",
             unit: .percent, used: 20, limit: 100, resetsAt: totalsNow.addingTimeInterval(3 * 3_600),
@@ -184,4 +184,14 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
         .providerTotals(now: totalsNow).first)
     #expect(total.runningOutCount == 1)
     #expect(AccountTerms.providerSummary(total, now: totalsNow).isShort)
+}
+
+@Test func horizonWithoutAResetTimeIsNotKnownToLast() throws {
+    // Burn is observed but the provider gave no reset time (reported on #722, 5943582956).
+    let overview = totalsOverview([("a", .openAI, 20, .infinity, 0.4, 0)])
+    let account = try #require(overview.accounts.first)
+    let headline = overview.headline(now: totalsNow)
+    #expect(headline.lastingCount == 0 && headline.measuringCount == 1)
+    #expect(AccountTerms.headline(headline).lead != "Your account lasts to its reset.")
+    #expect(AccountTerms.outcome(account, account.horizon(now: totalsNow), now: totalsNow).title == AccountTerms.resetUnknown)
 }

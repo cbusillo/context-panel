@@ -128,6 +128,8 @@ public enum AccountTerms {
     // Horizon: the one-sentence summary, the outcome beside each shape, and the single callout.
     public static let runsOutBeforeReset = "Runs out before reset"
     public static let toSpare = "to spare"
+    /// Burn is known but the provider gave no reset time, so nothing can be said about lasting to it.
+    public static let resetUnknown = "Reset time unknown"
     public static let leftOnAverage = "left on average"
     public static let weekLeft = "week left"
     public static let untouched = "untouched"
@@ -209,14 +211,14 @@ public enum AccountTerms {
         }
         let detail = resetText.map { (name.map { $0 + " resets " } ?? resets + " ") + $0 } ?? ""
         if let spare = horizon.spare { return (self.spare(spare), detail) }
-        return (measuring, detail)
+        return (horizon.burnPerHour != nil && horizon.resetAt == nil ? resetUnknown : measuring, detail)
     }
 
     /// The compact outcome: "Out Fri ~11 PM", "~50% spare", "measuring", or the state word.
     public static func outcomeShort(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> String {
         guard horizon.isCurrent else { return account.stateText }
         if let runOut = horizon.runOutAt { return outShort(runOut, now: now) }
-        return horizon.spare.map(spareShort) ?? measuring
+        return horizon.spare.map(spareShort) ?? (horizon.burnPerHour != nil && horizon.resetAt == nil ? resetUnknown : measuring)
     }
 
     /// The horizon window's name when it is not the account-wide week ("Opus · Week", "Day"); nil for the plain week.

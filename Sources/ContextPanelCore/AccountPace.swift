@@ -328,7 +328,7 @@ public struct AccountHeadline: Equatable, Sendable {
     public let shortCount: Int
     /// Current accounts projected to last to their reset.
     public let lastingCount: Int
-    /// Current accounts without observed burn yet.
+    /// Current accounts that cannot be projected yet: no observed burn, or no reset time.
     public let measuringCount: Int
     /// Saved, paused, unconnected or unknown accounts.
     public let notCurrentCount: Int
@@ -342,7 +342,8 @@ public extension AccountOverview {
             let horizon = account.horizon(now: now)
             if !horizon.isCurrent { other += 1 }
             else if horizon.runsOutBeforeReset { short += 1 }
-            else if horizon.burnPerHour == nil { measuring += 1 }
+            // Lasting needs a projection to a known reset; burn without a reset time is not known to last.
+            else if horizon.spare == nil { measuring += 1 }
             else { lasting += 1 }
         }
         return AccountHeadline(shortCount: short, lastingCount: lasting, measuringCount: measuring, notCurrentCount: other)
