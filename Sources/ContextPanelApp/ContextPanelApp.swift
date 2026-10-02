@@ -4610,8 +4610,10 @@ struct ProviderHeaderCapacity {
         total?.longRemaining == nil ? "" : AccountTerms.longColumn(weekly: total?.longIsWeekly ?? false)
     }
     var label: String { [windowTitle, AccountTerms.left].filter { !$0.isEmpty }.joined(separator: " ") }
-    func accessibilityValue(status: UsageStatus) -> String {
-        metric.isIndeterminate ? metric.accessibilityValue : percentText + " " + AccountTerms.left + ", " + status.accessibilityStatusText
+    func accessibilityValue(status: UsageStatus, overallStatus: UsageStatus) -> String {
+        let window = metric.isIndeterminate ? metric.accessibilityValue : percentText + " " + AccountTerms.left + ", " + status.accessibilityStatusText
+        let coverage = total.map { ", " + AccountTerms.accountCount($0) } ?? ""
+        return window + "; overall provider status " + overallStatus.accessibilityStatusText + coverage
     }
 }
 
@@ -4650,6 +4652,8 @@ struct ProviderHeaderCard: View {
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(CPTheme.primaryText)
                     StatusMark(status: providerStatus, size: 8)
+                        .accessibilityLabel(provider.accountDisplayName + " overall status, " + providerStatus.accessibilityStatusText)
+                        .help("Overall provider status: " + providerStatus.accessibilityStatusText)
                 }
                 Text(total.map { AccountTerms.sidebarRemaining($0) } ?? AccountTerms.unknown)
                     .font(.system(size: 13))
@@ -4669,10 +4673,10 @@ struct ProviderHeaderCard: View {
             MetricDial(
                 metric: capacity.metric,
                 status: dialStatus,
-                accessibilityName: [provider.accountDisplayName, capacity.windowTitle.lowercased(), "average remaining capacity"].filter { !$0.isEmpty }.joined(separator: " "),
+                accessibilityName: [provider.accountDisplayName, capacity.windowTitle.lowercased(), total?.accountCount == 1 ? "remaining capacity" : "average remaining capacity"].filter { !$0.isEmpty }.joined(separator: " "),
                 sublabel: capacity.label,
                 displayText: capacity.percentText,
-                accessibilityValue: capacity.accessibilityValue(status: dialStatus),
+                accessibilityValue: capacity.accessibilityValue(status: dialStatus, overallStatus: providerStatus),
                 size: 116
             )
         }
