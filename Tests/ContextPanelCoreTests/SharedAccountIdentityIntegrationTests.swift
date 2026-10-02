@@ -23,7 +23,7 @@ private func integrationFixture(setupID: String, providerID: String, used: Int, 
 }
 
 private func integrationDocument(_ fixture: (StoredUsageSnapshot, LocalProviderAccountConfiguration, SharedProviderAccountIdentity), publisher: String) -> CompanionSyncDocument {
-    CompanionSyncDocument(storedSnapshot: fixture.0, publishedAt: fixture.0.savedAt, cloudKitUserScope: integrationScope,
+    CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: fixture.0, publishedAt: fixture.0.savedAt, configuration: [fixture.1], publisherID: publisher), cloudKitUserScope: integrationScope,
         accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: [fixture.1], stored: fixture.0,
             now: fixture.0.savedAt, publisherID: publisher),
         accountIdentityAliases: CompanionAccountIdentityAlias.verifiedAliases(stored: fixture.0,
@@ -311,4 +311,78 @@ private actor IntegrationReadConnector: ProviderConnector {
     let remoteOnly = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: nil, status: .unknown), now: integrationNow,
         configuration: [], sharedDocument: cached, accountIntentDocument: configuration)
     #expect(remoteOnly.limits.isEmpty)
+}
+
+@Test func pendingReAddSurvivesFirstIdentifiedUsageFailureWithoutRestoringGlobally() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = integrationFixture(setupID: "readded", providerID: "account-one", used: 10)
+    let removed = AccountDisplayMetadata.safeID(.openAI, fixture.2.accountID)
+    var setup = fixture.1; setup.restorationRequestedAt = integrationNow
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [setup], removedDisplayIDs: [removed],
+        removalUserScope: integrationScope, removedDisplayDates: [removed: integrationNow.addingTimeInterval(-30)]))
+    let connector = IntegrationReadConnector(reports: [ProviderConnectorReport(provider: .openAI,
+        accountID: fixture.0.reports[0].accountID, configuredAccountID: setup.id, accountName: "Account", generatedAt: integrationNow,
+        limits: [], status: .failure, errorMessage: "Temporary rate limit", sharedAccountIdentity: fixture.2)])
+    let service = SnapshotRefreshService(accountStore: accountStore,
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots"))),
+        credentialStore: InMemoryProviderCredentialStore(storage: [:]), connectorFactory: { _ in [connector] },
+        promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+    _ = try await service.refresh(now: integrationNow)
+    let saved = accountStore.load(now: integrationNow).document
+    #expect(saved.accounts.count == 1)
+    #expect(saved.restoredDisplayDates?[removed] == nil)
+    #expect((saved.removedDisplayIDs ?? []).contains(removed))
+}
+
+@Test func removalAfterSetupWasAlreadyFailingStillPrunesIdentifiedQuota() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = integrationFixture(setupID: "combined", providerID: "account-one", used: 10)
+    let b = integrationFixture(setupID: "combined", providerID: "account-two", used: 20)
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [a.1], removalUserScope: integrationScope))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots"))
+    try snapshotStore.save(StoredUsageSnapshot(savedAt: integrationNow, snapshot: UsageSnapshot(generatedAt: integrationNow,
+        limits: a.0.snapshot.limits + b.0.snapshot.limits), reports: a.0.reports + b.0.reports))
+    let connector = IntegrationReadConnector(reports: [ProviderConnectorReport(provider: .openAI,
+        accountID: "setup-failure", configuredAccountID: a.1.id, accountName: "Account", generatedAt: integrationNow,
+        limits: [], status: .failure, errorMessage: "Auth file unavailable")])
+    let service = SnapshotRefreshService(accountStore: accountStore, stores: SnapshotRefreshStores(primary: snapshotStore),
+        credentialStore: InMemoryProviderCredentialStore(storage: [:]), connectorFactory: { _ in [connector] },
+        promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+    _ = try await service.refresh(now: integrationNow.addingTimeInterval(300))
+    #expect(snapshotStore.loadCurrent().snapshot?.reports.filter { $0.sharedAccountIdentity != nil }.count == 2)
+    try accountStore.applyGlobalRemovals([AccountDisplayMetadata.safeID(.openAI, a.2.accountID)],
+        storedSnapshot: snapshotStore.loadCurrent().snapshot, now: integrationNow.addingTimeInterval(301), userScope: integrationScope)
+    _ = try await service.refresh(now: integrationNow.addingTimeInterval(600))
+    #expect(snapshotStore.loadCurrent().snapshot?.snapshot.limits.count == 1)
+    #expect(snapshotStore.loadCurrent().snapshot?.snapshot.limits.first?.accountID == b.0.reports[0].accountID)
+}
+
+@Test func pendingKnownAccountRemovalHidesCachedAccountWhileCurrentScopeIsUnknown() {
+    let fixture = integrationFixture(setupID: "setup", providerID: "account-one", used: 10)
+    let removed = AccountDisplayMetadata.safeID(.openAI, fixture.2.accountID)
+    let configuration = AccountConfigurationDocument(updatedAt: integrationNow, accounts: [], pendingRemovedDisplayIDs: [removed])
+    let view = MacSharedAccountPresentation.make(stored: fixture.0, configuration: [],
+        remote: integrationDocument(fixture, publisher: "host"), accountIntentDocument: configuration, now: integrationNow)
+    #expect(view.limits.isEmpty)
+}
+
+@Test func unverifiedSourcesStayPublisherScopedAndTheirQuotaIsRetiredOnAuthentication() throws {
+    let known = integrationFixture(setupID: "custom-setup", providerID: "account-one", used: 30)
+    let raw = CodexUnverifiedAccountIdentity.localID(configurationID: known.1.id, legacyAccountID: known.0.reports[0].legacyAccountID!)
+    let oldLimit = known.0.snapshot.limits[0].reidentified(accountID: raw, configuredAccountID: known.1.id)
+    let unknown = StoredUsageSnapshot(savedAt: integrationNow, snapshot: UsageSnapshot(generatedAt: integrationNow, limits: [oldLimit]),
+        reports: [StoredProviderReport(provider: .openAI, accountID: raw, configuredAccountID: known.1.id,
+            accountName: "Account", generatedAt: integrationNow, status: .healthy, errorMessage: nil,
+            accountIdentityStatus: .providerIdentityUnavailable)])
+    let a = integrationDocument((unknown, known.1, known.2), publisher: "host-a")
+    let b = integrationDocument((unknown, known.1, known.2), publisher: "host-b")
+    #expect(a.snapshot.limits.first?.companionAccountID != b.snapshot.limits.first?.companionAccountID)
+    let migrated = integrationDocument(known, publisher: "host-a").mergingForRemotePublish(existing: a, now: integrationNow)
+    #expect(migrated.snapshot.limits.count == 1)
+    #expect(migrated.snapshot.limits.first?.companionAccountID == known.2.accountID)
+    #expect(migrated.snapshot.limits.first?.used == 30)
 }

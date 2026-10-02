@@ -16,7 +16,8 @@ public struct CompanionAccountIdentityAlias: Codable, Equatable, Sendable {
             guard report.status != .failure, let identity = report.sharedAccountIdentity,
                   stored.snapshot.limits.contains(where: { $0.provider == report.provider && $0.accountID == report.accountID }),
                   let setup = configuration.first(where: { $0.matchesProviderReport(report) }) else { return [] }
-            return Set([report.legacyAccountID, report.accountID].compactMap { $0 }).compactMap { raw -> Self? in
+            let oldUnverified = report.provider == .openAI ? report.legacyAccountID.map { CodexUnverifiedAccountIdentity.localID(configurationID: setup.id, legacyAccountID: $0) } : nil
+            return Set([report.legacyAccountID, report.accountID, oldUnverified].compactMap { $0 }).compactMap { raw -> Self? in
                 let override = AccountDisplayMetadata.companionIdentityOverride(provider: report.provider,
                     rawID: raw, configuredID: report.configuredAccountID,
                     configuration: configuration, publisherID: publisherID)

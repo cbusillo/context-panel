@@ -947,7 +947,14 @@ public struct JSONSnapshotStore: Sendable {
             }
             return storedReport.withResetCredits(previousResetCredits.presented(at: savedAt))
         }
-        let mergedReports = preservedReports + refreshedReports
+        let existingReportKeys = Set((preservedReports + refreshedReports).map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) })
+        let failureLimitKeys = Set(preservedFailureLimits.map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) })
+        let identifiedFailureReports = current?.reports.compactMap { report -> StoredProviderReport? in
+            let key = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
+            guard report.sharedAccountIdentity != nil, failureLimitKeys.contains(key), !existingReportKeys.contains(key) else { return nil }
+            return report.withStatus(.failure).withResetCredits(report.resetCredits?.presented(at: savedAt))
+        } ?? []
+        let mergedReports = preservedReports + refreshedReports + identifiedFailureReports
         let preservedPromptCacheObservations = current?.promptCacheObservations.filter { observation in
             savedAt.timeIntervalSince(observation.observedAt) <= PromptCacheSummary.defaultMaximumAge
                 && !refreshResult.promptCacheObservations.contains { refreshed in refreshed.id == observation.id }

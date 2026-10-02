@@ -7,7 +7,7 @@ primary. Explicit linking is reserved for a provider that truly has no ID.
 
 | Provider | Material used | Qualification |
 | --- | --- | --- |
-| OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Require the canonical `chatgpt_user_id` from either ID or access token, rejecting conflicts, independent of plan. Missing user claims retain readable local quota without minting an account-only alternative namespace. |
+| OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Require the canonical `chatgpt_user_id` from either ID or access token, rejecting conflicts, independent of plan. Missing user claims retain separate, publisher-scoped local sources without minting an account-only alternative namespace. |
 | Anthropic | `account.uuid` from Context Panel's own authenticated `/api/oauth/profile` response, scoped by required `organization.uuid` | Profile uses the same access token as the successful usage request, including after refresh. Missing or malformed identity leaves quota usable and identity unavailable. |
 | Google / Antigravity | Proposed Google OIDC issuer plus `sub` | The current status-line connector exposes email/LDAP, not a subject ID. No email hash is treated as a provider ID. A supported subject export or a bound Context Panel-owned Google login remains to be qualified. Owner question #7225951844161. |
 | OpenAI session-only quota | Not yet qualified | A session quota event does not carry a provider account ID. A current login cannot by itself identify a historical event from a switched login. Retain an unverified local lane until account-specific attribution is established. |
@@ -56,7 +56,8 @@ local history epoch. Weak old memberships are retired, never reattributed or tre
 as a global removal. Aliases only identify this connector's known memberships;
 unknown old feeds from other hosts require fresh authenticated readings.
 
-Remove targets the verified provider pseudonym across hosts. Explicitly adding an
+Remove targets the verified provider pseudonym across hosts. Failed readings preserve the identity provenance of their retained historical
+limits so later removals can still identify them. Explicitly adding an
 account records a restoration intent; after authentication it can supersede an older
 removal. A locally authenticated restoration remains durable through a failed
 CloudKit save; failed authentication does not create restoration intent. Partial
@@ -66,7 +67,8 @@ filtered. Removed native quota is pruned before a setup-level failure can preser
 old data. App, widget and agent projections apply local removal intents immediately,
 even before CloudKit acknowledges them. Old/offline publishers do not automatically
 restore removed accounts. A
-newer removal wins. Unverified feeds cannot claim global provider identity.
+newer removal wins. A pending re-add survives temporary first-read failures but
+never restores global quota before a successful authenticated read. Unverified feeds cannot claim global provider identity.
 
 Macs receive the existing private companion usage document into a bounded,
 scope-validated cache. App, widget and credential-free agent projection consume the

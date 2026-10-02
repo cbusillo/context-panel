@@ -3627,3 +3627,17 @@ private func base64URLEncoded(_ data: Data) -> String {
     #expect(result.reports.first?.sharedAccountIdentity?.accountID == key.identity(for: material).accountID)
     #expect(result.snapshot.limits.first?.used == 24)
 }
+
+@Test func codexMissingSeatClaimsKeepsLocalSourcesSeparateWithoutInventingSharedIdentity() async throws {
+    let auth = Data(#"{"tokens":{"access_token":"fake-access","account_id":"shared-workspace"}}"#.utf8)
+    let connector = CodexRateLimitConnector(accounts: ["one", "two"].map {
+        CodexAccountConfiguration(configuredAccountID: $0, authPath: "/fake/\($0)/auth.json", endpoint: URL(string: "https://example.invalid/usage")!)
+    }, httpClient: StubHTTPClient(responses: [10, 30].map { ConnectorHTTPResponse(statusCode: 200,
+        data: Data("{\"rate_limit\":{\"primary_window\":{\"used_percent\":\($0),\"limit_window_seconds\":18000}}}".utf8)) }),
+        identityResolver: ProviderAccountIdentityResolver { _ in nil }, fileLoader: { _ in auth })
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_900_000_000))
+    #expect(Set(result.reports.map(\.accountID)).count == 2)
+    #expect(result.reports.allSatisfy { $0.sharedAccountIdentity == nil && $0.accountIdentityStatus == .providerIdentityUnavailable })
+    let stored = StoredUsageSnapshot(savedAt: result.generatedAt, snapshot: result.snapshot, reports: result.reports.map { StoredProviderReport(report: $0) })
+    #expect(CompanionSnapshot(storedSnapshot: stored).limits.count == 2)
+}

@@ -427,7 +427,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
         } ?? ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
         let material = identityMaterial(auth: auth)
-        let localAccountID = identityResolver == nil ? legacyLocalAccountID : material?.localHistoryID(configurationID: account.configuredAccountID ?? account.authPath) ?? legacyLocalAccountID
+        let localAccountID = identityResolver == nil ? legacyLocalAccountID : material?.localHistoryID(configurationID: account.configuredAccountID ?? account.authPath) ?? CodexUnverifiedAccountIdentity.localID(configurationID: account.configuredAccountID ?? account.authPath, legacyAccountID: legacyLocalAccountID)
         let localName = account.accountAliases[localAccountID] ?? account.accountAliases[legacyLocalAccountID] ?? authRecord.accountName
         var observedResetCredits: ProviderResetCreditSummary?
         let identity = if let material, let identityResolver { await identityResolver.resolve(material)?.bound(toLocalAccountID: localAccountID) } else { nil as SharedProviderAccountIdentity? }
@@ -1044,5 +1044,13 @@ private func codexWindowLabel(minutes: Int) -> String {
             return "\(minutes / 60)-hour"
         }
         return "\(minutes)m"
+    }
+}
+
+/// Missing seat claims identify only a local source, never a provider account.
+public enum CodexUnverifiedAccountIdentity {
+    public static func localID(configurationID: String, legacyAccountID: String) -> String {
+        "openai-unverified-source:" + ConnectorRedactor.localAccountID(provider: .openAI,
+            stableID: "source:" + configurationID + ":legacy:" + legacyAccountID)
     }
 }

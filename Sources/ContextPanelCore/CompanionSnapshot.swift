@@ -1808,7 +1808,11 @@ public extension AccountDisplayMetadata {
         configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> String? {
         guard let publisherID, let setup = configuration.first(where: {
             $0.provider == provider && ($0.id == configuredID || $0.id == rawID || $0.providerReportAccountIDs.contains(rawID))
-        }), setup.isSharedDefaultMembership else { return nil }
+        }) else { return nil }
+        if provider == .openAI && rawID.hasPrefix("openai-unverified-source:") {
+            return "publisher:" + publisherID + ":" + setup.id
+        }
+        guard setup.isSharedDefaultMembership else { return nil }
         let sourceDerived = provider != .openAI || rawID == setup.id
             || rawID == ConnectorRedactor.localAccountID(provider: provider, stableID: setup.id)
             || setup.providerReportAccountIDs.contains(rawID)

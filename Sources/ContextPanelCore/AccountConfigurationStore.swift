@@ -325,13 +325,19 @@ public struct AccountConfigurationStore: Sendable {
         if let userScope { document.removalUserScope = userScope }
         let rows = AccountDisplayMetadata.companion(configuration: document.accounts, stored: membershipSnapshot, now: now, publisherID: document.publisherID)
         let deleted = document.accounts.filter { account in
-            if removed.contains(AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID)) { return true }
+            let configurationKey = AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID)
+            if removed.contains(configurationKey) {
+                return account.restorationRequestedAt.map { $0 <= (document.removedDisplayDates?[configurationKey] ?? Date(timeIntervalSince1970: 0)) } ?? true
+            }
             let reports = membershipSnapshot.reports.filter { account.matchesProviderReport($0) }
             if !reports.isEmpty {
                 return reports.allSatisfy { report in
                     guard let identity = report.sharedAccountIdentity,
                           identity.userScope == nil || identity.userScope == userScope else { return false }
-                    return removed.contains(AccountDisplayMetadata.safeID(report.provider, identity.accountID))
+                    let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
+                    if let requested = account.restorationRequestedAt,
+                       requested > (document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) { return false }
+                    return removed.contains(key)
                 }
             }
             let accountRows = rows.filter { $0.configurationID == AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID) }

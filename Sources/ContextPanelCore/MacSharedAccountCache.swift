@@ -90,13 +90,16 @@ public enum MacSharedAccountPresentation {
                 unitsPerHour: rate.unitsPerHour, observedDurationHours: rate.observedDurationHours, sampleCount: rate.sampleCount)
         }
         let intents = remote?.cloudKitUserScope == nil || remote?.cloudKitUserScope == accountIntentDocument?.removalUserScope ? accountIntentDocument : nil
+        let knownDisplayIDs = Set(stored.reports.compactMap { report in report.sharedAccountIdentity.map { AccountDisplayMetadata.safeID(report.provider, $0.accountID) } })
+        let pending = (accountIntentDocument?.pendingRemovedDisplayIDs ?? []).filter { knownDisplayIDs.contains($0) }
+        let localRemovalIDs = Array(Set(intents?.globalRemovedDisplayIDs ?? []).union(pending)).sorted()
         let local = CompanionSyncDocument(snapshot: snapshot, widgetDisplayPreferences: preferences,
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: forecast, cloudKitUserScope: remote?.cloudKitUserScope,
             accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: configuration, stored: stored,
                 now: now, publisherID: publisherID).filteringSharedPresentationMetadata(stored: stored,
                     configuration: configuration, publisherID: publisherID),
-            removedDisplayIDs: intents?.globalRemovedDisplayIDs, accountBurnRates: transportedRates,
+            removedDisplayIDs: localRemovalIDs.isEmpty ? nil : localRemovalIDs, accountBurnRates: transportedRates,
             accountIdentityAliases: CompanionAccountIdentityAlias.verifiedAliases(stored: stored,
                 configuration: configuration, publisherID: publisherID),
             accountRemovalDates: intents?.removedDisplayDates, accountRestorationDates: intents?.restoredDisplayDates)
