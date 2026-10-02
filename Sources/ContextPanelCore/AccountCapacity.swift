@@ -67,7 +67,7 @@ public struct AccountCapacity: Identifiable, Sendable {
                     : ([report?.status ?? .unknown] + limits.map(\.status)).contextPanelWorstStatus
                 return Self(
                     id: id, configuredAccountID: account.id, provider: account.provider,
-                    name: account.accountAliases?[id] ?? (ids.count > 1 ? "\(account.displayName) \(id.suffix(6))" : account.displayName),
+                    name: account.accountAliases?[id] ?? report?.legacyAccountID.flatMap { account.accountAliases?[$0] } ?? (ids.count > 1 ? "\(account.displayName) \(id.suffix(6))" : account.displayName),
                     isEnabled: account.isEnabled, limits: limits, report: report, status: status
                 )
             }

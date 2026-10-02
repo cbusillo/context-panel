@@ -1252,9 +1252,14 @@ public struct CompanionSyncPublisher: Sendable {
         )
         var result = publish(document: document)
         if let remoteStore {
-            let remoteOutcome = await remoteStore.save(document)
-            result = result.appending(storeOutcome: remoteOutcome.storeOutcome)
-            if remoteOutcome.succeeded { _ = await receiveSharedAccounts(now: publishedAt) }
+            if remoteStore.accountIdentityResolver != nil && scope == nil {
+                result = result.appending(storeOutcome: CompanionSyncStoreOutcome(storeRole: remoteStore.storeRole,
+                    isAvailable: false, succeeded: false, errorMessage: "iCloud account identity is unavailable. Local usage is still available."))
+            } else {
+                let remoteOutcome = await remoteStore.save(document)
+                result = result.appending(storeOutcome: remoteOutcome.storeOutcome)
+                if remoteOutcome.succeeded { _ = await receiveSharedAccounts(now: publishedAt) }
+            }
         }
         return result
     }
@@ -1313,7 +1318,7 @@ public struct CompanionSyncPublisher: Sendable {
         let snapshot = CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
             configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)
         var transportedRates: [String: [String: ObservedBurnRate]] = [:]
-        for local in storedSnapshot.snapshot.limits {
+        for local in storedSnapshot.selectingSharedAccountObservations().snapshot.limits {
             guard let rate = accountBurnRates[local.accountID]?[local.id], rate.sampleCount > 0 else { continue }
             let report = storedSnapshot.reports.first { $0.provider == local.provider && $0.accountID == local.accountID }
             let key = report?.sharedAccountIdentity?.accountID

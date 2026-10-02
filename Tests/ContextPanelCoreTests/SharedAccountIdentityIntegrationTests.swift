@@ -386,3 +386,77 @@ private actor IntegrationReadConnector: ProviderConnector {
     #expect(migrated.snapshot.limits.first?.companionAccountID == known.2.accountID)
     #expect(migrated.snapshot.limits.first?.used == 30)
 }
+
+@Test func pendingRemovalDateBeatsCachedOlderRestorationEvenWhileScopeIsUnknown() {
+    let fixture = integrationFixture(setupID: "setup", providerID: "account-one", used: 10)
+    let removed = AccountDisplayMetadata.safeID(.openAI, fixture.2.accountID)
+    let old = integrationDocument(fixture, publisher: "host")
+    let cached = CompanionSyncDocument(snapshot: old.snapshot, cloudKitUserScope: integrationScope,
+        accountDisplayMetadata: old.accountDisplayMetadata, accountRestorationDates: [removed: integrationNow.addingTimeInterval(-30)])
+    let config = AccountConfigurationDocument(updatedAt: integrationNow, accounts: [], pendingRemovedDisplayIDs: [removed],
+        removedDisplayDates: [removed: integrationNow])
+    #expect(MacSharedAccountPresentation.make(stored: fixture.0, configuration: [], remote: cached,
+        accountIntentDocument: config, now: integrationNow).limits.isEmpty)
+}
+
+@Test func failedReadWithTemporarilyUnavailableKeyRetainsHistoricalIdentityForSameMaterialEpochOnly() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = integrationFixture(setupID: "setup", providerID: "account-one", used: 10)
+    let store = JSONSnapshotStore(rootDirectory: root)
+    try store.save(fixture.0)
+    let failure = ProviderConnectorReport(provider: .openAI, accountID: fixture.0.reports[0].accountID,
+        configuredAccountID: fixture.1.id, accountName: "Account", generatedAt: integrationNow, limits: [], status: .failure,
+        errorMessage: "Unavailable", accountIdentityStatus: .waitingForSharedKey)
+    try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: integrationNow, reports: [failure]), savedAt: integrationNow, preservesUnreportedAccounts: false)
+    #expect(store.loadCurrent().snapshot?.reports.first?.sharedAccountIdentity == fixture.2)
+    let changed = integrationFixture(setupID: "setup", providerID: "other-login", used: 10)
+    try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: integrationNow, reports: [ProviderConnectorReport(provider: .openAI,
+        accountID: changed.0.reports[0].accountID, configuredAccountID: fixture.1.id, accountName: "Account", generatedAt: integrationNow,
+        limits: [], status: .failure, errorMessage: "Unavailable")]), savedAt: integrationNow, preservesUnreportedAccounts: false)
+    #expect(store.loadCurrent().snapshot?.reports.first?.sharedAccountIdentity == nil)
+}
+
+@Test func sharedBurnRateComesFromTheSelectedNativeMembershipEvenForEqualQuotaAndTimestamps() throws {
+    let a = integrationFixture(setupID: "source-a", providerID: "account-one", used: 10)
+    let b = integrationFixture(setupID: "source-b", providerID: "account-one", used: 10)
+    let stored = StoredUsageSnapshot(savedAt: integrationNow, snapshot: UsageSnapshot(generatedAt: integrationNow,
+        limits: a.0.snapshot.limits + b.0.snapshot.limits), reports: a.0.reports + b.0.reports)
+    let rates = Dictionary(uniqueKeysWithValues: [a.0, b.0].enumerated().map { index, snapshot in
+        let limit = snapshot.snapshot.limits[0]
+        return (limit.accountID, [limit.id: ObservedBurnRate(limitID: limit.id, unitsPerHour: index == 0 ? 2 : 9, observedDurationHours: 1, sampleCount: 10)])
+    })
+    let selected = try #require(stored.selectingSharedAccountObservations().snapshot.limits.first)
+    let expected = try #require(rates[selected.accountID]?[selected.id])
+    let view = MacSharedAccountPresentation.make(stored: stored, configuration: [a.1, b.1], now: integrationNow, rates: rates)
+    let limit = try #require(view.limits.first)
+    #expect(view.accountBurnRates?[a.2.accountID]?[limit.id]?.unitsPerHour == expected.unitsPerHour)
+}
+
+@Test func renamedLegacyAliasIsVisibleForTheNewUnverifiedSourceMembership() {
+    let known = integrationFixture(setupID: "setup", providerID: "account-one", used: 10)
+    var config = known.1; config.accountAliases = ["old-local-setup": "typed@name"]
+    #expect(AccountCapacity.rows(configuration: [config], snapshot: known.0.snapshot, reports: known.0.reports, now: integrationNow).first?.name == "typed@name")
+}
+
+private actor IntegrationRemoteSink {
+    var saves = 0
+    func save(_ document: CompanionSyncDocument) -> CompanionRemoteSyncOutcome { saves += 1; return CompanionRemoteSyncOutcome(succeeded: true) }
+}
+
+@Test func identityEnabledPublisherWithholdsRemoteWritesWhenCurrentCloudScopeCannotBeConfirmed() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sink = IntegrationRemoteSink()
+    let remote = CompanionRemoteSyncStore(saveDocument: { await sink.save($0) },
+        loadDocument: { _ in CompanionRemoteSyncLoadResult(result: CompanionSyncLoadResult(document: nil, status: .unknown), outcome: CompanionRemoteSyncOutcome(succeeded: false)) },
+        resolveUserScope: { nil }, accountIdentityResolver: ProviderAccountIdentityResolver { _ in nil })
+    let local = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+    let publisher = CompanionSyncPublisher(stores: CompanionSyncStoreSet(stores: [local]), remoteStore: remote,
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")))
+    let outcome = await publisher.publishAll(storedSnapshot: integrationFixture(setupID: "setup", providerID: "account-one", used: 10).0, publishedAt: integrationNow)
+    #expect(await sink.saves == 0)
+    #expect(outcome.storeOutcomes.contains { $0.storeRole == remote.storeRole && !$0.succeeded })
+    #expect(local.load(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge), now: integrationNow).document?.snapshot.limits.count == 1)
+}

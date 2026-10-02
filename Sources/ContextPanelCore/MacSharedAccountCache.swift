@@ -76,7 +76,7 @@ public enum MacSharedAccountPresentation {
         let snapshot = CompanionSnapshot(storedSnapshot: stored, publishedAt: now,
             configuration: configuration, publisherID: publisherID)
         var transportedRates: [String: [String: ObservedBurnRate]] = [:]
-        for local in stored.snapshot.limits {
+        for local in stored.selectingSharedAccountObservations().snapshot.limits {
             guard let rate = rates[local.accountID]?[local.id], rate.sampleCount > 0 else { continue }
             let report = stored.reports.first { $0.provider == local.provider && $0.accountID == local.accountID }
             let key = report?.sharedAccountIdentity?.accountID
@@ -93,6 +93,8 @@ public enum MacSharedAccountPresentation {
         let knownDisplayIDs = Set(stored.reports.compactMap { report in report.sharedAccountIdentity.map { AccountDisplayMetadata.safeID(report.provider, $0.accountID) } })
         let pending = (accountIntentDocument?.pendingRemovedDisplayIDs ?? []).filter { knownDisplayIDs.contains($0) }
         let localRemovalIDs = Array(Set(intents?.globalRemovedDisplayIDs ?? []).union(pending)).sorted()
+        let pendingDates = (accountIntentDocument?.removedDisplayDates ?? [:]).filter { pending.contains($0.key) }
+        let localRemovalDates = (intents?.removedDisplayDates ?? [:]).merging(pendingDates) { max($0, $1) }
         let local = CompanionSyncDocument(snapshot: snapshot, widgetDisplayPreferences: preferences,
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: forecast, cloudKitUserScope: remote?.cloudKitUserScope,
@@ -102,7 +104,7 @@ public enum MacSharedAccountPresentation {
             removedDisplayIDs: localRemovalIDs.isEmpty ? nil : localRemovalIDs, accountBurnRates: transportedRates,
             accountIdentityAliases: CompanionAccountIdentityAlias.verifiedAliases(stored: stored,
                 configuration: configuration, publisherID: publisherID),
-            accountRemovalDates: intents?.removedDisplayDates, accountRestorationDates: intents?.restoredDisplayDates)
+            accountRemovalDates: localRemovalDates.isEmpty ? nil : localRemovalDates, accountRestorationDates: intents?.restoredDisplayDates)
         let merged = local.mergingForRemotePublish(existing: remote?.verifiedAccountsOnly(), now: now)
         return WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: merged, status: .healthy), now: now, stalenessPolicy: stalenessPolicy)
     }

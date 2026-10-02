@@ -935,7 +935,17 @@ public struct JSONSnapshotStore: Sendable {
                 .deduplicatedByID()
         )
         let refreshedReports = refreshResult.reports.map { report in
-            let storedReport = StoredProviderReport(report: report)
+            var storedReport = StoredProviderReport(report: report)
+            if report.status == .failure, report.sharedAccountIdentity == nil,
+               report.accountID.hasPrefix(report.provider.rawValue + "-history-"),
+               let prior = current?.reports.first(where: { $0.provider == report.provider && $0.accountID == report.accountID && $0.sharedAccountIdentity != nil }) {
+                // A material-qualified history ID proves the same local principal, not a current cloud login.
+                storedReport = StoredProviderReport(provider: storedReport.provider, accountID: storedReport.accountID,
+                    configuredAccountID: storedReport.configuredAccountID, accountName: storedReport.accountName,
+                    generatedAt: storedReport.generatedAt, resetCredits: storedReport.resetCredits, usageCredits: storedReport.usageCredits,
+                    status: storedReport.status, accessState: storedReport.accessState, errorMessage: storedReport.errorMessage,
+                    legacyAccountID: storedReport.legacyAccountID ?? prior.legacyAccountID, sharedAccountIdentity: prior.sharedAccountIdentity)
+            }
             let previousResetCredits = current?.reports.lazy
                 .filter { $0.provider == report.provider && $0.accountID == report.accountID }
                 .compactMap(\.resetCredits)

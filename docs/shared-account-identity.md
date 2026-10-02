@@ -73,7 +73,9 @@ never restores global quota before a successful authenticated read. Unverified f
 Macs receive the existing private companion usage document into a bounded,
 scope-validated cache. App, widget and credential-free agent projection consume the
 same canonical account IDs and account observations. Remote readings never enter
-local provider history or get republished as fresh local quota. An unavailable or
+local provider history or get republished as fresh local quota. Identity-enabled
+remote writes require a confirmed current iCloud scope; unavailable scope keeps
+local usage available and reports sync unavailable. An unavailable or
 changed current iCloud scope withholds the cache; CKAccountChanged invalidates it.
 The cache lease follows the configured refresh interval plus ten minutes of slack.
 Future widget entries retain the document qualified when their timeline was built,

@@ -5828,7 +5828,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func rawAccountID(for safeID: String) -> String? {
-        if let report = storedSnapshot?.reports.first(where: { report in
+        if let report = storedSnapshot?.selectingSharedAccountObservations().reports.first(where: { report in
             report.sharedAccountIdentity.map { AccountDisplayMetadata.safeID(report.provider, $0.accountID) == safeID } == true
         }) { return report.accountID }
         return AccountCapacity.rows(configuration: configuredAccounts, snapshot: observedSnapshot,
