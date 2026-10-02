@@ -244,6 +244,31 @@ public enum AccountTerms {
         "Banked reset lapses " + AccountPaceText.when(deadline.expiresAt, now: now) + ", before it runs out"
     }
 
+    // Horizon Deadlines agenda.
+
+    public static let deadlinesKickerRest = "the next 7 days, then later"
+    public static let today = "Today"
+    public static let tomorrow = "Tomorrow"
+    public static let afterThisWeek = "after this week"
+    public static let bankedResetLapses = "Banked reset lapses"
+    public static let runsOutTitle = "Runs out"
+    public static let backToFull = "Resets, back to full"
+    public static func resetsUnused(_ fraction: Double) -> String { "Resets with ~" + AccountNumbers.percentWithSign(fraction) + " unused" }
+    public static func lapsesBeforeRunOut(_ seconds: TimeInterval) -> String {
+        "Lapses about " + AccountPaceText.span(seconds) + " before this account runs out, so spending it before then loses nothing"
+    }
+    /// "6 dated banked resets · 2 this week, 5 in the next 30 days · next lapses Fri 2:27 PM, in 1d 0h · 0 without a date".
+    public static func deadlinesSummary(dated: Int, thisWeek: Int, month: Int, undated: Int, next: AccountOverview.Deadline?, now: Date) -> String {
+        var parts = ["\(dated) dated banked reset" + (dated == 1 ? "" : "s")]
+        if dated > 0 { parts.append("\(thisWeek) this week, \(month) in the next 30 days") }
+        if let next {
+            parts.append("next lapses " + AccountPaceText.when(next.expiresAt, now: now) + ", " + AccountPaceText.countdown(to: next.expiresAt, now: now))
+        }
+        parts.append(AccountTerms.undated(undated))
+        return parts.joined(separator: " · ")
+    }
+    public static let deadlinesGlanceKey = "Each lane runs from now to one week out; the vertical mark is the weekly reset."
+
     /// A provider read that failed, where no saved account value stands in.
     public static let notUpdating = "Not updating"
 

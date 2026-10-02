@@ -27,7 +27,7 @@ private let unsupportedPresentationStatus: Int32 = 3
 // Account surfaces at their real point sizes: Mac pane, iPhone 15 Pro, Apple Watch 45 mm, Apple TV.
 private let accountPresentationSizes: [String: CGSize] = [
     "account-overview": CGSize(width: 900, height: 880),
-    "account-deadlines": CGSize(width: 900, height: 980),
+    "account-deadlines": CGSize(width: 900, height: 1_060),
     "account-detail": CGSize(width: 900, height: 720),
     "phone-overview": CGSize(width: 393, height: 1_900),
     "phone-detail": CGSize(width: 393, height: 852),
