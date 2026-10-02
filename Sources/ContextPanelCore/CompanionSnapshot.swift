@@ -1416,10 +1416,10 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
         resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
-        let decodedIdentity = try container.decodeIfPresent(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
+        let decodedIdentity = try? container.decode(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
         sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: companionAccountID) == true ? decodedIdentity : nil
         accountIdentityStatus = SharedProviderAccountIdentity.status(
-            try container.decodeIfPresent(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus) ?? .unverified, identity: sharedAccountIdentity)
+            (try? container.decode(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus)) ?? .unverified, identity: sharedAccountIdentity)
     }
 
     public var storedProviderReport: StoredProviderReport {

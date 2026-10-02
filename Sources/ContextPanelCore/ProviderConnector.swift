@@ -354,7 +354,9 @@ private extension ProviderConnectorReport {
             usageCredits: usageCredits,
             status: status,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -371,12 +373,14 @@ private extension ProviderConnectorReport {
             usageCredits: usageCredits,
             status: status,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 }
 
-private extension UsageLimit {
+extension UsageLimit {
     func replacingMissingConfiguredAccountID(with fallback: String, accountName replacementAccountName: String? = nil) -> UsageLimit {
         guard configuredAccountID != fallback || replacementAccountName != nil else { return self }
         return UsageLimit(

@@ -134,6 +134,7 @@ public enum ProviderIdentityKeyBootstrap {
 
 public enum ProviderAccountIdentityStatus: String, Codable, Sendable {
     case verified
+    case resolutionNotEnabled
     case waitingForSharedKey
     case providerIdentityUnavailable
     case notExposedByConnector
@@ -160,5 +161,21 @@ public enum ClaudeOAuthAccountIdentityParser {
         return ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID,
             identifier: profile.account.uuid.uuidString.lowercased(),
             scope: profile.organization?.uuid.uuidString.lowercased() ?? "")
+    }
+}
+
+/// Scope binding lives only with the encrypted key, never in usage snapshots.
+public enum ScopedProviderAccountIdentityKey {
+    private struct Payload: Codable {
+        let userScope: CompanionCloudKitUserScope
+        let key: Data
+    }
+    public static func encode(_ key: ProviderAccountIdentityKey, scope: CompanionCloudKitUserScope) throws -> Data {
+        try JSONEncoder().encode(Payload(userScope: scope, key: key.encryptedStorePayload()))
+    }
+    public static func decode(_ data: Data, scope: CompanionCloudKitUserScope) -> ProviderAccountIdentityKey? {
+        guard data.count <= 8192, let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              payload.userScope == scope else { return nil }
+        return ProviderAccountIdentityKey(encryptedStorePayload: payload.key)
     }
 }

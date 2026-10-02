@@ -7,7 +7,7 @@ primary. Explicit linking is reserved for a provider that truly has no ID.
 
 | Provider | Material used | Qualification |
 | --- | --- | --- |
-| OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Personal free/plus/pro plans use the account ID. Workspace or unknown plans also require `chatgpt_user_id` or token `sub` to distinguish seats. Plan may come from the token or authenticated usage response. |
+| OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Personal free/plus/pro plans use the account ID. Workspace or unknown plans also require `chatgpt_user_id` (no cross-claim fallback) to distinguish seats. Plan may come from the token or authenticated usage response. |
 | Anthropic | `account.uuid` from Context Panel's own authenticated `/api/oauth/profile` response, scoped by `organization.uuid` where returned | Profile uses the same access token as the successful usage request, including after refresh. Missing or malformed identity leaves quota usable and identity unavailable. |
 | Google / Antigravity | Proposed Google OIDC issuer plus `sub` | The current status-line connector exposes email/LDAP, not a subject ID. No email hash is treated as a provider ID. A supported subject export or a bound Context Panel-owned Google login remains to be qualified. Owner question #7225951844161. |
 | OpenAI session-only quota | Not yet qualified | A session quota event does not carry a provider account ID. A current login cannot by itself identify a historical event from a switched login. Retain an unverified local lane until account-specific attribution is established. |
@@ -26,7 +26,7 @@ Conditional first creation and conflict readback select one server key. An
 unavailable store never generates a local-only namespace. An established local
 key can restore a missing record conditionally; another publisher's winner
 still wins. The local Keychain cache is scoped to the verified iCloud user.
-Every resolution rechecks the remote key and user scope. No rotation or deletion
+The encrypted payload also binds its key to that iCloud user scope; a foreign-scope payload is rejected. Every resolution rechecks the remote key and user scope. No rotation or deletion
 UI is implemented.
 
 The existing schema receipt binds both complete schema files, so the new encrypted
@@ -48,7 +48,7 @@ Before enabling it:
    unverified feeds or interpreting migration as global account removal.
 2. Bind global removal to the provider identity and qualify copied setups,
    distinct accounts, multiple hosts, stale/offline publishers, and explicit
-   re-add behavior. Keep selected observations and their burn rates coherent.
+   re-add behavior. Keep selected observations and their burn rates coherent. Preserve a verified account binding through transient failures only when its credential/source identity is still established; profile errors must not create a second lane or lose banked resets.
 3. Add the Mac receiving/presentation path using the existing private companion
    records. Remote usage must not become credentials or get republished as a
    fresh local reading. Invalidate foreign-user caches on iCloud account changes.

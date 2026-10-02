@@ -151,10 +151,10 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
-        let decodedIdentity = try container.decodeIfPresent(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
+        let decodedIdentity = try? container.decode(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
         sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: accountID) == true ? decodedIdentity : nil
         accountIdentityStatus = SharedProviderAccountIdentity.status(
-            try container.decodeIfPresent(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus) ?? .unverified, identity: sharedAccountIdentity)
+            (try? container.decode(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus)) ?? .unverified, identity: sharedAccountIdentity)
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
             .map(ConnectorRedactor.safeErrorDescription)
     }

@@ -3506,3 +3506,36 @@ private func base64URLEncoded(_ data: Data) -> String {
     #expect(result.snapshot.limits.first?.accountID == expected.accountID)
     #expect(result.reports.first?.accountIdentityStatus == .verified)
 }
+
+@Test func duplicateProviderReportsRetainVerifiedIdentityThroughMembershipMerge() async throws {
+    let key = ProviderAccountIdentityKey.generate()
+    let material = try #require(ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID, identifier: UUID().uuidString))
+    let identity = key.identity(for: material)
+    let now = Date(timeIntervalSince1970: 1_900_000_000)
+    let limit = UsageLimit(provider: .anthropic, accountID: identity.accountID, accountName: "Label",
+        label: "Weekly", unit: .percent, used: 20, limit: 100)
+    let first = ProviderConnectorReport(provider: .anthropic, accountID: identity.accountID, configuredAccountID: "one",
+        accountName: "Label", generatedAt: now, limits: [limit], sharedAccountIdentity: identity)
+    let second = ProviderConnectorReport(provider: .anthropic, accountID: identity.accountID, configuredAccountID: "two",
+        accountName: "Label", generatedAt: now, limits: [limit], sharedAccountIdentity: identity)
+    let result = await ProviderConnectorRuntime(connectors: [
+        StubConnector(provider: .anthropic, report: first), StubConnector(provider: .anthropic, report: second)
+    ]).refreshAll(now: now)
+    #expect(result.reports.count == 1)
+    #expect(result.reports.first?.sharedAccountIdentity == identity)
+    #expect(result.reports.first?.accountIdentityStatus == .verified)
+}
+
+@Test func disabledIdentityResolutionIsHonestAndDoesNotRequestProfile() async throws {
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200,
+        data: Data(#"{"seven_day":{"utilization":23}}"#.utf8))])
+    let credentials = try claudeCredentialsData(accessToken: "fake-access", refreshToken: "fake-refresh",
+        expiresAt: Date(timeIntervalSince1970: 4_000_000_000))
+    let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "fake-setup")], httpClient: http,
+        credentialStore: StubCredentialStore(storage: ["fake-setup": credentials]))
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_900_000_000))
+    #expect(result.reports.first?.accountIdentityStatus == .resolutionNotEnabled)
+    #expect(!http.requests.contains { $0.url.path == "/api/oauth/profile" })
+    #expect(result.snapshot.limits.first?.configuredAccountID == "fake-setup")
+}

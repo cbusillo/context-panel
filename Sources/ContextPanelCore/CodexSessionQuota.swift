@@ -160,7 +160,7 @@ public struct CodexSessionQuotaConnector: ProviderConnector {
         return ConnectorRefreshResult(generatedAt: now, reports: [ProviderConnectorReport(
             provider: provider, accountID: accountID, configuredAccountID: account.id,
             accountName: account.displayName, generatedAt: now, limits: limits,
-            usageCredits: usageCredits, status: status, errorMessage: message
+            usageCredits: usageCredits, status: status, errorMessage: message, accountIdentityStatus: .notExposedByConnector
         )])
     }
 }

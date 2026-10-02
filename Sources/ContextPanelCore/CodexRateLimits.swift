@@ -320,7 +320,7 @@ public struct CodexTokenIdentity: Equatable, Sendable {
             email: object["email"] as? String,
             name: object["name"] as? String,
             planType: auth["chatgpt_plan_type"] as? String,
-            userID: auth["chatgpt_user_id"] as? String ?? object["sub"] as? String
+            userID: auth["chatgpt_user_id"] as? String
         )
     }
 }
@@ -462,7 +462,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                     ProviderUsageCreditSummary(hasCredits: $0.hasCredits, unlimited: $0.unlimited, balance: $0.balance.flatMap(Double.init))
                 },
                 sharedAccountIdentity: identity,
-                accountIdentityStatus: material == nil ? .providerIdentityUnavailable : .waitingForSharedKey
+                accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
             )
         } catch {
             return ProviderConnectorReport(

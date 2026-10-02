@@ -129,3 +129,24 @@ private actor IdentityKeyRaceStore {
         establishedKey: identityTestKey, insertIfAbsent: { await store.insert($0) }))
     #expect(restored.keyID == identityTestKey.keyID)
 }
+
+@Test func encryptedIdentityKeyRejectsForeignICloudScope() throws {
+    let a = CompanionCloudKitUserScope.derive(containerIdentifier: "test-container", userRecordName: "user-a")
+    let b = CompanionCloudKitUserScope.derive(containerIdentifier: "test-container", userRecordName: "user-b")
+    let payload = try ScopedProviderAccountIdentityKey.encode(identityTestKey, scope: a)
+    #expect(ScopedProviderAccountIdentityKey.decode(payload, scope: a)?.keyID == identityTestKey.keyID)
+    #expect(ScopedProviderAccountIdentityKey.decode(payload, scope: b) == nil)
+}
+
+@Test func futureIdentityMetadataDoesNotBreakStoredQuota() throws {
+    let report = StoredProviderReport(provider: .anthropic, accountID: "local", accountName: "Label",
+        generatedAt: Date(timeIntervalSince1970: 0), status: .healthy, errorMessage: nil)
+    var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+    object["sharedAccountIdentity"] = ["provider": "anthropic", "kind": "future-kind",
+        "keyID": UUID().uuidString, "digest": String(repeating: "a", count: 64)]
+    object["accountIdentityStatus"] = "future-status"
+    let decoded = try JSONDecoder().decode(StoredProviderReport.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.status == .healthy)
+    #expect(decoded.sharedAccountIdentity == nil)
+    #expect(decoded.accountIdentityStatus == .unverified)
+}

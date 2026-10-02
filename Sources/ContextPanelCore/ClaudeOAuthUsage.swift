@@ -315,6 +315,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
+                configuredAccountID: account.accountID,
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: [],
@@ -396,12 +397,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             configuredAccountID: account.accountID,
             accountName: account.accountName,
             generatedAt: now,
-            limits: usage.limits,
+            limits: usage.limits.map { $0.replacingMissingConfiguredAccountID(with: account.accountID) },
             resetCredits: await resetCredits(account: account, accessToken: accessToken, now: now),
             status: usage.limits.isEmpty ? .unknown : nil,
             accessState: usage.accessState,
             sharedAccountIdentity: identity,
-            accountIdentityStatus: material == nil ? .providerIdentityUnavailable : .waitingForSharedKey
+            accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
         )
     }
 
