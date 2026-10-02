@@ -11,6 +11,29 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public let deadlines: [Deadline]
     /// Each provider's combined room, pace and outlook, in the strings the app shows.
     public let providers: [ProviderDisplay]
+    /// The sentence every surface leads with, and which accounts run out before their reset.
+    public let headline: Headline
+
+    public struct Headline: Encodable, Sendable {
+        public let lead: String
+        public let rest: String
+        public let shortCount: Int
+        public let lastingCount: Int
+        public let measuringCount: Int
+        public let notCurrentCount: Int
+        /// Soonest run-out first: the accounts in the "Runs out before reset" callout.
+        public let runsOutBeforeResetAccountIDs: [String]
+
+        public init(overview: AccountOverview, now: Date) {
+            let headline = overview.headline(now: now)
+            (lead, rest) = AccountTerms.headline(headline)
+            shortCount = headline.shortCount
+            lastingCount = headline.lastingCount
+            measuringCount = headline.measuringCount
+            notCurrentCount = headline.notCurrentCount
+            runsOutBeforeResetAccountIDs = overview.runningShort(now: now).map(\.account.id)
+        }
+    }
 
     public struct ProviderDisplay: Encodable, Sendable {
         public let provider: Provider
@@ -21,6 +44,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let pace: String
         public let burn: String
         public let outlook: String
+        /// The provider group's line in the Horizon overview: "3 accounts · 59% left on average · 0.3%/h".
+        public let summary: String
+        /// "1 of 3 runs out before reset", or the calm outlook.
+        public let summaryOutlook: String
 
         public init(total: AccountProviderTotal, now: Date) {
             provider = total.provider
@@ -31,6 +58,9 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             pace = AccountNumbers.pace(total.paceRatio)
             burn = AccountTerms.burn(total.burnPerHour)
             outlook = AccountTerms.combinedOutlook(total, now: now)
+            let line = AccountTerms.providerSummary(total, now: now)
+            summary = line.facts
+            summaryOutlook = line.outlook
         }
     }
 
@@ -113,6 +143,14 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let banked: String?
         public let useNext: Bool
         public let windows: [WindowDisplay]
+        /// Horizon: what happens to the week before its reset, in the words beside the shape.
+        public let outcome: String
+        public let outcomeDetail: String
+        public let outcomeShort: String
+        public let runsOutBeforeReset: Bool
+        public let runsOutAt: Date?
+        /// Share expected to be left at the reset at the observed burn; nil while measuring or not current.
+        public let spareFraction: Double?
 
         public struct WindowDisplay: Encodable, Sendable {
             public let id: String
@@ -135,6 +173,12 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             banked = account.bankedResets.flatMap { $0.availableCount > 0
                 ? AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) : nil }
             useNext = isNext
+            let horizon = account.horizon(now: now)
+            (outcome, outcomeDetail) = AccountTerms.outcome(account, horizon, now: now)
+            outcomeShort = AccountTerms.outcomeShort(account, horizon, now: now)
+            runsOutBeforeReset = horizon.runsOutBeforeReset
+            runsOutAt = horizon.runOutAt
+            spareFraction = horizon.spare
             windows = account.orderedWindows.map { window in
                 WindowDisplay(id: window.id, name: window.shortLabel, percentLeft: AccountNumbers.window(window),
                     resets: AccountTerms.reset(window, now: now),
@@ -225,6 +269,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             overview.useNext(provider: provider).map { Recommendation(provider: provider, accountID: $0.id) }
         })
         providers = overview.providerTotals(now: now).map { ProviderDisplay(total: $0, now: now) }
+        headline = Headline(overview: overview, now: now)
         deadlines = overview.deadlines.map {
             Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,
                      expiresAt: $0.expiresAt, observedAt: $0.observedAt, state: $0.state)

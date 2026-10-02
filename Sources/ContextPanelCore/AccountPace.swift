@@ -384,6 +384,15 @@ public struct AccountHorizonGeometry: Equatable, Sendable {
 public extension AccountHorizon {
     static let span: TimeInterval = 7 * 86_400
 
+    /// Each midnight inside the span, with its x: the axis every horizon shares.
+    static func days(now: Date, span: TimeInterval = AccountHorizon.span, calendar: Calendar = .current) -> [(x: Double, date: Date)] {
+        (1...8).compactMap { day in
+            let boundary = calendar.startOfDay(for: now).addingTimeInterval(Double(day) * 86_400)
+            let value = boundary.timeIntervalSince(now) / span
+            return value > 0 && value < 1 ? (value, boundary) : nil
+        }
+    }
+
     func geometry(now: Date, deadlines: [AccountOverview.Deadline] = [], span: TimeInterval = AccountHorizon.span,
                   calendar: Calendar = .current) -> AccountHorizonGeometry {
         func x(_ date: Date) -> Double { min(1, max(0, date.timeIntervalSince(now) / span)) }
@@ -391,11 +400,7 @@ public extension AccountHorizon {
         let end = runOutAt ?? resetAt ?? now.addingTimeInterval(span)
         let endX = x(end)
         let empty = runOutAt.flatMap { runOut in resetAt.map { x(runOut)...x($0) } }
-        let days = (1...7).compactMap { day -> Double? in
-            let boundary = calendar.startOfDay(for: now).addingTimeInterval(Double(day) * 86_400)
-            let value = boundary.timeIntervalSince(now) / span
-            return value > 0 && value < 1 ? value : nil
-        }
+        let days = Self.days(now: now, span: span, calendar: calendar).map(\.x)
         let lapses = deadlines.filter { $0.expiresAt > now && $0.expiresAt.timeIntervalSince(now) <= span }
             .map { (x: x($0.expiresAt), level: remaining(at: $0.expiresAt, now: now) ?? 0) }
         return AccountHorizonGeometry(startLevel: start, fillEndX: endX,

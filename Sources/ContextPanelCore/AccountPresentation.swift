@@ -137,6 +137,7 @@ public enum AccountTerms {
     public static let bankedLapsesLegend = "banked reset lapses"
     public static let now = "Now"
     public static let thisWeekAtAGlance = "This week at a glance"
+    public static let beforeItsReset = "Before its reset"
 
     private static func accountsNoun(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
 
