@@ -204,7 +204,8 @@ struct AccountGlanceWidget: View {
         } else {
             total.map { AccountTerms.providerSummary($0, now: now).outlook }
         }
-        let others = total.flatMap { AccountTerms.othersRunOut($0, shownRunsOut: horizon?.runsOutBeforeReset == true) }
+        // Only beside a shown account: with none, the provider outlook above already says it.
+        let others = account == nil ? nil : total.flatMap { AccountTerms.othersRunOut($0, shownRunsOut: horizon?.runsOutBeforeReset == true) }
         return VStack(alignment: .leading, spacing: 0) {
             Text(provider.accountDisplayName).font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(palette.provider(provider)).lineLimit(1)

@@ -409,6 +409,9 @@ public enum AccountAlarm {
     }
     /// A provider group's outlook ("1 of 3 runs out before reset"): calm, the callout names the accounts.
     public static let providerOutlookToken: AccountColorToken = .secondary
+    /// On an account's own page, a window's "Runs out … before reset" fact is the alarm only when the page's
+    /// outcome is not already one, so a 5-hour window that empties while the week lasts still gets its red.
+    public static func windowRunOutIsAlarm(_ horizon: AccountHorizon) -> Bool { !horizon.runsOutBeforeReset }
 }
 
 /// Smallest sizes for words, in points, so nothing that must be read is tiny or faint. Words use `primary` or

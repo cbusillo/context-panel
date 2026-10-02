@@ -206,6 +206,10 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     for account in overview.accounts {
         #expect(AccountAlarm.outcomeToken(account, account.horizon(now: totalsNow)) != AccountAlarm.token)
     }
+    // On the account's page the window fact is red only when the week's outcome is not already the alarm.
+    #expect(!AccountAlarm.windowRunOutIsAlarm(short.horizon))
+    let lasting = try #require(overview.accounts.first { !$0.horizon(now: totalsNow).runsOutBeforeReset })
+    #expect(AccountAlarm.windowRunOutIsAlarm(lasting.horizon(now: totalsNow)))
 }
 
 @Test func widgetCardSaysOtherRunOutsApartFromTheShownAccount() throws {

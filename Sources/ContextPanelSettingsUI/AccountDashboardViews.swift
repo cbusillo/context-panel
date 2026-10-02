@@ -530,6 +530,8 @@ public struct AccountDashboardDetail: View {
                             Text("Runs out").foregroundStyle(palette.secondary)
                             Text(AccountPaceText.approximately(runOut, now: now) + " · before reset")
                                 .fontWeight(.semibold)
+                                .foregroundStyle(AccountAlarm.windowRunOutIsAlarm(account.horizon(now: now))
+                                                 ? palette.color(AccountAlarm.token) : palette.primary)
                         }
                     }
                 }
