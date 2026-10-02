@@ -4944,7 +4944,7 @@ struct LargeWidgetPreview: View {
                 HStack {
                     Text(snapshot.fastModeForecast.copy)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(CPTheme.accent)
+                        .foregroundStyle(CPTheme.accentText)
                         .lineLimit(1)
                     Spacer()
                     Text(snapshot.nearestResetText)
@@ -6395,7 +6395,7 @@ private struct ResetCreditAvailabilityTag: View {
     @State private var isHovering = false
 
     private var tone: Color {
-        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.accent
+        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.banked
     }
 
     private var destination: URL {
@@ -6415,7 +6415,7 @@ private struct ResetCreditAvailabilityTag: View {
             .foregroundStyle(tone)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(tone.opacity(isHovering ? 0.15 : 0.08))
+            .background(tone.opacity(isHovering ? 0.05 : 0.03))
             .clipShape(Capsule())
             .overlay {
                 Capsule()
@@ -6426,7 +6426,7 @@ private struct ResetCreditAvailabilityTag: View {
         .buttonStyle(.plain)
         .help(resetCreditHelpText(summary))
         .accessibilityLabel(resetCreditAccessibilityText(summary))
-        .accessibilityHint("Opens OpenAI detail in Context Panel")
+        .accessibilityHint("Opens \(summary.provider.displayName) detail in Context Panel")
         .onHover { isHovering in
             self.isHovering = isHovering
             (isHovering ? NSCursor.pointingHand : NSCursor.arrow).set()
@@ -6435,20 +6435,20 @@ private struct ResetCreditAvailabilityTag: View {
 }
 
 private func resetCreditTagText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
-    let prefix = summary.isLastSeenOnly ? "Reset credits last seen" : "Reset credits"
+    let prefix = AccountTerms.bankedResets + (summary.isLastSeenOnly ? " " + AccountTerms.lastSeen : "")
     return "\(prefix) · \(summary.accountCountText)"
 }
 
 private func resetCreditHelpText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
     summary.isLastSeenOnly
-        ? "Reset credits were last seen on \(summary.accountCountText)."
-        : "Reset credits are available on \(summary.accountCountText)."
+        ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.accountCountText)."
+        : "\(AccountTerms.bankedResets) are available on \(summary.accountCountText)."
 }
 
 private func resetCreditAccessibilityText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
     summary.isLastSeenOnly
-        ? "Reset credits were last seen on \(summary.providerAccountCountText)."
-        : "Reset credits are available on \(summary.providerAccountCountText)."
+        ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.providerAccountCountText)."
+        : "\(AccountTerms.bankedResets) are available on \(summary.providerAccountCountText)."
 }
 
 enum CPTheme {
@@ -6460,6 +6460,8 @@ enum CPTheme {
     static let secondaryText = token(.secondary)
     static let tertiaryText = token(.tertiary)
     static let accent = token(.actionFill)
+    static let accentText = token(.next)
+    static let banked = token(.banked)
 
     static func providerColor(_ provider: Provider) -> Color {
         let selected: AccountColorToken = switch provider { case .openAI: .openAI; case .anthropic: .anthropic; case .google: .google }
