@@ -373,8 +373,7 @@ struct AccountGlanceWidget: View {
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     if others > 0 {
-                        Text("\(others) more expiries")
-                            .help(AccountTerms.additionalBankedExpiries(others))
+                        Text(AccountTerms.additionalBankedExpiries(others, compact: true))
                             .foregroundStyle(palette.secondary)
                             .multilineTextAlignment(.trailing)
                             .fixedSize(horizontal: false, vertical: true)

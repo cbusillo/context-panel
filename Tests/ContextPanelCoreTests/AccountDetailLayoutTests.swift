@@ -156,6 +156,15 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
     let openAI = UsageLimit(provider: .openAI, accountID: "other", accountName: "Other",
         label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 90, limit: 100,
         resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow)
+    let expiries = [detailNow.addingTimeInterval(300), detailNow.addingTimeInterval(100),
+                    detailNow.addingTimeInterval(100)]
+    let reports = [(Provider.google, "google-detail"), (.openAI, "other")].map { provider, id in
+        StoredProviderReport(provider: provider, accountID: id, configuredAccountID: id,
+            accountName: id, generatedAt: detailNow,
+            resetCredits: ProviderResetCreditSummary(availableCount: 3, observedAt: detailNow,
+                coverage: .complete, knownExpiries: expiries),
+            status: .healthy, errorMessage: nil)
+    }
     let mixed = AccountOverview(
         snapshot: UsageSnapshot(generatedAt: detailNow, limits: google.accounts.flatMap { account in
             account.windows.map { window in
@@ -164,9 +173,12 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
                     unit: window.unit, used: window.used, limit: window.limit,
                     resetsAt: window.naturalResetAt, lastUpdatedAt: window.observedAt)
             }
-        } + [openAI]), reports: [], now: detailNow)
+        } + [openAI]), reports: reports, now: detailNow)
     let selected = mixed.filtered(to: .google)
     #expect(selected.accounts == mixed.accounts.filter { $0.metadata.provider == .google })
+    #expect(selected.deadlines.count == 3)
+    #expect(selected.deadlines.map(\.expiresAt) == expiries.sorted())
+    #expect(Set(selected.deadlines.map(\.id)).count == 3)
     #expect(selected.deadlines == mixed.deadlines.filter { $0.provider == .google })
     #expect(selected.providerTotals(now: detailNow).count == 1)
     #expect(selected.useNext(provider: .openAI) == nil)

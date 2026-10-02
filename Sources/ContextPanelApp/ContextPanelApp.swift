@@ -3164,7 +3164,8 @@ struct AccountDashboard: View {
                     }
                     DisclosureGroup("Provider diagnostics, pace and history") {
                         ProviderDashboard(model: model, snapshot: model.currentSnapshot, provider: provider,
-                            focusedAccountID: model.rawAccountID(for: accountID) ?? accountID).frame(minHeight: 600)
+                            focusedAccountID: model.rawAccountID(for: accountID) ?? accountID,
+                            showsHorizon: false).frame(minHeight: 600)
                     }
                 }.padding(24)
             }.background(CPTheme.background)
@@ -3982,6 +3983,8 @@ struct ProviderDashboard: View {
     let snapshot: UsageSnapshot
     let provider: Provider
     var focusedAccountID: String? = nil
+    var showsHorizon = true
+    var presentationDate: Date? = nil
     var openLimit: ((String) -> Void)? = nil
     @State private var selectedLimit: MainLimitSummary?
 
@@ -3994,21 +3997,28 @@ struct ProviderDashboard: View {
     }
 
     var body: some View {
-        let now = Date()
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            content(at: presentationDate ?? context.date)
+        }
+    }
+
+    @ViewBuilder private func content(at now: Date) -> some View {
         let overview = model.accountOverview(at: now).filtered(to: provider)
         let overallStatus = providerStatusIncludingAccessAlerts(
             provider: provider, baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 22) {
-                    AccountDashboardPanel(
-                        overview: overview,
-                        now: now,
-                        openAccount: { account in
-                            model.navigate(to: .providerAccount(account.metadata.provider, account.id))
-                        },
-                        openDeadlines: { model.navigate(to: .deadlines) }
-                    )
+                    if showsHorizon {
+                        AccountDashboardPanel(
+                            overview: overview,
+                            now: now,
+                            openAccount: { account in
+                                model.navigate(to: .providerAccount(account.metadata.provider, account.id))
+                            },
+                            openDeadlines: { model.navigate(to: .deadlines) }
+                        )
+                    }
                     HStack(spacing: 8) {
                         StatusMark(status: overallStatus, size: 8)
                             .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)

@@ -118,8 +118,8 @@ public enum AccountTerms {
     public static let outBeforeResetLegend = "out before reset at this pace"
     public static let bankedResetExpiresLegend = "banked reset expires"
     /// Additional available, dated banked resets beyond the expiry already shown.
-    public static func additionalBankedExpiries(_ count: Int) -> String {
-        "\(count) more banked " + (count == 1 ? "expiry" : "expiries")
+    public static func additionalBankedExpiries(_ count: Int, compact: Bool = false) -> String {
+        "\(count) more " + (compact ? "" : "banked ") + (count == 1 ? "expiry" : "expiries")
     }
     public static func dated(_ count: Int) -> String { "\(count) dated" }
     public static func accountsCount(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
