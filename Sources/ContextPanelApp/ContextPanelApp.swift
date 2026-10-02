@@ -361,6 +361,11 @@ enum AppNavigationSelection: Hashable {
     case provider(Provider)
     case providerAccount(Provider, String)
     case mainLimit(MainLimitSummary.ID)
+
+    func sidebarSelection(in snapshot: UsageSnapshot) -> Self {
+        guard case .mainLimit(let id) = self else { return self }
+        return snapshot.mainLimitSummaries.first(where: { $0.id == id }).map { .provider($0.provider) } ?? .overview
+    }
 }
 
 struct AppRoot: View {
@@ -2945,7 +2950,10 @@ struct AccountsSidebar: View {
     @Binding var selection: AppNavigationSelection?
 
     var body: some View {
-        List(selection: $selection) {
+        List(selection: Binding(
+            get: { selection?.sidebarSelection(in: snapshot) },
+            set: { selection = $0 }
+        )) {
             Section {
                 Label("Overview", systemImage: "gauge.medium")
                     .tag(AppNavigationSelection.overview)
@@ -2965,6 +2973,9 @@ struct AccountsSidebar: View {
                 ForEach(Provider.allCases) { provider in
                     let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
+                    let providerTotal = totals.first(where: { $0.provider == provider })
+                    let providerResetCredits = provider == .openAI ? resetCreditSummary : nil
+                    let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
                     if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
@@ -2987,8 +2998,7 @@ struct AccountsSidebar: View {
                             }
                         }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(provider.accountDisplayName + ", "
-                            + (totals.first(where: { $0.provider == provider }).map { AccountTerms.accountCount($0) + ", " + AccountTerms.sidebarRemaining($0) } ?? AccountTerms.unknown))
+                        .accessibilityLabel(spokenHeader)
                         .accessibilityHint("Opens provider usage, limits and history")
                         .tag(AppNavigationSelection.provider(provider))
                         ForEach(accounts) { account in
@@ -3022,77 +3032,13 @@ struct AccountsSidebar: View {
             .padding(12)
         }
     }
-}
 
-struct ProviderSidebarRow: View {
-    let provider: Provider
-    let limitCount: Int
-    let resetCreditSummary: ProviderResetCreditSurfaceSummary?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ProviderBadge(provider: provider)
-            Text(provider.displayName)
-                .font(.system(size: 12, weight: .semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
-            if let resetCreditSummary {
-                Image(systemName: "arrow.counterclockwise.circle")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(CPTheme.tertiaryText)
-                    .help(resetCreditHelpText(resetCreditSummary))
-                    .accessibilityHidden(true)
-            }
-            Spacer()
-            if limitCount > 0 {
-                Text("\(limitCount)")
-                    .font(.system(.caption, design: .monospaced, weight: .medium))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityText)
-    }
-
-    private var accessibilityText: String {
-        var parts = [provider.displayName]
-        if limitCount > 0 {
-            parts.append(limitCount == 1 ? "1 main limit" : "\(limitCount) main limits")
-        }
-        if let resetCreditSummary {
-            parts.append(resetCreditAccessibilityText(resetCreditSummary))
-        }
+    private func providerAccessibilityLabel(provider: Provider, total: AccountProviderTotal?, resetCredits: ProviderResetCreditSurfaceSummary?) -> String {
+        var parts = [total?.accessibilityText(now: Date()) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
+        if let resetCredits { parts.append(resetCreditAccessibilityText(resetCredits)) }
         return parts.joined(separator: ", ")
     }
-}
 
-struct SidebarRateLimitRow: View {
-    let summary: MainLimitSummary
-    let status: UsageStatus
-
-    var body: some View {
-        HStack(spacing: 10) {
-            StatusMark(status: status, size: 7)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(summary.previewWindowLine)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(2)
-                Text(summary.sidebarTimingText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            Text(summary.compactUsageText)
-                .font(.system(.caption2, design: .monospaced, weight: .medium))
-                .foregroundStyle(.secondary)
-                .assumedResetHelp(summary.hasAssumedScheduledResetCapacity)
-        }
-        .padding(.vertical, 3)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(summary.quantitativeAccessibilityLabel)
-        .accessibilityValue(summary.usedPressureAccessibilityValue(status: status))
-    }
 }
 
 private extension Array where Element == MainLimitSummary {

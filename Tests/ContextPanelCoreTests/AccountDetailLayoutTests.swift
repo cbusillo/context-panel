@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 @testable import ContextPanelSettingsUI
 @testable import ContextPanelCore
+@testable import ContextPanelApp
 
 private let detailNow = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -94,4 +95,25 @@ private func detailOverview(windowCount: Int) -> AccountOverview {
     #expect(decoded.label == "Third-party models Weekly")
     #expect(decoded.modelLabel == "Third-party models")
     #expect(decoded.used == limit.used)
+}
+
+@Test func limitHistoryKeepsItsProviderHighlightedAndMissingLimitsReturnToOverview() throws {
+    let snapshot = UsageSnapshot(generatedAt: detailNow, limits: [
+        UsageLimit(provider: .google, accountID: "a", accountName: "Google", label: "Weekly", windowLabel: "Weekly",
+            unit: .percent, used: 20, limit: 100)
+    ])
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    #expect(AppNavigationSelection.mainLimit(summary.id).sidebarSelection(in: snapshot) == .provider(.google))
+    #expect(AppNavigationSelection.mainLimit(summary.id).sidebarSelection(in: UsageSnapshot(generatedAt: detailNow, limits: [])) == .overview)
+    let account = AppNavigationSelection.providerAccount(.google, "a")
+    #expect(account.sidebarSelection(in: snapshot) == account)
+}
+
+@Test func loneQuotaCardsSpanTheAvailablePane() {
+    let layout = AccountWindowCardsLayout()
+    let one = layout.frames(width: 800, heights: [180])
+    #expect(one.first?.width == 800)
+    let three = layout.frames(width: 800, heights: [180, 260, 200])
+    #expect(three.last?.width == 800)
+    #expect(three.last!.minY > three.first!.maxY)
 }

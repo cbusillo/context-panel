@@ -15,7 +15,7 @@ struct AccountWindowCardsLayout: Layout {
             let height = heights[start..<end].max() ?? 0
             for index in start..<end {
                 result.append(CGRect(x: CGFloat(index - start) * (cardWidth + spacing), y: top,
-                                     width: cardWidth, height: height))
+                                     width: end - start == 1 ? width : cardWidth, height: height))
             }
             top += height + spacing
         }
@@ -26,7 +26,10 @@ struct AccountWindowCardsLayout: Layout {
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 2 * minimumCardWidth + spacing
         let columns = width >= 2 * minimumCardWidth + spacing ? 2 : 1
         let cardWidth = max(0, (width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
-        let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: cardWidth, height: nil)).height }
+        let heights = subviews.enumerated().map { index, view in
+            let isLoneLast = columns == 2 && index == subviews.count - 1 && subviews.count % 2 == 1
+            return view.sizeThatFits(ProposedViewSize(width: isLoneLast ? width : cardWidth, height: nil)).height
+        }
         return frames(width: width, heights: heights)
     }
 
