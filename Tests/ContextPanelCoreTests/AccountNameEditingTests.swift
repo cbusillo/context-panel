@@ -1,6 +1,25 @@
 import ContextPanelSettingsUI
+import ContextPanelCore
 import SwiftUI
 import Testing
+
+@Test func accountRenameFindsLegacySingleMemberWithoutClearingMultiAccountAliases() {
+    let account = LocalProviderAccountConfiguration(id: "configured", provider: .anthropic,
+        connectorKind: .claudeOAuthUsage, displayName: "Original")
+    let legacyID = account.providerReportAccountIDs[0]
+    let legacy = StoredProviderReport(provider: .anthropic, accountID: legacyID,
+        accountName: "Legacy", generatedAt: .distantPast, status: .healthy, errorMessage: nil)
+    let sibling = StoredProviderReport(provider: .anthropic, accountID: "another-login",
+        configuredAccountID: "other-configuration", accountName: "Other", generatedAt: .distantPast,
+        status: .healthy, errorMessage: nil)
+    #expect(account.soleProviderReportAccountID(in: [legacy, legacy, sibling]) == legacyID)
+    let current = StoredProviderReport(provider: .anthropic, accountID: "current-login",
+        configuredAccountID: account.id, accountName: "Current", generatedAt: .distantPast,
+        status: .healthy, errorMessage: nil)
+    #expect(account.soleProviderReportAccountID(in: [current]) == current.accountID)
+    #expect(account.soleProviderReportAccountID(in: [legacy, current]) == nil)
+    #expect(account.soleProviderReportAccountID(in: [sibling]) == nil)
+}
 
 @MainActor
 @Test func accountNameBindingReadsCommittedNameWithoutWaitingForAnotherRender() {

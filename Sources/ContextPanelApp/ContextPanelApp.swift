@@ -946,8 +946,9 @@ struct SettingsPane: View {
         nameInputError = AccountNameEditing.commit(for: field, drafts: $nameDrafts, allowsEmpty: allowsEmpty) { value in
             switch field {
             case let .account(id):
-                let members = Set((appModel.storedSnapshot?.reports ?? []).filter { $0.configuredAccountID == id }.map(\.accountID))
-                return model.renameAccount(id, name: value, soleLogicalID: members.count == 1 ? members.first : nil)
+                let account = model.accounts.first { $0.id == id }
+                let soleLogicalID = account?.soleProviderReportAccountID(in: appModel.storedSnapshot?.reports ?? [])
+                return model.renameAccount(id, name: value, soleLogicalID: soleLogicalID)
             case let .alias(id, logical): return model.renameAccount(id, name: value, logicalID: logical)
             }
         }

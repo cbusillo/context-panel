@@ -111,6 +111,11 @@ public extension LocalProviderAccountConfiguration {
         return report.accountID == id || providerReportAccountIDs.contains(report.accountID)
     }
 
+    func soleProviderReportAccountID(in reports: [StoredProviderReport]) -> String? {
+        let members = Set(reports.filter { matchesProviderReport($0) }.map(\.accountID))
+        return members.count == 1 ? members.first : nil
+    }
+
     private static func localAccountIDs(provider: Provider, path: String) -> [String] {
         var ids = [ConnectorRedactor.localAccountID(provider: provider, path: path)]
         let expandedPath = NSString(string: path).expandingTildeInPath
