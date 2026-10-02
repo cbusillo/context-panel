@@ -4601,6 +4601,20 @@ struct HeaderCard: View {
     }
 }
 
+struct ProviderHeaderCapacity {
+    let total: AccountProviderTotal?
+    var metric: MetricProgress { .remainingCapacity(remainingRatio: total?.longRemaining) }
+    var pressure: UsageStatus { .usagePressure(for: total?.longRemaining.map { 1 - $0 }) }
+    var percentText: String { AccountNumbers.percentWithSign(total?.longRemaining) }
+    var windowTitle: String {
+        total?.longRemaining == nil ? "" : AccountTerms.longColumn(weekly: total?.longIsWeekly ?? false)
+    }
+    var label: String { [windowTitle, AccountTerms.left].filter { !$0.isEmpty }.joined(separator: " ") }
+    func accessibilityValue(status: UsageStatus) -> String {
+        metric.isIndeterminate ? metric.accessibilityValue : percentText + " " + AccountTerms.left + ", " + status.accessibilityStatusText
+    }
+}
+
 struct ProviderHeaderCard: View {
     @ObservedObject var model: ContextPanelAppModel
     let provider: Provider
@@ -4626,7 +4640,8 @@ struct ProviderHeaderCard: View {
     var body: some View {
         let now = Date()
         let total = model.accountOverview(at: now).providerTotals(now: now).first { $0.provider == provider }
-        let longTitle = AccountTerms.longColumn(weekly: total?.longIsWeekly ?? false)
+        let capacity = ProviderHeaderCapacity(total: total)
+        let dialStatus = providerStatusIncludingAccessAlerts(provider: provider, baseStatuses: [capacity.pressure], alerts: model.providerAccessAlerts)
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -4634,6 +4649,7 @@ struct ProviderHeaderCard: View {
                     Text(provider.displayName)
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(CPTheme.primaryText)
+                    StatusMark(status: providerStatus, size: 8)
                 }
                 Text(total.map { AccountTerms.sidebarRemaining($0) } ?? AccountTerms.unknown)
                     .font(.system(size: 13))
@@ -4651,10 +4667,12 @@ struct ProviderHeaderCard: View {
             }
             Spacer(minLength: 16)
             MetricDial(
-                metric: .remainingCapacity(remainingRatio: total?.longRemaining),
-                status: providerStatus,
-                accessibilityName: "\(provider.accountDisplayName) \(longTitle.lowercased()) remaining capacity",
-                sublabel: longTitle + " " + AccountTerms.left,
+                metric: capacity.metric,
+                status: dialStatus,
+                accessibilityName: [provider.accountDisplayName, capacity.windowTitle.lowercased(), "average remaining capacity"].filter { !$0.isEmpty }.joined(separator: " "),
+                sublabel: capacity.label,
+                displayText: capacity.percentText,
+                accessibilityValue: capacity.accessibilityValue(status: dialStatus),
                 size: 116
             )
         }

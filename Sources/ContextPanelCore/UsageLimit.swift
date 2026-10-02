@@ -401,16 +401,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         if let statusOverride {
             return statusOverride
         }
-        guard let ratio = usageRatio else {
-            return .unknown
-        }
-        if ratio >= 1 {
-            return .limited
-        }
-        if ratio >= 0.8 {
-            return .close
-        }
-        return .healthy
+        return UsageStatus.usagePressure(for: usageRatio)
     }
 }
 
@@ -492,5 +483,16 @@ extension UsageStatus {
 extension UsageLimit {
     fileprivate var constraintScore: Double {
         status.sortRank + (usageRatio ?? 0)
+    }
+}
+
+
+public extension UsageStatus {
+    /// Pressure for a numeric window; provider access and refresh failures remain separate signals.
+    static func usagePressure(for ratio: Double?) -> UsageStatus {
+        guard let ratio else { return .unknown }
+        if ratio >= 1 { return .limited }
+        if ratio >= 0.8 { return .close }
+        return .healthy
     }
 }

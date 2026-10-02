@@ -130,3 +130,52 @@ private func detailOverview(windowCount: Int) -> AccountOverview {
     #expect(cleared == .overview)
     #expect(cleared.retainingAvailableLimit(in: snapshot) == .overview)
 }
+
+@Test(arguments: [false, true])
+func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyReports: Bool) throws {
+    let limits = ["a", "b"].flatMap { account in
+        [UsageLimit(provider: .openAI, accountID: account, accountName: account, label: "Weekly", windowLabel: "Weekly",
+            unit: .percent, used: account == "a" ? 20 : nil, limit: 100,
+            resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow, confidence: .observed),
+         UsageLimit(provider: .openAI, accountID: account, accountName: account, label: "5-hour", windowLabel: "5-hour",
+            unit: .percent, used: 30, limit: 100, resetsAt: detailNow.addingTimeInterval(3_600),
+            lastUpdatedAt: detailNow, confidence: .observed)]
+    }
+    let reports = healthyReports ? ["a", "b"].map {
+        StoredProviderReport(provider: .openAI, accountID: $0, accountName: $0, generatedAt: detailNow, status: .healthy, errorMessage: nil)
+    } : []
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: limits), reports: reports, now: detailNow)
+    let total = try #require(overview.providerTotals(now: detailNow).first)
+    // A missing weekly reading must either exclude its account visibly or make the aggregate unknown.
+    #expect(total.countedCount < total.accountCount || total.longRemaining == nil)
+}
+
+
+@Test func providerLongGaugeKeepsShortPressureSeparateAndPreservesSmallPositiveRoom() throws {
+    func total(weeklyUsed: Int, shortUsed: Int, accounts: Int = 1) throws -> AccountProviderTotal {
+        let limits = (0..<accounts).flatMap { index in
+            [UsageLimit(provider: .anthropic, accountID: "a\(index)", accountName: "Account \(index)",
+                label: "Weekly", windowLabel: "Weekly", unit: .percent, used: weeklyUsed + index, limit: 100,
+                resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow, confidence: .observed),
+             UsageLimit(provider: .anthropic, accountID: "a\(index)", accountName: "Account \(index)",
+                label: "5-hour", windowLabel: "5-hour", unit: .percent, used: shortUsed, limit: 100,
+                resetsAt: detailNow.addingTimeInterval(3_600), lastUpdatedAt: detailNow, confidence: .observed)]
+        }
+        return try #require(AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: limits), reports: [], now: detailNow)
+            .providerTotals(now: detailNow).first)
+    }
+    let ampleWeek = try total(weeklyUsed: 30, shortUsed: 100)
+    let ample = ProviderHeaderCapacity(total: ampleWeek)
+    #expect(ample.metric.ratio == ampleWeek.longRemaining)
+    #expect(ample.pressure == .healthy)
+    #expect(ampleWeek.shortRemaining == 0)
+    let tiny = ProviderHeaderCapacity(total: try total(weeklyUsed: 99, shortUsed: 0, accounts: 2))
+    #expect(tiny.metric.ratio! > 0)
+    #expect(tiny.pressure == .close)
+    #expect(tiny.percentText == AccountNumbers.percentWithSign(tiny.metric.ratio))
+    #expect(tiny.accessibilityValue(status: tiny.pressure).hasPrefix(tiny.percentText))
+    let missing = ProviderHeaderCapacity(total: nil)
+    #expect(missing.metric.isIndeterminate)
+    #expect(missing.pressure == .unknown)
+    #expect(missing.windowTitle.isEmpty)
+}
