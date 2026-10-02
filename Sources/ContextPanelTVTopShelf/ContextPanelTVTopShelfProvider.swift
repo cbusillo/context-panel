@@ -320,7 +320,7 @@ struct TVTopShelfRenderer {
 
         let glowWidth = size.width / CGFloat(max(cards.count, 1))
         for (index, card) in cards.enumerated() {
-            let accent = color(AccountTone.forRemaining(card.remainingPercent.map { Double($0) / 100 }).fillToken)
+            let accent = accentColor(card)
             context.setFillColor(accent.withAlphaComponent(0.095).cgColor)
             context.fillEllipse(in: CGRect(
                 x: CGFloat(index) * glowWidth - glowWidth * 0.05,
@@ -459,7 +459,7 @@ struct TVTopShelfRenderer {
         scale: CGFloat,
         isStale: Bool
     ) {
-        let accent = color(AccountTone.forRemaining(card.remainingPercent.map { Double($0) / 100 }).fillToken)
+        let accent = accentColor(card)
         let displayedStatus = displayStatus(for: card, isStale: isStale)
         accent.withAlphaComponent(isStale ? 0.045 : 0.075).setFill()
         UIBezierPath(roundedRect: frame, cornerRadius: 30 * scale).fill()
@@ -572,6 +572,9 @@ struct TVTopShelfRenderer {
         if isStale { return .stale }
         return card.remainingPercent == nil && card.status == .healthy ? .unknown : card.status
     }
+
+    /// Horizon: a card's accent is its provider's own hue, not a status colour.
+    private func accentColor(_ card: TVTopShelfCard) -> UIColor { color(card.provider?.colorToken ?? .tertiary) }
 
     private func statusColor(_ status: UsageStatus) -> UIColor { color(status.accountState.colorToken) }
 

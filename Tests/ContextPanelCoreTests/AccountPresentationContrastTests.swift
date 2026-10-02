@@ -20,5 +20,24 @@ private func luminance(_ token: AccountColorToken, dark: Bool) -> Double {
             let first = luminance(.actionText, dark: dark), second = luminance(fill, dark: dark)
             #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
         }
+        // Each provider's tinted "use next" card: its words, and every provider name, which also appears on it in callouts.
+        for surface in Provider.allCases.map(\.surfaceToken) {
+            for foreground in [AccountColorToken.primary, .secondary, .openAI, .anthropic, .google] {
+                let first = luminance(foreground, dark: dark), second = luminance(surface, dark: dark)
+                #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5, "\(foreground) on \(surface), dark \(dark)")
+            }
+        }
+    }
+}
+
+@Test func providerCardSurfacesAreDistinctTintsOfTheirHue() {
+    for dark in [false, true] {
+        let surfaces = Provider.allCases.map { $0.surfaceToken.rgb(dark: dark) }
+        for (index, first) in surfaces.enumerated() {
+            for second in surfaces.dropFirst(index + 1) {
+                let distance = abs(first.red - second.red) + abs(first.green - second.green) + abs(first.blue - second.blue)
+                #expect(distance > 0.08, "provider cards must tell apart at a glance")
+            }
+        }
     }
 }

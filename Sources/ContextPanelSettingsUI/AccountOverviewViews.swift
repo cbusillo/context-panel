@@ -112,54 +112,6 @@ public struct AccountOverviewRow: View {
     }
 }
 
-public struct AccountDeadlinesPanel: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let overview: AccountOverview
-    let now: Date
-    let openAccount: (String) -> Void
-    public init(overview: AccountOverview, now: Date = Date(), openAccount: @escaping (String) -> Void) {
-        self.overview = overview
-        self.now = now
-        self.openAccount = openAccount
-    }
-    private func token(_ token: AccountColorToken) -> Color {
-        let dark = colorScheme == .dark
-        let rgb = token.rgb(dark: dark)
-        return Color(.sRGB, red: rgb.red, green: rgb.green, blue: rgb.blue, opacity: token.opacity(dark: dark))
-    }
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(AccountTerms.bankedResets).font(.largeTitle.weight(.semibold))
-            Text("Banked resets expire here; expiration does not use a reset.").font(.callout).foregroundStyle(token(.secondary))
-            if overview.deadlines.isEmpty { Text("No dated banked resets.").foregroundStyle(token(.secondary)) }
-            ForEach(overview.deadlines) { deadline in
-                Button { openAccount(deadline.accountID) } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 16) {
-                        Image(systemName: AccountGlyphs.bankedExpiry).foregroundStyle(token(.banked))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(AccountTerms.deadlineLabel(deadline)).font(.headline)
-                            Text(deadline.provider.accountDisplayName).font(.caption).foregroundStyle(token(.secondary))
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
-                            if deadline.state != .available {
-                                Text(AccountTerms.lastSeen + " " + AccountPaceText.when(deadline.observedAt, now: now))
-                                    .font(.caption).foregroundStyle(token(.secondary))
-                            }
-                        }
-                    }.padding(12).frame(maxWidth: .infinity).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                Divider()
-            }
-            ForEach(overview.accounts.filter { ($0.unknownExpiryCount ?? 0) > 0 }) { account in
-                Text("\(account.metadata.label): \(account.unknownExpiryCount ?? 0) banked reset dates unknown")
-                    .font(.callout).foregroundStyle(token(.secondary))
-            }
-        }.foregroundStyle(token(.primary))
-    }
-}
-
 public struct AccountDetailPanel: View {
     let account: AccountOverview.Account
     let overview: AccountOverview
