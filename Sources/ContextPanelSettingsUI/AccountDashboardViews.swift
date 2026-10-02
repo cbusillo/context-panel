@@ -27,7 +27,7 @@ public struct AccountDashboardPanel: View {
     private var totals: [AccountProviderTotal] { overview.providerTotals(now: now) }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 14 : 18) {
+        VStack(alignment: .leading, spacing: compact ? 16 : 22) {
             header
             if overview.accounts.isEmpty {
                 Text("Add an account in Settings to see its usage and reset times.").foregroundStyle(palette.secondary)
@@ -127,7 +127,7 @@ public struct AccountDashboardPanel: View {
                     Text(AccountTerms.noEligibleAccount).font(.system(size: 12)).foregroundStyle(palette.secondary)
                 }
             }
-            .padding(14)
+            .padding(compact ? 14 : 18)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.color(provider.surfaceToken)))
             .contentShape(Rectangle())
@@ -184,7 +184,7 @@ public struct AccountDashboardPanel: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(14)
+            .padding(compact ? 14 : 18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.card))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(palette.bad.opacity(0.35), lineWidth: 1))
@@ -629,7 +629,7 @@ struct DashboardCard<Content: View>: View {
             }
             content
         }
-        .padding(14)
+        .padding(18)
         .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(palette.card))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.line, lineWidth: 1))

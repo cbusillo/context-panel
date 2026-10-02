@@ -105,6 +105,17 @@ public struct AccountOverview: Equatable, Sendable {
 
     public let accounts: [Account]
     public let deadlines: [Deadline]
+    private init(accounts: [Account], deadlines: [Deadline]) {
+        self.accounts = accounts
+        self.deadlines = deadlines
+    }
+
+    /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.
+    public func filtered(to provider: Provider) -> AccountOverview {
+        AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },
+                        deadlines: deadlines.filter { $0.provider == provider })
+    }
+
     public var closest: Account? {
         accounts.filter(\.isReliable).reduce(nil) { best, row in
             guard let best else { return row }

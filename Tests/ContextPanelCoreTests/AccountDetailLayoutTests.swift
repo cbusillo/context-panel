@@ -151,34 +151,24 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
 }
 
 
-@Test func providerLongGaugeKeepsShortPressureSeparateAndPreservesSmallPositiveRoom() throws {
-    func total(weeklyUsed: Int, shortUsed: Int, accounts: Int = 1) throws -> AccountProviderTotal {
-        let limits = (0..<accounts).flatMap { index in
-            [UsageLimit(provider: .anthropic, accountID: "a\(index)", accountName: "Account \(index)",
-                label: "Weekly", windowLabel: "Weekly", unit: .percent, used: weeklyUsed + index, limit: 100,
-                resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow, confidence: .observed),
-             UsageLimit(provider: .anthropic, accountID: "a\(index)", accountName: "Account \(index)",
-                label: "5-hour", windowLabel: "5-hour", unit: .percent, used: shortUsed, limit: 100,
-                resetsAt: detailNow.addingTimeInterval(3_600), lastUpdatedAt: detailNow, confidence: .observed)]
-        }
-        return try #require(AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: limits), reports: [], now: detailNow)
-            .providerTotals(now: detailNow).first)
-    }
-    let ampleWeek = try total(weeklyUsed: 30, shortUsed: 100)
-    let ample = ProviderHeaderCapacity(total: ampleWeek)
-    #expect(ample.metric.ratio == ampleWeek.longRemaining)
-    #expect(ample.pressure == .healthy)
-    #expect(ampleWeek.shortRemaining == 0)
-    let blocked = ample.accessibilityValue(status: .healthy, overallStatus: .limited)
-    #expect(blocked != ample.accessibilityValue(status: .healthy, overallStatus: .healthy))
-    #expect(blocked.contains(AccountTerms.accountCount(ampleWeek)))
-    let tiny = ProviderHeaderCapacity(total: try total(weeklyUsed: 99, shortUsed: 0, accounts: 2))
-    #expect(try #require(tiny.metric.ratio) > 0)
-    #expect(tiny.pressure == .close)
-    #expect(tiny.percentText == AccountNumbers.percentWithSign(tiny.metric.ratio))
-    #expect(tiny.accessibilityValue(status: tiny.pressure, overallStatus: .limited).hasPrefix(tiny.percentText))
-    let missing = ProviderHeaderCapacity(total: nil)
-    #expect(missing.metric.isIndeterminate)
-    #expect(missing.pressure == .unknown)
-    #expect(missing.windowTitle.isEmpty)
+@Test func providerPageKeepsItsOriginalAccountObservationsAndForecasts() throws {
+    let google = detailOverview(windowCount: 4)
+    let openAI = UsageLimit(provider: .openAI, accountID: "other", accountName: "Other",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 90, limit: 100,
+        resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow)
+    let mixed = AccountOverview(
+        snapshot: UsageSnapshot(generatedAt: detailNow, limits: google.accounts.flatMap { account in
+            account.windows.map { window in
+                UsageLimit(id: window.id, provider: .google, accountID: account.metadata.configurationID,
+                    accountName: account.metadata.label, label: window.label, windowLabel: window.periodLabel,
+                    unit: window.unit, used: window.used, limit: window.limit,
+                    resetsAt: window.naturalResetAt, lastUpdatedAt: window.observedAt)
+            }
+        } + [openAI]), reports: [], now: detailNow)
+    let selected = mixed.filtered(to: .google)
+    #expect(selected.accounts == mixed.accounts.filter { $0.metadata.provider == .google })
+    #expect(selected.deadlines == mixed.deadlines.filter { $0.provider == .google })
+    #expect(selected.providerTotals(now: detailNow).count == 1)
+    #expect(selected.useNext(provider: .openAI) == nil)
+    #expect(selected.accounts.first?.horizon(now: detailNow) == mixed.accounts.first { $0.metadata.provider == .google }?.horizon(now: detailNow))
 }

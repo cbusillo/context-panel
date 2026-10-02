@@ -117,6 +117,10 @@ public enum AccountTerms {
     public static let weeklyReset = "weekly reset"
     public static let outBeforeResetLegend = "out before reset at this pace"
     public static let bankedResetExpiresLegend = "banked reset expires"
+    /// Additional available, dated banked resets beyond the expiry already shown.
+    public static func additionalBankedExpiries(_ count: Int) -> String {
+        "\(count) more banked " + (count == 1 ? "expiry" : "expiries")
+    }
     public static func dated(_ count: Int) -> String { "\(count) dated" }
     public static func accountsCount(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
     /// Burn in plain words, as a share of the room used per day: "~7% a day", "<1% a day". A window shorter than

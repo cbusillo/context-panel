@@ -372,14 +372,22 @@ struct AccountGlanceWidget: View {
                             .foregroundStyle(palette.secondary))
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    if others > 0 { Text("+\(others)").foregroundStyle(palette.secondary) }
+                    if others > 0 {
+                        Text("\(others) more expiries")
+                            .help(AccountTerms.additionalBankedExpiries(others))
+                            .foregroundStyle(palette.secondary)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 94, alignment: .trailing)
+                    }
                 }
                 .font(.system(size: AccountTextSize.glanceMinimum))
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Banked reset for \(deadline.label) expires \(ContextPanelDateFormatting.accountReset(deadline.expiresAt))"
-                + (lapsing != nil ? ", before it runs out" : ""))
+                + (lapsing != nil ? ", before it runs out" : "")
+                + (others > 0 ? ", " + AccountTerms.additionalBankedExpiries(others) : ""))
         }
     }
 }

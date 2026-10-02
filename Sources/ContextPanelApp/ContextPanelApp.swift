@@ -3994,14 +3994,42 @@ struct ProviderDashboard: View {
     }
 
     var body: some View {
+        let now = Date()
+        let overview = model.accountOverview(at: now).filtered(to: provider)
+        let overallStatus = providerStatusIncludingAccessAlerts(
+            provider: provider, baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 18) {
-                    ProviderHeaderCard(model: model, provider: provider, summaries: summaries)
+                VStack(alignment: .leading, spacing: 22) {
+                    AccountDashboardPanel(
+                        overview: overview,
+                        now: now,
+                        openAccount: { account in
+                            model.navigate(to: .providerAccount(account.metadata.provider, account.id))
+                        },
+                        openDeadlines: { model.navigate(to: .deadlines) }
+                    )
+                    HStack(spacing: 8) {
+                        StatusMark(status: overallStatus, size: 8)
+                            .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)
+                            .help("Overall provider status: " + overallStatus.accessibilityStatusText)
+                        Text(provider.accountDisplayName + " · \(summaries.count) main windows · \(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
+                            .font(.system(size: 12))
+                            .foregroundStyle(CPTheme.secondaryText)
+                        if provider == .openAI, let resets = ResetCreditSurfaceAdvisor.appSummary(
+                            reports: model.storedSnapshot?.reports ?? [],
+                            limits: summaries.flatMap(\.limits), now: now) {
+                            ResetCreditAvailabilityTag(summary: resets)
+                        }
+                        if model.storeStatus != .healthy {
+                            TagLabel(model.storeStatus.previewStatusText.capitalized)
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                     ProviderAccessAlertsSection(
                         alerts: model.providerAccessAlerts.filter { $0.provider == provider }
                     )
-                    SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
+                    SectionHeader(title: "Window details", trailing: "\(summaries.count) windows")
                     VStack(spacing: 10) {
                         ForEach(summaries) { summary in
                             Button {
@@ -4601,94 +4629,6 @@ struct HeaderCard: View {
     }
 }
 
-struct ProviderHeaderCapacity {
-    let total: AccountProviderTotal?
-    var metric: MetricProgress { .remainingCapacity(remainingRatio: total?.longRemaining) }
-    var pressure: UsageStatus { .usagePressure(for: total?.longRemaining.map { 1 - $0 }) }
-    var percentText: String { AccountNumbers.percentWithSign(total?.longRemaining) }
-    var windowTitle: String {
-        total?.longRemaining == nil ? "" : AccountTerms.longColumn(weekly: total?.longIsWeekly ?? false)
-    }
-    var label: String { [windowTitle, AccountTerms.left].filter { !$0.isEmpty }.joined(separator: " ") }
-    func accessibilityValue(status: UsageStatus, overallStatus: UsageStatus) -> String {
-        let window = metric.isIndeterminate ? metric.accessibilityValue : percentText + " " + AccountTerms.left + ", " + status.accessibilityStatusText
-        let coverage = total.map { ", " + AccountTerms.accountCount($0) } ?? ""
-        return window + "; overall provider status " + overallStatus.accessibilityStatusText + coverage
-    }
-}
-
-struct ProviderHeaderCard: View {
-    @ObservedObject var model: ContextPanelAppModel
-    let provider: Provider
-    let summaries: [MainLimitSummary]
-
-    private var providerStatus: UsageStatus {
-        providerStatusIncludingAccessAlerts(
-            provider: provider,
-            baseStatuses: summaries.map(\.status),
-            alerts: model.providerAccessAlerts
-        )
-    }
-
-    private var resetCreditSummary: ProviderResetCreditSurfaceSummary? {
-        guard provider == .openAI else { return nil }
-        return ResetCreditSurfaceAdvisor.appSummary(
-            reports: model.storedSnapshot?.reports ?? [],
-            limits: summaries.flatMap(\.limits),
-            now: Date()
-        )
-    }
-
-    var body: some View {
-        let now = Date()
-        let total = model.accountOverview(at: now).providerTotals(now: now).first { $0.provider == provider }
-        let capacity = ProviderHeaderCapacity(total: total)
-        let dialStatus = providerStatusIncludingAccessAlerts(provider: provider, baseStatuses: [capacity.pressure], alerts: model.providerAccessAlerts)
-        HStack(alignment: .center, spacing: 22) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    ProviderBadge(provider: provider)
-                    Text(provider.displayName)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(CPTheme.primaryText)
-                    StatusMark(status: providerStatus, size: 8)
-                        .accessibilityLabel(provider.accountDisplayName + " overall status, " + providerStatus.accessibilityStatusText)
-                        .help("Overall provider status: " + providerStatus.accessibilityStatusText)
-                }
-                Text(total.map { AccountTerms.sidebarRemaining($0) } ?? AccountTerms.unknown)
-                    .font(.system(size: 13))
-                    .foregroundStyle(CPTheme.secondaryText)
-                HStack(spacing: 8) {
-                    TagLabel("\(summaries.count) main windows")
-                    TagLabel("\(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
-                    if let resetCreditSummary {
-                        ResetCreditAvailabilityTag(summary: resetCreditSummary)
-                    }
-                    if model.storeStatus != .healthy {
-                        TagLabel(model.storeStatus.previewStatusText.capitalized)
-                    }
-                }
-            }
-            Spacer(minLength: 16)
-            MetricDial(
-                metric: capacity.metric,
-                status: dialStatus,
-                accessibilityName: [provider.accountDisplayName, capacity.windowTitle.lowercased(), total?.accountCount == 1 ? "remaining capacity" : "average remaining capacity"].filter { !$0.isEmpty }.joined(separator: " "),
-                sublabel: capacity.label,
-                displayText: capacity.percentText,
-                accessibilityValue: capacity.accessibilityValue(status: dialStatus, overallStatus: providerStatus),
-                size: 116
-            )
-        }
-        .padding(22)
-        .background(CPTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(CPTheme.stroke(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
-    }
-
-}
-
 struct SetupStatusStrip: View {
     @ObservedObject var model: ContextPanelAppModel
 
@@ -4921,7 +4861,7 @@ struct MediumWidgetPreview: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(title: "Main Limits", trailing: "\(snapshot.mainLimitSummaries.count) windows")
+                    SectionHeader(title: "Window details", trailing: "\(snapshot.mainLimitSummaries.count) windows")
                     ForEach(snapshot.mostConstrainedMainLimitSummaries.prefix(4)) { summary in
                         MainLimitRow(summary: summary, compact: true)
                     }
@@ -5273,7 +5213,7 @@ struct DetailCard<Content: View>: View {
             CPLabel(title)
             content
         }
-        .padding(14)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(CPTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
