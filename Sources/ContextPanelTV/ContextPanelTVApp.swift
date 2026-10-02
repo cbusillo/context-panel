@@ -259,7 +259,8 @@ struct TVAccountOverviewContent: View {
                 let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
                     ForEach(overview.accounts) { account in
-                        TVAccountOverviewCard(account: account, isNext: nextIDs.contains(account.id), now: now,
+                        TVAccountOverviewCard(account: account, deadlines: overview.deadlines.filter { $0.accountID == account.id },
+                                              isNext: nextIDs.contains(account.id), now: now,
                                               showsPace: AccountOverview.Account.hasBurn(in: overview)) {
                             openAccount(account.id)
                         }
@@ -283,6 +284,7 @@ struct TVAccountOverviewContent: View {
 
 private struct TVAccountOverviewCard: View {
     let account: AccountOverview.Account
+    let deadlines: [AccountOverview.Deadline]
     let isNext: Bool
     let now: Date
     let showsPace: Bool
@@ -291,7 +293,7 @@ private struct TVAccountOverviewCard: View {
     var body: some View {
         // Focus changes only the outline, so percentages never move.
         Button(action: open) {
-            TVAccountTile(account: account, isNext: isNext, now: now, showsPace: showsPace)
+            TVAccountTile(account: account, isNext: isNext, now: now, showsPace: showsPace, deadlines: deadlines)
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(isFocused ? Color.white : Color.white.opacity(0.16),
                                                                   lineWidth: isFocused ? 4 : 1))
         }.buttonStyle(.plain).focusEffectDisabled().focused($isFocused)
