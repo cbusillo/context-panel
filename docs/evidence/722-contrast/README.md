@@ -21,3 +21,17 @@ These gallery captures establish the current light/dark presentation, not Horizo
 Production baseline and companion cache preflight passed after install, with the canonical app, widget and refresh agent registered. Settings → Updates verified background refresh **ON**, every **5 min**. No data reset, entitlement change, widget placement reset or global appearance change.
 
 Anthropic `claude-opus-5-5` reviewed the focused source diff read-only. It confirmed the contrast repair and unchanged counts/expiry calculations. Its first wording findings were addressed in the retained account card and no-guidance spoken token. Further legacy visible/spoken terms, a provider-count qualifier, and a potential dark tinted-link issue remain recorded for the Horizon integration; these captures do not claim those are resolved.
+
+## Final functional follow-up
+
+Source `516e97f29dd5a9bd602680e313301163f60fe09e`, version 1.0.69 build **202610020115**, also aligns the remaining retained app/widget labels, singular count grammar, provider-specific hint and mixed-provider spoken qualifier. The new mixed-provider behavioral regression fails with the old qualifier and passes with the fix. The full gate passes **1,118 Swift tests**. Anthropic `claude-opus-5-5` found no actionable regression in this focused follow-up. Its optional literal-string-pinning suggestion was declined under the repository’s test rules; fallback widget wording and the authorization link are not claimed as screen-tested. No sign-in/browser flow was started.
+
+The final candidate was verified, installed at the canonical path and inspected at normal Settings size. The banked-tag palette is unchanged from the measured contrast repair above. The source-bound app fingerprint is `ad54e9b6724cf07b42103c997cc5e186bf14d26488f10a965957611d02c47c5f`; ZIP SHA-256 is `613de1b7c8a4a207c1ee7787ea2abb7f0abcd908964b7c8f12b1ce352da0441d`. All three signatures and unchanged entitlements verify, with Production CloudKit for the app and agent; runtime baseline and companion cache preflight pass.
+
+| Accounts at normal size | Background refresh after install |
+| --- | --- |
+| ![Final Settings account rows](settings-final.png) | ![Background refresh on at five minutes](background-on.png) |
+
+Three complete account rows fit, with the next row visible; the account list scrolls vertically. Names, ordering, removal and connection actions fit the pane. These captures do not demonstrate the previously unverified expanded Advanced disclosure. Background refresh was restored and verified ON at five minutes before the Mac locked. The foreground guard then stopped an additional legacy-view check; no blind input, unlock attempt or further preference change was made. The helper remained running and a fresh read-only Production baseline and companion cache preflight passed after the lock.
+
+Horizon is owned by draft #741. This functional lane did not commit its temporary overlapping Horizon prototype. The reproduced #741 missing-reset false-reassurance defect is recorded on #722 at comment 5943582956; pending Horizon integration and physical/hand acceptance remain separate from this candidate.
