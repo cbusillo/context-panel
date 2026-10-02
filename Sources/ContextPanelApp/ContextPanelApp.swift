@@ -937,18 +937,21 @@ struct SettingsPane: View {
         }, onEdit: { nameInputError = nil })
     }
     private func commitName(_ field: SettingsNameField) {
-        guard let draft = nameDrafts[field] else { return }
-        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.count <= 80 else { nameInputError = "Use a name of 80 characters or fewer."; return }
+        guard nameDrafts[field] != nil else { return }
+        let allowsEmpty: Bool
         switch field {
-        case let .account(id):
-            guard !value.isEmpty else { nameInputError = "Enter an account name."; return }
-            let members = Set((appModel.storedSnapshot?.reports ?? []).filter { $0.configuredAccountID == id }.map(\.accountID))
-            model.renameAccount(id, name: value, soleLogicalID: members.count == 1 ? members.first : nil)
-        case let .alias(id, logical): model.renameAccount(id, name: value, logicalID: logical)
+        case .account: allowsEmpty = false
+        case .alias: allowsEmpty = true
         }
-        nameDrafts.removeValue(forKey: field)
-        appModel.loadSnapshot(reloadWidgetTimelines: false)
+        nameInputError = AccountNameEditing.commit(for: field, drafts: $nameDrafts, allowsEmpty: allowsEmpty) { value in
+            switch field {
+            case let .account(id):
+                let members = Set((appModel.storedSnapshot?.reports ?? []).filter { $0.configuredAccountID == id }.map(\.accountID))
+                return model.renameAccount(id, name: value, soleLogicalID: members.count == 1 ? members.first : nil)
+            case let .alias(id, logical): return model.renameAccount(id, name: value, logicalID: logical)
+            }
+        }
+        if nameInputError == nil { appModel.loadSnapshot(reloadWidgetTimelines: false) }
     }
 
     private var widgetMainLimitListHeight: CGFloat {
@@ -2092,10 +2095,12 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         saveAccounts()
     }
 
-    func renameAccount(_ accountID: String, name: String, logicalID: String? = nil, soleLogicalID: String? = nil) {
-        guard !isRemovingAccount else { return }
+    @discardableResult
+    func renameAccount(_ accountID: String, name: String, logicalID: String? = nil, soleLogicalID: String? = nil) -> Bool {
+        guard !isRemovingAccount else { return false }
         guard name.count <= 80,
-              let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+              let index = accounts.firstIndex(where: { $0.id == accountID }) else { return false }
+        let previousAccounts = accounts
         if let logicalID {
             var aliases = accounts[index].accountAliases ?? [:]
             aliases[logicalID] = name.isEmpty ? nil : name
@@ -2104,7 +2109,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accounts[index].displayName = name
             if let soleLogicalID { accounts[index].accountAliases?[soleLogicalID] = nil }
         }
-        saveAccounts()
+        if saveAccounts() { return true }
+        accounts = previousAccounts
+        return false
     }
 
     func removeAccount(_ accountID: String, onRemoved: @escaping () -> Void) {
@@ -2239,8 +2246,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
-    private func saveAccounts() {
-        guard !isRemovingAccount else { return }
+    @discardableResult
+    private func saveAccounts() -> Bool {
+        guard !isRemovingAccount else { return false }
         do {
             let loaded = store.load()
             guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
@@ -2250,8 +2258,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             document.accounts = accounts
             try store.save(document)
             reloadContextPanelWidgetTimeline()
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
