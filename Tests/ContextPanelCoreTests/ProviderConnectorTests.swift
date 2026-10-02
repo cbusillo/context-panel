@@ -3539,3 +3539,23 @@ private func base64URLEncoded(_ data: Data) -> String {
     #expect(!http.requests.contains { $0.url.path == "/api/oauth/profile" })
     #expect(result.snapshot.limits.first?.configuredAccountID == "fake-setup")
 }
+
+@Test func codexSharedIdentityDoesNotChangeWhenPlanChanges() async throws {
+    let key = ProviderAccountIdentityKey.generate()
+    var identities: [SharedProviderAccountIdentity] = []
+    for plan in ["pro", "go", "plus", "team"] {
+        let claims: [String: Any] = ["https://api.openai.com/auth": [
+            "chatgpt_account_id": "fake-provider-account", "chatgpt_user_id": "fake-provider-user", "chatgpt_plan_type": plan]]
+        let token = "header." + base64URLEncoded(try JSONSerialization.data(withJSONObject: claims)) + ".signature"
+        let auth = try JSONSerialization.data(withJSONObject: ["tokens": [
+            "access_token": "fake-access", "account_id": "fake-provider-account", "id_token": token]])
+        let usage = Data(#"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#.utf8)
+        let connector = CodexRateLimitConnector(accounts: [CodexAccountConfiguration(authPath: "/fake/auth.json",
+            endpoint: URL(string: "https://example.invalid/usage")!)],
+            httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)]),
+            identityResolver: ProviderAccountIdentityResolver { key.identity(for: $0) }, fileLoader: { _ in auth })
+        let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_900_000_000))
+        identities.append(try #require(result.reports.first?.sharedAccountIdentity))
+    }
+    #expect(identities.allSatisfy { $0 == identities.first })
+}

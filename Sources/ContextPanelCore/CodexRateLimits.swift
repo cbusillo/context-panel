@@ -486,7 +486,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
         // A workspace alone must not join the usage of two different seats.
         guard personal || token.userID != nil else { return nil }
         return ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID,
-            identifier: providerID, scope: personal ? "" : "seat:" + (token.userID ?? ""))
+            identifier: providerID, scope: token.userID.map { "seat:" + $0 } ?? "")
     }
 
     private func resetCredits(
