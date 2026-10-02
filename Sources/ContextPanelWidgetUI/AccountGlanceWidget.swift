@@ -2,7 +2,8 @@ import ContextPanelCore
 import SwiftUI
 import WidgetKit
 
-/// Account widgets: every account's 5h and weekly room, pace, the next reset or run-out, and banked deadlines.
+/// Account widgets in the Horizon design: one plain sentence first, a "use next" account per provider,
+/// and each account's weekly window as one shape draining toward its reset. Hatched red is the only red.
 struct AccountGlanceWidget: View {
     @Environment(\.cpwThemeVariant) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -17,24 +18,22 @@ struct AccountGlanceWidget: View {
     private var palette: GlancePalette {
         GlancePalette(dark: theme == .dark || (theme == .adaptive && colorScheme == .dark))
     }
-    private var nextIDs: Set<String> {
-        Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
-    }
 
     var body: some View {
         let overview = overview
         Group {
             if overview.accounts.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(snapshot.accountDisplayMetadata?.isEmpty == false ? "No accounts shown" : "Add your first account")
+                    Text(AccountTerms.widgetTitle).font(.system(size: 12, weight: .semibold))
+                    Spacer(minLength: 0)
+                    Text(snapshot.accountDisplayMetadata?.isEmpty == false ? "No accounts shown" : AccountTerms.addFirstAccount)
                         .font(.system(size: 14, weight: .semibold))
                     Text("Open Context Panel to set up accounts.").font(.system(size: 11)).foregroundStyle(palette.secondary)
                 }
             } else {
                 switch family {
                 case .systemSmall:
-                    if overview.accounts.count <= 2 { spotlight(overview.closest ?? overview.accounts[0], overview: overview) }
-                    else { ringGrid(overview) }
+                    small(overview)
                 case .systemLarge, .systemExtraLarge:
                     large(overview)
                 default:
@@ -48,222 +47,188 @@ struct AccountGlanceWidget: View {
         .background(palette.surface)
     }
 
-    // MARK: Small
+    // MARK: Shared pieces
 
-    /// One row per provider: its mark, then a ring per account (tightest % left), so which
-    /// account belongs to which provider reads without words.
-    private func ringGrid(_ overview: AccountOverview) -> some View {
-        let shown = Set(overview.accounts.prefix(6).map(\.id))
-        let names = overview.shortLabels
-        let groups = Provider.allCases.map { provider in overview.accounts.filter { $0.metadata.provider == provider && shown.contains($0.id) } }
-            .filter { !$0.isEmpty }
-        let ring: CGFloat = groups.count > 2 ? 23 : 29
-        return VStack(alignment: .leading, spacing: groups.count > 2 ? 3 : 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(AccountTerms.widgetTitle).font(.system(size: 11, weight: .semibold)).lineLimit(1)
-                if overview.accounts.count > shown.count {
-                    Text("+\(overview.accounts.count - shown.count)").font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(palette.secondary)
-                }
-                Spacer(minLength: 0)
-                Text(AccountTerms.percentLeft).font(.system(size: 8.5, weight: .medium)).foregroundStyle(palette.tertiary)
-            }
-            ForEach(groups, id: \.first!.id) { group in
-                HStack(alignment: .top, spacing: 4) {
-                    GlanceProviderMark(provider: group[0].metadata.provider, palette: palette, size: 13).padding(.top, (ring - 13) / 2)
-                    ForEach(group) { account in
-                        VStack(spacing: 1) {
-                            ZStack {
-                                GlanceRing(fraction: account.remainingFraction, color: palette.color(for: account),
-                                           track: palette.track, lineWidth: 3)
-                                Text(AccountNumbers.account(account, sign: false))
-                                    .font(.system(size: 9.5, weight: .semibold, design: .rounded)).monospacedDigit()
-                                    .minimumScaleFactor(0.8)
-                            }
-                            .frame(width: ring, height: ring)
-                            .overlay(alignment: .topTrailing) {
-                                if nextIDs.contains(account.id) {
-                                    Circle().fill(palette.next).frame(width: 6.5, height: 6.5)
-                                        .overlay(Circle().stroke(palette.surface, lineWidth: 1.5))
-                                }
-                            }
-                            Text(names[account.id] ?? account.metadata.label).font(.system(size: 7.5, weight: .medium)).lineLimit(1)
-                                .foregroundStyle(palette.secondary).frame(width: ring + 10)
-                        }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            Spacer(minLength: 0)
-            if showsBanked, let deadline = overview.nextDeadline {
-                bankedLine(deadline, compact: true)
-            } else if let runOut = overview.accounts.compactMap({ a in a.earliestRunOut(now: now).map { (a, $0.date) } }).min(by: { $0.1 < $1.1 }) {
-                HStack(spacing: 4) {
-                    Image(systemName: AccountGlyphs.runOut).font(.system(size: 8))
-                    Text("\(runOut.0.metadata.label) out \(AccountPaceText.approximately(runOut.1, now: now))").lineLimit(1)
-                }.font(.system(size: 9, weight: .medium)).foregroundStyle(palette.bad)
+    /// Each provider with accounts, and its account to use next (nil when none is eligible).
+    private func picks(_ overview: AccountOverview) -> [(provider: Provider, account: AccountOverview.Account?)] {
+        Provider.allCases.compactMap { provider in
+            overview.accounts.contains { $0.metadata.provider == provider } ? (provider, overview.useNext(provider: provider)) : nil
+        }
+    }
+
+    /// Week percent from the window the horizon follows, keeping "≈" for assumed capacity.
+    private func weekPercent(_ horizon: AccountHorizon, account: AccountOverview.Account) -> String {
+        horizon.window.map { AccountNumbers.window($0) } ?? AccountNumbers.account(account)
+    }
+
+    private func horizonView(_ account: AccountOverview.Account, _ horizon: AccountHorizon, in overview: AccountOverview) -> some View {
+        let deadlines = showsBanked ? overview.deadlines.filter { $0.accountID == account.id && $0.state == .available } : []
+        return HorizonShape(geometry: horizon.remaining == nil ? nil : horizon.geometry(now: now, deadlines: deadlines),
+                            hue: horizon.isCurrent ? palette.provider(account.metadata.provider) : palette.stale,
+                            palette: palette)
+    }
+
+    /// Red only for "runs out before reset"; the saved colour for readings that are not current.
+    private func outcomeColor(_ account: AccountOverview.Account, _ horizon: AccountHorizon) -> Color {
+        if horizon.runsOutBeforeReset { return palette.bad }
+        return horizon.isCurrent ? palette.secondary : palette.color(AccountTone.forAccount(account).textToken)
+    }
+
+    private func headline(_ overview: AccountOverview) -> (lead: String, rest: String, short: Bool) {
+        let headline = overview.headline(now: now)
+        let words = AccountTerms.compactHeadline(headline)
+        return (words.lead, words.rest, headline.shortCount > 0)
+    }
+
+    private func header(trailing: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(AccountTerms.widgetTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            Spacer(minLength: 4)
+            if let trailing {
+                Text(trailing).font(.system(size: 10, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(palette.secondary).lineLimit(1)
             }
         }
     }
 
-    private func spotlight(_ account: AccountOverview.Account, overview: AccountOverview) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(AccountTerms.widgetTitle).font(.system(size: 11, weight: .semibold)).lineLimit(1)
-            HStack(spacing: 5) {
-                GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 12)
-                Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
-                Spacer(minLength: 0)
-                GlanceStatusMark(state: account.state, palette: palette)
+    private var nextUpWord: String { AccountTerms.useNext.lowercased() }
+
+    // MARK: Small
+
+    /// One row per provider: its name in its hue, the account to use next and its week left; the
+    /// headline's lead at the bottom, red only when something runs out before its reset.
+    private func small(_ overview: AccountOverview) -> some View {
+        let picks = picks(overview).filter { $0.account != nil }
+        let headline = headline(overview)
+        let roomy = picks.count <= 2
+        return VStack(alignment: .leading, spacing: 0) {
+            header(trailing: picks.isEmpty ? nil : nextUpWord).padding(.bottom, 5)
+            if picks.isEmpty {
+                Text(AccountTerms.noEligibleAccount).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(account.remainingText).font(.system(size: 30, weight: .semibold, design: .rounded)).monospacedDigit()
-                Text(AccountTerms.left).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
-            }
-            ForEach(account.orderedWindows) { window in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(window.shortLabel).font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.secondary)
-                        Spacer(minLength: 0)
-                        Text(AccountTerms.reset(window, now: now) ?? "—")
-                            .font(.system(size: 9)).monospacedDigit().foregroundStyle(palette.secondary)
-                    }
-                    GlanceMeter(fraction: window.remainingFraction, even: window.evenPaceRemaining(now: now), palette: palette, height: 4)
+            VStack(alignment: .leading, spacing: roomy ? 8 : 4) {
+                ForEach(picks, id: \.provider) { pick in
+                    if let account = pick.account { smallRow(account, roomy: roomy, overview: overview) }
                 }
             }
-            Spacer(minLength: 0)
-            if showsBanked, let deadline = overview.nextDeadline { bankedLine(deadline, compact: true) }
+            Spacer(minLength: 2)
+            if showsBanked, let deadline = overview.nextDeadline {
+                // The next banked expiry, as before Horizon: "Fri 2:27 PM in 1d 0h".
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    BankedDiamond(palette: palette, size: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 0.5 }
+                    Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold)
+                    Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).foregroundStyle(palette.secondary)
+                }
+                .font(.system(size: 9.5)).monospacedDigit().lineLimit(1).padding(.bottom, 2)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Banked reset for \(deadline.label) expires \(ContextPanelDateFormatting.accountReset(deadline.expiresAt))")
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if headline.short {
+                    Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
+                }
+                Text(headline.lead)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(headline.short ? palette.bad : palette.secondary)
+                    .lineLimit(1).fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel([headline.lead, headline.rest].filter { !$0.isEmpty }.joined(separator: " "))
+        }
+    }
+
+    private func smallRow(_ account: AccountOverview.Account, roomy: Bool, overview: AccountOverview) -> some View {
+        let horizon = account.horizon(now: now)
+        let provider = account.metadata.provider
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(provider.accountDisplayName).font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(palette.provider(provider)).lineLimit(1)
+                Spacer(minLength: 2)
+                Text(weekPercent(horizon, account: account)).font(.system(size: 12, weight: .bold)).monospacedDigit()
+            }
+            Text(account.metadata.label).font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+            if roomy {
+                horizonView(account, horizon, in: overview).frame(height: 9).padding(.top, 2)
+                Text(AccountTerms.outcomeShort(account, horizon, now: now))
+                    .font(.system(size: 9.5, weight: horizon.runsOutBeforeReset ? .semibold : .regular))
+                    .foregroundStyle(outcomeColor(account, horizon)).lineLimit(1)
+            }
+        }
+        .padding(.leading, 6)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1).fill(palette.provider(provider)).frame(width: 2)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: true))
     }
 
     // MARK: Medium
 
-    /// The combined strip is dropped before any account row or the banked deadline when height runs short.
+    /// A calm "use next" card per provider: name in its hue, the account, its week left, its horizon and
+    /// the provider's outlook, which is red only when one of its accounts runs out before its reset.
     private func medium(_ overview: AccountOverview) -> some View {
-        let combined = overview.providerTotals(now: now).filter(\.isCombined)
-        return ViewThatFits(in: .vertical) {
-            mediumContent(overview, combined: combined)
-            mediumContent(overview, combined: [])
-        }
-    }
-
-    private func mediumContent(_ overview: AccountOverview, combined: [AccountProviderTotal]) -> some View {
-        let showsDeadline = showsBanked && overview.nextDeadline != nil
-        let rows = Array(overview.accounts.prefix(showsDeadline ? 6 : 7))
-        return VStack(alignment: .leading, spacing: 0) {
-            columnHeader(title: AccountTerms.widgetTitle + (overview.accounts.count > rows.count ? " +\(overview.accounts.count - rows.count)" : ""),
-                         trailing: AccountTerms.next.capitalized, compact: true)
-                .padding(.bottom, 3)
-            ForEach(rows) { account in
-                Link(destination: links.account(account.metadata.provider, id: account.id)) {
-                    compactRow(account)
+        let picks = picks(overview)
+        let totals = overview.providerTotals(now: now)
+        return VStack(alignment: .leading, spacing: 6) {
+            header(trailing: nextUpWord + " · " + AccountPaceText.when(now, now: now))
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(picks, id: \.provider) { pick in
+                    let card = mediumCard(pick.provider, account: pick.account,
+                                          total: totals.first { $0.provider == pick.provider }, overview: overview)
+                    Link(destination: pick.account.map { links.account(pick.provider, id: $0.id) } ?? links.overview) { card }
+                        .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
-            Spacer(minLength: 2)
-            if !combined.isEmpty {
-                combinedStrip(combined).padding(.bottom, 2)
-            }
-            if showsDeadline, let deadline = overview.nextDeadline {
-                Link(destination: links.deadlines) { bankedLine(deadline, compact: false, total: overview.deadlines.filter { $0.state == .available }.count) }
-                    .buttonStyle(.plain)
-            } else if overview.accounts.count > rows.count {
-                Link("+\(overview.accounts.count - rows.count) more", destination: links.overview)
-                    .font(.system(size: 9, weight: .medium)).foregroundStyle(palette.secondary)
-            }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 
-    private func columnHeader(title: String, trailing: String, compact: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text(title).font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
-            Group {
-                Text(AccountTerms.longColumn(weekly: overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 }))
-                    .frame(width: 52, alignment: .leading)
-                Text(AccountTerms.fiveHour).frame(width: 44, alignment: .leading)
-                Text(trailing).frame(width: 84, alignment: .trailing)
-            }
-            .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
-        }
-    }
-
-    private func compactRow(_ account: AccountOverview.Account) -> some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 4) {
-                GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 12)
-                Text(account.metadata.label).font(.system(size: 10.5, weight: .medium)).lineLimit(1)
-                // The provider mark leads; status is marked only when it is not the normal one.
-                if account.state != .available { GlanceStatusMark(state: account.state, palette: palette) }
-                if nextIDs.contains(account.id) { NextMark(palette: palette) }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            windowCell(account, window: weekly(account), width: 52)
-            windowCell(account, window: fiveHour(account), width: 44)
-            trailingTime(account).frame(width: 84, alignment: .trailing)
-        }
-        .frame(height: 15.5)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
-        .accessibilityHint("Opens this account")
-    }
-
-    private func windowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?, width: CGFloat) -> some View {
-        HStack(spacing: 4) {
-            Text(window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
-                .font(.system(size: 10, weight: window?.id == account.limitingWindow?.id ? .bold : .regular).monospacedDigit())
-                .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
-                .frame(width: 20, alignment: .trailing)
-            GlanceMeter(fraction: window?.remainingFraction, even: window?.evenPaceRemaining(now: now), palette: palette, height: 4)
-        }
-        .frame(width: width)
-    }
-
-    @ViewBuilder
-    private func trailingTime(_ account: AccountOverview.Account) -> some View {
-        if let runOut = account.earliestRunOut(now: now) {
-            HStack(spacing: 2) {
-                Image(systemName: AccountGlyphs.runOut).font(.system(size: 7))
-                Text(AccountPaceText.approximately(runOut.date, now: now)).monospacedDigit()
-            }
-            .font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.bad).lineLimit(1)
-        } else if [.stale, .unavailable].contains(account.state) {
-            Text(AccountTerms.accountTiming(account, now: now))
-                .font(.system(size: 9.5)).foregroundStyle(palette.stale).lineLimit(1)
+    private func mediumCard(_ provider: Provider, account: AccountOverview.Account?, total: AccountProviderTotal?,
+                            overview: AccountOverview) -> some View {
+        let horizon = account?.horizon(now: now)
+        let summary = total.map { AccountTerms.providerSummary($0, now: now) }
+        // Red "1 of 3 runs out before reset" when some account here runs short; else the pick's spare.
+        let outlook: (text: String, short: Bool)? = if let summary, summary.isShort {
+            (summary.outlook, true)
+        } else if let account, let horizon, horizon.isCurrent {
+            (AccountTerms.outcomeShort(account, horizon, now: now), false)
         } else {
-            Text(account.limitingWindow.flatMap { AccountTerms.reset($0, now: now) } ?? account.state.displayText)
-                .font(.system(size: 9.5)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
+            summary.map { ($0.outlook, false) }
         }
-    }
-
-    /// Combined room per provider with more than one account: mark, week % left, and its outlook.
-    private func combinedStrip(_ totals: [AccountProviderTotal]) -> some View {
-        HStack(spacing: 10) {
-            Text(AccountTerms.combined).font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
-            ForEach(totals) { total in
-                HStack(spacing: 3) {
-                    GlanceProviderMark(provider: total.provider, palette: palette, size: 10)
-                    Text(AccountNumbers.percentWithSign(total.longRemaining)).fontWeight(.semibold).monospacedDigit()
-                        .foregroundStyle(palette.color(AccountTone.forRemaining(total.longRemaining).textToken))
-                    if !AccountTerms.countedSuffix(total).isEmpty {
-                        Text(AccountTerms.countedSuffix(total)).foregroundStyle(palette.secondary)
-                    }
-                    if total.runningOutCount > 0 {
-                        Text(AccountTerms.combinedOutlook(total, now: now)).foregroundStyle(palette.bad)
-                    } else if total.paceRatio != nil {
-                        Text(AccountPaceText.ratio(total.paceRatio)).foregroundStyle(palette.paceColor(total.paceRatio))
-                    }
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(provider.accountDisplayName).font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(palette.provider(provider)).lineLimit(1)
+            if let account, let horizon {
+                Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(2, reservesSpace: true)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 1)
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(weekPercent(horizon, account: account)).font(.system(size: 22, weight: .bold, design: .rounded))
+                        .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                    Text(AccountTerms.left).font(.system(size: 10, weight: .medium)).foregroundStyle(palette.secondary)
                 }
-                .lineLimit(1)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(total.accessibilityText(now: now))
+                horizonView(account, horizon, in: overview).frame(height: 10).padding(.top, 2)
+            } else {
+                Text(AccountTerms.noEligibleAccount).font(.system(size: 10)).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+            }
+            if let outlook {
+                Text(outlook.text).font(.system(size: 9.5, weight: outlook.short ? .semibold : .regular))
+                    .foregroundStyle(outlook.short ? palette.bad : palette.secondary)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true).padding(.top, 3)
             }
             Spacer(minLength: 0)
         }
-        .font(.system(size: 9.5))
+        .padding(.horizontal, 7).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.nextSurface))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([account.map { $0.glanceAccessibilityText(now: now, isNext: true) }
+                                ?? provider.accountDisplayName + ", " + AccountTerms.noEligibleAccount,
+                             total.map { $0.accessibilityText(now: now) }].compactMap { $0 }.joined(separator: ". "))
+        .accessibilityHint(account == nil ? "Opens Context Panel" : "Opens this account")
     }
 
     // MARK: Large
@@ -271,165 +236,138 @@ struct AccountGlanceWidget: View {
     private func large(_ overview: AccountOverview) -> some View {
         let rows = Array(overview.accounts.prefix(6))
         let totals = overview.providerTotals(now: now)
+        let headline = headline(overview)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(AccountTerms.widgetTitle).font(.system(size: 12, weight: .semibold))
-                if overview.accounts.count > rows.count {
-                    Text("+\(overview.accounts.count - rows.count)").font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(palette.secondary)
-                }
-                Spacer()
-                Text([AccountTerms.longColumn(weekly: overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 }),
-                      AccountTerms.fiveHour, AccountTerms.pace.lowercased()].joined(separator: " · "))
-                    .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(palette.tertiary)
-            }
-            .padding(.bottom, 3)
-            ForEach(totals) { total in
-                let members = rows.filter { $0.metadata.provider == total.provider }
-                if !members.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if total.isCombined {
-                            largeCombinedRow(total)
-                        }
-                        ForEach(members) { account in
-                            if account.id != members.first?.id { Rectangle().fill(palette.line).frame(height: 0.5).padding(.leading, 18) }
-                            Link(destination: links.account(account.metadata.provider, id: account.id)) {
-                                largeRow(account, showsMark: !total.isCombined)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.leading, 5)
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1).fill(palette.provider(total.provider)).frame(width: 2).padding(.vertical, 2)
-                    }
-                    .padding(.vertical, 1)
+            header(trailing: AccountPaceText.when(now, now: now)
+                + (overview.accounts.count > rows.count ? " · +\(overview.accounts.count - rows.count)" : ""))
+                .padding(.bottom, 3)
+            (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.primary)
+                + Text(headline.rest.isEmpty ? "" : " " + headline.rest).foregroundStyle(palette.secondary))
+                .font(.system(size: 13.5, weight: .semibold)).lineLimit(2).minimumScaleFactor(0.85)
+                .padding(.bottom, 5)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(totals) { total in
+                    let members = rows.filter { $0.metadata.provider == total.provider }
+                    if !members.isEmpty { largeGroup(total, members: members, overview: overview) }
                 }
             }
             Spacer(minLength: 3)
-            if showsBanked, !overview.deadlines.isEmpty {
-                Link(destination: links.deadlines) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(overview.deadlines.prefix(3)) { deadline in
-                            HStack(spacing: 5) {
-                                Image(systemName: AccountGlyphs.banked).foregroundStyle(palette.banked)
-                                Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold).monospacedDigit()
-                                    .frame(width: 84, alignment: .leading)
-                                Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).monospacedDigit()
-                                    .foregroundStyle(palette.secondary).frame(width: 52, alignment: .leading)
-                                Text(AccountTerms.deadlineLabel(deadline)).foregroundStyle(palette.secondary).lineLimit(1)
-                            }
-                        }
-                    }
-                    .font(.system(size: 9.5))
+            if showsBanked { largeCallout(overview) }
+        }
+    }
+
+    private func largeGroup(_ total: AccountProviderTotal, members: [AccountOverview.Account], overview: AccountOverview) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(total.provider.accountDisplayName).font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(palette.provider(total.provider))
+                Spacer(minLength: 2)
+                Text(groupFacts(total)).font(.system(size: 9)).foregroundStyle(palette.secondary).lineLimit(1)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(total.accessibilityText(now: now))
+            ForEach(members) { account in
+                Link(destination: links.account(account.metadata.provider, id: account.id)) {
+                    largeRow(account, overview: overview)
                 }
                 .buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 7).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(palette.provider(total.provider).opacity(palette.dark ? 0.10 : 0.07)))
     }
 
-    /// A provider's combined room as the first line of its group.
-    private func largeCombinedRow(_ total: AccountProviderTotal) -> some View {
-        HStack(spacing: 5) {
-            GlanceProviderMark(provider: total.provider, palette: palette, size: 11)
-            Text(total.provider.accountDisplayName).font(.system(size: 10.5, weight: .bold))
-            Text(AccountNumbers.percentWithSign(total.longRemaining)).font(.system(size: 10.5, weight: .bold)).monospacedDigit()
-                .foregroundStyle(palette.color(AccountTone.forRemaining(total.longRemaining).textToken))
-            GlanceMeter(fraction: total.longRemaining, even: total.evenPaceRemaining, palette: palette, height: 3.5)
-                .frame(width: 46)
-            Text(AccountNumbers.percentWithSign(total.shortRemaining)).font(.system(size: 9)).monospacedDigit()
-                .foregroundStyle(palette.secondary)
-            if !AccountTerms.countedSuffix(total).isEmpty {
-                Text(AccountTerms.countedSuffix(total)).font(.system(size: 8.5)).foregroundStyle(palette.secondary)
-            }
-            Spacer(minLength: 2)
-            Text(AccountTerms.combinedOutlook(total, now: now)).font(.system(size: 8.5, weight: total.runningOutCount == 0 ? .regular : .semibold))
-                .foregroundStyle(total.runningOutCount == 0 ? palette.secondary : palette.bad).lineLimit(1)
-            Text(AccountPaceText.ratio(total.paceRatio)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                .foregroundStyle(palette.paceColor(total.paceRatio)).frame(width: 30, alignment: .trailing)
+    /// "3 accounts · 59% left on average"; burn and pace are carried by the shapes instead.
+    private func groupFacts(_ total: AccountProviderTotal) -> String {
+        var facts = [AccountTerms.accountCount(total)]
+        if total.isCombined, let long = total.longRemaining {
+            facts.append(AccountNumbers.percentWithSign(long) + " " + AccountTerms.leftOnAverage)
         }
-        .padding(.vertical, 3).padding(.horizontal, 4)
-        .background(RoundedRectangle(cornerRadius: 4).fill(palette.provider(total.provider).opacity(palette.dark ? 0.14 : 0.08)))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(total.accessibilityText(now: now))
+        return facts.joined(separator: " · ")
     }
 
-    private func largeRow(_ account: AccountOverview.Account, showsMark: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 5) {
-                if showsMark { GlanceProviderMark(provider: account.metadata.provider, palette: palette, size: 11) }
-                GlanceStatusMark(state: account.state, palette: palette)
+    private func largeRow(_ account: AccountOverview.Account, overview: AccountOverview) -> some View {
+        let horizon = account.horizon(now: now)
+        let provider = account.metadata.provider
+        let next = overview.useNext(provider: provider)?.id == account.id
+        return HStack(alignment: .center, spacing: 5) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
-                if nextIDs.contains(account.id) { NextTag(palette: palette) }
-                if let count = account.bankedResets?.availableCount, count > 0, showsBanked {
-                    HStack(spacing: 2) {
-                        Image(systemName: AccountGlyphs.bankedSmall).font(.system(size: 7, weight: .bold))
-                        Text("\(count)")
+                // "next" (or a quiet "use last") leads the second line so the name keeps the first line.
+                ViewThatFits(in: .horizontal) {
+                    secondaryLine(account, horizon: horizon, next: next, withRefill: true)
+                    secondaryLine(account, horizon: horizon, next: next, withRefill: false)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(weekPercent(horizon, account: account)).font(.system(size: 11.5, weight: .bold)).monospacedDigit()
+                .foregroundStyle(horizon.isCurrent ? palette.primary : palette.secondary)
+                .lineLimit(1).frame(width: 30, alignment: .trailing)
+            horizonView(account, horizon, in: overview).frame(width: 50, height: 13)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(AccountTerms.outcomeShort(account, horizon, now: now))
+                    .font(.system(size: 9.5, weight: horizon.runsOutBeforeReset ? .semibold : .regular))
+                    .foregroundStyle(outcomeColor(account, horizon))
+                if horizon.isCurrent, let reset = horizon.window.flatMap({ AccountTerms.reset($0, now: now) }) {
+                    ViewThatFits(in: .horizontal) {
+                        Text(AccountTerms.resets + " " + reset)
+                        Text(reset)
                     }
-                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.banked)
+                    .font(.system(size: 8)).foregroundStyle(palette.tertiary)
                 }
-                Spacer(minLength: 2)
-                if let runOut = account.earliestRunOut(now: now) {
-                    Text(AccountTerms.runOut(runOut.date, now: now))
-                        .font(.system(size: 9, weight: .semibold)).monospacedDigit().foregroundStyle(palette.bad).lineLimit(1)
-                }
-                Text(AccountPaceText.ratio(account.paceRatio(now: now)))
-                    .font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(paceColor(account)).frame(width: 30, alignment: .trailing)
             }
-            HStack(spacing: 10) {
-                largeWindowCell(account, window: weekly(account))
-                largeWindowCell(account, window: fiveHour(account))
-            }
-            .padding(.leading, 14)
+            .monospacedDigit().lineLimit(1).frame(width: 93, alignment: .trailing)
         }
-        .padding(.vertical, 3).padding(.leading, 4)
+        .padding(.vertical, 2.5)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: nextIDs.contains(account.id)))
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: next))
         .accessibilityHint("Opens this account")
     }
 
-    private func largeWindowCell(_ account: AccountOverview.Account, window: AccountOverview.Window?) -> some View {
-        HStack(spacing: 4) {
-            Text(window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
-                .font(.system(size: 11, weight: window?.id == account.limitingWindow?.id ? .bold : .medium).monospacedDigit())
-                .foregroundStyle(window.map { palette.textColor(for: $0) } ?? palette.tertiary)
-                .frame(width: 22, alignment: .trailing)
-            if let window { GlanceMeter(fraction: window.remainingFraction, even: window.evenPaceRemaining(now: now), palette: palette, height: 3.5) }
-            Text(window.flatMap { AccountTerms.reset($0, now: now) } ?? "")
-                .font(.system(size: 8)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
-                .frame(width: 86, alignment: .trailing)
+    /// Under the name: "next" or "use last", then the 5-hour window's room and refill for current
+    /// readings, or the saved time for readings that are not current.
+    private func secondaryLine(_ account: AccountOverview.Account, horizon: AccountHorizon, next: Bool, withRefill: Bool) -> some View {
+        var facts: [String] = []
+        if !horizon.isCurrent {
+            facts.append(AccountTerms.accountTiming(account, now: now))
+        } else if let short = account.shortWindow, short.remainingFraction != nil {
+            facts.append(AccountTerms.fiveHour + " " + AccountNumbers.window(short))
+            if withRefill { facts.append(AccountTerms.refill(short, now: now)) }
         }
-        .frame(maxWidth: .infinity)
+        let tag: Text? = next
+            ? Text(AccountTerms.next.lowercased()).fontWeight(.semibold).foregroundStyle(palette.provider(account.metadata.provider))
+            : account.metadata.useLast ? Text(AccountTerms.useLast.lowercased()).foregroundStyle(palette.tertiary) : nil
+        let rest = Text((tag == nil || facts.isEmpty ? "" : " · ") + facts.joined(separator: " · ")).foregroundStyle(palette.secondary)
+        return (tag.map { $0 + rest } ?? rest)
+            .font(.system(size: 8.5)).monospacedDigit().lineLimit(1).fixedSize()
     }
 
-    // MARK: Shared
-
-    private func fiveHour(_ account: AccountOverview.Account) -> AccountOverview.Window? { account.shortWindow }
-
-    private func weekly(_ account: AccountOverview.Account) -> AccountOverview.Window? { account.longWindow }
-
-    private func paceColor(_ account: AccountOverview.Account) -> Color { palette.paceColor(account.paceRatio(now: now)) }
-
-    private func bankedLine(_ deadline: AccountOverview.Deadline, compact: Bool, total: Int = 0) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: AccountGlyphs.banked).font(.system(size: compact ? 9 : 10))
-                .foregroundStyle(palette.banked)
-            if compact {
-                Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold).monospacedDigit()
-                Text(AccountPaceText.countdown(to: deadline.expiresAt, now: now)).foregroundStyle(palette.secondary)
-            } else {
-                Text(AccountTerms.bankedResetExpires).foregroundStyle(palette.secondary)
-                Text(AccountPaceText.when(deadline.expiresAt, now: now)).fontWeight(.semibold).monospacedDigit()
-                Text("· " + deadline.label).foregroundStyle(palette.secondary)
-                Spacer(minLength: 0)
-                if total > 1 { Text("+\(total - 1)").foregroundStyle(palette.tertiary) }
+    /// The single callout: a banked reset that lapses before its account runs out; else the next banked expiry.
+    @ViewBuilder
+    private func largeCallout(_ overview: AccountOverview) -> some View {
+        let lapsing = overview.runningShort(now: now).lazy.compactMap { overview.bankedBeforeRunOut($0.account, now: now) }.first
+        if let deadline = lapsing ?? overview.nextDeadline {
+            let others = overview.deadlines.filter { $0.state == .available }.count - 1
+            Link(destination: links.deadlines) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    BankedDiamond(palette: palette, size: 6.5).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                    (Text(deadline.label + " · ").foregroundStyle(palette.primary)
+                        + Text(lapsing != nil ? AccountTerms.bankedBeforeRunOut(deadline, now: now)
+                            : AccountTerms.bankedResetExpires + " " + AccountPaceText.when(deadline.expiresAt, now: now))
+                            .foregroundStyle(palette.secondary))
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if others > 0 { Text("+\(others)").foregroundStyle(palette.tertiary) }
+                }
+                .font(.system(size: 9.5))
             }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Banked reset for \(deadline.label) expires \(ContextPanelDateFormatting.accountReset(deadline.expiresAt))"
+                + (lapsing != nil ? ", before it runs out" : ""))
         }
-        .font(.system(size: compact ? 9 : 9.5)).lineLimit(1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Banked reset for \(deadline.label) expires \(ContextPanelDateFormatting.accountReset(deadline.expiresAt))")
     }
 }
 
@@ -451,116 +389,93 @@ struct GlancePalette {
     var tertiary: Color { color(.tertiary) }
     var line: Color { color(.line) }
     var track: Color { color(.track) }
-    var fill: Color { color(.fill) }
-    var good: Color { color(.available) }
-    var warn: Color { color(.low) }
     var bad: Color { color(.critical) }
     var stale: Color { color(.saved) }
     var banked: Color { color(.banked) }
-    var next: Color { color(.next) }
+    var nextSurface: Color { color(.nextSurface) }
 
-    func color(forRemaining fraction: Double?) -> Color { color(AccountTone.forRemaining(fraction).fillToken) }
-    func color(for account: AccountOverview.Account) -> Color { color(AccountTone.forAccount(account).fillToken) }
-    func textColor(for window: AccountOverview.Window) -> Color {
-        color(AccountTone.forRemaining(window.remainingFraction).textToken)
-    }
-    func paceColor(_ ratio: Double?) -> Color { color(AccountTone.forPace(ratio)) }
     func provider(_ provider: Provider) -> Color { color(provider.colorToken) }
-    var markInk: Color { color(.markInk) }
 }
 
-/// The provider's letter on its colour, the same mark as the app.
-struct GlanceProviderMark: View {
-    let provider: Provider
+/// One account's weekly window across the next seven days: what is left draining at the observed burn,
+/// hatched red if it empties before the reset, the reset mark, then full again. Drawn from
+/// `AccountHorizonGeometry`; nil geometry (no reading) draws only the track.
+struct HorizonShape: View {
+    let geometry: AccountHorizonGeometry?
+    let hue: Color
     let palette: GlancePalette
-    let size: CGFloat
 
     var body: some View {
-        Text(provider.markLetter).font(.system(size: size * 0.66, weight: .bold, design: .rounded))
-            .foregroundStyle(palette.markInk)
-            .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(palette.provider(provider)))
-            .accessibilityHidden(true)
-    }
-}
-
-/// Remaining share as a bar, with a tick where an even spend would be now.
-struct GlanceMeter: View {
-    let fraction: Double?
-    let even: Double?
-    let palette: GlancePalette
-    let height: CGFloat
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let filled = fraction ?? 0
-            ZStack(alignment: .leading) {
-                Capsule().fill(palette.track)
-                Capsule().fill(palette.color(forRemaining: fraction))
-                    .frame(width: max(filled > 0 ? height : 0, width * filled))
-                if let even {
-                    Rectangle().fill(palette.primary.opacity(0.75))
-                        .frame(width: 1.5, height: height + 4)
-                        .offset(x: min(width - 1.5, max(0, width * even - 0.75)))
-                }
+        Canvas { context, size in
+            let width = size.width, height = size.height
+            func x(_ fraction: Double) -> CGFloat { CGFloat(fraction) * width }
+            func y(_ level: Double) -> CGFloat { height * CGFloat(1 - min(1, max(0, level))) }
+            let resetX = geometry?.resetX ?? 1
+            context.clip(to: Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 2.5))
+            context.fill(Path(CGRect(x: 0, y: 0, width: x(resetX), height: height)), with: .color(palette.track))
+            guard let geometry else { return }
+            for day in geometry.dayXs where day < resetX {
+                context.fill(Path(CGRect(x: x(day) - 0.25, y: 0, width: 0.5, height: height)), with: .color(palette.line))
             }
-            .frame(height: height + 4)
+            if let reset = geometry.resetX, reset < 1 {
+                context.fill(Path(CGRect(x: x(reset), y: 0, width: width - x(reset), height: height)), with: .color(hue.opacity(0.13)))
+            }
+            var fill = Path()
+            fill.move(to: CGPoint(x: 0, y: height))
+            fill.addLine(to: CGPoint(x: 0, y: y(geometry.startLevel)))
+            fill.addLine(to: CGPoint(x: x(geometry.fillEndX), y: y(geometry.fillEndLevel)))
+            fill.addLine(to: CGPoint(x: x(geometry.fillEndX), y: height))
+            fill.closeSubpath()
+            context.fill(fill, with: .linearGradient(Gradient(colors: [hue.opacity(0.95), hue.opacity(0.45)]),
+                                                     startPoint: .zero, endPoint: CGPoint(x: 0, y: height)))
+            var edge = Path()
+            edge.move(to: CGPoint(x: 0, y: y(geometry.startLevel)))
+            edge.addLine(to: CGPoint(x: x(geometry.fillEndX), y: y(geometry.fillEndLevel)))
+            context.stroke(edge, with: .color(hue), lineWidth: 1.5)
+            if let empty = geometry.emptyRange, empty.upperBound > empty.lowerBound {
+                let band = CGRect(x: x(empty.lowerBound), y: 0, width: x(empty.upperBound) - x(empty.lowerBound), height: height)
+                context.drawLayer { layer in
+                    layer.clip(to: Path(band))
+                    var stripes = Path()
+                    var start = band.minX - height
+                    while start < band.maxX {
+                        stripes.move(to: CGPoint(x: start, y: height))
+                        stripes.addLine(to: CGPoint(x: start + height, y: 0))
+                        start += 5
+                    }
+                    layer.stroke(stripes, with: .color(palette.bad.opacity(0.3)), lineWidth: 2)
+                }
+                context.fill(Path(CGRect(x: band.minX, y: height - 2.5, width: band.width, height: 2.5)), with: .color(palette.bad))
+            }
+            if let reset = geometry.resetX {
+                context.fill(Path(CGRect(x: min(width - 1.5, x(reset) - 0.75), y: 0, width: 1.5, height: height)),
+                             with: .color(palette.primary))
+            }
+            let side = min(7, height * 0.62)
+            for lapse in geometry.banked {
+                let center = CGPoint(x: min(width - side / 2, max(side / 2, x(lapse.x))),
+                                     y: min(height - side / 2, max(side / 2, y(lapse.level))))
+                var diamond = Path()
+                diamond.move(to: CGPoint(x: center.x, y: center.y - side / 2))
+                diamond.addLine(to: CGPoint(x: center.x + side / 2, y: center.y))
+                diamond.addLine(to: CGPoint(x: center.x, y: center.y + side / 2))
+                diamond.addLine(to: CGPoint(x: center.x - side / 2, y: center.y))
+                diamond.closeSubpath()
+                context.stroke(diamond, with: .color(palette.card), lineWidth: 1.5)
+                context.fill(diamond, with: .color(palette.banked))
+            }
         }
-        .frame(height: height + 4)
         .accessibilityHidden(true)
     }
 }
 
-struct GlanceRing: View {
-    let fraction: Double?
-    let color: Color
-    let track: Color
-    let lineWidth: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(track, lineWidth: lineWidth)
-            if let fraction {
-                Circle().trim(from: 0, to: max(0.015, fraction))
-                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            } else {
-                Circle().stroke(track, style: StrokeStyle(lineWidth: lineWidth, dash: [2, 3]))
-            }
-        }
-        .padding(lineWidth / 2)
-    }
-}
-
-struct GlanceStatusMark: View {
-    let state: AccountCapacityState
+/// The banked-reset mark beside the callout, matching the diamonds on the shapes.
+struct BankedDiamond: View {
     let palette: GlancePalette
+    let size: CGFloat
 
     var body: some View {
-        Image(systemName: state.glyphName).font(.system(size: 7.5, weight: .bold))
-            .foregroundStyle(palette.color(state.colorToken))
-            .frame(width: 9).accessibilityHidden(true)
+        Rectangle().fill(palette.banked).frame(width: size, height: size).rotationEffect(.degrees(45))
+            .frame(width: size * 1.42, height: size * 1.42).accessibilityHidden(true)
     }
 }
-
-struct NextTag: View {
-    let palette: GlancePalette
-    var body: some View {
-        Text(AccountTerms.next).font(.system(size: 6.5, weight: .heavy)).tracking(0.4)
-            .foregroundStyle(palette.next)
-            .padding(.horizontal, 3).padding(.vertical, 1)
-            .overlay(RoundedRectangle(cornerRadius: 2.5).stroke(palette.next, lineWidth: 0.8))
-            .accessibilityLabel("Use next")
-    }
-}
-
-/// A small "use next" arrow for rows too narrow for the NEXT tag.
-struct NextMark: View {
-    let palette: GlancePalette
-    var body: some View {
-        Image(systemName: AccountGlyphs.useNext).font(.system(size: 8.5)).foregroundStyle(palette.next)
-            .accessibilityLabel("Use next")
-    }
-}
-
