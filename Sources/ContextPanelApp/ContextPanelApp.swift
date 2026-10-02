@@ -7313,20 +7313,22 @@ struct AccountCapacityCard: View {
                                 .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
                         if let resets = row.report?.resetCredits?.presented(at: date) {
-                            Text("\(resets.availableCount) reset credits · observed \(dateText(resets.observedAt))")
+                            Text(AccountTerms.bankedResets + ": \(resets.availableCount) · observed \(dateText(resets.observedAt))")
                                 .font(.caption)
                             let dates = resets.knownExpiries.isEmpty
                                 ? resets.earliestKnownExpiry.map { [$0] } ?? [] : resets.knownExpiries
                             ForEach(Array(dates.enumerated()), id: \.offset) { _, date in
-                                Text("Reset credit expires \(dateText(date))")
+                                Text(AccountTerms.bankedResetExpires + " \(dateText(date))")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                             if dates.count < resets.availableCount {
-                                Text("\(resets.availableCount - dates.count) reset credit expiry dates unknown")
+                                Text("\(resets.availableCount - dates.count) " + AccountTerms.bankedResets.lowercased() + " · expiry dates unknown")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                         } else if row.provider == .openAI || row.provider == .anthropic {
-                            Text("Banked resets unknown").font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            Text(AccountTerms.bankedResets + " " + AccountTerms.unknown)
+                                .accessibilityLabel(AccountTerms.bankedResets + " unknown")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
                     }
                     if row.id != rows.last?.id { Divider() }

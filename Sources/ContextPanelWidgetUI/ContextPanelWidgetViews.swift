@@ -1075,7 +1075,7 @@ private struct CPWResetCreditHeaderToken: View {
 
     private var accessibilityText: String {
         guard let guidance else {
-            return "Reset credits are available on \(summary.providerAccountCountText)."
+            return "\(AccountTerms.bankedResets) are available on \(summary.providerAccountCountText)."
         }
         let expiry = guidance.resetCredits.earliestKnownExpiry
             .map { "Earliest known expiry \($0.formatted(date: .long, time: .shortened))." }
