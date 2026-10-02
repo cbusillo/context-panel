@@ -156,6 +156,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
+    public let legacyAccountID: String?
     public let sharedAccountIdentity: SharedProviderAccountIdentity?
     public let accountIdentityStatus: ProviderAccountIdentityStatus
 
@@ -171,6 +172,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         status: UsageStatus? = nil,
         accessState: ProviderAccessState = .unknown,
         errorMessage: String? = nil,
+        legacyAccountID: String? = nil,
         sharedAccountIdentity: SharedProviderAccountIdentity? = nil,
         accountIdentityStatus: ProviderAccountIdentityStatus = .unverified
     ) {
@@ -185,6 +187,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
         self.accessState = accessState.retainingCurrentProviderObservation(for: self.status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.legacyAccountID = legacyAccountID
         self.sharedAccountIdentity = sharedAccountIdentity?.matches(provider: provider, accountID: accountID) == true ? sharedAccountIdentity : nil
         self.accountIdentityStatus = SharedProviderAccountIdentity.status(accountIdentityStatus, identity: self.sharedAccountIdentity)
     }
@@ -355,6 +358,7 @@ private extension ProviderConnectorReport {
             status: status,
             accessState: accessState,
             errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
             sharedAccountIdentity: sharedAccountIdentity,
             accountIdentityStatus: accountIdentityStatus
         )
@@ -374,6 +378,7 @@ private extension ProviderConnectorReport {
             status: status,
             accessState: accessState,
             errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
             sharedAccountIdentity: sharedAccountIdentity,
             accountIdentityStatus: accountIdentityStatus
         )

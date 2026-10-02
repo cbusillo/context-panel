@@ -166,8 +166,21 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         promptCacheWidgetState: PromptCacheWidgetState? = nil,
         stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
-        configuration: [LocalProviderAccountConfiguration]? = nil
+        configuration: [LocalProviderAccountConfiguration]? = nil,
+        sharedDocument: CompanionSyncDocument? = nil,
+        publisherID: String? = nil
     ) -> WidgetSnapshot {
+        if let sharedDocument, result.snapshot == nil {
+            return Self.fromCompanionSync(CompanionSyncLoadResult(document: sharedDocument.verifiedAccountsOnly(), status: .healthy),
+                now: now, stalenessPolicy: stalenessPolicy)
+        }
+        if let stored = result.snapshot, sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
+            let rates = AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)
+            return MacSharedAccountPresentation.make(stored: stored, configuration: configuration ?? [],
+                publisherID: publisherID, remote: sharedDocument, now: now, rates: rates,
+                observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
+                stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
+        }
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
                 state: result.status == .failure ? .failure : .setupNeeded,

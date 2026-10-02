@@ -3,6 +3,7 @@ import ContextPanelCloudKitSync
 import ContextPanelSettingsUI
 import ContextPanelValidationGalleryUI
 import AppKit
+import CloudKit
 import Combine
 import os
 import ServiceManagement
@@ -382,6 +383,9 @@ struct AppRoot: View {
         .onReceive(model.$navigationRequest.compactMap { $0 }) { request in
             selection = request
             model.clearNavigationRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
+            model.invalidateSharedAccounts()
         }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             model.loadSnapshot(reloadWidgetTimelines: false)
@@ -2071,7 +2075,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             guard !settingsAccounts.contains(where: { $0.provider == .google }),
                   let account = AccountConfigurationStore.defaultDocument().accounts.first(where: { $0.provider == .google }) else { return }
             accounts.append(LocalProviderAccountConfiguration(id: "local-" + UUID().uuidString.lowercased(),
-                provider: account.provider, connectorKind: account.connectorKind, displayName: account.displayName))
+                provider: account.provider, connectorKind: account.connectorKind, displayName: account.displayName, restorationRequestedAt: Date()))
             saveAccounts()
             return
         }
@@ -2081,7 +2085,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
             displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
             authPath: nil,
-            codexClient: provider == .openAI ? .codex : nil
+            codexClient: provider == .openAI ? .codex : nil,
+            restorationRequestedAt: Date()
         ))
         saveAccounts()
     }
@@ -2108,7 +2113,13 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accounts[index].accountAliases = aliases
         } else {
             accounts[index].displayName = name
-            if let soleLogicalID { accounts[index].accountAliases?[soleLogicalID] = nil }
+            if let soleLogicalID {
+                accounts[index].accountAliases?[soleLogicalID] = nil
+                for report in SnapshotRefreshStores.appDefault().primary.loadCurrent().snapshot?.reports ?? []
+                    where report.accountID == soleLogicalID {
+                    if let legacy = report.legacyAccountID { accounts[index].accountAliases?[legacy] = nil }
+                }
+            }
         }
         if saveAccounts() { return true }
         if let retainedIndex = accounts.firstIndex(where: { $0.id == accountID }) {
@@ -2692,7 +2703,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     func addCodexAccount(name: String, home: URL, scopeRoot: URL?, onCompletion: @escaping (Bool) -> Void) {
         let account = LocalProviderAccountConfiguration(id: "local-" + UUID().uuidString.lowercased(),
-            provider: .openAI, connectorKind: .codexRateLimits, displayName: name, codexClient: .codex)
+            provider: .openAI, connectorKind: .codexRateLimits, displayName: name, codexClient: .codex, restorationRequestedAt: Date())
         Task { @MainActor in
             let root = scopeRoot ?? home
             let scoped = root.startAccessingSecurityScopedResource()
@@ -5450,7 +5461,11 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var currentSnapshot: UsageSnapshot {
-        observedSnapshot.presented(at: presentationDate)
+        if fixedPresentationDate == nil, let storedSnapshot,
+           let shared = refreshService.sharedAccountPresentation(stored: storedSnapshot, now: presentationDate, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
+            return shared.usageSnapshot
+        }
+        return observedSnapshot.presented(at: presentationDate)
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
@@ -5796,16 +5811,27 @@ final class ContextPanelAppModel: ObservableObject {
 
     func navigate(to selection: AppNavigationSelection) { navigationRequest = selection }
 
+    func invalidateSharedAccounts() {
+        refreshService.invalidateSharedAccounts()
+        loadSnapshot()
+    }
+
     func accountOverview(at now: Date) -> AccountOverview {
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
+        if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
+            return shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
+        }
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
             metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
             accountBurnRates: accountBurnRates)
     }
 
     func rawAccountID(for safeID: String) -> String? {
-        AccountCapacity.rows(configuration: configuredAccounts, snapshot: currentSnapshot,
+        if let report = storedSnapshot?.reports.first(where: { report in
+            report.sharedAccountIdentity.map { AccountDisplayMetadata.safeID(report.provider, $0.accountID) == safeID } == true
+        }) { return report.accountID }
+        return AccountCapacity.rows(configuration: configuredAccounts, snapshot: observedSnapshot,
             reports: storedSnapshot?.reports ?? [], now: Date()).first {
                 AccountDisplayMetadata.safeID($0.provider, $0.id) == safeID
             }?.id

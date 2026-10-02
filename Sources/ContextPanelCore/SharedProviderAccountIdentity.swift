@@ -28,6 +28,26 @@ public struct ProviderAccountIdentityMaterial: Sendable, CustomStringConvertible
 
     public var description: String { "Provider account identity material [redacted]" }
 
+    public func localHistoryID(configurationID: String) -> String {
+        var value = message
+        value.append(Data(("source:" + configurationID).utf8))
+        return provider.rawValue + "-history-" + SHA256.hash(data: value).map { String(format: "%02x", $0) }.joined()
+    }
+
+    fileprivate struct CachePayload: Codable {
+        let provider: Provider; let kind: ProviderAccountIdentifierKind
+        let identifier: String; let scope: String; let credentialDigest: String
+    }
+    fileprivate func cachePayload(credentialDigest: String) throws -> Data {
+        try JSONEncoder().encode(CachePayload(provider: provider, kind: kind, identifier: identifier,
+            scope: scope, credentialDigest: credentialDigest))
+    }
+    fileprivate static func cached(_ data: Data, credentialDigest: String) -> Self? {
+        guard data.count <= 8192, let value = try? JSONDecoder().decode(CachePayload.self, from: data),
+              value.credentialDigest == credentialDigest else { return nil }
+        return Self(provider: value.provider, kind: value.kind, identifier: value.identifier, scope: value.scope)
+    }
+
     fileprivate var message: Data {
         // Length-delimited components distinguish account, organization and provider.
         Data(["context-panel-account-v1", provider.rawValue, kind.rawValue, identifier, scope]
@@ -41,9 +61,14 @@ public struct SharedProviderAccountIdentity: Codable, Equatable, Sendable {
     public let kind: ProviderAccountIdentifierKind
     public let keyID: UUID
     public let digest: String
+    /// Local membership binding is stripped from the shared transport.
+    public let boundLocalAccountID: String?
+    public let userScope: CompanionCloudKitUserScope?
 
-    fileprivate init(provider: Provider, kind: ProviderAccountIdentifierKind, keyID: UUID, digest: String) {
+    fileprivate init(provider: Provider, kind: ProviderAccountIdentifierKind, keyID: UUID, digest: String, boundLocalAccountID: String? = nil, userScope: CompanionCloudKitUserScope? = nil) {
         self.provider = provider; self.kind = kind; self.keyID = keyID; self.digest = digest
+        self.boundLocalAccountID = boundLocalAccountID
+        self.userScope = userScope
     }
 
     public var accountID: String {
@@ -59,7 +84,15 @@ public struct SharedProviderAccountIdentity: Codable, Equatable, Sendable {
     }
 
     public func matches(provider: Provider, accountID: String) -> Bool {
-        self.provider == provider && self.accountID == accountID
+        self.provider == provider && (self.accountID == accountID || boundLocalAccountID == accountID)
+    }
+
+    public func bound(toLocalAccountID id: String?) -> Self {
+        Self(provider: provider, kind: kind, keyID: keyID, digest: digest, boundLocalAccountID: id, userScope: userScope)
+    }
+
+    public func bound(toUserScope scope: CompanionCloudKitUserScope) -> Self {
+        Self(provider: provider, kind: kind, keyID: keyID, digest: digest, boundLocalAccountID: boundLocalAccountID, userScope: scope)
     }
 
     public static func status(_ proposed: ProviderAccountIdentityStatus, identity: SharedProviderAccountIdentity?) -> ProviderAccountIdentityStatus {
@@ -72,6 +105,8 @@ public struct SharedProviderAccountIdentity: Codable, Equatable, Sendable {
         kind = try c.decode(ProviderAccountIdentifierKind.self, forKey: .kind)
         keyID = try c.decode(UUID.self, forKey: .keyID)
         digest = try c.decode(String.self, forKey: .digest)
+        boundLocalAccountID = try c.decodeIfPresent(String.self, forKey: .boundLocalAccountID)
+        userScope = try c.decodeIfPresent(CompanionCloudKitUserScope.self, forKey: .userScope)
         guard Self.isSharedAccountID(accountID),
               (provider == .openAI && kind == .chatGPTAccountID)
                 || (provider == .anthropic && kind == .claudeAccountUUID)
@@ -153,14 +188,14 @@ public struct ProviderAccountIdentityResolver: Sendable {
 
 public enum ClaudeOAuthAccountIdentityParser {
     public static func material(from data: Data) -> ProviderAccountIdentityMaterial? {
-        struct Profile: Decodable { let account: Account; let organization: Organization?
+        struct Profile: Decodable { let account: Account; let organization: Organization
             struct Account: Decodable { let uuid: UUID }
             struct Organization: Decodable { let uuid: UUID }
         }
         guard data.count <= 256 * 1024, let profile = try? JSONDecoder().decode(Profile.self, from: data) else { return nil }
         return ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID,
             identifier: profile.account.uuid.uuidString.lowercased(),
-            scope: profile.organization?.uuid.uuidString.lowercased() ?? "")
+            scope: profile.organization.uuid.uuidString.lowercased())
     }
 }
 
@@ -177,5 +212,24 @@ public enum ScopedProviderAccountIdentityKey {
         guard data.count <= 8192, let payload = try? JSONDecoder().decode(Payload.self, from: data),
               payload.userScope == scope else { return nil }
         return ProviderAccountIdentityKey(encryptedStorePayload: payload.key)
+    }
+}
+
+/// Profile material is cached in the app-owned Keychain, bound to the exact access credential.
+/// Neither raw provider IDs nor the credential digest enter a usage snapshot.
+public struct ProviderAccountIdentityMaterialStore: Sendable {
+    private let store: any ProviderCredentialStoring
+    public init(store: any ProviderCredentialStoring) { self.store = store }
+    private func digest(_ credential: String) -> String {
+        SHA256.hash(data: Data(credential.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    public func load(provider: Provider, configurationID: String, credential: String) -> ProviderAccountIdentityMaterial? {
+        guard let data = try? store.load(accountID: provider.rawValue + ":" + configurationID) else { return nil }
+        let material = ProviderAccountIdentityMaterial.cached(data, credentialDigest: digest(credential))
+        return material?.provider == provider ? material : nil
+    }
+    public func save(_ material: ProviderAccountIdentityMaterial, configurationID: String, credential: String) {
+        guard let data = try? material.cachePayload(credentialDigest: digest(credential)) else { return }
+        try? store.save(data, accountID: material.provider.rawValue + ":" + configurationID)
     }
 }

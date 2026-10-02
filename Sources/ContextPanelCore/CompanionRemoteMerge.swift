@@ -5,12 +5,16 @@ public extension CompanionSyncDocument {
         existing: CompanionSyncDocument?,
         now: Date
     ) -> CompanionSyncDocument {
-        let incomingDocument = normalizedForRemotePublish().applyingGlobalRemovals()
+        let compatible = existing?.cloudKitUserScope == cloudKitUserScope ? existing : nil
+        let removalDates = (compatible?.accountRemovalDates ?? [:]).merging(accountRemovalDates ?? [:]) { max($0, $1) }
+        let restorationDates = (compatible?.accountRestorationDates ?? [:]).merging(accountRestorationDates ?? [:]) { max($0, $1) }
+        let identityAliases = Self.mergedIdentityAliases(existing?.cloudKitUserScope == cloudKitUserScope ? existing?.accountIdentityAliases ?? [] : [], accountIdentityAliases ?? [])
+        let incomingDocument = normalizedForRemotePublish().retiringLegacyMemberships(using: identityAliases).applyingGlobalRemovals()
         let existingDocument = existing
             .flatMap { existing in
                 existing.cloudKitUserScope == cloudKitUserScope ? existing : nil
             }?
-            .normalizedForRemotePublish().applyingGlobalRemovals()
+            .normalizedForRemotePublish().retiringLegacyMemberships(using: identityAliases).applyingGlobalRemovals()
         let existingDegradedAccountKeys = existingDocument?.snapshot.degradedAccountKeysForRemotePublish ?? []
         let incomingDegradedAccountKeys = snapshot.degradedAccountKeysForRemotePublish
 
@@ -61,7 +65,10 @@ public extension CompanionSyncDocument {
                 incoming: incomingDocument, retainedSnapshot: retained.snapshot, settingsDocument: settingsDocument),
             removedDisplayIDs: existingDocument?.removedDisplayIDs == nil && incomingDocument.removedDisplayIDs == nil ? nil
                 : Array(Set(existingDocument?.removedDisplayIDs ?? []).union(incomingDocument.removedDisplayIDs ?? [])).sorted(),
-            accountBurnRates: mergedAccountBurnRates(existing: existingDocument, incoming: incomingDocument, retainedSnapshot: retained.snapshot)
+            accountBurnRates: mergedAccountBurnRates(existing: existingDocument, incoming: incomingDocument, retainedSnapshot: retained.snapshot),
+            accountIdentityAliases: identityAliases.isEmpty ? nil : identityAliases,
+            accountRemovalDates: removalDates.isEmpty ? nil : removalDates,
+            accountRestorationDates: restorationDates.isEmpty ? nil : restorationDates
         ).applyingGlobalRemovals()
     }
 
@@ -175,7 +182,10 @@ private extension CompanionSyncDocument {
             cloudKitUserScope: cloudKitUserScope,
             accountDisplayMetadata: accountDisplayMetadata,
             removedDisplayIDs: removedDisplayIDs,
-            accountBurnRates: accountBurnRates
+            accountBurnRates: accountBurnRates,
+            accountIdentityAliases: accountIdentityAliases,
+            accountRemovalDates: accountRemovalDates,
+            accountRestorationDates: accountRestorationDates
         )
     }
 

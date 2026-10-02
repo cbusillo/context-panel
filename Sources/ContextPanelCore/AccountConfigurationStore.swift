@@ -44,6 +44,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     /// Independent of collection. Missing values preserve older setup until edited.
     public var showInWidgets: Bool?
     public var useLast: Bool?
+    public var restorationRequestedAt: Date?
 
     public init(
         id: String,
@@ -57,7 +58,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         accountAliases: [String: String]? = nil,
         codexQuotaPath: String? = nil,
         showInWidgets: Bool? = nil,
-        useLast: Bool? = nil
+        useLast: Bool? = nil,
+        restorationRequestedAt: Date? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -71,6 +73,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.codexQuotaPath = codexQuotaPath
         self.showInWidgets = showInWidgets
         self.useLast = useLast
+        self.restorationRequestedAt = restorationRequestedAt
     }
 
     public var effectiveAuthPath: String? {
@@ -136,8 +139,9 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public var removalUserScope: CompanionCloudKitUserScope?
     public var publisherID: String?
     public var membershipIdentityVersion: Int?
+    public var removedDisplayDates: [String: Date]?
 
-    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, pendingRemovedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil, membershipIdentityVersion: Int? = nil) {
+    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, pendingRemovedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil, membershipIdentityVersion: Int? = nil, removedDisplayDates: [String: Date]? = nil) {
         schemaVersion = 1
         self.updatedAt = updatedAt
         self.accounts = accounts
@@ -147,9 +151,10 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         self.removalUserScope = removalUserScope
         self.publisherID = publisherID
         self.membershipIdentityVersion = membershipIdentityVersion
+        self.removedDisplayDates = removedDisplayDates
     }
 
-    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, pendingRemovedDisplayIDs, removalUserScope, publisherID, membershipIdentityVersion }
+    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, pendingRemovedDisplayIDs, removalUserScope, publisherID, membershipIdentityVersion, removedDisplayDates }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -162,6 +167,7 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         removalUserScope = try container.decodeIfPresent(CompanionCloudKitUserScope.self, forKey: .removalUserScope)
         publisherID = try container.decodeIfPresent(String.self, forKey: .publisherID)
         membershipIdentityVersion = try container.decodeIfPresent(Int.self, forKey: .membershipIdentityVersion)
+        removedDisplayDates = try container.decodeIfPresent([String: Date].self, forKey: .removedDisplayDates)
     }
 }
 
@@ -257,10 +263,16 @@ public struct AccountConfigurationStore: Sendable {
             guard let account = document.accounts.first(where: { $0.id == id }) else { return document }
             if let userScope, let previousScope = document.removalUserScope, previousScope != userScope {
                 document.removedDisplayIDs = []
+                document.removedDisplayDates = [:]
             }
             if let userScope { document.removalUserScope = userScope }
             var removed = Set<String>()
-            removed.insert(AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID))
+            let verified = storedSnapshot?.reports.filter { account.matchesProviderReport($0) && $0.sharedAccountIdentity != nil
+                && (userScope == nil || $0.sharedAccountIdentity?.userScope == nil || $0.sharedAccountIdentity?.userScope == userScope) } ?? []
+            if verified.isEmpty && !(storedSnapshot?.reports.contains(where: { account.matchesProviderReport($0) }) ?? false) { removed.insert(AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID)) }
+            for report in verified {
+                if let identity = report.sharedAccountIdentity { removed.insert(AccountDisplayMetadata.safeID(report.provider, identity.accountID)) }
+            }
             let membershipSnapshot = storedSnapshot ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
             do {
                 for entry in AccountDisplayMetadata.companion(configuration: [account], stored: membershipSnapshot, now: now, publisherID: document.publisherID) {
@@ -273,6 +285,7 @@ public struct AccountConfigurationStore: Sendable {
                 document.removedDisplayIDs = Array(Set(document.removedDisplayIDs ?? []).union(document.pendingRemovedDisplayIDs ?? []).union(removed)).sorted()
                 document.pendingRemovedDisplayIDs = nil
             }
+            for key in removed { document.removedDisplayDates = (document.removedDisplayDates ?? [:]).merging([key: now]) { max($0, $1) } }
             document.accounts.removeAll { $0.id == id }
             if !document.removedAccountIDs.contains(id) { document.removedAccountIDs.append(id) }
             document.updatedAt = now
@@ -287,6 +300,7 @@ public struct AccountConfigurationStore: Sendable {
         guard result.status != .failure else { return }
         var document = result.document
         let changedScope = userScope != nil && document.removalUserScope != nil && document.removalUserScope != userScope
+        if changedScope { document.removedDisplayDates = [:] }
         let existing = changedScope ? [] : document.removedDisplayIDs ?? []
         let removed = Set(existing).union(document.pendingRemovedDisplayIDs ?? []).union(ids)
         guard !removed.isEmpty || changedScope else { return }
@@ -294,6 +308,13 @@ public struct AccountConfigurationStore: Sendable {
         let membershipSnapshot = storedSnapshot ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
         let rows = AccountDisplayMetadata.companion(configuration: document.accounts, stored: membershipSnapshot, now: now, publisherID: document.publisherID)
         let removedConfigurations = Set(rows.filter { removed.contains($0.id) }.map(\.configurationID))
+            .union(document.accounts.filter { account in
+                membershipSnapshot.reports.contains { report in
+                    account.matchesProviderReport(report) && report.sharedAccountIdentity.map {
+                        ($0.userScope == nil || $0.userScope == userScope) && removed.contains(AccountDisplayMetadata.safeID(report.provider, $0.accountID))
+                    } == true
+                }
+            }.map { AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID) })
         let deleted = document.accounts.filter {
             removed.contains(AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID))
                 || removedConfigurations.contains(AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID))
@@ -303,6 +324,24 @@ public struct AccountConfigurationStore: Sendable {
         document.removedDisplayIDs = removed.sorted()
         if userScope != nil { document.pendingRemovedDisplayIDs = nil }
         if result.status == .unknown && deleted.isEmpty { return }
+        if document != result.document { document.updatedAt = now; try save(document) }
+    }
+
+    public func receiveSharedAccountIntents(_ shared: CompanionSyncDocument, scope: CompanionCloudKitUserScope, now: Date) throws {
+        let result = load(now: now)
+        guard result.status != .failure, shared.cloudKitUserScope == scope else { return }
+        var document = result.document
+        if let previous = document.removalUserScope, previous != scope {
+            document.removedDisplayIDs = []
+            document.removedDisplayDates = [:]
+        }
+        document.removalUserScope = scope
+        document.removedDisplayDates = (document.removedDisplayDates ?? [:]).merging(shared.accountRemovalDates ?? [:]) { max($0, $1) }
+        let restored = Set((shared.accountRestorationDates ?? [:]).compactMap { key, date -> String? in
+            date > (document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) ? key : nil
+        })
+        document.removedDisplayIDs = (document.removedDisplayIDs ?? []).filter { !restored.contains($0) }
+        document.pendingRemovedDisplayIDs = document.pendingRemovedDisplayIDs?.filter { !restored.contains($0) }
         if document != result.document { document.updatedAt = now; try save(document) }
     }
 
@@ -484,7 +523,8 @@ public enum AccountConnectorFactory {
                         accountName: account.displayName
                     )],
                     credentialStore: effectiveCredentialStore,
-                    identityResolver: identityResolver
+                    identityResolver: identityResolver,
+                    identityMaterialStore: identityResolver == nil ? nil : ProviderAccountIdentityMaterialStore(store: ProviderCredentialStore(service: "Context Panel account identity bindings"))
                 )
             }
         }

@@ -279,6 +279,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private let expirationSkew: TimeInterval
     private let resetReadCooldown: ClaudeResetCreditReadCooldown
     private let identityResolver: ProviderAccountIdentityResolver?
+    private let identityMaterialStore: ProviderAccountIdentityMaterialStore?
 
     public init(
         resetReadCooldown: ClaudeResetCreditReadCooldown = .shared,
@@ -286,7 +287,8 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
         credentialStore: any ProviderCredentialStoring,
         expirationSkew: TimeInterval = 5 * 60,
-        identityResolver: ProviderAccountIdentityResolver? = nil
+        identityResolver: ProviderAccountIdentityResolver? = nil,
+        identityMaterialStore: ProviderAccountIdentityMaterialStore? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
@@ -294,6 +296,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         self.expirationSkew = expirationSkew
         self.resetReadCooldown = resetReadCooldown
         self.identityResolver = identityResolver
+        self.identityMaterialStore = identityMaterialStore
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -312,15 +315,21 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             var credentials = try loadCredentials(accountID: account.accountID)
             return try await refresh(account: account, credentials: &credentials, now: now, localAccountID: localAccountID)
         } catch {
+            let material = (try? loadCredentials(accountID: account.accountID))?.accessToken.flatMap {
+                identityMaterialStore?.load(provider: .anthropic, configurationID: account.accountID, credential: $0)
+            }
+            let historyAccountID = material?.localHistoryID(configurationID: account.accountID) ?? localAccountID
+            let identity = if let material, let identityResolver { await identityResolver.resolve(material)?.bound(toLocalAccountID: historyAccountID) } else { nil as SharedProviderAccountIdentity? }
             return ProviderConnectorReport(
                 provider: provider,
-                accountID: localAccountID,
+                accountID: historyAccountID,
                 configuredAccountID: account.accountID,
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: [],
                 status: .failure,
-                errorMessage: error.localizedDescription
+                errorMessage: error.localizedDescription,
+                sharedAccountIdentity: identity
             )
         }
     }
@@ -380,11 +389,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         // Qualify usage before requesting the identity of this exact authenticated login.
         _ = try ClaudeOAuthUsageParser.usageResult(from: data, accountID: localAccountID,
             accountName: account.accountName, observedAt: now)
-        let material = await identityMaterial(accessToken: accessToken)
+        let material = await identityMaterial(accessToken: accessToken, configurationID: account.accountID)
+        let historyAccountID = material?.localHistoryID(configurationID: account.accountID) ?? localAccountID
         let identity: SharedProviderAccountIdentity?
-        if let material, let identityResolver { identity = await identityResolver.resolve(material) }
+        if let material, let identityResolver { identity = await identityResolver.resolve(material)?.bound(toLocalAccountID: historyAccountID) }
         else { identity = nil }
-        let accountID = identity?.accountID ?? localAccountID
+        let accountID = historyAccountID
         let usage = try ClaudeOAuthUsageParser.usageResult(
             from: data,
             accountID: accountID,
@@ -401,12 +411,13 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             resetCredits: await resetCredits(account: account, accessToken: accessToken, now: now),
             status: usage.limits.isEmpty ? .unknown : nil,
             accessState: usage.accessState,
+            legacyAccountID: localAccountID,
             sharedAccountIdentity: identity,
             accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
         )
     }
 
-    private func identityMaterial(accessToken: String) async -> ProviderAccountIdentityMaterial? {
+    private func identityMaterial(accessToken: String, configurationID: String) async -> ProviderAccountIdentityMaterial? {
         guard identityResolver != nil else { return nil }
         do {
             let profile = try await httpClient.data(for: ConnectorHTTPRequest(
@@ -414,9 +425,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 headers: ["Authorization": "Bearer \(accessToken)", "Accept": "application/json",
                     "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
                     "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader]))
-            guard profile.statusCode == 200 else { return nil }
-            return ClaudeOAuthAccountIdentityParser.material(from: profile.data)
-        } catch { return nil }
+            if profile.statusCode == 200, let material = ClaudeOAuthAccountIdentityParser.material(from: profile.data) {
+                identityMaterialStore?.save(material, configurationID: configurationID, credential: accessToken)
+                return material
+            }
+        } catch { }
+        return identityMaterialStore?.load(provider: .anthropic, configurationID: configurationID, credential: accessToken)
     }
 
     private func resetCredits(

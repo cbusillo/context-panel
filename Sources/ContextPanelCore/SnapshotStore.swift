@@ -93,6 +93,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
+    public let legacyAccountID: String?
     public let sharedAccountIdentity: SharedProviderAccountIdentity?
     public let accountIdentityStatus: ProviderAccountIdentityStatus
 
@@ -107,6 +108,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         case status
         case accessState
         case errorMessage
+        case legacyAccountID
         case sharedAccountIdentity
         case accountIdentityStatus
     }
@@ -122,6 +124,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         status: UsageStatus,
         accessState: ProviderAccessState = .unknown,
         errorMessage: String?,
+        legacyAccountID: String? = nil,
         sharedAccountIdentity: SharedProviderAccountIdentity? = nil,
         accountIdentityStatus: ProviderAccountIdentityStatus = .unverified
     ) {
@@ -135,6 +138,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.status = status
         self.accessState = accessState.retainingCurrentProviderObservation(for: status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.legacyAccountID = legacyAccountID
         self.sharedAccountIdentity = sharedAccountIdentity?.matches(provider: provider, accountID: accountID) == true ? sharedAccountIdentity : nil
         self.accountIdentityStatus = SharedProviderAccountIdentity.status(accountIdentityStatus, identity: self.sharedAccountIdentity)
     }
@@ -151,6 +155,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
+        legacyAccountID = try container.decodeIfPresent(String.self, forKey: .legacyAccountID)
         let decodedIdentity = try? container.decode(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
         sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: accountID) == true ? decodedIdentity : nil
         accountIdentityStatus = SharedProviderAccountIdentity.status(
@@ -171,6 +176,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             status: report.status,
             accessState: report.accessState,
             errorMessage: report.errorMessage,
+            legacyAccountID: report.legacyAccountID,
             sharedAccountIdentity: report.sharedAccountIdentity,
             accountIdentityStatus: report.accountIdentityStatus
         )
@@ -188,6 +194,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             status: replacementStatus,
             accessState: accessState,
             errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
             sharedAccountIdentity: sharedAccountIdentity,
             accountIdentityStatus: accountIdentityStatus
         )
@@ -205,6 +212,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             status: status,
             accessState: replacementAccessState,
             errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
             sharedAccountIdentity: sharedAccountIdentity,
             accountIdentityStatus: accountIdentityStatus
         )
@@ -222,6 +230,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             status: status,
             accessState: accessState,
             errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
             sharedAccountIdentity: sharedAccountIdentity,
             accountIdentityStatus: accountIdentityStatus
         )

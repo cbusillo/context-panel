@@ -7,8 +7,8 @@ primary. Explicit linking is reserved for a provider that truly has no ID.
 
 | Provider | Material used | Qualification |
 | --- | --- | --- |
-| OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Whenever available, the stable user ID scopes the account independent of plan. Personal free/plus/pro plans alone may omit it; workspace or unknown plans require `chatgpt_user_id` (no cross-claim fallback) to distinguish seats. Plan may come from the token or authenticated usage response. |
-| Anthropic | `account.uuid` from Context Panel's own authenticated `/api/oauth/profile` response, scoped by `organization.uuid` where returned | Profile uses the same access token as the successful usage request, including after refresh. Missing or malformed identity leaves quota usable and identity unavailable. |
+| OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Require the canonical `chatgpt_user_id` from either ID or access token, rejecting conflicts, independent of plan. Missing user claims retain readable local quota without minting an account-only alternative namespace. |
+| Anthropic | `account.uuid` from Context Panel's own authenticated `/api/oauth/profile` response, scoped by required `organization.uuid` | Profile uses the same access token as the successful usage request, including after refresh. Missing or malformed identity leaves quota usable and identity unavailable. |
 | Google / Antigravity | Proposed Google OIDC issuer plus `sub` | The current status-line connector exposes email/LDAP, not a subject ID. No email hash is treated as a provider ID. A supported subject export or a bound Context Panel-owned Google login remains to be qualified. Owner question #7225951844161. |
 | OpenAI session-only quota | Not yet qualified | A session quota event does not carry a provider account ID. A current login cannot by itself identify a historical event from a switched login. Retain an unverified local lane until account-specific attribution is established. |
 
@@ -34,32 +34,54 @@ contract changes its digest. No entitlements or container are widened. Static
 validation and fake-server tests do not prove Apple's live schema or encrypted
 record access. Production promotion awaits Owner question #7225952078955.
 
-## Integration state and activation gates
+## Functional integration
 
-The connector resolver is optional. Shared identity construction and transport
-are implemented and behaviorally tested, but the normal refresh service does
-**not** pass the resolver yet. This prevents an unqualified identity migration
-from replacing the installed product's account lanes.
+Normal app and refresh-agent connectors now receive the shared resolver. Provider
+quota remains usable when identity/key/schema access is unavailable; no local-only
+shared key is generated. The installed AF hand-test build predates this integration.
 
-Before enabling it:
+Local history uses a separate source and authenticated-material digest. Temporary
+shared-key failure does not change that history membership. Claude profile material
+is cached only in the app-owned Keychain and bound to the exact access credential;
+a changed credential cannot reuse the old binding. Raw UUIDs and credential digests
+never enter usage snapshots. First migration starts a new identity-qualified history
+epoch rather than attributing old, unqualified history to the new login; burn needs
+new samples. Existing current reset-credit reads and failure preservation remain.
 
-1. Retire a connector's own legacy local and companion memberships when its
-   authenticated ID is established, without guessing identities for other Macs'
-   unverified feeds or interpreting migration as global account removal.
-2. Bind global removal to the provider identity and qualify copied setups,
-   distinct accounts, multiple hosts, stale/offline publishers, and explicit
-   re-add behavior. Verify unchanged identity across plan changes, differing token claim availability and hosts; do not activate an account-ID-only fallback alongside a user-scoped identity for the same login. Keep selected observations and their burn rates coherent. Preserve a verified account binding through transient failures only when its credential/source identity is still established; profile errors and identity-store/scope unavailability must not create a second lane or lose banked resets. An unavailable current iCloud scope fails closed; a stale scope is not silently reused across an unconfirmed account change.
-3. Add the Mac receiving/presentation path using the existing private companion
-   records. Remote usage must not become credentials or get republished as a
-   fresh local reading. Invalidate foreign-user caches on iCloud account changes.
-4. Qualify Google binding and session-only OpenAI attribution.
-5. Validate/promote the additive schema with owner approval and a fresh exact-source
-   receipt; verify both Claude profiles and all configured OpenAI accounts from
-   the canonical signed Production app, without printing raw IDs or credentials.
-6. Run duplicate-lane checks across active storage roots and companions, plus
-   independent review and the required acceptance gates before release.
+Shared transport replaces local memberships with the provider pseudonym and picks
+one complete account observation, carrying its account burn rates. Strong scoped
+aliases can preserve that pseudonym through a key failure for the same authenticated
+local history epoch. Weak old memberships are retired, never reattributed or treated
+as a global removal. Aliases only identify this connector's known memberships;
+unknown old feeds from other hosts require fresh authenticated readings.
 
-A synthetic merge test proves that two configured memberships carrying the same
-verified provider pseudonym converge on one latest usage lane, and different
-provider accounts remain separate. It does not prove migration, Mac receiving,
-physical devices, live account identity, or release readiness.
+Remove targets the verified provider pseudonym across hosts. Explicitly adding an
+account records a restoration intent; after authentication it can supersede an older
+removal. Old/offline publishers do not automatically restore removed accounts. A
+newer removal wins. Unverified feeds cannot claim global provider identity.
+
+Macs receive the existing private companion usage document into a bounded,
+scope-validated cache. App, widget and credential-free agent projection consume the
+same canonical account IDs and account observations. Remote readings never enter
+local provider history or get republished as fresh local quota. An unavailable or
+changed current iCloud scope withholds the cache; CKAccountChanged invalidates it.
+The cache has a six-minute verified-scope lease, so offline remote-only accounts
+are temporarily unavailable instead of being attributed to an unconfirmed user.
+
+## Remaining qualification and owner boundaries
+
+- Google subject export/bound sign-in remains Owner question #7225951844161.
+  Antigravity quota continues locally; email/LDAP is not promoted to identity.
+- Session-only OpenAI events remain unverified; current credentials cannot prove
+  attribution of historical events from a switched login.
+- The additive encrypted Production schema promotion awaits #7225952078955.
+  Source integration and fake-key/merge tests do not prove Apple's encrypted field
+  support or live schema access. No live schema has been changed.
+- Verify both Claude profiles and all configured OpenAI accounts from an exact
+  canonical signed Production build, then duplicate-lane checks in all active
+  storage roots and physical companions. Mixed old/new client fleets and manually
+  copied unverified setups need qualification; no cross-host merging is inferred
+  from a label or copied configuration ID.
+- Chris's Horizon/rename hand test and marking #733 ready remain owner actions.
+  Matching companion/runtime/release gates precede publication. No entitlements,
+  Production schema or release gates are widened by this integration.

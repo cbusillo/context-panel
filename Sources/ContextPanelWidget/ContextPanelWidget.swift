@@ -158,9 +158,11 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             bookmarkStore: bookmarkStore,
             now: date
         )
-        let configuration = (try? Data(contentsOf: accountStore.configurationURL)).flatMap {
-            try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0).accounts
+        let configurationDocument = (try? Data(contentsOf: accountStore.configurationURL)).flatMap {
+            try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
         }
+        let configuration = configurationDocument?.accounts
+        let sharedDocument = MacSharedAccountCache(cacheURL: accountStore.configurationURL.deletingLastPathComponent().appending(path: MacSharedAccountCache.filename)).load(now: date)
         let result = store.loadCurrent(policy: policy, now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(
@@ -178,7 +180,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                             fastModeForecastSettings: forecastSettings,
                             promptCacheWidgetState: promptCacheWidgetState,
                             stalenessPolicy: policy,
-                            configuration: configuration
+                            configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID
                         ),
                         displayPreferences: displayPreferences
                     ),
@@ -196,7 +198,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                     fastModeForecastSettings: forecastSettings,
                     promptCacheWidgetState: promptCacheWidgetState,
                     stalenessPolicy: policy,
-                    configuration: configuration
+                    configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID
                 ),
                 displayPreferences: displayPreferences
             ),

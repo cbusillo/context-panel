@@ -163,12 +163,13 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
-        try await refreshIfNeededWithEvidence(now: now).decision
+        return try await refreshIfNeededWithEvidence(now: now).decision
     }
 
     public func refreshIfNeededWithEvidence(
         now: Date = Date()
     ) async throws -> SnapshotRefreshRunEvidence {
+        await service.receiveSharedAccounts(now: now)
         service.importConfiguredAuthFiles(now: now)
         let stalenessPolicy = effectiveStalenessPolicy()
         let current = service.loadCurrent(policy: stalenessPolicy, now: now)
@@ -573,6 +574,15 @@ public struct SnapshotRefreshService: Sendable {
         )
     }
 
+    public func invalidateSharedAccounts() { companionSyncPublisher?.sharedAccountCache?.invalidate() }
+    public func receiveSharedAccounts(now: Date) async { _ = await companionSyncPublisher?.receiveSharedAccounts(now: now) }
+    public func sharedAccountPresentation(stored: StoredUsageSnapshot, now: Date,
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:]) -> WidgetSnapshot? {
+        guard let publisher = companionSyncPublisher else { return nil }
+        let document = publisher.presentationDocument(storedSnapshot: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates)
+        return WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: document, status: .healthy), now: now)
+    }
+
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
         let result = accountStore.load(now: now)
         migrateClaudeStateIfNeeded(document: result.document, now: now)
@@ -661,7 +671,8 @@ public struct SnapshotRefreshService: Sendable {
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
             googleAntigravitySnapshotLoader: googleAntigravitySnapshotLoader,
-            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
+            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox,
+            identityResolver: companionSyncPublisher?.remoteStore?.accountIdentityResolver
         )
         RefreshDiagnostics.logRefreshStarted(
             enabledAccountCount: enabledAccountCount,

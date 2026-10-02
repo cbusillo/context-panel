@@ -3483,7 +3483,7 @@ private func base64URLEncoded(_ data: Data) -> String {
         #expect(report.configuredAccountID == "fake-setup")
         #expect(http.requests[1].url.path == "/api/oauth/profile")
         #expect(http.requests[1].headers["Authorization"] == "Bearer fake-panel-access")
-        #expect(report.sharedAccountIdentity == (status == 200 ? key.identity(for: expectedMaterial) : nil))
+        #expect(report.sharedAccountIdentity == (status == 200 ? key.identity(for: expectedMaterial).bound(toLocalAccountID: expectedMaterial.localHistoryID(configurationID: "fake-setup")) : nil))
         #expect(report.accountIdentityStatus == (status == 200 ? .verified : .providerIdentityUnavailable))
         let json = String(decoding: try JSONEncoder().encode(StoredProviderReport(report: report)), as: UTF8.self)
         #expect(!json.contains(accountUUID.uuidString))
@@ -3500,11 +3500,9 @@ private func base64URLEncoded(_ data: Data) -> String {
         authPath: "/fake/auth.json", endpoint: URL(string: "https://example.invalid/usage")!)], httpClient: http,
         identityResolver: ProviderAccountIdentityResolver { key.identity(for: $0) }, fileLoader: { _ in auth })
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_900_000_000))
-    let expected = key.identity(for: try #require(ProviderAccountIdentityMaterial(provider: .openAI,
-        kind: .chatGPTAccountID, identifier: "fake-provider-account")))
-    #expect(result.reports.first?.sharedAccountIdentity == expected)
-    #expect(result.snapshot.limits.first?.accountID == expected.accountID)
-    #expect(result.reports.first?.accountIdentityStatus == .verified)
+    #expect(result.reports.first?.sharedAccountIdentity == nil)
+    #expect(result.snapshot.limits.first?.used == 5)
+    #expect(result.reports.first?.accountIdentityStatus == .providerIdentityUnavailable)
 }
 
 @Test func duplicateProviderReportsRetainVerifiedIdentityThroughMembershipMerge() async throws {
@@ -3558,4 +3556,52 @@ private func base64URLEncoded(_ data: Data) -> String {
         identities.append(try #require(result.reports.first?.sharedAccountIdentity))
     }
     #expect(identities.allSatisfy { $0 == identities.first })
+}
+
+@Test func codexCanonicalUserClaimInEitherTokenUsesOnePrimaryKey() async throws {
+    let key = ProviderAccountIdentityKey.generate()
+    let claims: [String: Any] = ["https://api.openai.com/auth": ["chatgpt_account_id": "fake-account", "chatgpt_user_id": "fake-user"]]
+    let token = "header." + base64URLEncoded(try JSONSerialization.data(withJSONObject: claims)) + ".signature"
+    var identities: [String] = []
+    var nativeIDs: [String] = []
+    for idToken in [true, false] {
+        var tokens = ["access_token": idToken ? "fake-access" : token, "account_id": "fake-account"]
+        if idToken { tokens["id_token"] = token }
+        let auth = try JSONSerialization.data(withJSONObject: ["tokens": tokens])
+        let connector = CodexRateLimitConnector(accounts: [CodexAccountConfiguration(configuredAccountID: "setup", authPath: "/fake/auth.json",
+            endpoint: URL(string: "https://example.invalid/usage")!)],
+            httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200,
+                data: Data(#"{"rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":18000}}}"#.utf8))]),
+            identityResolver: ProviderAccountIdentityResolver { key.identity(for: $0) }, fileLoader: { _ in auth })
+        let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_900_000_000))
+        identities.append(try #require(result.reports.first?.sharedAccountIdentity?.accountID))
+        nativeIDs.append(try #require(result.reports.first?.accountID))
+    }
+    #expect(Set(identities).count == 1)
+    #expect(Set(nativeIDs).count == 1)
+}
+
+@Test func claudeProfileFailureReusesOnlyTheCredentialQualifiedBinding() async throws {
+    let key = ProviderAccountIdentityKey.generate()
+    let cache = ProviderAccountIdentityMaterialStore(store: InMemoryProviderCredentialStore(storage: [:]))
+    let profile = try JSONSerialization.data(withJSONObject: ["account": ["uuid": UUID().uuidString],
+        "organization": ["uuid": UUID().uuidString]])
+    var ids: [String?] = []
+    var nativeIDs: [String] = []
+    for (status, access) in [(200, "fake-access-one"), (403, "fake-access-one"), (403, "fake-access-two")] {
+        let credentials = try claudeCredentialsData(accessToken: access, refreshToken: "fake-refresh", expiresAt: Date(timeIntervalSince1970: 4_000_000_000))
+        let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+            accounts: [ClaudeOAuthAccountConfiguration(accountID: "setup")],
+            httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"seven_day":{"utilization":23}}"#.utf8)),
+                ConnectorHTTPResponse(statusCode: status, data: profile), ConnectorHTTPResponse(statusCode: 403, data: Data())]),
+            credentialStore: StubCredentialStore(storage: ["setup": credentials]),
+            identityResolver: ProviderAccountIdentityResolver { key.identity(for: $0) }, identityMaterialStore: cache)
+        let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_900_000_000))
+        #expect(result.snapshot.limits.first?.used == 23)
+        ids.append(result.reports.first?.sharedAccountIdentity?.accountID)
+        nativeIDs.append(try #require(result.reports.first?.accountID))
+    }
+    #expect(ids[0] != nil && ids[0] == ids[1])
+    #expect(nativeIDs[0] == nativeIDs[1])
+    #expect(ids[2] == nil)
 }

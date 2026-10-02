@@ -420,14 +420,17 @@ public struct CodexRateLimitConnector: ProviderConnector {
     ) async throws -> ProviderConnectorReport {
         let auth = authRecord.tokens
         let providerAccountID = canonicalProviderAccountID(from: auth)
-        let localAccountID = providerAccountID.map {
+        let legacyLocalAccountID = providerAccountID.map {
             ConnectorRedactor.localAccountID(provider: provider, stableID: "chatgpt:\($0)")
         } ?? authRecord.stableID.map {
             ConnectorRedactor.localAccountID(provider: provider, stableID: "local:\($0)")
         } ?? ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
-        let localName = account.accountAliases[localAccountID] ?? authRecord.accountName
+        let material = identityMaterial(auth: auth)
+        let localAccountID = identityResolver == nil ? legacyLocalAccountID : material?.localHistoryID(configurationID: account.configuredAccountID ?? account.authPath) ?? legacyLocalAccountID
+        let localName = account.accountAliases[localAccountID] ?? account.accountAliases[legacyLocalAccountID] ?? authRecord.accountName
         var observedResetCredits: ProviderResetCreditSummary?
+        let identity = if let material, let identityResolver { await identityResolver.resolve(material)?.bound(toLocalAccountID: localAccountID) } else { nil as SharedProviderAccountIdentity? }
         do {
             let data = try await fetchUsage(endpoint: account.endpoint, auth: auth)
             observedResetCredits = await resetCredits(
@@ -438,9 +441,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             )
             let availability = await modelAvailability(for: account, auth: auth, usageData: data)
             let snapshots = try CodexUsagePayloadParser.snapshots(from: data, modelAvailability: availability)
-            let material = identityMaterial(auth: auth, observedPlan: snapshots.first?.planType)
-            let identity = if let material, let identityResolver { await identityResolver.resolve(material) } else { nil as SharedProviderAccountIdentity? }
-            let observedAccountID = identity?.accountID ?? localAccountID
+            let observedAccountID = localAccountID
             let limits = snapshots.flatMap { snapshot in
                 codexUsageLimits(
                     from: snapshot,
@@ -461,6 +462,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 usageCredits: snapshots.first?.credits.map {
                     ProviderUsageCreditSummary(hasCredits: $0.hasCredits, unlimited: $0.unlimited, balance: $0.balance.flatMap(Double.init))
                 },
+                legacyAccountID: legacyLocalAccountID,
                 sharedAccountIdentity: identity,
                 accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
             )
@@ -474,19 +476,25 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 limits: [],
                 resetCredits: observedResetCredits?.presented(at: now),
                 status: .failure,
-                errorMessage: error.localizedDescription
+                errorMessage: error.localizedDescription,
+                legacyAccountID: legacyLocalAccountID,
+                sharedAccountIdentity: identity,
+                accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
             )
         }
     }
 
-    private func identityMaterial(auth: CodexAuthTokens, observedPlan: String? = nil) -> ProviderAccountIdentityMaterial? {
-        guard let providerID = canonicalProviderAccountID(from: auth) else { return nil }
-        let token = CodexTokenIdentity.extract(fromIDToken: auth.idToken)
-        let personal = ["free", "plus", "pro"].contains((token.planType ?? observedPlan)?.lowercased() ?? "")
-        // A workspace alone must not join the usage of two different seats.
-        guard personal || token.userID != nil else { return nil }
+    private func identityMaterial(auth: CodexAuthTokens) -> ProviderAccountIdentityMaterial? {
+        let idClaims = CodexTokenIdentity.extract(fromIDToken: auth.idToken)
+        let accessClaims = CodexTokenIdentity.extract(fromIDToken: auth.accessToken)
+        if let a = idClaims.userID, let b = accessClaims.userID, a != b { return nil }
+        guard let providerID = canonicalProviderAccountID(from: auth),
+              let userID = idClaims.userID ?? accessClaims.userID, !userID.isEmpty,
+              accessClaims.chatGPTAccountID == nil || accessClaims.chatGPTAccountID == providerID else { return nil }
+        // Plan and optional-claim availability never select a second namespace.
+        // Account-only tokens remain readable locally until the stable seat is established.
         return ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID,
-            identifier: providerID, scope: token.userID.map { "seat:" + $0 } ?? "")
+            identifier: providerID, scope: "seat:" + userID)
     }
 
     private func resetCredits(

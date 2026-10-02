@@ -26,12 +26,12 @@ actor SharedAccountIdentityCloudKitStore {
             guard let encoded = try? ScopedProviderAccountIdentityKey.encode(key, scope: scope) else { return nil }
             try? cache.save(encoded, accountID: cacheID)
             memoryKeys[scope] = key
-            return key.identity(for: material)
+            return key.identity(for: material).bound(toUserScope: scope)
         }
         // Offline reads may reuse an established key, but never create a local-only key.
         if let cached = establishedKey {
             memoryKeys[scope] = cached
-            return cached.identity(for: material)
+            return cached.identity(for: material).bound(toUserScope: scope)
         }
         return nil
     }

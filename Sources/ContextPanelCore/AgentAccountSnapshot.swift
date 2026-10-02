@@ -109,7 +109,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let accountIdentityStatus: ProviderAccountIdentityStatus
 
         enum CodingKeys: String, CodingKey {
-            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, accountIdentityStatus
+            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, primaryAccountID, accountIdentityStatus
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -128,7 +128,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(usageCredits, forKey: .usageCredits)
             try container.encode(bankedResets, forKey: .bankedResets)
             try container.encode(display, forKey: .display)
-            try container.encodeIfPresent(sharedAccountIdentity, forKey: .sharedAccountIdentity)
+            try container.encodeIfPresent(sharedAccountIdentity?.bound(toLocalAccountID: nil), forKey: .sharedAccountIdentity)
+            try container.encodeIfPresent(sharedAccountIdentity?.accountID, forKey: .primaryAccountID)
             try container.encode(accountIdentityStatus, forKey: .accountIdentityStatus)
         }
     }
@@ -257,7 +258,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         configuration: AccountConfigurationDocument,
         stored: StoredUsageSnapshot,
         history: [StoredUsageSnapshot],
-        now: Date
+        now: Date,
+        sharedDocument: CompanionSyncDocument? = nil
     ) {
         readAt = now
         savedAt = stored.savedAt
@@ -265,9 +267,14 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         let rates = AccountBurnRateEstimator.observedBurnRates(
             current: stored.snapshot, history: history, now: now
         )
-        let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
-            metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
-            accountBurnRates: rates)
+        let canonical: WidgetSnapshot? = if sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
+            MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
+                publisherID: configuration.publisherID, remote: sharedDocument, now: now, rates: rates)
+        } else { nil }
+        let overview = canonical?.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
+            ?? AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+                metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
+                accountBurnRates: rates)
         let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
         answers = Answers(closestAccountID: overview.closest?.id, useNext: Provider.allCases.compactMap { provider in
             overview.useNext(provider: provider).map { Recommendation(provider: provider, accountID: $0.id) }
@@ -277,6 +284,31 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         deadlines = overview.deadlines.map {
             Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,
                      expiresAt: $0.expiresAt, observedAt: $0.observedAt, state: $0.state)
+        }
+        if let canonical {
+            accounts = overview.accounts.map { account in
+                let report = canonical.reports.first { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
+                let limits = canonical.limits.filter { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
+                return Account(id: account.id, configurationID: account.metadata.configurationID,
+                    provider: account.metadata.provider, label: account.metadata.label, state: account.state,
+                    showInWidgets: account.metadata.showInWidgets, useLast: account.metadata.useLast,
+                    remainingFraction: account.remainingFraction, limitingWindowID: account.limitingWindow?.id,
+                    observedAt: account.observedAt, windows: limits.map { limit in
+                        let rate = canonical.accountBurnRates?[limit.accountID]?[limit.id]
+                        return Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id), label: limit.label,
+                            unit: limit.unit, used: limit.used, limit: limit.limit, naturalResetAt: limit.resetsAt,
+                            observedAt: limit.lastUpdatedAt,
+                            burn: rate.flatMap { $0.sampleCount > 0 ? Burn(unitsPerHour: $0.unitsPerHour,
+                                observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) : nil },
+                            confidence: limit.confidence, presentationAssumption: limit.presentationAssumption)
+                    },
+                    usageCredits: stored.reports.first { report?.sharedAccountIdentity != nil && $0.sharedAccountIdentity?.accountID == report?.sharedAccountIdentity?.accountID && $0.provider == account.metadata.provider }?.usageCredits,
+                    bankedResets: BankedResets(state: account.bankedState, summary: account.bankedResets),
+                    display: Display(account: account, isNext: nextIDs.contains(account.id), now: now),
+                    sharedAccountIdentity: report?.sharedAccountIdentity,
+                    accountIdentityStatus: report?.accountIdentityStatus ?? .unverified)
+            }
+            return
         }
         accounts = AccountCapacity.rows(configuration: configuration.accounts,
             snapshot: presented, reports: stored.reports, now: now).map { row in
@@ -342,15 +374,21 @@ public extension AgentAccountSnapshot {
             let configuration = try decoder.decode(AccountConfigurationDocument.self,
                 from: Data(contentsOf: rootDirectory.appending(path: "accounts.json")))
             let snapshotDirectory = rootDirectory.appending(path: "Snapshots")
-            let stored = try decoder.decode(StoredUsageSnapshot.self,
+            let shared = MacSharedAccountCache(cacheURL: rootDirectory.appending(path: MacSharedAccountCache.filename)).load(now: now)
+            let stored: StoredUsageSnapshot
+            if shared != nil && !FileManager.default.fileExists(atPath: snapshotDirectory.appending(path: "current-snapshot.json").path) {
+                stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
+            } else {
+                stored = try decoder.decode(StoredUsageSnapshot.self,
                 from: Data(contentsOf: snapshotDirectory.appending(path: "current-snapshot.json")))
+            }
             guard configuration.schemaVersion == 1, stored.schemaVersion == 1 else {
                 throw AgentAccountSnapshotReadError.unsupportedSchema
             }
             let history = JSONSnapshotStore(rootDirectory: snapshotDirectory).loadHistory(
                 query: SnapshotStoreQuery(since: min(now, stored.snapshot.generatedAt).addingTimeInterval(-24 * 3_600), limit: 2_000)
             )
-            return Self(configuration: configuration, stored: stored, history: history, now: now)
+            return Self(configuration: configuration, stored: stored, history: history, now: now, sharedDocument: shared)
         } catch let error as AgentAccountSnapshotReadError {
             throw error
         } catch {

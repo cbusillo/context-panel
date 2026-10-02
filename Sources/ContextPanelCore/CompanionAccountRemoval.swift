@@ -4,7 +4,7 @@ public extension CompanionSyncDocument {
     /// Explicit tombstones outlive usage retention so an offline publisher cannot revive a removed lane.
     /// Only opaque display/configuration keys travel; provider login material remains local.
     func applyingGlobalRemovals() -> CompanionSyncDocument {
-        let removed = Set(removedDisplayIDs ?? [])
+        let removed = effectiveRemovedDisplayIDs
         guard !removed.isEmpty else { return self }
         let removedRows = Set((accountDisplayMetadata ?? []).filter {
             removed.contains($0.id) || removed.contains($0.configurationID)
@@ -39,6 +39,17 @@ public extension CompanionSyncDocument {
                     }
                 }
                 return retained
-            })
+            }, accountIdentityAliases: accountIdentityAliases,
+            accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates)
+    }
+}
+
+public extension CompanionSyncDocument {
+    var effectiveRemovedDisplayIDs: Set<String> {
+        Set(removedDisplayIDs ?? []).union(accountRemovalDates?.keys.map { $0 } ?? []).filter { key in
+            guard let restored = accountRestorationDates?[key] else { return true }
+            let removedAt = accountRemovalDates?[key] ?? Date(timeIntervalSince1970: 0)
+            return removedAt >= restored
+        }
     }
 }
