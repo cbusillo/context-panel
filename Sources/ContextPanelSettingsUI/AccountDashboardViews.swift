@@ -240,7 +240,7 @@ public struct AccountDashboardPanel: View {
             }
             .font(.system(size: 12))
             .foregroundStyle(palette.secondary)
-            .padding(.horizontal, 16).padding(.bottom, 12)
+            .padding(.horizontal, 16).padding(.bottom, 8)
         }
     }
 

@@ -4122,7 +4122,7 @@ struct ProviderDashboard: View {
                                 Label(summary.previewWindowName + " history", systemImage: "chart.xyaxis.line")
                                     .font(.system(size: 12, weight: .medium))
                             }
-                            Text("\(summary.accountCount) reported account windows · " + summary.previewUsageText)
+                            Text(summary.accountText + " reported · " + summary.previewUsageText)
                                 .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
                             Text(summary.previewResetConfidenceText)
                                 .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
