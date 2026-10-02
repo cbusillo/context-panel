@@ -4134,6 +4134,8 @@ struct ProviderDashboard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(summary.previewWindowName + " pooled window history, " + summary.quantitativeAccessibilityLabel)
+                    .accessibilityValue(summary.usedPressureAccessibilityValue(status: providerStatusIncludingAccessAlerts(
+                        provider: provider, baseStatuses: [summary.status], alerts: model.providerAccessAlerts)))
                     .accessibilityHint("Opens limit history and forecast")
                     .help(summary.previewResetConfidenceText)
                 }
