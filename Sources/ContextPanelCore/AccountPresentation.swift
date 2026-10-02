@@ -124,6 +124,125 @@ public enum AccountTerms {
     /// "1 dated", "3 without a date".
     public static func undated(_ count: Int) -> String { "\(count) without a date" }
 
+    // Horizon: the one-sentence summary, the outcome beside each shape, and the single callout.
+    public static let runsOutBeforeReset = "Runs out before reset"
+    public static let toSpare = "to spare"
+    public static let leftOnAverage = "left on average"
+    public static let weekLeft = "week left"
+    public static let untouched = "untouched"
+    public static let refills = "refills"
+    public static let horizonLegendLeft = "what is left, draining at your pace"
+    public static let horizonLegendEmpty = "empty before the reset"
+    public static let horizonLegendReset = "weekly reset, then full again"
+    public static let bankedLapsesLegend = "banked reset lapses"
+    public static let now = "Now"
+    public static let thisWeekAtAGlance = "This week at a glance"
+
+    private static func accountsNoun(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
+
+    /// The sentence every surface leads with, as a bold lead and a quieter rest:
+    /// "2 accounts run out before they reset." / "The other 4 are fine."
+    public static func headline(_ headline: AccountHeadline) -> (lead: String, rest: String) {
+        let total = headline.total
+        guard total > 0 else { return (addFirstAccount, "") }
+        let others = headline.lastingCount + headline.measuringCount + headline.notCurrentCount
+        let othersFine = headline.measuringCount == 0 && headline.notCurrentCount == 0
+        if headline.shortCount > 0 {
+            let lead = headline.shortCount == 1 ? "1 account runs out before it resets."
+                : "\(headline.shortCount) accounts run out before they reset."
+            if others == 0 { return (lead, "") }
+            if othersFine { return (lead, others == 1 ? "The other one is fine." : "The other \(others) are fine.") }
+            return (lead, restParts(headline))
+        }
+        if othersFine {
+            return (total == 1 ? "Your account lasts to its reset." : "All \(total) accounts last to their reset.", "")
+        }
+        return ("Nothing runs out before its reset.", restParts(headline))
+    }
+
+    /// The same sentence for a widget's few words: "2 run out before reset." / "4 are fine."
+    public static func compactHeadline(_ headline: AccountHeadline) -> (lead: String, rest: String) {
+        guard headline.total > 0 else { return (addFirstAccount, "") }
+        let others = headline.lastingCount + headline.measuringCount + headline.notCurrentCount
+        if headline.shortCount > 0 {
+            let lead = "\(headline.shortCount) run\(headline.shortCount == 1 ? "s" : "") out before reset."
+            guard others > 0 else { return (lead, "") }
+            return (lead, headline.measuringCount == 0 && headline.notCurrentCount == 0 ? "\(others) \(others == 1 ? "is" : "are") fine." : restParts(headline))
+        }
+        if headline.measuringCount == 0 && headline.notCurrentCount == 0 {
+            return (headline.total == 1 ? "Lasts to reset." : "All \(headline.total) last to reset.", "")
+        }
+        return ("None run out.", restParts(headline))
+    }
+
+    private static func restParts(_ headline: AccountHeadline) -> String {
+        var parts: [String] = []
+        if headline.lastingCount > 0 { parts.append("\(headline.lastingCount) last\(headline.lastingCount == 1 ? "s" : "") to reset") }
+        if headline.measuringCount > 0 { parts.append("\(headline.measuringCount) \(measuring)") }
+        if headline.notCurrentCount > 0 { parts.append("\(headline.notCurrentCount) not current") }
+        return parts.joined(separator: ", ").prefix(1).uppercased() + parts.joined(separator: ", ").dropFirst() + "."
+    }
+
+    /// "~50% to spare".
+    public static func spare(_ fraction: Double) -> String { "~" + AccountNumbers.percentWithSign(fraction) + " " + toSpare }
+    /// "~50% spare", for widgets.
+    public static func spareShort(_ fraction: Double) -> String { "~" + AccountNumbers.percentWithSign(fraction) + " spare" }
+    /// "Runs out Fri ~11 PM".
+    public static func runsOut(_ date: Date, now: Date) -> String { "Runs out " + AccountPaceText.approximately(date, now: now) }
+    /// "Out Fri ~11 PM", for widgets.
+    public static func outShort(_ date: Date, now: Date) -> String { "Out " + AccountPaceText.approximately(date, now: now) }
+
+    /// The outcome beside a horizon: what happens before the reset, then the fact it rests on.
+    /// "Runs out Fri ~11 PM" / "Empty 3½ days until it resets Tue 2:07 PM";
+    /// "~50% to spare" / "Resets Sat 9:07 PM"; "measuring" / "Resets …"; or the state word for a reading
+    /// that is not current.
+    public static func outcome(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> (title: String, detail: String) {
+        guard horizon.isCurrent else { return (account.stateText, accountTiming(account, now: now)) }
+        let resetText = horizon.window.flatMap { reset($0, now: now) }
+        if let runOut = horizon.runOutAt, let empty = horizon.emptyFor {
+            return (runsOut(runOut, now: now), "Empty " + AccountPaceText.span(empty) + (resetText.map { " until it resets " + $0 } ?? ""))
+        }
+        let detail = resetText.map { resets + " " + $0 } ?? ""
+        if let spare = horizon.spare { return (self.spare(spare), detail) }
+        return (measuring, detail)
+    }
+
+    /// The compact outcome: "Out Fri ~11 PM", "~50% spare", "measuring", or the state word.
+    public static func outcomeShort(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> String {
+        guard horizon.isCurrent else { return account.stateText }
+        if let runOut = horizon.runOutAt { return outShort(runOut, now: now) }
+        return horizon.spare.map(spareShort) ?? measuring
+    }
+
+    /// Why the use-next account: "Resets Sat 9:07 PM · ~50% to spare".
+    public static func useNextReason(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> String {
+        [horizon.window.flatMap { reset($0, now: now) }.map { resets + " " + $0 }, horizon.spare.map(spare)]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.
+    public static func refill(_ window: AccountOverview.Window, now: Date) -> String {
+        if let fraction = window.remainingFraction, fraction >= 0.995, window.assumption == nil { return untouched }
+        return reset(window, now: now).map { refills + " " + $0 } ?? unknown
+    }
+
+    /// A provider group's summary: "3 accounts · 59% left on average · 0.3%/h", then its outlook, which is red only
+    /// when some account runs out before its reset.
+    public static func providerSummary(_ total: AccountProviderTotal, now: Date) -> (facts: String, outlook: String, isShort: Bool) {
+        var facts = [accountCount(total)]
+        if total.isCombined, let long = total.longRemaining { facts.append(AccountNumbers.percentWithSign(long) + " " + leftOnAverage) }
+        if total.isCombined, let burn = total.burnPerHour { facts.append(self.burn(burn)) }
+        let outlook = total.runningOutCount > 0
+            ? "\(total.runningOutCount) of \(total.countedCount) run\(total.runningOutCount == 1 ? "s" : "") out before reset"
+            : combinedOutlook(total, now: now)
+        return (facts.joined(separator: " · "), outlook, total.runningOutCount > 0)
+    }
+
+    /// For the callout: "Banked reset lapses Fri 2:27 PM, before it runs out".
+    public static func bankedBeforeRunOut(_ deadline: AccountOverview.Deadline, now: Date) -> String {
+        "Banked reset lapses " + AccountPaceText.when(deadline.expiresAt, now: now) + ", before it runs out"
+    }
+
     /// A provider read that failed, where no saved account value stands in.
     public static let notUpdating = "Not updating"
 
@@ -219,7 +338,7 @@ public enum AccountTone: String, Codable, Sendable {
 /// Colour tokens as sRGB, light and dark. Every text token meets WCAG AA (4.5:1) on `surface` and `card`.
 public enum AccountColorToken: String, CaseIterable, Sendable {
     case surface, card, primary, secondary, tertiary, line, track
-    case fill, available, low, critical, saved, banked, next
+    case fill, available, low, critical, saved, banked, next, nextSurface
     case openAI, anthropic, google, markInk, actionFill, actionText, watchSurface, destructiveFill
 
     public func rgb(dark: Bool) -> (red: Double, green: Double, blue: Double) {
@@ -239,13 +358,15 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .saved: ((134, 104, 56), (204, 172, 110))
         case .banked: ((10, 122, 160), (92, 205, 236))
         case .next: ((36, 99, 209), (120, 169, 255))
-        // Provider identity: graphite for OpenAI, clay for Claude, violet for Google. Hues stay clear
-        // of the status colours (green, amber, red, saved brown, banked cyan, next blue). Each is a text
-        // colour on `card` and a mark fill under `markInk`, at 4.5:1 or better both ways.
-        case .openAI: ((40, 42, 48), (222, 224, 230))
-        case .anthropic: ((168, 72, 40), (236, 146, 112))
-        case .google: ((96, 72, 204), (178, 160, 255))
-        case .markInk: ((255, 255, 255), (24, 25, 28))
+        // The calm surface of a "use next" card.
+        case .nextSurface: ((232, 242, 252), (38, 63, 89))
+        // Provider identity (Horizon): teal OpenAI, ochre Claude, violet Google. Used for the provider's
+        // name, its group tint and its horizon fill; never for status. Each is a text colour at 4.5:1 or
+        // better on `surface`, `card` and `nextSurface`.
+        case .openAI: ((12, 112, 98), (60, 196, 174))
+        case .anthropic: ((150, 88, 20), (227, 166, 92))
+        case .google: ((106, 75, 214), (184, 168, 255))
+        case .markInk: ((255, 255, 255), (24, 25, 28)) // HORIZON-TRANSITION: removed once no view draws letter marks
         case .destructiveFill: ((170, 35, 30), (157, 45, 40))
         case .actionFill: ((36, 99, 209), (40, 88, 171))
         case .actionText: ((255, 255, 255), (255, 255, 255))
@@ -303,15 +424,8 @@ public extension AccountCapacityState {
 }
 
 public extension Provider {
-    /// One letter for the provider mark: a rounded square in the provider's colour. Typographic,
-    /// so no provider logo is reproduced.
-    var markLetter: String {
-        switch self {
-        case .openAI: "O"
-        case .anthropic: "C"
-        case .google: "G"
-        }
-    }
+    // HORIZON-TRANSITION: removed once no view draws letter marks.
+    var markLetter: String { String(accountDisplayName.prefix(1)) }
 
     var colorToken: AccountColorToken {
         switch self {

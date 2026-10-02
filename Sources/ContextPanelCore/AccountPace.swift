@@ -260,3 +260,147 @@ public extension AccountOverview {
         return result
     }
 }
+
+/// Horizon: an account's long (weekly) window as one shape that drains at the observed burn toward
+/// its reset. If it reaches empty first, the gap until the reset is the only thing drawn in red.
+/// Only current readings are projected; saved, paused and unconnected accounts get no projection.
+public struct AccountHorizon: Equatable, Sendable {
+    /// The window the shape follows: the account's long column, so the limiting window is never hidden.
+    public let window: AccountOverview.Window?
+    public let remaining: Double?
+    public let resetAt: Date?
+    /// Observed burn as a share per hour; nil while measuring or when the reading is not current.
+    public let burnPerHour: Double?
+    /// When the shape reaches empty, if that comes before the reset.
+    public let runOutAt: Date?
+    /// Share expected to be left at the reset at the observed burn; zero when it runs out first.
+    public let spare: Double?
+    public let isCurrent: Bool
+
+    public var runsOutBeforeReset: Bool { runOutAt != nil }
+    /// How long the account sits empty before its reset refills it.
+    public var emptyFor: TimeInterval? {
+        guard let runOutAt, let resetAt else { return nil }
+        return resetAt.timeIntervalSince(runOutAt)
+    }
+
+    /// Share left at `date` along the projection, for drawing; flat while measuring.
+    public func remaining(at date: Date, now: Date) -> Double? {
+        guard let remaining else { return nil }
+        guard let burnPerHour else { return remaining }
+        return max(0, remaining - burnPerHour * max(0, date.timeIntervalSince(now)) / 3_600)
+    }
+}
+
+public extension AccountOverview.Account {
+    func horizon(now: Date) -> AccountHorizon {
+        let window = longWindow
+        let current = isReliable
+        let reset = window?.naturalResetAt.flatMap { $0 > now ? $0 : nil }
+        let burn = current ? window?.burnFractionPerHour : nil
+        let runOut = current ? window?.projectedRunOut(now: now) : nil
+        let spare: Double? = if runOut != nil { 0 } else if let burn, let reset, let remaining = window?.remainingFraction {
+            max(0, remaining - burn * reset.timeIntervalSince(now) / 3_600)
+        } else { nil }
+        return AccountHorizon(window: window, remaining: window?.remainingFraction, resetAt: reset, burnPerHour: burn,
+                              runOutAt: runOut, spare: spare, isCurrent: current)
+    }
+}
+
+/// The one-sentence summary every surface leads with.
+public struct AccountHeadline: Equatable, Sendable {
+    /// Current accounts whose long window runs out before its reset.
+    public let shortCount: Int
+    /// Current accounts projected to last to their reset.
+    public let lastingCount: Int
+    /// Current accounts without observed burn yet.
+    public let measuringCount: Int
+    /// Saved, paused, unconnected or unknown accounts.
+    public let notCurrentCount: Int
+    public var total: Int { shortCount + lastingCount + measuringCount + notCurrentCount }
+}
+
+public extension AccountOverview {
+    func headline(now: Date) -> AccountHeadline {
+        var short = 0, lasting = 0, measuring = 0, other = 0
+        for account in accounts {
+            let horizon = account.horizon(now: now)
+            if !horizon.isCurrent { other += 1 }
+            else if horizon.runsOutBeforeReset { short += 1 }
+            else if horizon.burnPerHour == nil { measuring += 1 }
+            else { lasting += 1 }
+        }
+        return AccountHeadline(shortCount: short, lastingCount: lasting, measuringCount: measuring, notCurrentCount: other)
+    }
+
+    /// Accounts that run out before their reset, soonest first: the single callout.
+    func runningShort(now: Date) -> [(account: Account, horizon: AccountHorizon)] {
+        accounts.map { ($0, $0.horizon(now: now)) }.filter(\.1.runsOutBeforeReset)
+            .sorted { ($0.1.runOutAt ?? .distantFuture) < ($1.1.runOutAt ?? .distantFuture) }
+    }
+
+    /// The account's banked reset that lapses before it runs out, if any: spending it first loses nothing.
+    func bankedBeforeRunOut(_ account: Account, now: Date) -> Deadline? {
+        guard let runOut = account.horizon(now: now).runOutAt else { return nil }
+        return deadlines.first { $0.accountID == account.id && $0.state == .available && $0.expiresAt < runOut }
+    }
+}
+
+public extension AccountPaceText {
+    /// A span to the nearest useful unit: "40 min", "32 hours", "3½ days".
+    static func span(_ seconds: TimeInterval) -> String {
+        let hours = seconds / 3_600
+        if hours < 1 { return "\(max(1, Int((seconds / 60).rounded()))) min" }
+        if hours < 48 { let whole = Int(hours.rounded()); return "\(whole) hour" + (whole == 1 ? "" : "s") }
+        let halves = Int((hours / 12).rounded())
+        return "\(halves / 2)" + (halves % 2 == 1 ? "½" : "") + " days"
+    }
+}
+
+/// Where to draw a horizon across a span that starts now, as fractions: x of the span (0...1) and
+/// y of the window (0...1 left). Every surface draws the same shape from this, at its own size.
+public struct AccountHorizonGeometry: Equatable, Sendable {
+    /// Share left now, at x = 0.
+    public let startLevel: Double
+    /// Where the fill ends: the run-out, else the reset, else the end of the span.
+    public let fillEndX: Double
+    public let fillEndLevel: Double
+    /// Time spent empty before the reset: the hatched red gap.
+    public let emptyRange: ClosedRange<Double>?
+    /// The reset mark, when the reset falls inside the span.
+    public let resetX: Double?
+    /// Midnight boundaries inside the span, for faint day lines.
+    public let dayXs: [Double]
+    /// Banked resets lapsing inside the span, at the level the shape has then.
+    public let banked: [(x: Double, level: Double)]
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.startLevel == rhs.startLevel && lhs.fillEndX == rhs.fillEndX && lhs.fillEndLevel == rhs.fillEndLevel
+            && lhs.emptyRange == rhs.emptyRange && lhs.resetX == rhs.resetX && lhs.dayXs == rhs.dayXs
+            && lhs.banked.map(\.x) == rhs.banked.map(\.x) && lhs.banked.map(\.level) == rhs.banked.map(\.level)
+    }
+}
+
+public extension AccountHorizon {
+    static let span: TimeInterval = 7 * 86_400
+
+    func geometry(now: Date, deadlines: [AccountOverview.Deadline] = [], span: TimeInterval = AccountHorizon.span,
+                  calendar: Calendar = .current) -> AccountHorizonGeometry {
+        func x(_ date: Date) -> Double { min(1, max(0, date.timeIntervalSince(now) / span)) }
+        let start = remaining ?? 0
+        let end = runOutAt ?? resetAt ?? now.addingTimeInterval(span)
+        let endX = x(end)
+        let empty = runOutAt.flatMap { runOut in resetAt.map { x(runOut)...x($0) } }
+        let days = (1...7).compactMap { day -> Double? in
+            let boundary = calendar.startOfDay(for: now).addingTimeInterval(Double(day) * 86_400)
+            let value = boundary.timeIntervalSince(now) / span
+            return value > 0 && value < 1 ? value : nil
+        }
+        let lapses = deadlines.filter { $0.expiresAt > now && $0.expiresAt.timeIntervalSince(now) <= span }
+            .map { (x: x($0.expiresAt), level: remaining(at: $0.expiresAt, now: now) ?? 0) }
+        return AccountHorizonGeometry(startLevel: start, fillEndX: endX,
+                                      fillEndLevel: remaining(at: end, now: now) ?? start, emptyRange: empty,
+                                      resetX: resetAt.flatMap { $0.timeIntervalSince(now) <= span ? x($0) : nil },
+                                      dayXs: days, banked: lapses)
+    }
+}

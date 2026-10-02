@@ -113,7 +113,48 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(AccountTerms.weekResetRelation(expiresAt: totalsNow, week: account?.shortWindow, now: totalsNow) == nil)
 }
 
-@Test func providerMarksAreDistinctLettersAndColours() {
-    #expect(Set(Provider.allCases.map(\.markLetter)).count == Provider.allCases.count)
+@Test func providerHuesAreDistinct() {
     #expect(Set(Provider.allCases.map(\.colorToken)).count == Provider.allCases.count)
+}
+
+// MARK: Horizon
+
+@Test func horizonProjectsRunOutSpareAndTheEmptyGap() throws {
+    // a: 20% left at 1%/h, reset in 100h: empty at 20h, empty 80h. b: 60% left at 0.5%/h, reset in 50h: 35% to spare.
+    let overview = totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 40, 50, 0.5, 0), ("c", .anthropic, 10, 100, nil, 0)])
+    let a = try #require(overview.accounts.first { $0.metadata.label == "a" }).horizon(now: totalsNow)
+    #expect(a.runOutAt == totalsNow.addingTimeInterval(20 * 3_600) && a.spare == 0)
+    #expect(abs((a.emptyFor ?? 0) - 80 * 3_600) < 1)
+    #expect(AccountPaceText.span(a.emptyFor ?? 0) == "3½ days")
+    let b = try #require(overview.accounts.first { $0.metadata.label == "b" }).horizon(now: totalsNow)
+    #expect(b.runOutAt == nil && abs((b.spare ?? 0) - 0.35) < 0.0001)
+    let c = try #require(overview.accounts.first { $0.metadata.label == "c" })
+    #expect(c.horizon(now: totalsNow).spare == nil)
+    #expect(AccountTerms.outcome(c, c.horizon(now: totalsNow), now: totalsNow).title == AccountTerms.measuring)
+    let headline = overview.headline(now: totalsNow)
+    #expect(headline.shortCount == 1 && headline.lastingCount == 1 && headline.measuringCount == 1)
+    #expect(AccountTerms.headline(headline).lead == "1 account runs out before it resets.")
+    #expect(AccountTerms.headline(headline).rest == "1 lasts to reset, 1 measuring.")
+    #expect(overview.runningShort(now: totalsNow).map(\.account.metadata.label) == ["a"])
+}
+
+@Test func horizonHeadlineCountsOnlyCurrentAccountsAsFine() {
+    let fine = totalsOverview([("a", .openAI, 10, 50, 0.1, 0), ("b", .anthropic, 10, 50, 0.1, 0)])
+    #expect(AccountTerms.headline(fine.headline(now: totalsNow)).lead == "All 2 accounts last to their reset.")
+    #expect(AccountTerms.compactHeadline(fine.headline(now: totalsNow)).lead == "All 2 last to reset.")
+    // A reading 10 hours old is saved, not fine, and gets no projection.
+    let saved = totalsOverview([("a", .openAI, 90, 100, 1.0, 0), ("b", .openAI, 10, 50, 0.1, 10)])
+    let headline = saved.headline(now: totalsNow)
+    #expect(headline.shortCount == 1 && headline.notCurrentCount == 1)
+    #expect(AccountTerms.headline(headline).rest == "1 not current.")
+    #expect(saved.accounts.last?.horizon(now: totalsNow).runOutAt == nil)
+}
+
+@Test func horizonGeometryDrawsTheSameShapeEverywhere() throws {
+    let account = try #require(totalsOverview([("a", .openAI, 80, 100, 1.0, 0)]).accounts.first)
+    let geometry = account.horizon(now: totalsNow).geometry(now: totalsNow)
+    #expect(abs(geometry.startLevel - 0.2) < 0.0001 && geometry.fillEndLevel == 0)
+    #expect(abs(geometry.fillEndX - 20.0 / 168) < 0.0001)
+    #expect(abs((geometry.emptyRange?.upperBound ?? 0) - 100.0 / 168) < 0.0001)
+    #expect(geometry.resetX == geometry.emptyRange?.upperBound)
 }

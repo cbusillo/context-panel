@@ -20,9 +20,9 @@ private func luminance(_ token: AccountColorToken, dark: Bool) -> Double {
             let first = luminance(.actionText, dark: dark), second = luminance(fill, dark: dark)
             #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
         }
-        // Provider marks: the letter on its provider's colour.
-        for provider in Provider.allCases {
-            let first = luminance(.markInk, dark: dark), second = luminance(provider.colorToken, dark: dark)
+        // The calm "use next" card: its words and the provider names on it.
+        for foreground in [AccountColorToken.primary, .secondary, .next, .openAI, .anthropic, .google] {
+            let first = luminance(foreground, dark: dark), second = luminance(.nextSurface, dark: dark)
             #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5)
         }
     }
