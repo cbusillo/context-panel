@@ -68,11 +68,15 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
 }
 
 @Test func providerTotalNeedsEveryCurrentAccountsBurnAndSkipsSavedOnes() throws {
-    // b has no observed burn: a partial set would understate the combined burn, so no pace.
+    // b has no observed burn: a partial set would understate the combined burn, so no pace;
+    // a's own run-out is still known and counted.
     let measuring = try #require(totalsOverview([("a", .openAI, 50, 100, 1.0, 0), ("b", .openAI, 50, 100, nil, 0)])
         .providerTotals(now: totalsNow).first)
-    #expect(measuring.paceRatio == nil && measuring.runningOutCount == 0)
-    #expect(AccountTerms.combinedOutlook(measuring, now: totalsNow) == AccountTerms.measuring)
+    #expect(measuring.paceRatio == nil && measuring.runningOutCount == 1)
+    #expect(AccountTerms.combinedOutlook(measuring, now: totalsNow) == "1 of 2 run out")
+    let calm = try #require(totalsOverview([("a", .openAI, 10, 100, 0.1, 0), ("b", .openAI, 50, 100, nil, 0)])
+        .providerTotals(now: totalsNow).first)
+    #expect(AccountTerms.combinedOutlook(calm, now: totalsNow) == AccountTerms.measuring)
 
     // b is saved (observed long ago): listed, not added, and compact surfaces say so.
     let saved = try #require(totalsOverview([("a", .openAI, 50, 100, 1.0, 0), ("b", .openAI, 0, 100, 1.0, 48)])
@@ -157,4 +161,27 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(abs(geometry.fillEndX - 20.0 / 168) < 0.0001)
     #expect(abs((geometry.emptyRange?.upperBound ?? 0) - 100.0 / 168) < 0.0001)
     #expect(geometry.resetX == geometry.emptyRange?.upperBound)
+}
+
+@Test func horizonNeverReassuresPastWhatIsMeasured() {
+    // One account lasts, one is still measuring: the lead must not say nothing runs out.
+    let overview = totalsOverview([("a", .openAI, 10, 50, 0.1, 0), ("b", .openAI, 10, 50, nil, 0)])
+    let sentence = AccountTerms.headline(overview.headline(now: totalsNow))
+    #expect(sentence.lead == "1 of 2 accounts last to their reset.")
+    #expect(sentence.rest == "1 measuring.")
+    #expect(AccountTerms.compactHeadline(overview.headline(now: totalsNow)).lead == "1 of 2 last to reset.")
+}
+
+@Test func horizonCountsAnEmptyWeekAsRunningOutNow() throws {
+    // 0% left with no burn after exhaustion: already out, not "fine".
+    let account = try #require(totalsOverview([("a", .openAI, 100, 50, 0.0, 0)]).accounts.first)
+    let horizon = account.horizon(now: totalsNow)
+    #expect(horizon.runOutAt == totalsNow && horizon.runsOutBeforeReset)
+}
+
+@Test func providerLineKeepsAKnownRunOutWhileASiblingMeasures() throws {
+    let total = try #require(totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 10, 50, nil, 0)])
+        .providerTotals(now: totalsNow).first)
+    #expect(total.runningOutCount == 1)
+    #expect(AccountTerms.providerSummary(total, now: totalsNow).isShort)
 }

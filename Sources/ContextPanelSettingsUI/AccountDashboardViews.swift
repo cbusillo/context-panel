@@ -117,7 +117,7 @@ public struct AccountDashboardPanel: View {
                             if horizon.remaining != nil {
                                 Text("%").font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundStyle(palette.secondary)
                             }
-                            Text(AccountTerms.weekLeft).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
+                            Text(AccountTerms.horizonLeft(horizon.window)).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
                         }
                     }
                     Text(AccountTerms.useNextReason(account, horizon, now: now))
@@ -136,7 +136,7 @@ public struct AccountDashboardPanel: View {
         .disabled(account == nil)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(provider.accountDisplayName + ", " + AccountTerms.useNext + ", " + (account.map {
-            $0.metadata.label + ", " + AccountNumbers.percentWithSign($0.horizon(now: now).remaining) + " " + AccountTerms.weekLeft + ", "
+            $0.metadata.label + ", " + AccountNumbers.percentWithSign($0.horizon(now: now).remaining) + " " + AccountTerms.horizonLeft($0.horizon(now: now).window) + ", "
                 + AccountTerms.useNextReason($0, $0.horizon(now: now), now: now) } ?? AccountTerms.noEligibleAccount))
     }
 

@@ -77,9 +77,10 @@ public enum AccountTerms {
     /// The combined outlook, true whatever each plan's size: "Week lasts to reset" when no account runs
     /// out before its own reset, "1 of 3 run out" (before their resets) when some do, "all out by Sat ~4 PM" when all do.
     public static func combinedOutlook(_ total: AccountProviderTotal, now: Date) -> String {
-        guard total.paceRatio != nil else { return measuring }
         if let date = total.allOutBy { return "all out by " + AccountPaceText.approximately(date, now: now) }
+        // A known run-out is said even while a sibling is still measuring.
         if total.runningOutCount > 0 { return "\(total.runningOutCount) of \(total.countedCount) run out" }
+        guard total.paceRatio != nil else { return measuring }
         return longColumn(weekly: total.longIsWeekly) + " " + lastsToReset
     }
     /// "1 of 2" beside a compact combined number when some accounts are not current; empty otherwise.
@@ -158,7 +159,8 @@ public enum AccountTerms {
         if othersFine {
             return (total == 1 ? "Your account lasts to its reset." : "All \(total) accounts last to their reset.", "")
         }
-        return ("Nothing runs out before its reset.", restParts(headline))
+        // Never reassure past what is measured: say how many are known to last, then the rest.
+        return ("\(headline.lastingCount) of \(total) accounts last to their reset.", restParts(headline, includingLasting: false))
     }
 
     /// The same sentence for a widget's few words: "2 run out before reset." / "4 are fine."
@@ -173,12 +175,12 @@ public enum AccountTerms {
         if headline.measuringCount == 0 && headline.notCurrentCount == 0 {
             return (headline.total == 1 ? "Lasts to reset." : "All \(headline.total) last to reset.", "")
         }
-        return ("None run out.", restParts(headline))
+        return ("\(headline.lastingCount) of \(headline.total) last to reset.", restParts(headline, includingLasting: false))
     }
 
-    private static func restParts(_ headline: AccountHeadline) -> String {
+    private static func restParts(_ headline: AccountHeadline, includingLasting: Bool = true) -> String {
         var parts: [String] = []
-        if headline.lastingCount > 0 { parts.append("\(headline.lastingCount) last\(headline.lastingCount == 1 ? "s" : "") to reset") }
+        if includingLasting, headline.lastingCount > 0 { parts.append("\(headline.lastingCount) last\(headline.lastingCount == 1 ? "s" : "") to reset") }
         if headline.measuringCount > 0 { parts.append("\(headline.measuringCount) \(measuring)") }
         if headline.notCurrentCount > 0 { parts.append("\(headline.notCurrentCount) not current") }
         return parts.joined(separator: ", ").prefix(1).uppercased() + parts.joined(separator: ", ").dropFirst() + "."
@@ -200,10 +202,12 @@ public enum AccountTerms {
     public static func outcome(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> (title: String, detail: String) {
         guard horizon.isCurrent else { return (account.stateText, accountTiming(account, now: now)) }
         let resetText = horizon.window.flatMap { reset($0, now: now) }
+        let name = horizon.window.flatMap(horizonWindowName)
         if let runOut = horizon.runOutAt, let empty = horizon.emptyFor {
-            return (runsOut(runOut, now: now), "Empty " + AccountPaceText.span(empty) + (resetText.map { " until it resets " + $0 } ?? ""))
+            return ((name.map { $0 + " " } ?? "") + runsOut(runOut, now: now),
+                    "Empty " + AccountPaceText.span(empty) + (resetText.map { " until it resets " + $0 } ?? ""))
         }
-        let detail = resetText.map { resets + " " + $0 } ?? ""
+        let detail = resetText.map { (name.map { $0 + " resets " } ?? resets + " ") + $0 } ?? ""
         if let spare = horizon.spare { return (self.spare(spare), detail) }
         return (measuring, detail)
     }
@@ -215,9 +219,20 @@ public enum AccountTerms {
         return horizon.spare.map(spareShort) ?? measuring
     }
 
+    /// The horizon window's name when it is not the account-wide week ("Opus · Week", "Day"); nil for the plain week.
+    public static func horizonWindowName(_ window: AccountOverview.Window) -> String? {
+        window.modelLabel == nil && window.duration == 7 * 86_400 ? nil : window.shortLabel
+    }
+
+    /// "week left", or "Opus · Week left" when the horizon follows a model-only or other-length window.
+    public static func horizonLeft(_ window: AccountOverview.Window?) -> String {
+        window.flatMap(horizonWindowName).map { $0 + " " + left } ?? weekLeft
+    }
+
     /// Why the use-next account: "Resets Sat 9:07 PM · ~50% to spare".
     public static func useNextReason(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> String {
-        [horizon.window.flatMap { reset($0, now: now) }.map { resets + " " + $0 }, horizon.spare.map(spare)]
+        [horizon.window.flatMap { window in reset(window, now: now).map { (horizonWindowName(window).map { $0 + " resets " } ?? resets + " ") + $0 } },
+         horizon.spare.map(spare)]
             .compactMap { $0 }.joined(separator: " · ")
     }
 

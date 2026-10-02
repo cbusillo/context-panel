@@ -170,10 +170,11 @@ public extension AccountOverview {
                 }
                 burn = total / Double(longs.count)
                 pace = even > 0 ? total / even : (total > 0 ? .infinity : 0)
-                let runOuts = longs.compactMap { $0.projectedRunOut(now: now) }
-                runningOut = runOuts.count
+                let runOuts = counted.compactMap { $0.horizon(now: now).runOutAt }
                 allOutBy = runOuts.count == longs.count ? runOuts.max() : nil
             }
+            // A known run-out is counted even while a sibling is still measuring, so the provider line never hides it.
+            runningOut = counted.filter { $0.horizon(now: now).runsOutBeforeReset }.count
             return AccountProviderTotal(
                 provider: provider, accountCount: all.count, countedCount: counted.count,
                 longRemaining: complete ? mean(longs.compactMap(\.remainingFraction)) : nil,
@@ -293,12 +294,26 @@ public struct AccountHorizon: Equatable, Sendable {
 }
 
 public extension AccountOverview.Account {
+    /// The long window the horizon follows: the one that runs out first before its reset at the observed burn,
+    /// else the tightest long window, so neither a fast-burning model limit nor the limiting window is hidden.
+    func horizonWindow(now: Date) -> AccountOverview.Window? {
+        guard isReliable else { return longWindow }
+        let long = windows.filter { $0.id != shortWindow?.id }
+        return long.compactMap { window in Self.runOut(window, now: now).map { (window, $0) } }.min { $0.1 < $1.1 }?.0 ?? longWindow
+    }
+
+    /// Run-out before the reset: projected from the observed burn, or now when the window is already empty.
+    private static func runOut(_ window: AccountOverview.Window, now: Date) -> Date? {
+        if let remaining = window.remainingFraction, remaining <= 0, (window.naturalResetAt ?? .distantPast) > now { return now }
+        return window.projectedRunOut(now: now)
+    }
+
     func horizon(now: Date) -> AccountHorizon {
-        let window = longWindow
+        let window = horizonWindow(now: now)
         let current = isReliable
         let reset = window?.naturalResetAt.flatMap { $0 > now ? $0 : nil }
         let burn = current ? window?.burnFractionPerHour : nil
-        let runOut = current ? window?.projectedRunOut(now: now) : nil
+        let runOut = current ? window.flatMap { Self.runOut($0, now: now) } : nil
         let spare: Double? = if runOut != nil { 0 } else if let burn, let reset, let remaining = window?.remainingFraction {
             max(0, remaining - burn * reset.timeIntervalSince(now) / 3_600)
         } else { nil }

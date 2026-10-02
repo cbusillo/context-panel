@@ -11,8 +11,11 @@ files only: `Sources/ContextPanelCore/AccountPresentation.swift` (words, colours
 
 - **One sentence first:** `AccountOverview.headline(now:)` + `AccountTerms.headline` /
   `compactHeadline`. "2 accounts run out before they reset. The other 4 are fine." Only current readings
-  with observed burn count as fine; others are counted as "measuring" or "not current".
-- **Horizon per account:** `Account.horizon(now:)` follows the long (Week) window: share left now,
+  with observed burn count as fine. When some are measuring or not current, the lead says how many are known
+  to last ("4 of 6 accounts last to their reset.") instead of reassuring.
+- **Horizon per account:** `Account.horizon(now:)` follows the long window that runs out first before its
+  reset (a fast-burning model limit is never hidden), else the tightest long window. A window already at 0% counts
+  as out now. When it is not the account-wide week, its name is said ("Opus · Week resets …"). It shows: share left now,
   observed burn, run-out if it comes before the reset, share to spare at the reset. `geometry(now:deadlines:)`
   gives every surface the same shape as fractions, so the Mac, widgets, iPhone, Watch, TV and Deadlines
   draw one picture at different sizes.

@@ -102,7 +102,19 @@ struct AccountGlanceWidget: View {
         let headline = headline(overview)
         let roomy = picks.count <= 2
         return VStack(alignment: .leading, spacing: 0) {
-            header(trailing: picks.isEmpty ? nil : nextUpWord).padding(.bottom, 5)
+            header(trailing: picks.isEmpty ? nil : nextUpWord).padding(.bottom, 2)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if headline.short {
+                    Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
+                }
+                Text(headline.lead)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(headline.short ? palette.bad : palette.secondary)
+                    .lineLimit(1).fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .ignore)
+            .padding(.bottom, 5)
+            .accessibilityLabel([headline.lead, headline.rest].filter { !$0.isEmpty }.joined(separator: " "))
             if picks.isEmpty {
                 Text(AccountTerms.noEligibleAccount).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
@@ -124,17 +136,6 @@ struct AccountGlanceWidget: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Banked reset for \(deadline.label) expires \(ContextPanelDateFormatting.accountReset(deadline.expiresAt))")
             }
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                if headline.short {
-                    Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
-                }
-                Text(headline.lead)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(headline.short ? palette.bad : palette.secondary)
-                    .lineLimit(1).fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel([headline.lead, headline.rest].filter { !$0.isEmpty }.joined(separator: " "))
         }
     }
 
@@ -172,7 +173,16 @@ struct AccountGlanceWidget: View {
         let picks = picks(overview)
         let totals = overview.providerTotals(now: now)
         return VStack(alignment: .leading, spacing: 6) {
-            header(trailing: nextUpWord + " · " + AccountPaceText.when(now, now: now))
+            let headline = headline(overview)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(AccountTerms.widgetTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                Spacer(minLength: 4)
+                (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.secondary)
+                 + Text(headline.rest.isEmpty ? "" : " " + headline.rest).foregroundStyle(palette.secondary))
+                    .font(.system(size: 10.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel([AccountTerms.widgetTitle, headline.lead, headline.rest].filter { !$0.isEmpty }.joined(separator: " "))
             HStack(alignment: .top, spacing: 6) {
                 ForEach(picks, id: \.provider) { pick in
                     let card = mediumCard(pick.provider, account: pick.account,
@@ -314,7 +324,7 @@ struct AccountGlanceWidget: View {
                         Text(AccountTerms.resets + " " + reset)
                         Text(reset)
                     }
-                    .font(.system(size: 8)).foregroundStyle(palette.tertiary)
+                    .font(.system(size: 9)).foregroundStyle(palette.tertiary)
                 }
             }
             .monospacedDigit().lineLimit(1).frame(width: 93, alignment: .trailing)
@@ -341,7 +351,7 @@ struct AccountGlanceWidget: View {
             : account.metadata.useLast ? Text(AccountTerms.useLast.lowercased()).foregroundStyle(palette.tertiary) : nil
         let rest = Text((tag == nil || facts.isEmpty ? "" : " · ") + facts.joined(separator: " · ")).foregroundStyle(palette.secondary)
         return (tag.map { $0 + rest } ?? rest)
-            .font(.system(size: 8.5)).monospacedDigit().lineLimit(1).fixedSize()
+            .font(.system(size: 9)).monospacedDigit().lineLimit(1).fixedSize()
     }
 
     /// The single callout: a banked reset that lapses before its account runs out; else the next banked expiry.

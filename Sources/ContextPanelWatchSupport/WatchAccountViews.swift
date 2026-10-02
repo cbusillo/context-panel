@@ -75,6 +75,10 @@ public struct WatchAccountRow: View {
                 }
             }
             .font(.system(size: 12)).monospacedDigit().lineLimit(1)
+            if horizon.isCurrent, let reset = horizon.window.flatMap({ AccountTerms.reset($0, now: now) }) {
+                Text(AccountTerms.resets + " " + reset).font(.system(size: 11)).monospacedDigit()
+                    .foregroundStyle(WatchTokens.color(.secondary)).lineLimit(1)
+            }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .ignore)
