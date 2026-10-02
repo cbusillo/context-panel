@@ -105,9 +105,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let usageCredits: ProviderUsageCreditSummary?
         public let bankedResets: BankedResets
         public let display: Display?
+        public let sharedAccountIdentity: SharedProviderAccountIdentity?
+        public let accountIdentityStatus: ProviderAccountIdentityStatus
 
         enum CodingKeys: String, CodingKey {
-            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display
+            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, accountIdentityStatus
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -126,6 +128,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(usageCredits, forKey: .usageCredits)
             try container.encode(bankedResets, forKey: .bankedResets)
             try container.encode(display, forKey: .display)
+            try container.encodeIfPresent(sharedAccountIdentity, forKey: .sharedAccountIdentity)
+            try container.encode(accountIdentityStatus, forKey: .accountIdentityStatus)
         }
     }
 
@@ -317,7 +321,9 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 },
                 usageCredits: row.report?.usageCredits,
                 bankedResets: BankedResets(state: shared?.bankedState ?? resetState, summary: summary),
-                display: shared.map { Display(account: $0, isNext: nextIDs.contains($0.id), now: now) }
+                display: shared.map { Display(account: $0, isNext: nextIDs.contains($0.id), now: now) },
+                sharedAccountIdentity: row.report?.sharedAccountIdentity,
+                accountIdentityStatus: row.report?.accountIdentityStatus ?? .unverified
             )
         }
     }

@@ -22,6 +22,15 @@ available count, observation time, detail coverage, and earliest trustworthy
 expiry described below; provider credit identifiers and raw rows are never
 included.
 
+The shared account identity implementation derives a per-iCloud-user keyed
+pseudonym from a provider's stable account ID. Usage records can contain the
+pseudonym, its provider identifier kind, and an identity qualification status;
+they never contain the raw provider ID or the hashing secret. The random secret
+has a separate encrypted field in the private CloudKit database and a local
+Keychain cache bound to the iCloud user. Provider OAuth credentials stay local.
+The identity integration is not enabled until its migration and live schema
+qualification gates pass; see [the implementation contract](shared-account-identity.md).
+
 During an explicit expiring signed-validation session, Context Panel may sync
 privacy-safe runtime receipts through the user's private CloudKit database.
 These receipts contain app/extension build fingerprints, loaded executable

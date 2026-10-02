@@ -16,3 +16,5 @@
 - [Signed Validation Replay Inventory](signed-validation-replay-inventory.md)
 - [Repository Settings](repo-settings.md)
 - [Test Lanes](test-lanes.md)
+
+[Shared account identity](shared-account-identity.md) records provider keys, privacy boundaries, and activation qualification.

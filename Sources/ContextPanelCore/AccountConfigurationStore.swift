@@ -427,7 +427,8 @@ public enum AccountConnectorFactory {
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
         googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)? = nil,
-        requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox
+        requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox,
+        identityResolver: ProviderAccountIdentityResolver? = nil
     ) -> [any ProviderConnector] {
         var hasGoogleAntigravityConnector = false
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
@@ -454,6 +455,7 @@ public enum AccountConnectorFactory {
                             : account.displayName,
                         accountAliases: account.accountAliases ?? [:]
                     )],
+                    identityResolver: identityResolver,
                     fileLoader: authFileLoader
                 )
             case .googleAntigravityQuota:
@@ -481,7 +483,8 @@ public enum AccountConnectorFactory {
                         accountID: account.id,
                         accountName: account.displayName
                     )],
-                    credentialStore: effectiveCredentialStore
+                    credentialStore: effectiveCredentialStore,
+                    identityResolver: identityResolver
                 )
             }
         }

@@ -47,3 +47,7 @@ DEFINE SCHEMA
         GRANT WRITE TO "_creator",
         GRANT READ TO "_world"
     );
+
+    RECORD TYPE ContextPanelAccountIdentityKey (
+        keyMaterial ENCRYPTED_BYTES
+    );

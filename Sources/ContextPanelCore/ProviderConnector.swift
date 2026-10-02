@@ -156,6 +156,8 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
+    public let sharedAccountIdentity: SharedProviderAccountIdentity?
+    public let accountIdentityStatus: ProviderAccountIdentityStatus
 
     public init(
         provider: Provider,
@@ -168,7 +170,9 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         usageCredits: ProviderUsageCreditSummary? = nil,
         status: UsageStatus? = nil,
         accessState: ProviderAccessState = .unknown,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        sharedAccountIdentity: SharedProviderAccountIdentity? = nil,
+        accountIdentityStatus: ProviderAccountIdentityStatus = .unverified
     ) {
         self.provider = provider
         self.accountID = accountID
@@ -181,6 +185,8 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
         self.accessState = accessState.retainingCurrentProviderObservation(for: self.status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.sharedAccountIdentity = sharedAccountIdentity?.matches(provider: provider, accountID: accountID) == true ? sharedAccountIdentity : nil
+        self.accountIdentityStatus = SharedProviderAccountIdentity.status(accountIdentityStatus, identity: self.sharedAccountIdentity)
     }
 }
 

@@ -289,12 +289,14 @@ public struct CodexTokenIdentity: Equatable, Sendable {
     public let email: String?
     public let name: String?
     public let planType: String?
+    public let userID: String?
 
-    public init(chatGPTAccountID: String?, email: String?, name: String?, planType: String?) {
+    public init(chatGPTAccountID: String?, email: String?, name: String?, planType: String?, userID: String? = nil) {
         self.chatGPTAccountID = chatGPTAccountID
         self.email = email
         self.name = name
         self.planType = planType
+        self.userID = userID
     }
 
     public static func extract(fromIDToken token: String?) -> CodexTokenIdentity {
@@ -317,7 +319,8 @@ public struct CodexTokenIdentity: Equatable, Sendable {
             chatGPTAccountID: auth["chatgpt_account_id"] as? String,
             email: object["email"] as? String,
             name: object["name"] as? String,
-            planType: auth["chatgpt_plan_type"] as? String
+            planType: auth["chatgpt_plan_type"] as? String,
+            userID: auth["chatgpt_user_id"] as? String ?? object["sub"] as? String
         )
     }
 }
@@ -358,10 +361,12 @@ public struct CodexRateLimitConnector: ProviderConnector {
     private let accounts: [CodexAccountConfiguration]
     private let httpClient: any ConnectorHTTPClient
     private let fileLoader: @Sendable (String) throws -> Data
+    private let identityResolver: ProviderAccountIdentityResolver?
 
     public init(
         accounts: [CodexAccountConfiguration],
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
+        identityResolver: ProviderAccountIdentityResolver? = nil,
         fileLoader: @escaping @Sendable (String) throws -> Data = { path in
             try Data(contentsOf: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
         }
@@ -369,6 +374,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
         self.accounts = accounts
         self.httpClient = httpClient
         self.fileLoader = fileLoader
+        self.identityResolver = identityResolver
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -432,10 +438,13 @@ public struct CodexRateLimitConnector: ProviderConnector {
             )
             let availability = await modelAvailability(for: account, auth: auth, usageData: data)
             let snapshots = try CodexUsagePayloadParser.snapshots(from: data, modelAvailability: availability)
+            let material = identityMaterial(auth: auth, observedPlan: snapshots.first?.planType)
+            let identity = if let material, let identityResolver { await identityResolver.resolve(material) } else { nil as SharedProviderAccountIdentity? }
+            let observedAccountID = identity?.accountID ?? localAccountID
             let limits = snapshots.flatMap { snapshot in
                 codexUsageLimits(
                     from: snapshot,
-                    accountID: localAccountID,
+                    accountID: observedAccountID,
                     configuredAccountID: account.configuredAccountID,
                     accountName: localName,
                     observedAt: now
@@ -443,7 +452,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             }
             return ProviderConnectorReport(
                 provider: provider,
-                accountID: localAccountID,
+                accountID: observedAccountID,
                 configuredAccountID: account.configuredAccountID,
                 accountName: localName,
                 generatedAt: now,
@@ -451,7 +460,9 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 resetCredits: observedResetCredits,
                 usageCredits: snapshots.first?.credits.map {
                     ProviderUsageCreditSummary(hasCredits: $0.hasCredits, unlimited: $0.unlimited, balance: $0.balance.flatMap(Double.init))
-                }
+                },
+                sharedAccountIdentity: identity,
+                accountIdentityStatus: material == nil ? .providerIdentityUnavailable : .waitingForSharedKey
             )
         } catch {
             return ProviderConnectorReport(
@@ -466,6 +477,16 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 errorMessage: error.localizedDescription
             )
         }
+    }
+
+    private func identityMaterial(auth: CodexAuthTokens, observedPlan: String? = nil) -> ProviderAccountIdentityMaterial? {
+        guard let providerID = canonicalProviderAccountID(from: auth) else { return nil }
+        let token = CodexTokenIdentity.extract(fromIDToken: auth.idToken)
+        let personal = ["free", "plus", "pro"].contains((token.planType ?? observedPlan)?.lowercased() ?? "")
+        // A workspace alone must not join the usage of two different seats.
+        guard personal || token.userID != nil else { return nil }
+        return ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID,
+            identifier: providerID, scope: personal ? "" : "seat:" + (token.userID ?? ""))
     }
 
     private func resetCredits(

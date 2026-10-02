@@ -145,6 +145,17 @@
           "type": "INT64"
         }
       ]
+    },
+    {
+      "name": "ContextPanelAccountIdentityKey",
+      "recordName": "ContextPanelAccountIdentityKey.v1",
+      "publicDatabaseGrants": [],
+      "fields": [
+        {
+          "name": "keyMaterial",
+          "type": "ENCRYPTED_BYTES"
+        }
+      ]
     }
   ]
 }

@@ -278,19 +278,22 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private let credentialStore: any ProviderCredentialStoring
     private let expirationSkew: TimeInterval
     private let resetReadCooldown: ClaudeResetCreditReadCooldown
+    private let identityResolver: ProviderAccountIdentityResolver?
 
     public init(
         resetReadCooldown: ClaudeResetCreditReadCooldown = .shared,
         accounts: [ClaudeOAuthAccountConfiguration],
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
         credentialStore: any ProviderCredentialStoring,
-        expirationSkew: TimeInterval = 5 * 60
+        expirationSkew: TimeInterval = 5 * 60,
+        identityResolver: ProviderAccountIdentityResolver? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
         self.credentialStore = credentialStore
         self.expirationSkew = expirationSkew
         self.resetReadCooldown = resetReadCooldown
+        self.identityResolver = identityResolver
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -360,43 +363,59 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             guard (200..<300).contains(retryResponse.statusCode) else {
                 throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: retryResponse.statusCode)
             }
-            let retryUsage = try ClaudeOAuthUsageParser.usageResult(
-                from: retryResponse.data,
-                accountID: localAccountID,
-                accountName: account.accountName,
-                observedAt: now
-            )
-            return ProviderConnectorReport(
-                provider: provider,
-                accountID: localAccountID,
-                accountName: account.accountName,
-                generatedAt: now,
-                limits: retryUsage.limits,
-                resetCredits: await resetCredits(account: account, accessToken: refreshedToken, now: now),
-                status: retryUsage.limits.isEmpty ? .unknown : nil,
-                accessState: retryUsage.accessState
-            )
+            return try await usageReport(data: retryResponse.data, accessToken: refreshedToken,
+                account: account, localAccountID: localAccountID, now: now)
         }
 
         guard (200..<300).contains(response.statusCode) else {
             throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
         }
+        return try await usageReport(data: response.data, accessToken: currentAccessToken,
+            account: account, localAccountID: localAccountID, now: now)
+    }
+
+    private func usageReport(data: Data, accessToken: String, account: ClaudeOAuthAccountConfiguration,
+        localAccountID: String, now: Date) async throws -> ProviderConnectorReport {
+        // Qualify usage before requesting the identity of this exact authenticated login.
+        _ = try ClaudeOAuthUsageParser.usageResult(from: data, accountID: localAccountID,
+            accountName: account.accountName, observedAt: now)
+        let material = await identityMaterial(accessToken: accessToken)
+        let identity: SharedProviderAccountIdentity?
+        if let material, let identityResolver { identity = await identityResolver.resolve(material) }
+        else { identity = nil }
+        let accountID = identity?.accountID ?? localAccountID
         let usage = try ClaudeOAuthUsageParser.usageResult(
-            from: response.data,
-            accountID: localAccountID,
+            from: data,
+            accountID: accountID,
             accountName: account.accountName,
             observedAt: now
         )
         return ProviderConnectorReport(
             provider: provider,
-            accountID: localAccountID,
+            accountID: accountID,
+            configuredAccountID: account.accountID,
             accountName: account.accountName,
             generatedAt: now,
             limits: usage.limits,
-            resetCredits: await resetCredits(account: account, accessToken: currentAccessToken, now: now),
+            resetCredits: await resetCredits(account: account, accessToken: accessToken, now: now),
             status: usage.limits.isEmpty ? .unknown : nil,
-            accessState: usage.accessState
+            accessState: usage.accessState,
+            sharedAccountIdentity: identity,
+            accountIdentityStatus: material == nil ? .providerIdentityUnavailable : .waitingForSharedKey
         )
+    }
+
+    private func identityMaterial(accessToken: String) async -> ProviderAccountIdentityMaterial? {
+        guard identityResolver != nil else { return nil }
+        do {
+            let profile = try await httpClient.data(for: ConnectorHTTPRequest(
+                url: URL(string: "https://api.anthropic.com/api/oauth/profile")!, method: "GET",
+                headers: ["Authorization": "Bearer \(accessToken)", "Accept": "application/json",
+                    "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
+                    "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader]))
+            guard profile.statusCode == 200 else { return nil }
+            return ClaudeOAuthAccountIdentityParser.material(from: profile.data)
+        } catch { return nil }
     }
 
     private func resetCredits(

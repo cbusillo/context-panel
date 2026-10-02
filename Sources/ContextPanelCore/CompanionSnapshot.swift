@@ -1373,6 +1373,8 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let resetCredits: ProviderResetCreditSummary?
+    public let sharedAccountIdentity: SharedProviderAccountIdentity?
+    public let accountIdentityStatus: ProviderAccountIdentityStatus
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -1382,6 +1384,8 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         case status
         case accessState
         case resetCredits
+        case sharedAccountIdentity
+        case accountIdentityStatus
     }
 
     public init(report: StoredProviderReport) { self.init(report: report, identityConfiguredAccountID: nil) }
@@ -1398,6 +1402,8 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         status = report.status
         accessState = report.accessState.retainingCurrentProviderObservation(for: report.status)
         resetCredits = report.resetCredits
+        sharedAccountIdentity = report.sharedAccountIdentity
+        accountIdentityStatus = report.accountIdentityStatus
     }
 
     public init(from decoder: Decoder) throws {
@@ -1410,6 +1416,10 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
         resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
+        let decodedIdentity = try container.decodeIfPresent(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
+        sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: companionAccountID) == true ? decodedIdentity : nil
+        accountIdentityStatus = SharedProviderAccountIdentity.status(
+            try container.decodeIfPresent(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus) ?? .unverified, identity: sharedAccountIdentity)
     }
 
     public var storedProviderReport: StoredProviderReport {
@@ -1422,7 +1432,9 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
             resetCredits: resetCredits,
             status: status,
             accessState: accessState,
-            errorMessage: nil
+            errorMessage: nil,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 }
@@ -1650,6 +1662,7 @@ private struct ProviderAccountKey: Hashable, Sendable {
 
 private enum CompanionAccountIdentity {
     static func id(provider: Provider, accountID: String, configuredAccountID: String?) -> String {
+        if SharedProviderAccountIdentity.isSharedAccountID(accountID, provider: provider) { return accountID }
         let stableID = "companion:" + ProviderAccountIdentity.unique(
             accountID: accountID,
             configuredAccountID: configuredAccountID

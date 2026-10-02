@@ -93,6 +93,8 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
+    public let sharedAccountIdentity: SharedProviderAccountIdentity?
+    public let accountIdentityStatus: ProviderAccountIdentityStatus
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -105,6 +107,8 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         case status
         case accessState
         case errorMessage
+        case sharedAccountIdentity
+        case accountIdentityStatus
     }
 
     public init(
@@ -117,7 +121,9 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         usageCredits: ProviderUsageCreditSummary? = nil,
         status: UsageStatus,
         accessState: ProviderAccessState = .unknown,
-        errorMessage: String?
+        errorMessage: String?,
+        sharedAccountIdentity: SharedProviderAccountIdentity? = nil,
+        accountIdentityStatus: ProviderAccountIdentityStatus = .unverified
     ) {
         self.provider = provider
         self.accountID = accountID
@@ -129,6 +135,8 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.status = status
         self.accessState = accessState.retainingCurrentProviderObservation(for: status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.sharedAccountIdentity = sharedAccountIdentity?.matches(provider: provider, accountID: accountID) == true ? sharedAccountIdentity : nil
+        self.accountIdentityStatus = SharedProviderAccountIdentity.status(accountIdentityStatus, identity: self.sharedAccountIdentity)
     }
 
     public init(from decoder: Decoder) throws {
@@ -143,6 +151,10 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
+        let decodedIdentity = try container.decodeIfPresent(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
+        sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: accountID) == true ? decodedIdentity : nil
+        accountIdentityStatus = SharedProviderAccountIdentity.status(
+            try container.decodeIfPresent(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus) ?? .unverified, identity: sharedAccountIdentity)
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
             .map(ConnectorRedactor.safeErrorDescription)
     }
@@ -158,7 +170,9 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             usageCredits: report.usageCredits,
             status: report.status,
             accessState: report.accessState,
-            errorMessage: report.errorMessage
+            errorMessage: report.errorMessage,
+            sharedAccountIdentity: report.sharedAccountIdentity,
+            accountIdentityStatus: report.accountIdentityStatus
         )
     }
 
@@ -173,7 +187,9 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             usageCredits: usageCredits,
             status: replacementStatus,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -188,7 +204,9 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             usageCredits: usageCredits,
             status: status,
             accessState: replacementAccessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -203,7 +221,9 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             usageCredits: usageCredits,
             status: status,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
