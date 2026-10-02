@@ -362,6 +362,11 @@ enum AppNavigationSelection: Hashable {
     case providerAccount(Provider, String)
     case mainLimit(MainLimitSummary.ID)
 
+    func retainingAvailableLimit(in snapshot: UsageSnapshot) -> Self {
+        guard case .mainLimit(let id) = self else { return self }
+        return snapshot.mainLimitSummaries.contains(where: { $0.id == id }) ? self : .overview
+    }
+
     func sidebarSelection(in snapshot: UsageSnapshot) -> Self {
         guard case .mainLimit(let id) = self else { return self }
         return snapshot.mainLimitSummaries.first(where: { $0.id == id }).map { .provider($0.provider) } ?? .overview
@@ -388,6 +393,9 @@ struct AppRoot: View {
         .onReceive(model.$navigationRequest.compactMap { $0 }) { request in
             selection = request
             model.clearNavigationRequest()
+        }
+        .onChange(of: snapshot.mainLimitSummaries.map(\.id)) { _, _ in
+            selection = selection?.retainingAvailableLimit(in: snapshot)
         }
         .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
             model.invalidateSharedAccounts()
@@ -2977,6 +2985,7 @@ struct AccountsSidebar: View {
                     let providerResetCredits = provider == .openAI ? resetCreditSummary : nil
                     let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
                     if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
+                        Button { selection = .provider(provider) } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
                                 ProviderBadge(provider: provider)
@@ -2997,6 +3006,10 @@ struct AccountsSidebar: View {
                                 Text(AccountTerms.unknown).font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(spokenHeader)
                         .accessibilityHint("Opens provider usage, limits and history")

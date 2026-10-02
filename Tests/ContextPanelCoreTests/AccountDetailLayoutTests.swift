@@ -117,3 +117,16 @@ private func detailOverview(windowCount: Int) -> AccountOverview {
     #expect(three.last?.width == 800)
     #expect(three.last!.minY > three.first!.maxY)
 }
+
+@Test func vanishedLimitClearsStoredNavigationSoARecoveredLimitCannotReopenIt() throws {
+    let snapshot = UsageSnapshot(generatedAt: detailNow, limits: [
+        UsageLimit(provider: .google, accountID: "a", accountName: "Google", label: "Weekly", windowLabel: "Weekly",
+            unit: .percent, used: 20, limit: 100)
+    ])
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    let selected = AppNavigationSelection.mainLimit(summary.id)
+    #expect(selected.retainingAvailableLimit(in: snapshot) == selected)
+    let cleared = selected.retainingAvailableLimit(in: UsageSnapshot(generatedAt: detailNow, limits: []))
+    #expect(cleared == .overview)
+    #expect(cleared.retainingAvailableLimit(in: snapshot) == .overview)
+}
