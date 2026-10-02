@@ -44,7 +44,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let pace: String
         public let burn: String
         public let outlook: String
-        /// The provider group's line in the Horizon overview: "3 accounts · 59% left on average · 0.3%/h".
+        /// The provider group's line in the Horizon overview: "3 accounts · 59% left on average · uses ~7% a day".
         public let summary: String
         /// "1 of 3 runs out before reset", or the calm outlook.
         public let summaryOutlook: String

@@ -95,9 +95,14 @@ public enum AccountTerms {
     public static let bankedResetExpiresLegend = "banked reset expires"
     public static func dated(_ count: Int) -> String { "\(count) dated" }
     public static func accountsCount(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
-    /// Combined burn as a share of the combined room per hour: "0.3%/h".
-    public static func burn(_ perHour: Double?) -> String {
-        perHour.map { String(format: "%.1f%%/h", $0 * 100) } ?? unknown
+    /// Burn in plain words, as a share of the room used per day: "~7% a day", "<1% a day". A window shorter than
+    /// a day says it per hour instead ("~6% an hour"), since it refills before a day passes.
+    public static func burn(_ perHour: Double?, windowDuration: TimeInterval? = nil) -> String {
+        perHour.map { perHour in
+            let hourly = (windowDuration ?? .infinity) < 86_400
+            let percent = AccountNumbers.percentWithSign(perHour * (hourly ? 1 : 24))
+            return (percent.hasPrefix("<") ? percent : "~" + percent) + (hourly ? " an hour" : " a day")
+        } ?? unknown
     }
 
     // Deadlines page.
@@ -245,16 +250,24 @@ public enum AccountTerms {
         return reset(window, now: now).map { refills + " " + $0 } ?? unknown
     }
 
-    /// A provider group's summary: "3 accounts · 59% left on average · 0.3%/h", then its outlook, which is red only
-    /// when some account runs out before its reset.
+    /// A provider group's summary: "3 accounts · 59% left on average · uses ~7% a day", then its outlook. `isShort`
+    /// says some account runs out before its reset; the outlook is still drawn calm (`AccountAlarm`).
     public static func providerSummary(_ total: AccountProviderTotal, now: Date) -> (facts: String, outlook: String, isShort: Bool) {
         var facts = [accountCount(total)]
         if total.isCombined, let long = total.longRemaining { facts.append(AccountNumbers.percentWithSign(long) + " " + leftOnAverage) }
-        if total.isCombined, let burn = total.burnPerHour { facts.append(self.burn(burn)) }
+        if total.isCombined, let burn = total.burnPerHour { facts.append("uses " + self.burn(burn)) }
         let outlook = total.runningOutCount > 0
             ? "\(total.runningOutCount) of \(total.countedCount) run\(total.runningOutCount == 1 ? "s" : "") out before reset"
             : combinedOutlook(total, now: now)
         return (facts.joined(separator: " · "), outlook, total.runningOutCount > 0)
+    }
+
+    /// Under a widget's use-next card that lasts, when other accounts of its provider run out: "1 other runs out".
+    /// Nil when none do. The card names the provider, so this reads as the provider's news, not the shown account's.
+    public static func othersRunOut(_ total: AccountProviderTotal, shownRunsOut: Bool) -> String? {
+        let others = total.runningOutCount - (shownRunsOut ? 1 : 0)
+        guard others > 0 else { return nil }
+        return others == 1 ? "1 other runs out" : "\(others) others run out"
     }
 
     /// For the callout: "Banked reset lapses Fri 2:27 PM, before it runs out".
@@ -383,11 +396,35 @@ public enum AccountTone: String, Codable, Sendable {
     public var textToken: AccountColorToken { self == .fine ? .primary : fillToken }
 }
 
+/// Horizon's one alarm. Red words say "runs out before reset" in one place on each surface: the callout on the
+/// overview, iPhone and TV; the outcome on an account's own page; the headline's lead on widgets and the Watch,
+/// which have no room for a callout. Rows, cards and provider summaries stay calm, and a horizon bar shows its
+/// empty stretch only as the hatched gap.
+public enum AccountAlarm {
+    /// The colour of the surface's single alarm.
+    public static let token: AccountColorToken = .critical
+    /// An account's outcome words beside its horizon in a list, card or widget row: never red.
+    public static func outcomeToken(_ account: AccountOverview.Account, _ horizon: AccountHorizon) -> AccountColorToken {
+        horizon.isCurrent ? .primary : AccountTone.forAccount(account).textToken
+    }
+    /// A provider group's outlook ("1 of 3 runs out before reset"): calm, the callout names the accounts.
+    public static let providerOutlookToken: AccountColorToken = .secondary
+}
+
+/// Smallest sizes for words, in points, so nothing that must be read is tiny or faint. Words use `primary` or
+/// `secondary`; `tertiary` is only for marks such as the "%" after a number.
+public enum AccountTextSize {
+    /// Widgets and the Watch.
+    public static let glanceMinimum: Double = 10
+    /// The Mac app and iPhone.
+    public static let appMinimum: Double = 12
+}
+
 /// Colour tokens as sRGB, light and dark. Every text token meets WCAG AA (4.5:1) on `surface` and `card`.
 public enum AccountColorToken: String, CaseIterable, Sendable {
     case surface, card, primary, secondary, tertiary, line, track
-    case fill, available, low, critical, saved, banked, next, nextSurface
-    case openAI, anthropic, google, actionFill, actionText, watchSurface, destructiveFill
+    case fill, available, low, critical, saved, banked, next
+    case openAI, anthropic, google, openAISurface, anthropicSurface, googleSurface, actionFill, actionText, watchSurface, destructiveFill
 
     public func rgb(dark: Bool) -> (red: Double, green: Double, blue: Double) {
         let pair: ((Double, Double, Double), (Double, Double, Double)) = switch self {
@@ -406,14 +443,17 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .saved: ((134, 104, 56), (204, 172, 110))
         case .banked: ((10, 122, 160), (92, 205, 236))
         case .next: ((36, 99, 209), (120, 169, 255))
-        // The calm surface of a "use next" card.
-        case .nextSurface: ((232, 242, 252), (38, 63, 89))
         // Provider identity (Horizon): teal OpenAI, ochre Claude, violet Google. Used for the provider's
         // name, its group tint and its horizon fill; never for status. Each is a text colour at 4.5:1 or
-        // better on `surface`, `card` and `nextSurface`.
+        // better on `surface`, `card` and every provider surface.
         case .openAI: ((12, 112, 98), (60, 196, 174))
         case .anthropic: ((150, 88, 20), (227, 166, 92))
         case .google: ((106, 75, 214), (184, 168, 255))
+        // A "use next" card's calm surface, tinted with its provider's hue so providers tell apart at a glance.
+        // `primary`, `secondary` and every provider hue stay at 4.5:1 or better on each (tested).
+        case .openAISurface: ((225, 243, 238), (22, 56, 52))
+        case .anthropicSurface: ((250, 236, 220), (62, 45, 26))
+        case .googleSurface: ((238, 234, 253), (46, 40, 80))
         case .destructiveFill: ((170, 35, 30), (157, 45, 40))
         case .actionFill: ((36, 99, 209), (40, 88, 171))
         case .actionText: ((255, 255, 255), (255, 255, 255))
@@ -476,6 +516,15 @@ public extension Provider {
         case .openAI: .openAI
         case .anthropic: .anthropic
         case .google: .google
+        }
+    }
+
+    /// The surface of this provider's "use next" card.
+    var surfaceToken: AccountColorToken {
+        switch self {
+        case .openAI: .openAISurface
+        case .anthropic: .anthropicSurface
+        case .google: .googleSurface
         }
     }
 }

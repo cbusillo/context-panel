@@ -29,7 +29,7 @@ private let accountPresentationSizes: [String: CGSize] = [
     "account-overview": CGSize(width: 900, height: 880),
     "account-deadlines": CGSize(width: 900, height: 1_060),
     "account-detail": CGSize(width: 900, height: 720),
-    "phone-overview": CGSize(width: 393, height: 1_900),
+    "phone-overview": CGSize(width: 393, height: 1_960),
     "phone-detail": CGSize(width: 393, height: 852),
     "watch-app": CGSize(width: 198, height: 560),
     "watch-rectangular": CGSize(width: 184, height: 74),

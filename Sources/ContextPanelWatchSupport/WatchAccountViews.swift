@@ -21,7 +21,7 @@ public struct WatchAccountHeadline: View {
     public var body: some View {
         let headline = overview.headline(now: now)
         let text = AccountTerms.compactHeadline(headline)
-        (Text(text.lead).foregroundColor(WatchTokens.color(headline.shortCount > 0 ? .critical : .primary))
+        (Text(text.lead).foregroundColor(WatchTokens.color(headline.shortCount > 0 ? AccountAlarm.token : .primary))
             + Text(text.rest.isEmpty ? "" : " " + text.rest).foregroundColor(WatchTokens.color(.secondary)))
             .font(.system(size: 14, weight: .semibold))
             .fixedSize(horizontal: false, vertical: true)
@@ -52,7 +52,7 @@ public struct WatchAccountRow: View {
                 if isNext {
                     Text(AccountTerms.useNext).foregroundStyle(WatchTokens.color(provider.colorToken))
                 } else if account.metadata.useLast {
-                    Text(AccountTerms.useLast).foregroundStyle(WatchTokens.color(.tertiary))
+                    Text(AccountTerms.useLast).foregroundStyle(WatchTokens.color(.secondary))
                 }
             }
             .font(.system(size: 10, weight: .semibold)).lineLimit(1)
@@ -68,7 +68,7 @@ public struct WatchAccountRow: View {
                          token: horizon.isCurrent ? provider.colorToken : .saved)
                 .frame(height: 9)
             HStack(spacing: 4) {
-                Text(outcome(horizon)).foregroundStyle(WatchTokens.color(outcomeToken(horizon)))
+                Text(outcome(horizon)).foregroundStyle(WatchTokens.color(AccountAlarm.outcomeToken(account, horizon)))
                 Spacer(minLength: 2)
                 if let short = account.shortWindow, account.longWindow != short {
                     Text(AccountTerms.fiveHour + " " + AccountNumbers.window(short)).foregroundStyle(WatchTokens.color(.secondary))
@@ -94,10 +94,6 @@ public struct WatchAccountRow: View {
             : AccountTerms.outcomeShort(account, horizon, now: now)
     }
 
-    private func outcomeToken(_ horizon: AccountHorizon) -> AccountColorToken {
-        if horizon.runsOutBeforeReset { return .critical }
-        return horizon.isCurrent ? .secondary : account.state.colorToken
-    }
 }
 
 /// The next banked expiry, kept as one line in the watch list.
@@ -144,7 +140,7 @@ public struct WatchAccountRectangularFace: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(AccountTerms.compactHeadline(headline).lead)
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                    .foregroundStyle(WatchTokens.color(headline.shortCount > 0 ? .critical : .primary))
+                    .foregroundStyle(WatchTokens.color(headline.shortCount > 0 ? AccountAlarm.token : .primary))
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text(provider.accountDisplayName).font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(WatchTokens.color(provider.colorToken))
@@ -156,7 +152,7 @@ public struct WatchAccountRectangularFace: View {
                 WatchHorizon(geometry: horizon.geometry(now: now), token: horizon.isCurrent ? provider.colorToken : .saved)
                     .frame(height: 6)
                 Text(footer(account, horizon)).font(.system(size: 11)).monospacedDigit().lineLimit(1)
-                    .foregroundStyle(WatchTokens.color(horizon.runsOutBeforeReset ? .critical : .secondary))
+                    .foregroundStyle(WatchTokens.color(AccountAlarm.outcomeToken(account, horizon)))
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(AccountTerms.compactHeadline(headline).lead + " "
@@ -205,7 +201,7 @@ public struct WatchAccountCircularFace: View {
             }
             Text(horizon?.window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
                 .font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit()
-                .foregroundStyle(WatchTokens.color(horizon?.runsOutBeforeReset == true ? .critical : .primary))
+                .foregroundStyle(WatchTokens.color(.primary))
         }
         .padding(3)
         .accessibilityLabel(account.map { $0.glanceAccessibilityText(now: now, isNext: false) } ?? AccountTerms.addFirstAccount)

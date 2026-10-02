@@ -55,7 +55,7 @@ public struct TVAccountAnswers: View {
     }
 }
 
-/// One provider's use-next account on the calm next surface: the name in the provider's hue, the
+/// One provider's use-next account on its provider's calm surface: the name in the provider's hue, the
 /// account, its weekly share left in large type, its horizon and why it is next.
 struct TVUseNextCard: View {
     let provider: Provider
@@ -69,7 +69,7 @@ struct TVUseNextCard: View {
                 Text(provider.accountDisplayName).font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(TVTokens.color(provider.colorToken))
                 Spacer()
-                Text(AccountTerms.useNext).font(.system(size: 20)).foregroundStyle(TVTokens.color(.secondary))
+                Text(AccountTerms.useNext).font(.system(size: 20, weight: .semibold)).foregroundStyle(TVTokens.color(provider.colorToken))
             }
             .frame(height: 28)
             if let account {
@@ -104,7 +104,7 @@ struct TVUseNextCard: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(TVTokens.color(.nextSurface), in: RoundedRectangle(cornerRadius: 20))
+        .background(TVTokens.color(provider.surfaceToken), in: RoundedRectangle(cornerRadius: 20))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(provider.accountDisplayName + ", " + AccountTerms.useNext + ": "
             + (account.map { $0.glanceAccessibilityText(now: now, isNext: true) } ?? AccountTerms.noEligibleAccount))
@@ -186,7 +186,7 @@ struct TVAccountLines: View {
                 .frame(height: 24)
             HStack(alignment: .firstTextBaseline) {
                 Text(outcome.title).font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(TVTokens.color(outcomeToken(horizon)))
+                    .foregroundStyle(TVTokens.color(AccountAlarm.outcomeToken(account, horizon)))
                 Spacer(minLength: 8)
                 if let short = account.shortWindow, account.longWindow != short {
                     Text(AccountTerms.fiveHour + " " + AccountNumbers.window(short)).font(.system(size: 20))
@@ -208,12 +208,6 @@ struct TVAccountLines: View {
 
     private func detail(_ text: String) -> String {
         account.metadata.useLast ? [text, AccountTerms.useLast].filter { !$0.isEmpty }.joined(separator: " · ") : text
-    }
-
-    private func outcomeToken(_ horizon: AccountHorizon) -> AccountColorToken {
-        if horizon.runsOutBeforeReset { return .critical }
-        if !horizon.isCurrent, account.state.needsWord { return account.state.colorToken }
-        return .primary
     }
 }
 
@@ -291,8 +285,8 @@ public struct TVAccountGroups: View {
                     if let total = totals.first(where: { $0.provider == provider }) {
                         let summary = AccountTerms.providerSummary(total, now: now)
                         (Text(summary.facts + " · ").foregroundColor(TVTokens.color(.secondary))
-                            + Text(summary.outlook).foregroundColor(TVTokens.color(summary.isShort ? .critical : .secondary)))
-                            .font(.system(size: 19)).lineLimit(1).minimumScaleFactor(0.7).frame(height: 24)
+                            + Text(summary.outlook).foregroundColor(TVTokens.color(AccountAlarm.providerOutlookToken)))
+                            .font(.system(size: 20)).lineLimit(2).frame(height: 52, alignment: .topLeading)
                     }
                     ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
                         if index > 0 { Rectangle().fill(TVTokens.color(.line)).frame(height: 1) }

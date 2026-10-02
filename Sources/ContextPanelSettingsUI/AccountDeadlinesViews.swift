@@ -99,7 +99,7 @@ public struct AccountDeadlinesPanel: View {
                                     next: overview.nextDeadline ?? overview.deadlines.first, now: now)
         return VStack(alignment: .leading, spacing: 5) {
             Text(AccountTerms.deadlines + " · " + AccountTerms.deadlinesKickerRest)
-                .font(.system(size: 12)).foregroundStyle(palette.tertiary)
+                .font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
             (Text(words.lead).foregroundStyle(palette.primary)
                 + Text(words.rest.isEmpty ? "" : " " + words.rest).foregroundStyle(palette.tertiary).fontWeight(.semibold))
                 .font(.system(size: 23, weight: .bold)).fixedSize(horizontal: false, vertical: true)
@@ -146,7 +146,7 @@ public struct AccountDeadlinesPanel: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.system(size: 16, weight: .bold))
-                    if let subtitle { Text(subtitle).font(.system(size: 11.5)).foregroundStyle(palette.tertiary) }
+                    if let subtitle { Text(subtitle).font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary) }
                 }
                 .frame(width: 98, alignment: .leading).padding(.top, 6)
                 .accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
@@ -187,7 +187,7 @@ public struct AccountDeadlinesPanel: View {
 
     private func title(_ event: Event, _ action: Text, prefix: String? = nil) -> Text {
         (prefix.map { Text($0 + " · ").fontWeight(.semibold).foregroundStyle(palette.primary) } ?? Text(""))
-            + Text(event.provider.accountDisplayName + "  ").font(.system(size: 11, weight: .semibold)).foregroundStyle(palette.provider(event.provider))
+            + Text(event.provider.accountDisplayName + "  ").font(.system(size: AccountTextSize.appMinimum, weight: .semibold)).foregroundStyle(palette.provider(event.provider))
             + action + Text(" · ").foregroundStyle(palette.tertiary)
             + Text(event.label).fontWeight(.semibold).foregroundStyle(palette.primary)
     }
@@ -215,13 +215,13 @@ public struct AccountDeadlinesPanel: View {
                 .font(.system(size: 13.5)).fixedSize(horizontal: false, vertical: true)
             if saved {
                 Text(AccountTerms.lastSeen + " " + AccountPaceText.when(deadline.observedAt, now: now))
-                    .font(.system(size: 11.5)).foregroundStyle(palette.stale)
+                    .font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.stale)
             }
             if let relation {
-                Text(relation).font(.system(size: 11.5)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(relation).font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if let before {
-                Text(before + ".").font(.system(size: 11.5, weight: .medium)).foregroundStyle(palette.banked)
+                Text(before + ".").font(.system(size: AccountTextSize.appMinimum, weight: .medium)).foregroundStyle(palette.banked)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -243,7 +243,7 @@ public struct AccountDeadlinesPanel: View {
             title(event, Text(AccountTerms.runsOutTitle).fontWeight(.semibold).foregroundStyle(palette.bad))
                 .font(.system(size: 13.5)).fixedSize(horizontal: false, vertical: true)
             if let detail = outcome?.detail, !detail.isEmpty {
-                Text(detail + ".").font(.system(size: 11.5)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detail + ".").font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
         .background(RoundedRectangle(cornerRadius: 9).fill(palette.bad.opacity(colorScheme == .dark ? 0.12 : 0.08)))
@@ -307,9 +307,9 @@ public struct AccountDeadlinesPanel: View {
         return Button { openAccount(account.id) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(account.metadata.label).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                    Text(account.metadata.label).font(.system(size: AccountTextSize.appMinimum, weight: .semibold)).lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(room ?? AccountTerms.unknown).font(.system(size: 11)).monospacedDigit()
+                    Text(room ?? AccountTerms.unknown).font(.system(size: AccountTextSize.appMinimum)).monospacedDigit()
                         .foregroundStyle(account.isReliable ? palette.secondary : palette.stale).lineLimit(1)
                 }
                 DeadlineHorizonShape(geometry: horizon.geometry(now: now, deadlines: deadlines),
@@ -338,7 +338,7 @@ public struct AccountDeadlinesPanel: View {
                 Text(AccountTerms.bankedLapsesLegend)
             }
         }
-        .font(.system(size: 10.5)).foregroundStyle(palette.secondary)
+        .font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
         .accessibilityElement(children: .combine)
     }
 }
