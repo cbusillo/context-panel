@@ -4606,21 +4606,6 @@ struct ProviderHeaderCard: View {
     let provider: Provider
     let summaries: [MainLimitSummary]
 
-    private var tightestSummary: MainLimitSummary? {
-        summaries.sorted { lhs, rhs in
-            (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
-        }.first
-    }
-
-    private var providerTotal: AccountProviderTotal? {
-        model.accountOverview(at: Date()).providerTotals(now: Date()).first { $0.provider == provider }
-    }
-
-    private var remainingCapacity: Double? {
-        guard let providerTotal else { return tightestSummary?.remainingCapacityRatio }
-        return [providerTotal.longRemaining, providerTotal.shortRemaining].compactMap { $0 }.min()
-    }
-
     private var providerStatus: UsageStatus {
         providerStatusIncludingAccessAlerts(
             provider: provider,
@@ -4639,6 +4624,9 @@ struct ProviderHeaderCard: View {
     }
 
     var body: some View {
+        let now = Date()
+        let total = model.accountOverview(at: now).providerTotals(now: now).first { $0.provider == provider }
+        let longTitle = AccountTerms.longColumn(weekly: total?.longIsWeekly ?? false)
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -4647,7 +4635,7 @@ struct ProviderHeaderCard: View {
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(CPTheme.primaryText)
                 }
-                Text(providerSummaryText)
+                Text(total.map { AccountTerms.sidebarRemaining($0) } ?? AccountTerms.unknown)
                     .font(.system(size: 13))
                     .foregroundStyle(CPTheme.secondaryText)
                 HStack(spacing: 8) {
@@ -4662,15 +4650,13 @@ struct ProviderHeaderCard: View {
                 }
             }
             Spacer(minLength: 16)
-            if providerTotal != nil || tightestSummary != nil {
-                MetricDial(
-                    metric: .remainingCapacity(remainingRatio: remainingCapacity),
-                    status: providerStatus,
-                    accessibilityName: "\(provider.accountDisplayName) average remaining capacity across current accounts",
-                    sublabel: AccountTerms.left,
-                    size: 116
-                )
-            }
+            MetricDial(
+                metric: .remainingCapacity(remainingRatio: total?.longRemaining),
+                status: providerStatus,
+                accessibilityName: "\(provider.accountDisplayName) \(longTitle.lowercased()) remaining capacity",
+                sublabel: longTitle + " " + AccountTerms.left,
+                size: 116
+            )
         }
         .padding(22)
         .background(CPTheme.surface)
@@ -4679,13 +4665,6 @@ struct ProviderHeaderCard: View {
         .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
     }
 
-    private var providerSummaryText: String {
-        if let providerTotal { return AccountTerms.sidebarRemaining(providerTotal) }
-        guard !summaries.isEmpty else { return "No main limits available yet." }
-        return summaries
-            .map { "\($0.previewWindowName.lowercased()) \($0.previewRemainingHeadline.lowercased())" }
-            .joined(separator: " · ")
-    }
 }
 
 struct SetupStatusStrip: View {
