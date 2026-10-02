@@ -527,6 +527,7 @@ public struct SnapshotRefreshService: Sendable {
     private let refreshDiagnosticsStore: RefreshDiagnosticsStateStore?
     private let promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)?
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
+    private let connectorFactory: (@Sendable (AccountConfigurationDocument) -> [any ProviderConnector])?
 
     public init(
         accountStore: AccountConfigurationStore,
@@ -535,6 +536,7 @@ public struct SnapshotRefreshService: Sendable {
         credentialStore: (any ProviderCredentialStoring)? = nil,
         googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)? = nil,
         companionSyncPublisher: CompanionSyncPublisher? = nil,
+        connectorFactory: (@Sendable (AccountConfigurationDocument) -> [any ProviderConnector])? = nil,
         refreshDiagnosticsStore: RefreshDiagnosticsStateStore? = nil,
         promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)? = nil,
         promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
@@ -547,6 +549,7 @@ public struct SnapshotRefreshService: Sendable {
         self.credentialStore = credentialStore
         self.googleAntigravitySnapshotLoader = googleAntigravitySnapshotLoader
         self.companionSyncPublisher = companionSyncPublisher
+        self.connectorFactory = connectorFactory
         self.refreshDiagnosticsStore = refreshDiagnosticsStore
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
@@ -664,9 +667,9 @@ public struct SnapshotRefreshService: Sendable {
         let accountResult = accountStore.load(now: now)
         let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
         let previousLoadResult = stores.primary.loadCurrent()
-        let previousStoredSnapshot = previousLoadResult.snapshot
+        var previousStoredSnapshot = previousLoadResult.snapshot
         migrateClaudeStateIfNeeded(document: accountResult.document, now: now)
-        let connectors = AccountConnectorFactory.connectors(
+        let connectors = connectorFactory?(accountResult.document) ?? AccountConnectorFactory.connectors(
             from: accountResult.document,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
@@ -679,9 +682,24 @@ public struct SnapshotRefreshService: Sendable {
             connectorCount: connectors.count
         )
         let rawConnectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
-        let removals = Set(accountResult.document.globalRemovedDisplayIDs).filter { key in
-            guard let restored = accountResult.document.restoredDisplayDates?[key] else { return true }
-            return (accountResult.document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) >= restored
+        // Resolve setup membership from this raw read before discarding removed lanes.
+        let rawStored = StoredUsageSnapshot(savedAt: now, snapshot: rawConnectorResult.snapshot,
+            reports: rawConnectorResult.reports.map { StoredProviderReport(report: $0) })
+        try accountStore.applyGlobalRemovals(accountResult.document.globalRemovedDisplayIDs,
+            storedSnapshot: rawStored, now: now, userScope: accountResult.document.removalUserScope)
+        let refreshedConfiguration = accountStore.load(now: now).document
+        let removals = Set(refreshedConfiguration.globalRemovedDisplayIDs).filter { key in
+            guard let restored = refreshedConfiguration.restoredDisplayDates?[key] else { return true }
+            return (refreshedConfiguration.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) >= restored
+        }
+        if let previous = previousStoredSnapshot {
+            let pruned = previous.excludingRemovedSharedAccounts(removals)
+            if pruned != previous {
+                // Preserve the original observation times; removal is not a quota reading.
+                try stores.primary.save(pruned)
+                mirrorSnapshotToFallbackStores(pruned)
+                previousStoredSnapshot = pruned
+            }
         }
         let connectorResult = ConnectorRefreshResult(generatedAt: rawConnectorResult.generatedAt, reports: rawConnectorResult.reports.filter { report in
             guard let identity = report.sharedAccountIdentity else { return true }

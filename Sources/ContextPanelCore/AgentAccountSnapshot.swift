@@ -269,7 +269,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         )
         let canonical: WidgetSnapshot? = if sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
             MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
-                publisherID: configuration.publisherID, remote: sharedDocument, now: now, rates: rates)
+                publisherID: configuration.publisherID, remote: sharedDocument, accountIntentDocument: configuration, now: now, rates: rates)
         } else { nil }
         let overview = canonical?.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
             ?? AccountOverview(snapshot: stored.snapshot, reports: stored.reports,

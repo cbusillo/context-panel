@@ -168,16 +168,17 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
         configuration: [LocalProviderAccountConfiguration]? = nil,
         sharedDocument: CompanionSyncDocument? = nil,
-        publisherID: String? = nil
+        publisherID: String? = nil, accountIntentDocument: AccountConfigurationDocument? = nil
     ) -> WidgetSnapshot {
         if let sharedDocument, result.snapshot == nil {
-            return Self.fromCompanionSync(CompanionSyncLoadResult(document: sharedDocument.verifiedAccountsOnly(), status: .healthy),
-                now: now, stalenessPolicy: stalenessPolicy)
+            return MacSharedAccountPresentation.make(stored: StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: []),
+                configuration: configuration ?? [], publisherID: publisherID, remote: sharedDocument, accountIntentDocument: accountIntentDocument,
+                now: now, stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
         }
         if let stored = result.snapshot, sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
             let rates = AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)
             return MacSharedAccountPresentation.make(stored: stored, configuration: configuration ?? [],
-                publisherID: publisherID, remote: sharedDocument, now: now, rates: rates,
+                publisherID: publisherID, remote: sharedDocument, accountIntentDocument: accountIntentDocument, now: now, rates: rates,
                 observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
                 stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
         }

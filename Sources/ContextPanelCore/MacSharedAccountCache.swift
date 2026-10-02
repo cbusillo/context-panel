@@ -60,6 +60,7 @@ public extension CompanionSyncDocument {
 public enum MacSharedAccountPresentation {
     public static func make(stored: StoredUsageSnapshot, configuration: [LocalProviderAccountConfiguration],
         publisherID: String? = nil, remote: CompanionSyncDocument? = nil,
+        accountIntentDocument: AccountConfigurationDocument? = nil,
         now: Date, rates: [String: [String: ObservedBurnRate]] = [:],
         preferences: WidgetDisplayPreferences = .defaultPreferences,
         observedBurnRates: [String: ObservedBurnRate] = [:],
@@ -88,15 +89,17 @@ public enum MacSharedAccountPresentation {
             transportedRates[key, default: [:]][id] = ObservedBurnRate(limitID: id,
                 unitsPerHour: rate.unitsPerHour, observedDurationHours: rate.observedDurationHours, sampleCount: rate.sampleCount)
         }
+        let intents = remote?.cloudKitUserScope == nil || remote?.cloudKitUserScope == accountIntentDocument?.removalUserScope ? accountIntentDocument : nil
         let local = CompanionSyncDocument(snapshot: snapshot, widgetDisplayPreferences: preferences,
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: forecast, cloudKitUserScope: remote?.cloudKitUserScope,
             accountDisplayMetadata: AccountDisplayMetadata.companion(configuration: configuration, stored: stored,
                 now: now, publisherID: publisherID).filteringSharedPresentationMetadata(stored: stored,
                     configuration: configuration, publisherID: publisherID),
-            accountBurnRates: transportedRates,
+            removedDisplayIDs: intents?.globalRemovedDisplayIDs, accountBurnRates: transportedRates,
             accountIdentityAliases: CompanionAccountIdentityAlias.verifiedAliases(stored: stored,
-                configuration: configuration, publisherID: publisherID))
+                configuration: configuration, publisherID: publisherID),
+            accountRemovalDates: intents?.removedDisplayDates, accountRestorationDates: intents?.restoredDisplayDates)
         let merged = local.mergingForRemotePublish(existing: remote?.verifiedAccountsOnly(), now: now)
         return WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: merged, status: .healthy), now: now, stalenessPolicy: stalenessPolicy)
     }

@@ -53,3 +53,19 @@ public extension CompanionSyncDocument {
         }
     }
 }
+
+public extension StoredUsageSnapshot {
+    /// Prune identified removed lanes before any setup-level failure can preserve their quota.
+    func excludingRemovedSharedAccounts(_ removed: Set<String>) -> Self {
+        let rejected = Set(reports.compactMap { report -> String? in
+            guard let identity = report.sharedAccountIdentity,
+                  removed.contains(AccountDisplayMetadata.safeID(report.provider, identity.accountID)) else { return nil }
+            return report.provider.rawValue + ":" + report.accountID
+        })
+        guard !rejected.isEmpty else { return self }
+        return Self(savedAt: savedAt, snapshot: UsageSnapshot(generatedAt: snapshot.generatedAt,
+            limits: snapshot.limits.filter { !rejected.contains($0.provider.rawValue + ":" + $0.accountID) }),
+            reports: reports.filter { !rejected.contains($0.provider.rawValue + ":" + $0.accountID) },
+            promptCacheObservations: promptCacheObservations)
+    }
+}

@@ -61,7 +61,11 @@ account records a restoration intent; after authentication it can supersede an o
 removal. A locally authenticated restoration remains durable through a failed
 CloudKit save; failed authentication does not create restoration intent. Partial
 removal from a multi-login Codex setup keeps its other accounts monitored.
-Old/offline publishers do not automatically restore removed accounts. A
+Raw connector evidence finalizes setup deletion before removed reports are
+filtered. Removed native quota is pruned before a setup-level failure can preserve
+old data. App, widget and agent projections apply local removal intents immediately,
+even before CloudKit acknowledges them. Old/offline publishers do not automatically
+restore removed accounts. A
 newer removal wins. Unverified feeds cannot claim global provider identity.
 
 Macs receive the existing private companion usage document into a bounded,

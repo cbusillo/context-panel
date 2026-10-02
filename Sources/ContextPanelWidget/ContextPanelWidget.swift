@@ -180,7 +180,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                             fastModeForecastSettings: forecastSettings,
                             promptCacheWidgetState: promptCacheWidgetState,
                             stalenessPolicy: policy,
-                            configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID
+                            configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID, accountIntentDocument: configurationDocument
                         ),
                         displayPreferences: displayPreferences
                     ),
@@ -198,7 +198,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                     fastModeForecastSettings: forecastSettings,
                     promptCacheWidgetState: promptCacheWidgetState,
                     stalenessPolicy: policy,
-                    configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID
+                    configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID, accountIntentDocument: configurationDocument
                 ),
                 displayPreferences: displayPreferences
             ),
