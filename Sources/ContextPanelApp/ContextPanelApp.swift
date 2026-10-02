@@ -2101,7 +2101,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard !isRemovingAccount else { return false }
         guard name.count <= 80,
               let index = accounts.firstIndex(where: { $0.id == accountID }) else { return false }
-        let previousAccounts = accounts
+        let previousAccount = accounts[index]
         if let logicalID {
             var aliases = accounts[index].accountAliases ?? [:]
             aliases[logicalID] = name.isEmpty ? nil : name
@@ -2111,7 +2111,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             if let soleLogicalID { accounts[index].accountAliases?[soleLogicalID] = nil }
         }
         if saveAccounts() { return true }
-        accounts = previousAccounts
+        if let retainedIndex = accounts.firstIndex(where: { $0.id == accountID }) {
+            accounts[retainedIndex] = previousAccount
+        }
         return false
     }
 
