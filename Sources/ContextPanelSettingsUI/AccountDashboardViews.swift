@@ -232,13 +232,15 @@ public struct AccountDashboardPanel: View {
 
     @ViewBuilder private func foldedDetails(_ account: AccountOverview.Account) -> some View {
         if let accountDetails {
-            DisclosureGroup("Windows and banked resets") {
+            DisclosureGroup {
                 accountDetails(account).padding(.top, 10)
+            } label: {
+                Text("Windows and banked resets")
+                    .accessibilityLabel("Windows and banked resets for " + account.metadata.label)
             }
             .font(.system(size: 12))
             .foregroundStyle(palette.secondary)
             .padding(.horizontal, 16).padding(.bottom, 12)
-            .accessibilityLabel("Windows and banked resets for " + account.metadata.label)
         }
     }
 
@@ -534,11 +536,12 @@ public struct AccountDashboardDetail: View {
                                   tick: palette.primary)
                     VStack(spacing: -2) {
                         Text(window.remainingFraction == nil
-                             ? window.used.map(String.init) ?? AccountNumbers.window(window, sign: false)
+                             ? window.used.map { $0.formatted(.number.notation(.compactName)) } ?? AccountNumbers.window(window, sign: false)
                              : AccountNumbers.window(window, sign: false))
                             .font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
+                            .lineLimit(1).minimumScaleFactor(0.7)
                         Text(window.remainingFraction == nil && window.used != nil
-                             ? window.unit.rawValue + " used" : AccountTerms.percentLeft)
+                             ? (window.unit == .unknown ? "used" : window.unit.rawValue + " used") : AccountTerms.percentLeft)
                             .font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
                     }
                 }
@@ -550,9 +553,9 @@ public struct AccountDashboardDetail: View {
                     if let used = window.used {
                         fact("Used", window.limit.map { window.unit == .percent && $0 == 100
                             ? "\(used)%" : "\(used) of \($0) \(window.unit.rawValue)" }
-                            ?? "\(used) \(window.unit.rawValue)")
+                            ?? (window.unit == .unknown ? used.formatted() + " · unit not reported" : used.formatted() + " " + window.unit.rawValue))
                     } else if let limit = window.limit {
-                        fact("Limit", "\(limit) \(window.unit.rawValue)")
+                        fact("Limit", window.unit == .unknown ? limit.formatted() + " · unit not reported" : limit.formatted() + " " + window.unit.rawValue)
                     }
                     fact("Status", window.status.displayText)
                     fact("Reading", window.assumption?.displayText ?? window.confidence.rawValue.capitalized)

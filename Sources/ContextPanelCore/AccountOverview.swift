@@ -200,15 +200,19 @@ public struct AccountOverview: Equatable, Sendable {
                     || banked.observedAt > now.addingTimeInterval(60)
                     || abs((report?.generatedAt ?? banked.observedAt).timeIntervalSince(banked.observedAt)) > 1 ? .stale : .available
             } else { bankedState = state == .notConnected ? .notConnected : .unknown }
-            let planParts = (report?.accountName ?? limits.first?.accountName ?? "").split(separator: "·")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let namedPlan = [limits.first?.accountName, report?.accountName].compactMap { $0 }
+                .lazy.compactMap { name -> String? in
+                    let parts = name.split(separator: "·")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                    return parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : nil
+                }.first
             let notedPlan = limits.lazy.compactMap { limit -> String? in
                 guard let note = limit.note, note.lowercased().hasPrefix("plan:") else { return nil }
                 let value = note.dropFirst("plan:".count).trimmingCharacters(in: .whitespacesAndNewlines)
                 return value.isEmpty ? nil : value.capitalized
             }.first
             let plan = entry.provider == .openAI
-                ? (planParts.count > 1 ? planParts.dropFirst().joined(separator: " · ") : notedPlan)
+                ? (namedPlan ?? notedPlan)
                     .map { ConnectorRedactor.safeErrorDescription($0) } : nil
             let advice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
                 .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }

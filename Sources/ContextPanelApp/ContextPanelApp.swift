@@ -3996,8 +3996,14 @@ struct ProviderDashboard: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            content(at: context.date)
+        let start = Date()
+        let reports = (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider }
+        let transitions = reports.resetCreditTransitionDates(after: start)
+            + snapshot.limits.filter { $0.provider == provider }.compactMap(\.resetsAt).filter { $0 > start }
+        TimelineView(.explicit([start] + Array(Set(transitions)).sorted())) { transition in
+            TimelineView(.periodic(from: start, by: 30)) { tick in
+                content(at: max(transition.date, tick.date))
+            }
         }
     }
 
@@ -4110,10 +4116,17 @@ struct ProviderDashboard: View {
                         else { selectedLimit = summary }
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
-                            Label(summary.previewWindowName + " history", systemImage: "chart.xyaxis.line")
-                                .font(.system(size: 12, weight: .medium))
+                            HStack(spacing: 6) {
+                                StatusMark(status: providerStatusIncludingAccessAlerts(
+                                    provider: provider, baseStatuses: [summary.status], alerts: model.providerAccessAlerts), size: 6)
+                                Label(summary.previewWindowName + " history", systemImage: "chart.xyaxis.line")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
                             Text("\(summary.accountCount) reported account windows · " + summary.previewUsageText)
                                 .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
+                            Text(summary.previewResetConfidenceText)
+                                .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.horizontal, 12).padding(.vertical, 9)
                         .background(CPTheme.surface, in: RoundedRectangle(cornerRadius: 8))

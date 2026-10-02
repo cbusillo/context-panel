@@ -229,7 +229,9 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
     #expect(foldedImage.height + 100 < fullImage.height)
     if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
         let bytes = try #require(NSBitmapImageRep(cgImage: foldedImage).representation(using: .png, properties: [:]))
-        try bytes.write(to: URL(fileURLWithPath: output).appendingPathComponent("provider-folded-windows.png"))
+        let root = URL(fileURLWithPath: output)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try bytes.write(to: root.appendingPathComponent("provider-folded-windows.png"))
     }
 }
 
@@ -242,4 +244,39 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
     let account = try #require(AccountOverview(snapshot: snapshot, reports: [], now: detailNow).accounts.first)
     let original = try #require(OpenAIAccountLimitSummary.accounts(from: snapshot.mainLimitSummaries, reports: []).first)
     #expect(account.providerPlan == original.planText)
+}
+
+@Test func horizonPlanRetainsQuotaNameWhenReportOmitsThePlan() throws {
+    let plan = "source-plan"
+    let input = UsageLimit(provider: .openAI, accountID: "quota-name", accountName: "Typed name · " + plan,
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 10, limit: 100,
+        resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow)
+    let report = StoredProviderReport(provider: input.provider, accountID: input.accountID,
+        configuredAccountID: input.accountID, accountName: "Typed name", generatedAt: detailNow,
+        status: .healthy, errorMessage: nil)
+    let snapshot = UsageSnapshot(generatedAt: detailNow, limits: [input])
+    let account = try #require(AccountOverview(snapshot: snapshot, reports: [report], now: detailNow).accounts.first)
+    #expect(account.providerPlan == plan)
+}
+
+
+@MainActor
+@Test func usedOnlyUnknownUnitWindowRendersAlongsideFullQuotaCards() throws {
+    let used = 12_345_678
+    let input = UsageLimit(provider: .google, accountID: "amount-only", accountName: "Usage-only counter",
+        label: "Requests", unit: .unknown, used: used, limit: nil, lastUpdatedAt: detailNow)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: [input]), reports: [], now: detailNow)
+    let account = try #require(overview.accounts.first)
+    #expect(account.windows.first?.used == used)
+    #expect(account.windows.first?.remainingFraction == nil)
+    let renderer = ImageRenderer(content: AccountDashboardDetail(account: account, overview: overview, now: detailNow,
+        showsHorizon: false).padding(16).frame(width: 420))
+    let image = try #require(renderer.cgImage)
+    #expect(image.width == 420)
+    if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
+        let root = URL(fileURLWithPath: output)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let bytes = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        try bytes.write(to: root.appendingPathComponent("used-only-unknown-unit.png"))
+    }
 }
