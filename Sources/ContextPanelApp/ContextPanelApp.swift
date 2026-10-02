@@ -437,7 +437,7 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProviderBadge(provider: account.provider)
-                            TextField("Local account name", text: nameBinding(.account(account.id), saved: account.displayName))
+                            TextField("Local account name", text: nameBinding(.account(account.id)))
                                 .labelsHidden().accessibilityLabel("Local account name")
                                 .focused($focusedName, equals: .account(account.id))
                                 .onSubmit { commitName(.account(account.id)) }
@@ -608,7 +608,7 @@ struct SettingsPane: View {
                             }
                             ForEach(Array(Set((appModel.storedSnapshot?.reports ?? [])
                                 .filter { account.matchesProviderReport($0) }.map(\.accountID))).sorted(), id: \.self) { id in
-                                TextField("Local name for account \(id.suffix(6))", text: nameBinding(.alias(account.id, id), saved: account.accountAliases?[id] ?? ""))
+                                TextField("Local name for account \(id.suffix(6))", text: nameBinding(.alias(account.id, id)))
                                 .focused($focusedName, equals: .alias(account.id, id))
                                 .onSubmit { commitName(.alias(account.id, id)) }
                                 .textFieldStyle(.roundedBorder)
@@ -928,11 +928,16 @@ struct SettingsPane: View {
         .padding(24).frame(width: 420)
     }
 
-    private func nameBinding(_ field: SettingsNameField, saved: String) -> Binding<String> {
-        Binding(get: { nameDrafts[field] ?? saved }, set: { nameDrafts[field] = $0; nameInputError = nil })
+    private func nameBinding(_ field: SettingsNameField) -> Binding<String> {
+        AccountNameEditing.binding(for: field, drafts: $nameDrafts, savedName: {
+            switch field {
+            case let .account(id): model.accounts.first { $0.id == id }?.displayName ?? ""
+            case let .alias(id, logical): model.accounts.first { $0.id == id }?.accountAliases?[logical] ?? ""
+            }
+        }, onEdit: { nameInputError = nil })
     }
     private func commitName(_ field: SettingsNameField) {
-        guard let draft = nameDrafts.removeValue(forKey: field) else { return }
+        guard let draft = nameDrafts[field] else { return }
         let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value.count <= 80 else { nameInputError = "Use a name of 80 characters or fewer."; return }
         switch field {
@@ -942,6 +947,7 @@ struct SettingsPane: View {
             model.renameAccount(id, name: value, soleLogicalID: members.count == 1 ? members.first : nil)
         case let .alias(id, logical): model.renameAccount(id, name: value, logicalID: logical)
         }
+        nameDrafts.removeValue(forKey: field)
         appModel.loadSnapshot(reloadWidgetTimelines: false)
     }
 
