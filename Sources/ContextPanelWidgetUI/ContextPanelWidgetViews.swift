@@ -928,7 +928,7 @@ private struct CPWResetCreditHeaderToken: View {
 
     private var nativeAccessibilityHint: String {
         guidance == nil
-            ? "Opens OpenAI detail in Context Panel"
+            ? "Opens \(summary.provider.displayName) detail in Context Panel"
             : "Opens account detail in Context Panel"
     }
 
@@ -1016,13 +1016,13 @@ private struct CPWResetCreditHeaderToken: View {
                 case .standard:
                     if layout != .medium {
                         CPWProviderBadge(provider: summary.provider, compact: true)
-                        Text("Reset credits · \(compactAccountCountText)")
+                        Text(AccountTerms.bankedResets + " · \(compactAccountCountText)")
                             .font(.system(size: 8, weight: .semibold))
                             .lineLimit(1)
                     } else {
                         Image(systemName: "arrow.counterclockwise.circle.fill")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Credits · \(summary.accountCountText)")
+                        Text(AccountTerms.bankedResets + " · \(summary.accountCountText)")
                             .font(.system(size: 8, weight: .semibold))
                             .lineLimit(1)
                     }

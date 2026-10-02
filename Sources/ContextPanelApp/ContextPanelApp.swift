@@ -1263,6 +1263,7 @@ struct ClaudeOAuthCodeSheet: View {
                 .foregroundStyle(CPTheme.secondaryText)
             if let url = model.pendingClaudeOAuthAuthorizationURL {
                 Link("Open Claude authorization", destination: url)
+                    .foregroundStyle(CPTheme.accentText)
                     .font(.system(size: 12, weight: .medium))
                 Text(url.absoluteString)
                     .font(.system(size: 10, design: .monospaced))
@@ -4252,7 +4253,7 @@ private struct OpenAIResetCreditRow: View {
                 .frame(width: 18, height: 18)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Reset credits")
+                    Text(AccountTerms.bankedResets)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(CPTheme.secondaryText)
                     Spacer(minLength: 8)
@@ -7322,7 +7323,7 @@ struct AccountCapacityCard: View {
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                             if dates.count < resets.availableCount {
-                                Text("\(resets.availableCount - dates.count) " + AccountTerms.bankedResets.lowercased() + " · expiry dates unknown")
+                                Text(AccountTerms.bankedResetCount(resets.availableCount - dates.count) + " · expiry dates unknown")
                                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
                             }
                         } else if row.provider == .openAI || row.provider == .anthropic {
