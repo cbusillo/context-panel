@@ -247,9 +247,9 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.accountID = accountID
         self.configuredAccountID = configuredAccountID
         self.accountName = accountName
-        self.label = label
+        self.label = AccountTerms.modelName(label, provider: provider) ?? label
         self.windowLabel = windowLabel
-        self.modelLabel = modelLabel
+        self.modelLabel = AccountTerms.modelName(modelLabel, provider: provider)
         self.unit = unit
         self.used = used
         self.limit = limit
@@ -269,9 +269,9 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         accountID = try container.decode(String.self, forKey: .accountID)
         configuredAccountID = try container.decodeIfPresent(String.self, forKey: .configuredAccountID)
         accountName = try container.decode(String.self, forKey: .accountName)
-        label = try container.decode(String.self, forKey: .label)
+        label = AccountTerms.modelName(try container.decode(String.self, forKey: .label), provider: provider) ?? ""
         windowLabel = try container.decodeIfPresent(String.self, forKey: .windowLabel)
-        modelLabel = try container.decodeIfPresent(String.self, forKey: .modelLabel)
+        modelLabel = AccountTerms.modelName(try container.decodeIfPresent(String.self, forKey: .modelLabel), provider: provider)
         unit = try container.decode(UsageUnit.self, forKey: .unit)
         used = try container.decodeIfPresent(Int.self, forKey: .used)
         limit = try container.decodeIfPresent(Int.self, forKey: .limit)

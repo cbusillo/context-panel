@@ -376,7 +376,7 @@ struct AppRoot: View {
             AccountsSidebar(model: model, snapshot: snapshot, selection: $selection)
                 .frame(width: 240)
             Divider()
-            MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview)
+            MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview, openLimit: { selection = .mainLimit($0) })
                 .frame(minWidth: 760)
         }
         .tint(CPTheme.accent)
@@ -2961,6 +2961,7 @@ struct AccountsSidebar: View {
                 let overview = model.accountOverview(at: Date())
                 let totals = overview.providerTotals(now: Date())
                 let reports = model.storedSnapshot?.reports ?? []
+                let resetCreditSummary = ResetCreditSurfaceAdvisor.appSummary(reports: reports, limits: snapshot.limits, now: Date())
                 ForEach(Provider.allCases) { provider in
                     let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
@@ -2969,6 +2970,13 @@ struct AccountsSidebar: View {
                             HStack(spacing: 8) {
                                 ProviderBadge(provider: provider)
                                 Text(provider.accountDisplayName).font(.system(size: 13, weight: .semibold))
+                                StatusMark(status: providerStatusIncludingAccessAlerts(provider: provider,
+                                    baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts), size: 7)
+                                if provider == .openAI, let resetCreditSummary {
+                                    Image(systemName: "arrow.counterclockwise.circle")
+                                        .help(resetCreditHelpText(resetCreditSummary))
+                                        .accessibilityHidden(true)
+                                }
                             }
                             if let total = totals.first(where: { $0.provider == provider }) {
                                 Text(AccountTerms.sidebarRemaining(total))
@@ -2978,6 +2986,10 @@ struct AccountsSidebar: View {
                                 Text(AccountTerms.unknown).font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(provider.accountDisplayName + ", "
+                            + (totals.first(where: { $0.provider == provider }).map { AccountTerms.accountCount($0) + ", " + AccountTerms.sidebarRemaining($0) } ?? AccountTerms.unknown))
+                        .accessibilityHint("Opens provider usage, limits and history")
                         .tag(AppNavigationSelection.provider(provider))
                         ForEach(accounts) { account in
                             VStack(alignment: .leading, spacing: 4) {
@@ -3114,6 +3126,7 @@ struct MainContent: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     let selection: AppNavigationSelection
+    var openLimit: (String) -> Void = { _ in }
 
     var body: some View {
         switch selection {
@@ -3124,7 +3137,7 @@ struct MainContent: View {
         case .reconnect:
             ReconnectDashboard(appModel: model, snapshot: snapshot)
         case .provider(let provider):
-            ProviderDashboard(model: model, snapshot: snapshot, provider: provider)
+            ProviderDashboard(model: model, snapshot: snapshot, provider: provider, openLimit: openLimit)
         case let .providerAccount(provider, accountID):
             AccountDashboard(model: model, provider: provider, accountID: accountID)
         case .mainLimit(let id):
@@ -4011,6 +4024,8 @@ struct ProviderDashboard: View {
     let snapshot: UsageSnapshot
     let provider: Provider
     var focusedAccountID: String? = nil
+    var openLimit: ((String) -> Void)? = nil
+    @State private var selectedLimit: MainLimitSummary?
 
     private var summaries: [MainLimitSummary] {
         snapshot.mainLimitSummaries.filter { $0.provider == provider }
@@ -4031,14 +4046,22 @@ struct ProviderDashboard: View {
                     SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
                     VStack(spacing: 10) {
                         ForEach(summaries) { summary in
-                            MainLimitRow(
-                                summary: summary,
-                                status: providerStatusIncludingAccessAlerts(
-                                    provider: provider,
-                                    baseStatuses: [summary.status],
-                                    alerts: model.providerAccessAlerts
+                            Button {
+                                if let openLimit { openLimit(summary.id) }
+                                else { selectedLimit = summary }
+                            } label: {
+                                MainLimitRow(
+                                    summary: summary,
+                                    status: providerStatusIncludingAccessAlerts(
+                                        provider: provider,
+                                        baseStatuses: [summary.status],
+                                        alerts: model.providerAccessAlerts
+                                    )
                                 )
-                            )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens limit history and forecast")
                         }
                     }
                     if provider == .openAI {
@@ -4059,6 +4082,10 @@ struct ProviderDashboard: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .background(CPTheme.background)
+            .sheet(item: $selectedLimit) { summary in
+                MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
+                    .frame(minWidth: 700, minHeight: 600)
+            }
             .onAppear { scrollToFocusedAccount(using: proxy) }
             .onChange(of: focusedAccountID) { _, _ in scrollToFocusedAccount(using: proxy) }
         }

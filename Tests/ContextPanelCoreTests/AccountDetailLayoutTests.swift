@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
-import ContextPanelSettingsUI
+@testable import ContextPanelSettingsUI
 @testable import ContextPanelCore
 
 private let detailNow = Date(timeIntervalSince1970: 1_800_000_000)
@@ -14,7 +14,7 @@ private func detailOverview(windowCount: Int) -> AccountOverview {
             modelLabel: index < 2 ? "3p" : "Gemini", unit: .percent, used: 35, limit: 100,
             resetsAt: detailNow.addingTimeInterval(index.isMultiple(of: 2) ? 86_400 : 3_600), lastUpdatedAt: detailNow)
     }
-    return AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: limits), reports: [], now: detailNow)
+    return AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: limits), reports: [], now: detailNow, accountBurnRates: ["google-detail": Dictionary(uniqueKeysWithValues: limits.map { ($0.id, ObservedBurnRate(limitID: $0.id, unitsPerHour: 4, observedDurationHours: 2, sampleCount: 3)) })])
 }
 
 @MainActor
@@ -65,4 +65,33 @@ private func detailOverview(windowCount: Int) -> AccountOverview {
     #expect(text.contains("60% left"))
     #expect(text.contains("2 of 3 current"))
     #expect(!text.contains("used"))
+}
+
+@Test func quotaCardRowsHaveTwoColumnsAndEqualHeightWithoutTextDependentBreakpoints() {
+    let layout = AccountWindowCardsLayout()
+    let wide = layout.frames(width: 800, heights: [180, 260, 200, 220])
+    #expect(Set(wide.map(\.minX)).count == 2)
+    #expect(wide[0].minY == wide[1].minY)
+    #expect(wide[0].height == wide[1].height)
+    #expect(wide[2].minY > wide[0].maxY)
+    #expect(wide.allSatisfy { $0.maxX <= 800 })
+    let narrow = layout.frames(width: 500, heights: [180, 260, 200, 220])
+    #expect(Set(narrow.map(\.minX)).count == 1)
+    #expect(zip(narrow, narrow.dropFirst()).allSatisfy { $0.maxY < $1.minY })
+    #expect(narrow.allSatisfy { $0.width == 500 })
+}
+
+@Test func decodedOldGoogleLabelsBecomePlainWordsOnEveryLimitSurface() throws {
+    let original = try #require(detailOverview(windowCount: 1).accounts.first)
+    #expect(original.windows.first?.modelLabel == "Third-party models")
+    let limit = UsageLimit(id: "stable-history-id", provider: .google, accountID: "a", accountName: "Google",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 20, limit: 100)
+    var raw = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(limit)) as? [String: Any])
+    raw["label"] = "3p Models Weekly"
+    raw["modelLabel"] = "3p Models"
+    let decoded = try JSONDecoder().decode(UsageLimit.self, from: JSONSerialization.data(withJSONObject: raw))
+    #expect(decoded.id == limit.id)
+    #expect(decoded.label == "Third-party models Weekly")
+    #expect(decoded.modelLabel == "Third-party models")
+    #expect(decoded.used == limit.used)
 }

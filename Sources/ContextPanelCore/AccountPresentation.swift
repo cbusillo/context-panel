@@ -6,7 +6,12 @@ import Foundation
 public enum AccountTerms {
     /// Expand the AGY bridge's historical abbreviation, including already saved readings.
     public static func modelName(_ label: String?, provider: Provider) -> String? {
-        provider == .google && label?.lowercased() == "3p" ? "Third-party models" : label
+        guard provider == .google, let label else { return label }
+        let parts = label.split(separator: " ").map(String.init)
+        guard parts.first?.lowercased() == "3p" else { return label }
+        var rest = Array(parts.dropFirst())
+        if rest.first?.lowercased() == "models" { rest.removeFirst() }
+        return (["Third-party models"] + rest).joined(separator: " ")
     }
 
     /// Same mean share as the dashboard, never a sum of incompatible account plans.
