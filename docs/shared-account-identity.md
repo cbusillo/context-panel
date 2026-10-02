@@ -43,7 +43,8 @@ shared key is generated. The installed AF hand-test build predates this integrat
 Local history uses a separate source and authenticated-material digest. Temporary
 shared-key failure does not change that history membership. Claude profile material
 is cached only in the app-owned Keychain and bound to the exact access credential;
-a changed credential cannot reuse the old binding. Raw UUIDs and credential digests
+a changed credential cannot reuse the old binding. A provider-accepted refresh of
+the same OAuth grant carries that binding to the rotated access token. Raw UUIDs and credential digests
 never enter usage snapshots. First migration starts a new identity-qualified history
 epoch rather than attributing old, unqualified history to the new login; burn needs
 new samples. Existing current reset-credit reads and failure preservation remain.
@@ -57,7 +58,10 @@ unknown old feeds from other hosts require fresh authenticated readings.
 
 Remove targets the verified provider pseudonym across hosts. Explicitly adding an
 account records a restoration intent; after authentication it can supersede an older
-removal. Old/offline publishers do not automatically restore removed accounts. A
+removal. A locally authenticated restoration remains durable through a failed
+CloudKit save; failed authentication does not create restoration intent. Partial
+removal from a multi-login Codex setup keeps its other accounts monitored.
+Old/offline publishers do not automatically restore removed accounts. A
 newer removal wins. Unverified feeds cannot claim global provider identity.
 
 Macs receive the existing private companion usage document into a bounded,
@@ -65,8 +69,10 @@ scope-validated cache. App, widget and credential-free agent projection consume 
 same canonical account IDs and account observations. Remote readings never enter
 local provider history or get republished as fresh local quota. An unavailable or
 changed current iCloud scope withholds the cache; CKAccountChanged invalidates it.
-The cache has a six-minute verified-scope lease, so offline remote-only accounts
-are temporarily unavailable instead of being attributed to an unconfirmed user.
+The cache lease follows the configured refresh interval plus ten minutes of slack.
+Future widget entries retain the document qualified when their timeline was built,
+then present its age/reset state honestly. Account-change invalidation and expiry
+withhold unconfirmed remote-only accounts.
 
 ## Remaining qualification and owner boundaries
 

@@ -3566,7 +3566,7 @@ private func base64URLEncoded(_ data: Data) -> String {
     var nativeIDs: [String] = []
     for idToken in [true, false] {
         var tokens = ["access_token": idToken ? "fake-access" : token, "account_id": "fake-account"]
-        if idToken { tokens["id_token"] = token }
+        if idToken { tokens["id_token"] = token } else { tokens["account_id"] = nil }
         let auth = try JSONSerialization.data(withJSONObject: ["tokens": tokens])
         let connector = CodexRateLimitConnector(accounts: [CodexAccountConfiguration(configuredAccountID: "setup", authPath: "/fake/auth.json",
             endpoint: URL(string: "https://example.invalid/usage")!)],
@@ -3604,4 +3604,26 @@ private func base64URLEncoded(_ data: Data) -> String {
     #expect(ids[0] != nil && ids[0] == ids[1])
     #expect(nativeIDs[0] == nativeIDs[1])
     #expect(ids[2] == nil)
+}
+
+@Test func claudeAcceptedTokenRotationKeepsHistoryWhenProfileReadFails() async throws {
+    let now = Date(timeIntervalSince1970: 1_900_000_000)
+    let key = ProviderAccountIdentityKey.generate()
+    let cache = ProviderAccountIdentityMaterialStore(store: InMemoryProviderCredentialStore(storage: [:]))
+    let material = try #require(ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID,
+        identifier: UUID().uuidString.lowercased(), scope: UUID().uuidString.lowercased()))
+    cache.save(material, configurationID: "setup", credential: "fake-old-access")
+    let old = try claudeCredentialsData(accessToken: "fake-old-access", refreshToken: "fake-grant", expiresAt: now.addingTimeInterval(-1))
+    let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "setup")],
+        httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200,
+            data: Data(#"{"access_token":"fake-new-access","refresh_token":"fake-next-grant","expires_in":3600,"token_type":"Bearer"}"#.utf8)),
+            ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"seven_day":{"utilization":24}}"#.utf8)),
+            ConnectorHTTPResponse(statusCode: 429, data: Data()), ConnectorHTTPResponse(statusCode: 403, data: Data())]),
+        credentialStore: StubCredentialStore(storage: ["setup": old]),
+        identityResolver: ProviderAccountIdentityResolver { key.identity(for: $0) }, identityMaterialStore: cache)
+    let result = await connector.refresh(now: now)
+    #expect(result.reports.first?.accountID == material.localHistoryID(configurationID: "setup"))
+    #expect(result.reports.first?.sharedAccountIdentity?.accountID == key.identity(for: material).accountID)
+    #expect(result.snapshot.limits.first?.used == 24)
 }

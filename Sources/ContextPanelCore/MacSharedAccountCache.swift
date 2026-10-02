@@ -24,8 +24,12 @@ public struct MacSharedAccountCache: Sendable {
               let payload = try? JSONDecoder.contextPanelISO8601.decode(Payload.self, from: data),
               payload.document.cloudKitUserScope == payload.scope,
               payload.checkedAt <= now.addingTimeInterval(60),
-              now.timeIntervalSince(payload.checkedAt) <= 6 * 60 else { return nil }
+              now.timeIntervalSince(payload.checkedAt) <= verifiedScopeLeaseSeconds else { return nil }
         return payload.document
+    }
+    public var verifiedScopeLeaseSeconds: TimeInterval {
+        let settings = BackgroundRefreshSettingsStore(settingsURL: cacheURL.deletingLastPathComponent().appending(path: "background-refresh-settings.json")).load()
+        return TimeInterval(settings.intervalSeconds + 10 * 60)
     }
     public func invalidate() {
         if FileManager.default.fileExists(atPath: cacheURL.path) { try? FileManager.default.removeItem(at: cacheURL) }

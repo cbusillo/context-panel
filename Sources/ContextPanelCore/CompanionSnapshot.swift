@@ -1235,6 +1235,7 @@ public struct CompanionSyncPublisher: Sendable {
                 if let previous = configuration.removalUserScope, previous != scope {
                     configuration.removedDisplayIDs = []
                     configuration.removedDisplayDates = [:]
+                    configuration.restoredDisplayDates = [:]
                 }
                 configuration.removedDisplayIDs = Array(Set(configuration.removedDisplayIDs ?? []).union(configuration.pendingRemovedDisplayIDs ?? [])).sorted()
                 configuration.pendingRemovedDisplayIDs = nil
@@ -1346,11 +1347,12 @@ public struct CompanionSyncPublisher: Sendable {
             accountIdentityAliases: configuration.map { CompanionAccountIdentityAlias.verifiedAliases(stored: storedSnapshot, configuration: $0.accounts, publisherID: $0.publisherID) },
             accountRemovalDates: configuration?.removedDisplayDates,
             accountRestorationDates: configuration.map { configuration in
-                var dates: [String: Date] = [:]
+                var dates = configuration.removalUserScope == removalUserScope ? configuration.restoredDisplayDates ?? [:] : [:]
                 for account in configuration.accounts {
                     guard let requested = account.restorationRequestedAt else { continue }
-                    for report in storedSnapshot.reports where account.matchesProviderReport(report) {
-                        guard let identity = report.sharedAccountIdentity else { continue }
+                    for report in storedSnapshot.reports where account.matchesProviderReport(report) && report.status != .failure {
+                        guard let identity = report.sharedAccountIdentity,
+                              storedSnapshot.snapshot.limits.contains(where: { $0.provider == report.provider && $0.accountID == report.accountID }) else { continue }
                         let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
                         dates[key] = max(dates[key] ?? .distantPast, requested)
                     }

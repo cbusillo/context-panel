@@ -140,8 +140,9 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public var publisherID: String?
     public var membershipIdentityVersion: Int?
     public var removedDisplayDates: [String: Date]?
+    public var restoredDisplayDates: [String: Date]?
 
-    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, pendingRemovedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil, membershipIdentityVersion: Int? = nil, removedDisplayDates: [String: Date]? = nil) {
+    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, pendingRemovedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil, membershipIdentityVersion: Int? = nil, removedDisplayDates: [String: Date]? = nil, restoredDisplayDates: [String: Date]? = nil) {
         schemaVersion = 1
         self.updatedAt = updatedAt
         self.accounts = accounts
@@ -152,9 +153,10 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         self.publisherID = publisherID
         self.membershipIdentityVersion = membershipIdentityVersion
         self.removedDisplayDates = removedDisplayDates
+        self.restoredDisplayDates = restoredDisplayDates
     }
 
-    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, pendingRemovedDisplayIDs, removalUserScope, publisherID, membershipIdentityVersion, removedDisplayDates }
+    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, pendingRemovedDisplayIDs, removalUserScope, publisherID, membershipIdentityVersion, removedDisplayDates, restoredDisplayDates }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -168,6 +170,7 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         publisherID = try container.decodeIfPresent(String.self, forKey: .publisherID)
         membershipIdentityVersion = try container.decodeIfPresent(Int.self, forKey: .membershipIdentityVersion)
         removedDisplayDates = try container.decodeIfPresent([String: Date].self, forKey: .removedDisplayDates)
+        restoredDisplayDates = try container.decodeIfPresent([String: Date].self, forKey: .restoredDisplayDates)
     }
 }
 
@@ -264,6 +267,7 @@ public struct AccountConfigurationStore: Sendable {
             if let userScope, let previousScope = document.removalUserScope, previousScope != userScope {
                 document.removedDisplayIDs = []
                 document.removedDisplayDates = [:]
+            document.restoredDisplayDates = [:]
             }
             if let userScope { document.removalUserScope = userScope }
             var removed = Set<String>()
@@ -300,24 +304,38 @@ public struct AccountConfigurationStore: Sendable {
         guard result.status != .failure else { return }
         var document = result.document
         let changedScope = userScope != nil && document.removalUserScope != nil && document.removalUserScope != userScope
-        if changedScope { document.removedDisplayDates = [:] }
+        if changedScope { document.removedDisplayDates = [:]; document.restoredDisplayDates = [:] }
         let existing = changedScope ? [] : document.removedDisplayIDs ?? []
-        let removed = Set(existing).union(document.pendingRemovedDisplayIDs ?? []).union(ids)
-        guard !removed.isEmpty || changedScope else { return }
-        if let userScope { document.removalUserScope = userScope }
         let membershipSnapshot = storedSnapshot ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [])
+        for account in document.accounts {
+            guard let requested = account.restorationRequestedAt else { continue }
+            for report in membershipSnapshot.reports where account.matchesProviderReport(report) && report.status != .failure {
+                guard let identity = report.sharedAccountIdentity,
+                      identity.userScope == nil || identity.userScope == userScope,
+                      membershipSnapshot.snapshot.limits.contains(where: { $0.provider == report.provider && $0.accountID == report.accountID }) else { continue }
+                let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
+                document.restoredDisplayDates = (document.restoredDisplayDates ?? [:]).merging([key: requested]) { max($0, $1) }
+            }
+        }
+        let removed = Set(existing).union(document.pendingRemovedDisplayIDs ?? []).union(ids).filter { key in
+            guard let restored = document.restoredDisplayDates?[key] else { return true }
+            return (document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) >= restored
+        }
+        guard !removed.isEmpty || changedScope || document != result.document else { return }
+        if let userScope { document.removalUserScope = userScope }
         let rows = AccountDisplayMetadata.companion(configuration: document.accounts, stored: membershipSnapshot, now: now, publisherID: document.publisherID)
-        let removedConfigurations = Set(rows.filter { removed.contains($0.id) }.map(\.configurationID))
-            .union(document.accounts.filter { account in
-                membershipSnapshot.reports.contains { report in
-                    account.matchesProviderReport(report) && report.sharedAccountIdentity.map {
-                        ($0.userScope == nil || $0.userScope == userScope) && removed.contains(AccountDisplayMetadata.safeID(report.provider, $0.accountID))
-                    } == true
+        let deleted = document.accounts.filter { account in
+            if removed.contains(AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID)) { return true }
+            let reports = membershipSnapshot.reports.filter { account.matchesProviderReport($0) }
+            if !reports.isEmpty {
+                return reports.allSatisfy { report in
+                    guard let identity = report.sharedAccountIdentity,
+                          identity.userScope == nil || identity.userScope == userScope else { return false }
+                    return removed.contains(AccountDisplayMetadata.safeID(report.provider, identity.accountID))
                 }
-            }.map { AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID) })
-        let deleted = document.accounts.filter {
-            removed.contains(AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID))
-                || removedConfigurations.contains(AccountDisplayMetadata.companionConfigurationID($0, publisherID: document.publisherID))
+            }
+            let accountRows = rows.filter { $0.configurationID == AccountDisplayMetadata.companionConfigurationID(account, publisherID: document.publisherID) }
+            return !accountRows.isEmpty && accountRows.allSatisfy { removed.contains($0.id) }
         }
         document.accounts.removeAll { account in deleted.contains { $0.id == account.id } }
         document.removedAccountIDs = Array(Set(document.removedAccountIDs).union(deleted.map(\.id))).sorted()
@@ -334,10 +352,12 @@ public struct AccountConfigurationStore: Sendable {
         if let previous = document.removalUserScope, previous != scope {
             document.removedDisplayIDs = []
             document.removedDisplayDates = [:]
+            document.restoredDisplayDates = [:]
         }
         document.removalUserScope = scope
         document.removedDisplayDates = (document.removedDisplayDates ?? [:]).merging(shared.accountRemovalDates ?? [:]) { max($0, $1) }
-        let restored = Set((shared.accountRestorationDates ?? [:]).compactMap { key, date -> String? in
+        document.restoredDisplayDates = (document.restoredDisplayDates ?? [:]).merging(shared.accountRestorationDates ?? [:]) { max($0, $1) }
+        let restored = Set((document.restoredDisplayDates ?? [:]).compactMap { key, date -> String? in
             date > (document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) ? key : nil
         })
         document.removedDisplayIDs = (document.removedDisplayIDs ?? []).filter { !restored.contains($0) }

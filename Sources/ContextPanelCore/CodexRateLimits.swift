@@ -603,6 +603,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
 
 private func canonicalProviderAccountID(from auth: CodexAuthTokens) -> String? {
     CodexAccountIDExtractor.accountID(fromIDToken: auth.idToken) ?? auth.accountID
+        ?? CodexAccountIDExtractor.accountID(fromIDToken: auth.accessToken)
 }
 
 public func codexUsageLimits(

@@ -678,7 +678,19 @@ public struct SnapshotRefreshService: Sendable {
             enabledAccountCount: enabledAccountCount,
             connectorCount: connectors.count
         )
-        let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
+        let rawConnectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
+        let removals = Set(accountResult.document.globalRemovedDisplayIDs).filter { key in
+            guard let restored = accountResult.document.restoredDisplayDates?[key] else { return true }
+            return (accountResult.document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) >= restored
+        }
+        let connectorResult = ConnectorRefreshResult(generatedAt: rawConnectorResult.generatedAt, reports: rawConnectorResult.reports.filter { report in
+            guard let identity = report.sharedAccountIdentity else { return true }
+            let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
+            if let setup = accountResult.document.accounts.first(where: { $0.id == report.configuredAccountID }),
+               let requested = setup.restorationRequestedAt, report.status != .failure, !report.limits.isEmpty,
+               requested > (accountResult.document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) { return true }
+            return !removals.contains(key)
+        })
         let refreshResult = ConnectorRefreshResult(
             generatedAt: connectorResult.generatedAt,
             reports: connectorResult.reports,

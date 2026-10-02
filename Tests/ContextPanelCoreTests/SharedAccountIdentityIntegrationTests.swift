@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ContextPanelCore
+@testable import ContextPanelWidget
 
 private let integrationNow = Date(timeIntervalSince1970: 1_900_000_000)
 private let integrationKey = ProviderAccountIdentityKey.generate()
@@ -86,7 +87,7 @@ private func integrationDocument(_ fixture: (StoredUsageSnapshot, LocalProviderA
     let document = integrationDocument(fixture, publisher: "remote-host")
     try cache.save(document, verifiedScope: integrationScope, checkedAt: integrationNow)
     #expect(cache.load(now: integrationNow) != nil)
-    #expect(cache.load(now: integrationNow.addingTimeInterval(361)) == nil)
+    #expect(cache.load(now: integrationNow.addingTimeInterval(cache.verifiedScopeLeaseSeconds + 1)) == nil)
     let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
     try encoder.encode(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [])).write(to: root.appending(path: "accounts.json"))
     let agent = try AgentAccountSnapshot.read(rootDirectory: root, now: integrationNow)
@@ -136,4 +137,103 @@ private func integrationDocument(_ fixture: (StoredUsageSnapshot, LocalProviderA
         accountRemovalDates: removed.removedDisplayDates).applyingGlobalRemovals()
     #expect(filtered.snapshot.limits.count == 1)
     #expect(filtered.snapshot.limits.first?.companionAccountID == b.2.accountID)
+}
+
+@Test func removalOfOneVerifiedLanePreservesTheOtherLaneInOneSetup() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = integrationFixture(setupID: "combined", providerID: "account-one", used: 10)
+    let b = integrationFixture(setupID: "combined", providerID: "account-two", used: 20)
+    let stored = StoredUsageSnapshot(savedAt: integrationNow, snapshot: UsageSnapshot(generatedAt: integrationNow,
+        limits: a.0.snapshot.limits + b.0.snapshot.limits), reports: a.0.reports + b.0.reports)
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try store.save(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [a.1], publisherID: "host"))
+    let removed = AccountDisplayMetadata.safeID(.openAI, a.2.accountID)
+    try store.applyGlobalRemovals([removed], storedSnapshot: stored, now: integrationNow, userScope: integrationScope)
+    #expect(store.load(now: integrationNow).document.accounts == [a.1])
+    let document = CompanionSyncDocument(storedSnapshot: stored, cloudKitUserScope: integrationScope,
+        removedDisplayIDs: [removed]).applyingGlobalRemovals()
+    #expect(document.snapshot.limits.count == 1)
+    #expect(document.snapshot.limits.first?.companionAccountID == b.2.accountID)
+}
+
+@Test func authenticatedReAddSurvivesFailedRemoteSaveAndLaterOldRemovalRead() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = integrationFixture(setupID: "readded", providerID: "account-one", used: 10)
+    var setup = fixture.1; setup.restorationRequestedAt = integrationNow.addingTimeInterval(-10)
+    let removed = AccountDisplayMetadata.safeID(.openAI, fixture.2.accountID)
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try store.save(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [setup], removedDisplayIDs: [removed],
+        removalUserScope: integrationScope, removedDisplayDates: [removed: integrationNow.addingTimeInterval(-30)]))
+    let oldRemote = CompanionSyncDocument(snapshot: integrationDocument(fixture, publisher: "host").snapshot,
+        cloudKitUserScope: integrationScope, removedDisplayIDs: [removed], accountRemovalDates: [removed: integrationNow.addingTimeInterval(-30)])
+    try store.receiveSharedAccountIntents(oldRemote, scope: integrationScope, now: integrationNow)
+    try store.applyGlobalRemovals([removed], storedSnapshot: fixture.0, now: integrationNow, userScope: integrationScope)
+    #expect(store.load(now: integrationNow).document.accounts.count == 1)
+    #expect(store.load(now: integrationNow).document.restoredDisplayDates?[removed] == setup.restorationRequestedAt)
+    // The failed save left the old remote tombstone; repeat it without any provider payload.
+    try store.receiveSharedAccountIntents(oldRemote, scope: integrationScope, now: integrationNow.addingTimeInterval(1))
+    try store.applyGlobalRemovals([removed], storedSnapshot: nil, now: integrationNow.addingTimeInterval(1), userScope: integrationScope)
+    #expect(store.load(now: integrationNow).document.accounts.count == 1)
+    let newer = CompanionSyncDocument(snapshot: oldRemote.snapshot, cloudKitUserScope: integrationScope,
+        removedDisplayIDs: [removed], accountRemovalDates: [removed: integrationNow.addingTimeInterval(2)])
+    try store.receiveSharedAccountIntents(newer, scope: integrationScope, now: integrationNow.addingTimeInterval(2))
+    try store.applyGlobalRemovals([removed], storedSnapshot: fixture.0, now: integrationNow.addingTimeInterval(2), userScope: integrationScope)
+    #expect(store.load(now: integrationNow).document.accounts.isEmpty)
+}
+
+@Test func sharedAccountCacheLeaseAccommodatesSupportedLongRefreshIntervals() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = integrationFixture(setupID: "setup", providerID: "account-one", used: 10)
+    let cache = MacSharedAccountCache(cacheURL: root.appending(path: MacSharedAccountCache.filename))
+    try cache.save(integrationDocument(fixture, publisher: "host"), verifiedScope: integrationScope, checkedAt: integrationNow)
+    try BackgroundRefreshSettingsStore(settingsURL: root.appending(path: "background-refresh-settings.json")).save(BackgroundRefreshSettings(intervalMinutes: 60))
+    #expect(cache.load(now: integrationNow.addingTimeInterval(60 * 60 + 60)) != nil)
+    #expect(cache.load(now: integrationNow.addingTimeInterval(71 * 60)) == nil)
+    cache.invalidate()
+    #expect(cache.load(now: integrationNow) == nil)
+}
+
+@Test func futureWidgetEntriesKeepTheCurrentlyScopeQualifiedRemoteAccount() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = integrationFixture(setupID: "remote", providerID: "account-one", used: 10)
+    try MacSharedAccountCache(cacheURL: root.appending(path: MacSharedAccountCache.filename)).save(
+        integrationDocument(fixture, publisher: "remote-host"), verifiedScope: integrationScope, checkedAt: integrationNow)
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: integrationNow, accounts: []))
+    let provider = ContextPanelTimelineProvider(store: JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots")),
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback")),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-preferences.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: accountStore, bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json")))
+    let entries = provider.timelineEntries(date: integrationNow)
+    #expect(entries.count > 1)
+    #expect(entries.allSatisfy { $0.snapshot.limits.count == 1 })
+    #expect(entries.last?.snapshot.status == .stale)
+}
+
+@Test func failedAuthenticationCannotPublishAnExplicitRestore() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = integrationFixture(setupID: "setup", providerID: "account-one", used: 10)
+    var setup = fixture.1; setup.restorationRequestedAt = integrationNow
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [setup]))
+    let failure = StoredUsageSnapshot(savedAt: integrationNow, snapshot: UsageSnapshot(generatedAt: integrationNow, limits: []),
+        reports: [StoredProviderReport(provider: .openAI, accountID: fixture.0.reports[0].accountID,
+            configuredAccountID: setup.id, accountName: "Account", generatedAt: integrationNow, status: .failure,
+            errorMessage: "Login failed", sharedAccountIdentity: fixture.2)])
+    let syncStore = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+    let publisher = CompanionSyncPublisher(stores: CompanionSyncStoreSet(stores: [syncStore]),
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        accountConfigurationURL: accountStore.configurationURL)
+    #expect(publisher.publish(storedSnapshot: failure, publishedAt: integrationNow).succeeded)
+    let published = try #require(syncStore.load(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge), now: integrationNow).document)
+    #expect(published.accountRestorationDates?.isEmpty ?? true)
 }

@@ -329,7 +329,8 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 limits: [],
                 status: .failure,
                 errorMessage: error.localizedDescription,
-                sharedAccountIdentity: identity
+                legacyAccountID: localAccountID, sharedAccountIdentity: identity,
+                accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
             )
         }
     }
@@ -517,6 +518,9 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             )
         }
         let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: response.data)
+        let previousMaterial = credentials.accessToken.flatMap {
+            identityMaterialStore?.load(provider: .anthropic, configurationID: account.accountID, credential: $0)
+        }
         credentials = ClaudeOAuthCredentials(
             accessToken: token.accessToken,
             refreshToken: token.refreshToken ?? refreshToken,
@@ -524,6 +528,8 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             scopes: token.scopes.isEmpty ? credentials.scopes : token.scopes
         )
         try saveCredentials(credentials, accountID: account.accountID)
+        // The provider accepted this exact refresh grant; carry only its existing binding.
+        if let previousMaterial { identityMaterialStore?.save(previousMaterial, configurationID: account.accountID, credential: token.accessToken) }
         return token.accessToken
     }
 

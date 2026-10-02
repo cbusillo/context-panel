@@ -117,7 +117,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             [staleTransition].compactMap { $0 } + resetTransitions
         ).filter { $0 > date }.sorted()
         let entries = [currentEntry] + transitionDates.map {
-            entry(date: $0, stalenessPolicy: policy)
+            entry(date: $0, stalenessPolicy: policy, cacheValidationDate: date)
         }
         return (entries, current)
     }
@@ -142,14 +142,14 @@ struct ContextPanelTimelineProvider: TimelineProvider {
 
     private func entry(
         date: Date,
-        stalenessPolicy policy: SnapshotStoreStalenessPolicy
+        stalenessPolicy policy: SnapshotStoreStalenessPolicy, cacheValidationDate: Date? = nil
     ) -> ContextPanelWidgetEntry {
-        entrySelection(date: date, stalenessPolicy: policy).entry
+        entrySelection(date: date, stalenessPolicy: policy, cacheValidationDate: cacheValidationDate).entry
     }
 
     private func entrySelection(
         date: Date,
-        stalenessPolicy policy: SnapshotStoreStalenessPolicy
+        stalenessPolicy policy: SnapshotStoreStalenessPolicy, cacheValidationDate: Date? = nil
     ) -> ContextPanelWidgetSelection {
         let displayPreferences = loadDisplayPreferences()
         let forecastSettings = loadForecastSettings()
@@ -162,7 +162,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
         }
         let configuration = configurationDocument?.accounts
-        let sharedDocument = MacSharedAccountCache(cacheURL: accountStore.configurationURL.deletingLastPathComponent().appending(path: MacSharedAccountCache.filename)).load(now: date)
+        let sharedDocument = MacSharedAccountCache(cacheURL: accountStore.configurationURL.deletingLastPathComponent().appending(path: MacSharedAccountCache.filename)).load(now: cacheValidationDate ?? date)
         let result = store.loadCurrent(policy: policy, now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(

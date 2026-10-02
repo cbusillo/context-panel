@@ -128,7 +128,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(usageCredits, forKey: .usageCredits)
             try container.encode(bankedResets, forKey: .bankedResets)
             try container.encode(display, forKey: .display)
-            try container.encodeIfPresent(sharedAccountIdentity?.bound(toLocalAccountID: nil), forKey: .sharedAccountIdentity)
+            try container.encodeIfPresent(sharedAccountIdentity?.bound(toLocalAccountID: nil).bound(toUserScope: nil), forKey: .sharedAccountIdentity)
             try container.encodeIfPresent(sharedAccountIdentity?.accountID, forKey: .primaryAccountID)
             try container.encode(accountIdentityStatus, forKey: .accountIdentityStatus)
         }
@@ -169,7 +169,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             provider = account.metadata.provider.accountDisplayName
             state = account.stateText
             percentLeft = account.remainingText
-            tightestWindow = account.limitingWindow?.label
+            tightestWindow = account.limitingWindow.map { ConnectorRedactor.safeErrorDescription($0.label) }
             resets = account.limitingWindow.flatMap { AccountTerms.reset($0, now: now) }
             let ratio = account.paceRatio(now: now)
             pace = AccountNumbers.pace(ratio)
@@ -185,7 +185,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             runsOutAt = horizon.runOutAt
             spareFraction = horizon.spare
             windows = account.orderedWindows.map { window in
-                WindowDisplay(id: window.id, name: window.shortLabel, percentLeft: AccountNumbers.window(window),
+                WindowDisplay(id: window.id, name: ConnectorRedactor.safeErrorDescription(window.shortLabel), percentLeft: AccountNumbers.window(window),
                     resets: AccountTerms.reset(window, now: now),
                     evenPacePercentLeft: window.evenPaceRemaining(now: now).map(AccountNumbers.percentWithSign))
             }
@@ -290,12 +290,12 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 let report = canonical.reports.first { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
                 let limits = canonical.limits.filter { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
                 return Account(id: account.id, configurationID: account.metadata.configurationID,
-                    provider: account.metadata.provider, label: account.metadata.label, state: account.state,
+                    provider: account.metadata.provider, label: ConnectorRedactor.safeErrorDescription(account.metadata.label, preservingTypedEmail: true), state: account.state,
                     showInWidgets: account.metadata.showInWidgets, useLast: account.metadata.useLast,
                     remainingFraction: account.remainingFraction, limitingWindowID: account.limitingWindow?.id,
                     observedAt: account.observedAt, windows: limits.map { limit in
                         let rate = canonical.accountBurnRates?[limit.accountID]?[limit.id]
-                        return Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id), label: limit.label,
+                        return Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id), label: ConnectorRedactor.safeErrorDescription(limit.label),
                             unit: limit.unit, used: limit.used, limit: limit.limit, naturalResetAt: limit.resetsAt,
                             observedAt: limit.lastUpdatedAt,
                             burn: rate.flatMap { $0.sampleCount > 0 ? Burn(unitsPerHour: $0.unitsPerHour,

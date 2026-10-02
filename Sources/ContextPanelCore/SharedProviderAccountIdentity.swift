@@ -91,7 +91,7 @@ public struct SharedProviderAccountIdentity: Codable, Equatable, Sendable {
         Self(provider: provider, kind: kind, keyID: keyID, digest: digest, boundLocalAccountID: id, userScope: userScope)
     }
 
-    public func bound(toUserScope scope: CompanionCloudKitUserScope) -> Self {
+    public func bound(toUserScope scope: CompanionCloudKitUserScope?) -> Self {
         Self(provider: provider, kind: kind, keyID: keyID, digest: digest, boundLocalAccountID: boundLocalAccountID, userScope: scope)
     }
 
@@ -199,7 +199,7 @@ public enum ClaudeOAuthAccountIdentityParser {
     }
 }
 
-/// Scope binding lives only with the encrypted key, never in usage snapshots.
+/// Raw CloudKit user IDs stay private; only a derived scope digest accompanies identity provenance.
 public enum ScopedProviderAccountIdentityKey {
     private struct Payload: Codable {
         let userScope: CompanionCloudKitUserScope
