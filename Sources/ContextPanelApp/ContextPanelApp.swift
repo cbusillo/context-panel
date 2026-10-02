@@ -3984,7 +3984,6 @@ struct ProviderDashboard: View {
     let provider: Provider
     var focusedAccountID: String? = nil
     var showsHorizon = true
-    var presentationDate: Date? = nil
     var openLimit: ((String) -> Void)? = nil
     @State private var selectedLimit: MainLimitSummary?
 
@@ -3998,12 +3997,11 @@ struct ProviderDashboard: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            content(at: presentationDate ?? context.date)
+            content(at: context.date)
         }
     }
 
     @ViewBuilder private func content(at now: Date) -> some View {
-        let overview = model.accountOverview(at: now).filtered(to: provider)
         let overallStatus = providerStatusIncludingAccessAlerts(
             provider: provider, baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts)
         ScrollViewReader { proxy in
@@ -4011,7 +4009,7 @@ struct ProviderDashboard: View {
                 VStack(alignment: .leading, spacing: 22) {
                     if showsHorizon {
                         AccountDashboardPanel(
-                            overview: overview,
+                            overview: model.accountOverview(at: now).filtered(to: provider),
                             now: now,
                             openAccount: { account in
                                 model.navigate(to: .providerAccount(account.metadata.provider, account.id))
@@ -4064,7 +4062,7 @@ struct ProviderDashboard: View {
                         OpenAIAccountLimitsSection(
                             summaries: summaries,
                             reports: model.storedSnapshot?.reports ?? [],
-                            now: Date()
+                            now: now
                         )
                     } else {
                         ProviderAccountLimitsSection(summaries: summaries)

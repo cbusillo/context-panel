@@ -366,10 +366,11 @@ struct AccountGlanceWidget: View {
             Link(destination: links.deadlines) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     BankedDiamond(palette: palette, size: 6.5).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                    (Text(deadline.label + " · ").foregroundStyle(palette.primary)
-                        + Text(lapsing != nil ? AccountTerms.bankedBeforeRunOut(deadline, now: now)
+                    // Lead with the expiry so a long account name cannot hide its time.
+                    (Text(lapsing != nil ? AccountTerms.bankedBeforeRunOut(deadline, now: now)
                             : AccountTerms.bankedResetExpires + " " + AccountPaceText.when(deadline.expiresAt, now: now))
-                            .foregroundStyle(palette.secondary))
+                            .foregroundStyle(palette.primary)
+                        + Text(" · " + deadline.label).foregroundStyle(palette.secondary))
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     if others > 0 {
