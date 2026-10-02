@@ -161,8 +161,12 @@ public struct AccountDashboardPanel: View {
                             }
                             .foregroundStyle(palette.bad)
                             let outcome = AccountTerms.outcome(account, horizon, now: now)
-                            (Text(account.metadata.provider.accountDisplayName).foregroundStyle(palette.provider(account.metadata.provider))
-                             + Text(" · " + outcome.title))
+                            let providerName = account.metadata.provider.accountDisplayName
+                            let repeatedPrefix = providerName + " · "
+                            let title = outcome.title.hasPrefix(repeatedPrefix)
+                                ? String(outcome.title.dropFirst(repeatedPrefix.count)) : outcome.title
+                            (Text(providerName).foregroundStyle(palette.provider(account.metadata.provider))
+                             + Text(" · " + title))
                                 .font(.system(size: 12, weight: .medium))
                             Text(outcome.detail).font(.system(size: 12)).foregroundStyle(palette.secondary)
                             if let banked = overview.bankedBeforeRunOut(account, now: now) {

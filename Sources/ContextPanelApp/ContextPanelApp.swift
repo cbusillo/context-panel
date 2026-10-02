@@ -2931,7 +2931,7 @@ struct AccountsSidebar: View {
                 ForEach(model.accountOverview(at: Date()).accounts) { account in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(account.metadata.label).font(.system(size: 13, weight: .medium)).lineLimit(2)
-                        Text(account.metadata.provider.accountDisplayName + " · " + account.remainingText + " left")
+                        Text(account.metadata.provider.accountDisplayName + " · " + AccountTerms.tightest + " " + account.remainingText + " " + AccountTerms.left)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .tag(AppNavigationSelection.providerAccount(account.metadata.provider, account.id))
