@@ -17,9 +17,12 @@ public struct WatchAccountRow: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Image(systemName: account.state.glyphName).font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(WatchTokens.color(account.state.colorToken))
+            HStack(alignment: .center, spacing: 4) {
+                WatchProviderMark(provider: account.metadata.provider, size: 14)
+                if account.state != .available {
+                    Image(systemName: account.state.glyphName).font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(WatchTokens.color(account.state.colorToken))
+                }
                 Text(account.metadata.label).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 if isNext {
                     Image(systemName: AccountGlyphs.useNext).font(.system(size: 10)).foregroundStyle(WatchTokens.color(.next))
@@ -30,7 +33,7 @@ public struct WatchAccountRow: View {
                     .foregroundStyle(WatchTokens.color(AccountTone.forAccount(account).textToken))
             }
             HStack(spacing: 6) {
-                ForEach([account.shortWindow, account.longWindow].compactMap { $0 }) { window in
+                ForEach(account.glanceWindows) { window in
                     WatchMeter(window: window, now: now)
                 }
             }
@@ -89,7 +92,8 @@ public struct WatchAccountRectangularFace: View {
     public var body: some View {
         if let account = overview.closest ?? overview.accounts.first {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                HStack(alignment: .center, spacing: 3) {
+                    WatchProviderMark(provider: account.metadata.provider, size: 12)
                     Image(systemName: account.state.glyphName).font(.system(size: 8, weight: .bold))
                     Text(account.metadata.label).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     Spacer(minLength: 2)
@@ -97,7 +101,7 @@ public struct WatchAccountRectangularFace: View {
                         .font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
                 }
                 HStack(spacing: 4) {
-                    ForEach([account.shortWindow, account.longWindow].compactMap { $0 }) { window in
+                    ForEach(account.glanceWindows) { window in
                         WatchMeter(window: window, now: now, showsLabel: false)
                     }
                 }
@@ -182,6 +186,26 @@ func savedText(_ account: AccountOverview.Account, now: Date) -> String {
         return account.stateText
     }
     return account.stateText + " " + AccountPaceText.when(observed, now: now)
+}
+
+/// The provider's letter on its colour, the same mark as every other surface. Complications
+/// render it in the face's tint, where the letter still tells providers apart.
+public struct WatchProviderMark: View {
+    let provider: Provider
+    let size: CGFloat
+
+    public init(provider: Provider, size: CGFloat) {
+        self.provider = provider
+        self.size = size
+    }
+
+    public var body: some View {
+        Text(provider.markLetter).font(.system(size: size * 0.66, weight: .bold, design: .rounded))
+            .foregroundStyle(WatchTokens.color(.markInk))
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(WatchTokens.color(provider.colorToken)))
+            .accessibilityHidden(true)
+    }
 }
 
 /// The watch is always dark.

@@ -46,10 +46,14 @@ public extension AccountOverview.Window {
 }
 
 public extension AccountOverview.Account {
-    /// Windows ordered shortest first so every row reads 5h, then Week.
+    /// Windows ordered longest first so every surface reads Week, then 5h: the weekly window
+    /// decides how much work is left; the 5-hour window only paces it.
     var orderedWindows: [AccountOverview.Window] {
-        windows.sorted { ($0.duration ?? .infinity) < ($1.duration ?? .infinity) }
+        windows.sorted { ($0.duration ?? .infinity) > ($1.duration ?? .infinity) }
     }
+
+    /// The two columns every glance surface shows, in reading order: long (Week), then short (5h).
+    var glanceWindows: [AccountOverview.Window] { [longWindow, shortWindow].compactMap { $0 } }
 
     /// The short column: a window under a day long.
     var shortWindow: AccountOverview.Window? {
@@ -89,6 +93,95 @@ public extension AccountOverview.Account {
         }
         if isNext { parts.append("use next") }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// One provider's accounts side by side. Providers report percentages, not plan sizes, so the
+/// combined percent, burn and pace are an index: each account counts equally. The outlook does not
+/// depend on plan sizes: it says how many accounts run out before their own reset at their own
+/// burn, and when the last of them does if all of them do. Only accounts with a current reading
+/// count; saved, paused and unconnected accounts are listed but not added.
+public struct AccountProviderTotal: Equatable, Sendable, Identifiable {
+    public let provider: Provider
+    public let accountCount: Int
+    public let countedCount: Int
+    /// Mean share left of each counted account's provider-wide weekly window, and of its 5-hour window.
+    public let longRemaining: Double?
+    public let shortRemaining: Double?
+    public let longIsWeekly: Bool
+    /// Where the combined long window would sit now at an even spend.
+    public let evenPaceRemaining: Double?
+    /// Combined observed burn against the burn that would land every account on zero at its reset.
+    public let paceRatio: Double?
+    /// Mean observed burn per hour, comparable with `longRemaining`.
+    public let burnPerHour: Double?
+    /// Counted accounts whose long window runs out before its own reset at its own burn.
+    public let runningOutCount: Int
+    /// When the last counted account runs out, if every one of them runs out before its reset.
+    public let allOutBy: Date?
+    public var id: String { provider.rawValue }
+}
+
+public extension AccountOverview.Account {
+    /// The window an account adds to its provider's total: the tightest long window that applies to
+    /// the whole account (no model name), so a model-only limit is never pooled with an overall one.
+    var poolWindow: AccountOverview.Window? {
+        let long = windows.filter { $0.id != shortWindow?.id }
+        return long.filter { $0.modelLabel == nil }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+            ?? longWindow
+    }
+}
+
+public extension AccountProviderTotal {
+    /// A combined row says something only when a provider has more than one account.
+    var isCombined: Bool { accountCount > 1 }
+
+    /// Spoken summary of the combined row, in the words the row shows.
+    func accessibilityText(now: Date) -> String {
+        var parts = [provider.accountDisplayName + " " + AccountTerms.combined.lowercased(), AccountTerms.accountCount(self)]
+        if let longRemaining {
+            parts.append(AccountTerms.longColumn(weekly: longIsWeekly) + " " + AccountNumbers.percentWithSign(longRemaining) + " " + AccountTerms.left)
+        }
+        if let shortRemaining { parts.append(AccountTerms.fiveHourLong + " " + AccountNumbers.percentWithSign(shortRemaining) + " " + AccountTerms.left) }
+        if let paceRatio { parts.append("pace " + AccountPaceText.ratio(paceRatio)) }
+        parts.append(AccountTerms.combinedOutlook(self, now: now))
+        return parts.joined(separator: ", ")
+    }
+}
+
+public extension AccountOverview {
+    /// Combined room, pace and outlook per provider, in provider order, for providers with accounts.
+    func providerTotals(now: Date) -> [AccountProviderTotal] {
+        Provider.allCases.compactMap { provider in
+            let all = accounts.filter { $0.metadata.provider == provider }
+            guard !all.isEmpty else { return nil }
+            let counted = all.filter(\.isReliable)
+            let longs = counted.compactMap(\.poolWindow)
+            let shorts = counted.compactMap(\.shortWindow)
+            func mean(_ values: [Double]) -> Double? { values.isEmpty ? nil : values.reduce(0, +) / Double(values.count) }
+            let complete = !longs.isEmpty && longs.count == counted.count
+            let evens = longs.compactMap { $0.evenPaceRemaining(now: now) }
+            // Pace and outlook need every counted account's burn; a partial set would understate it.
+            var pace: Double?, burn: Double?, runningOut = 0, allOutBy: Date?
+            if complete, longs.allSatisfy({ $0.burnFractionPerHour != nil && $0.remainingFraction != nil && ($0.naturalResetAt ?? now) > now }) {
+                let total = longs.reduce(0) { $0 + ($1.burnFractionPerHour ?? 0) }
+                let even = longs.reduce(0) { sum, window in
+                    sum + (window.remainingFraction ?? 0) / max(1.0 / 60, (window.naturalResetAt ?? now).timeIntervalSince(now) / 3_600)
+                }
+                burn = total / Double(longs.count)
+                pace = even > 0 ? total / even : (total > 0 ? .infinity : 0)
+                let runOuts = longs.compactMap { $0.projectedRunOut(now: now) }
+                runningOut = runOuts.count
+                allOutBy = runOuts.count == longs.count ? runOuts.max() : nil
+            }
+            return AccountProviderTotal(
+                provider: provider, accountCount: all.count, countedCount: counted.count,
+                longRemaining: complete ? mean(longs.compactMap(\.remainingFraction)) : nil,
+                shortRemaining: !shorts.isEmpty && shorts.count == counted.count ? mean(shorts.compactMap(\.remainingFraction)) : nil,
+                longIsWeekly: longs.allSatisfy { $0.duration == 7 * 86_400 },
+                evenPaceRemaining: complete && evens.count == longs.count ? mean(evens) : nil,
+                paceRatio: pace, burnPerHour: burn, runningOutCount: runningOut, allOutBy: allOutBy)
+        }
     }
 }
 

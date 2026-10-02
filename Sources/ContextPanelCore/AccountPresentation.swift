@@ -4,6 +4,10 @@ import Foundation
 /// Mac app, widgets, iPhone, Watch, TV and the agent snapshot. A surface may show less,
 /// never different words or numbers for the same thing.
 public enum AccountTerms {
+    /// The app's name. Widgets carry it as their header: on the desktop nothing else says which
+    /// app a widget belongs to, and every widget already shows accounts.
+    public static let appName = "Context Panel"
+    public static let widgetTitle = appName
     public static let accounts = "Accounts"
     public static let settings = "Settings"
     public static let updates = "Updates"
@@ -55,6 +59,71 @@ public enum AccountTerms {
     public static func deadlineLabel(_ deadline: AccountOverview.Deadline) -> String {
         deadline.label + (deadline.state == .available ? "" : " · " + lastSeen)
     }
+    // Provider totals.
+    public static let combined = "Combined"
+    public static let week = "Week"
+    public static let fiveHour = "5h"
+    public static let fiveHourLong = "5-hour"
+    public static let account = "Account"
+    public static let lastsToReset = "lasts to reset"
+    /// Column name for the long window: "Week" unless some long window is another length.
+    public static func longColumn(weekly: Bool) -> String { weekly ? week : longWindow }
+    /// "3 accounts", or "2 of 3 current" when some are saved, paused or not connected.
+    public static func accountCount(_ total: AccountProviderTotal) -> String {
+        total.countedCount == total.accountCount
+            ? "\(total.accountCount) account" + (total.accountCount == 1 ? "" : "s")
+            : "\(total.countedCount) of \(total.accountCount) current"
+    }
+    /// The combined outlook, true whatever each plan's size: "Week lasts to reset" when no account runs
+    /// out before its own reset, "1 of 3 run out" (before their resets) when some do, "all out by Sat ~4 PM" when all do.
+    public static func combinedOutlook(_ total: AccountProviderTotal, now: Date) -> String {
+        guard total.paceRatio != nil else { return measuring }
+        if let date = total.allOutBy { return "all out by " + AccountPaceText.approximately(date, now: now) }
+        if total.runningOutCount > 0 { return "\(total.runningOutCount) of \(total.countedCount) run out" }
+        return longColumn(weekly: total.longIsWeekly) + " " + lastsToReset
+    }
+    /// "1 of 2" beside a compact combined number when some accounts are not current; empty otherwise.
+    public static func countedSuffix(_ total: AccountProviderTotal) -> String {
+        total.countedCount == total.accountCount ? "" : "\(total.countedCount) of \(total.accountCount)"
+    }
+    // Legends and counts.
+    public static let evenPaceMark = "even-pace mark"
+    public static let weeklyReset = "weekly reset"
+    public static let outBeforeResetLegend = "out before reset at this pace"
+    public static let bankedResetExpiresLegend = "banked reset expires"
+    public static func dated(_ count: Int) -> String { "\(count) dated" }
+    public static func accountsCount(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
+    /// Combined burn as a share of the combined room per hour: "0.3%/h".
+    public static func burn(_ perHour: Double?) -> String {
+        perHour.map { String(format: "%.1f%%/h", $0 * 100) } ?? unknown
+    }
+
+    // Deadlines page.
+    public static let deadlines = "Deadlines"
+    public static let nextExpiry = "Next expiry"
+    public static let thisWeek = "This week"
+    public static let nextThirtyDays = "Next 30 days"
+    public static let later = "Later"
+    public static let datesUnknown = "Dates unknown"
+    public static let accountsWithBanked = "Accounts"
+    public static let expires = "Expires"
+    public static let noDatedBankedResets = "No dated banked resets"
+    /// Whether the account's own weekly reset comes before this banked reset expires: if it does,
+    /// the natural reset refills the account first; if not, the banked reset is the only refill before it lapses.
+    /// Only for a window that really is weekly, and "last seen" when the reading is saved.
+    public static func weekResetRelation(expiresAt: Date, week: AccountOverview.Window?, current: Bool = true, now: Date) -> String? {
+        guard let week, week.duration == 7 * 86_400, let weekReset = week.naturalResetAt else { return nil }
+        return weekResetRelation(expiresAt: expiresAt, weekReset: weekReset, now: now).map { current ? $0 : $0 + ", " + lastSeen }
+    }
+    public static func weekResetRelation(expiresAt: Date, weekReset: Date?, now: Date) -> String? {
+        guard let weekReset else { return nil }
+        return weekReset < expiresAt
+            ? "Week resets first, " + AccountPaceText.when(weekReset, now: now)
+            : "Expires before week resets " + AccountPaceText.when(weekReset, now: now)
+    }
+    /// "1 dated", "3 without a date".
+    public static func undated(_ count: Int) -> String { "\(count) without a date" }
+
     /// A provider read that failed, where no saved account value stands in.
     public static let notUpdating = "Not updating"
 
@@ -151,7 +220,7 @@ public enum AccountTone: String, Codable, Sendable {
 public enum AccountColorToken: String, CaseIterable, Sendable {
     case surface, card, primary, secondary, tertiary, line, track
     case fill, available, low, critical, saved, banked, next
-    case openAI, anthropic, google, actionFill, actionText, watchSurface, destructiveFill
+    case openAI, anthropic, google, markInk, actionFill, actionText, watchSurface, destructiveFill
 
     public func rgb(dark: Bool) -> (red: Double, green: Double, blue: Double) {
         let pair: ((Double, Double, Double), (Double, Double, Double)) = switch self {
@@ -170,9 +239,13 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .saved: ((134, 104, 56), (204, 172, 110))
         case .banked: ((10, 122, 160), (92, 205, 236))
         case .next: ((36, 99, 209), (120, 169, 255))
-        case .openAI: ((56, 92, 126), (107, 164, 218))
-        case .anthropic: ((139, 102, 51), (220, 174, 103))
-        case .google: ((35, 116, 106), (83, 183, 168))
+        // Provider identity: graphite for OpenAI, clay for Claude, violet for Google. Hues stay clear
+        // of the status colours (green, amber, red, saved brown, banked cyan, next blue). Each is a text
+        // colour on `card` and a mark fill under `markInk`, at 4.5:1 or better both ways.
+        case .openAI: ((40, 42, 48), (222, 224, 230))
+        case .anthropic: ((168, 72, 40), (236, 146, 112))
+        case .google: ((96, 72, 204), (178, 160, 255))
+        case .markInk: ((255, 255, 255), (24, 25, 28))
         case .destructiveFill: ((170, 35, 30), (157, 45, 40))
         case .actionFill: ((36, 99, 209), (40, 88, 171))
         case .actionText: ((255, 255, 255), (255, 255, 255))
@@ -227,6 +300,26 @@ public extension AccountCapacityState {
 
     /// Normal states are carried by the mark alone; unusual ones are also spelled out.
     var needsWord: Bool { ![.available, .closeToLimit].contains(self) }
+}
+
+public extension Provider {
+    /// One letter for the provider mark: a rounded square in the provider's colour. Typographic,
+    /// so no provider logo is reproduced.
+    var markLetter: String {
+        switch self {
+        case .openAI: "O"
+        case .anthropic: "C"
+        case .google: "G"
+        }
+    }
+
+    var colorToken: AccountColorToken {
+        switch self {
+        case .openAI: .openAI
+        case .anthropic: .anthropic
+        case .google: .google
+        }
+    }
 }
 
 public enum AccountGlyphs {

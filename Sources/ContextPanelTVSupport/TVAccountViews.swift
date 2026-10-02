@@ -28,8 +28,11 @@ public struct TVAccountAnswers: View {
                             })
                         VStack(alignment: .leading, spacing: 6) {
                             Text(account.metadata.label).font(.system(size: 28, weight: .semibold)).lineLimit(1)
-                            Text("\(account.metadata.provider.accountDisplayName) · \(account.limitingWindow?.label ?? "")")
-                                .foregroundStyle(TVTokens.color(.secondary))
+                            HStack(spacing: 10) {
+                                TVProviderMark(provider: account.metadata.provider, size: 26)
+                                Text("\(account.metadata.provider.accountDisplayName) · \(account.limitingWindow?.label ?? "")")
+                            }
+                            .foregroundStyle(TVTokens.color(.secondary))
                             if let reset = account.limitingWindow?.naturalResetAt {
                                 Text(AccountTerms.resets + " " + AccountPaceText.when(reset, now: now)).monospacedDigit()
                             }
@@ -43,16 +46,28 @@ public struct TVAccountAnswers: View {
                     Text(AccountTerms.noCurrentReading).foregroundStyle(TVTokens.color(.secondary))
                 }
             }
+            // Per provider: the account to use next, and the provider's combined weekly room under it.
             TVCard(title: AccountTerms.useNext) {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Provider.allCases) { provider in
-                        if let account = overview.useNext(provider: provider) {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(overview.providerTotals(now: now)) { total in
+                        VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 14) {
-                                Text(provider.accountDisplayName).foregroundStyle(TVTokens.color(.secondary))
-                                    .frame(width: 110, alignment: .leading)
-                                Text(account.metadata.label).fontWeight(.semibold).lineLimit(1)
-                                Spacer(minLength: 8)
-                                Text(AccountNumbers.percentWithSign(account.remainingFraction)).fontWeight(.semibold).monospacedDigit()
+                                TVProviderMark(provider: total.provider, size: 30)
+                                if let account = overview.useNext(provider: total.provider) {
+                                    Text(account.metadata.label).fontWeight(.semibold).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Text(AccountNumbers.percentWithSign(account.remainingFraction)).fontWeight(.semibold).monospacedDigit()
+                                } else {
+                                    Text(AccountTerms.noEligibleAccount).foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                }
+                            }
+                            if total.isCombined {
+                                Text([AccountTerms.combined + " " + AccountNumbers.percentWithSign(total.longRemaining), AccountTerms.accountCount(total),
+                                      AccountPaceText.ratio(total.paceRatio), AccountTerms.combinedOutlook(total, now: now)].joined(separator: " · "))
+                                    .font(.system(size: 18)).monospacedDigit()
+                                    .foregroundStyle(TVTokens.color(total.runningOutCount == 0 ? .secondary : .critical))
+                                    .padding(.leading, 44)
                             }
                         }
                     }
@@ -109,6 +124,7 @@ public struct TVAccountTile: View {
                 if isNext { TVTag(text: AccountTerms.next, token: .next) }
                 if account.metadata.useLast { TVTag(text: AccountTerms.last, token: .tertiary) }
                 Spacer(minLength: 8)
+                TVProviderMark(provider: account.metadata.provider, size: 30)
                 Text(account.metadata.provider.accountDisplayName).font(.system(size: 20))
                     .foregroundStyle(TVTokens.color(.secondary))
             }
@@ -136,7 +152,7 @@ public struct TVAccountTile: View {
             }
             .frame(height: 100)
             HStack(spacing: 24) {
-                ForEach([account.shortWindow, account.longWindow].compactMap { $0 }) { window in
+                ForEach(account.glanceWindows) { window in
                     TVMeter(window: window, now: now)
                 }
             }
@@ -261,6 +277,25 @@ struct TVRing: View {
                 .rotationEffect(.degrees(-90))
         }
         .padding(6)
+    }
+}
+
+/// The provider's letter on its colour, the same mark as every other surface.
+public struct TVProviderMark: View {
+    let provider: Provider
+    let size: CGFloat
+
+    public init(provider: Provider, size: CGFloat) {
+        self.provider = provider
+        self.size = size
+    }
+
+    public var body: some View {
+        Text(provider.markLetter).font(.system(size: size * 0.64, weight: .bold, design: .rounded))
+            .foregroundStyle(TVTokens.color(.markInk))
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(TVTokens.color(provider.colorToken)))
+            .accessibilityHidden(true)
     }
 }
 
