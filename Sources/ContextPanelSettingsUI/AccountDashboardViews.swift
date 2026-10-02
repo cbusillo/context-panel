@@ -458,10 +458,21 @@ public struct AccountDashboardDetail: View {
             if compact {
                 ForEach(account.orderedWindows) { window in windowCard(window) }
             } else {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(account.orderedWindows) { window in windowCard(window) }
+                ViewThatFits(in: .horizontal) {
+                    Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 12) {
+                        ForEach(Array(stride(from: 0, to: account.orderedWindows.count, by: 2)), id: \.self) { index in
+                            GridRow {
+                                windowCard(account.orderedWindows[index]).frame(minWidth: 300)
+                                if index + 1 < account.orderedWindows.count {
+                                    windowCard(account.orderedWindows[index + 1]).frame(minWidth: 300)
+                                }
+                            }
+                        }
+                    }
+                    VStack(spacing: 12) {
+                        ForEach(account.orderedWindows) { window in windowCard(window) }
+                    }
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
             bankedCard
         }
@@ -500,7 +511,7 @@ public struct AccountDashboardDetail: View {
     }
 
     private func windowCard(_ window: AccountOverview.Window) -> some View {
-        DashboardCard(title: window.label, trailing: window.id == account.limitingWindow?.id ? AccountTerms.tightest : nil, fillsHeight: !compact, palette: palette) {
+        DashboardCard(title: window.label, trailing: window.id == account.limitingWindow?.id ? AccountTerms.tightest : nil, fillsHeight: false, palette: palette) {
             HStack(alignment: .center, spacing: 16) {
                 ZStack {
                     DashboardRing(fraction: window.remainingFraction, color: account.isReliable ? palette.provider(account.metadata.provider) : palette.stale,

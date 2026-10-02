@@ -2958,42 +2958,36 @@ struct AccountsSidebar: View {
                 }
             }
             Section(AccountTerms.accounts) {
-                ForEach(model.accountOverview(at: Date()).accounts) { account in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(account.metadata.label).font(.system(size: 13, weight: .medium)).lineLimit(2)
-                        Text(account.metadata.provider.accountDisplayName + " · " + AccountTerms.tightest + " " + account.remainingText + " " + AccountTerms.left)
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .tag(AppNavigationSelection.providerAccount(account.metadata.provider, account.id))
-                    .accessibilityLabel(account.accessibilityText)
-                }
-            }
-            Section("Details") {
+                let overview = model.accountOverview(at: Date())
+                let totals = overview.providerTotals(now: Date())
                 let reports = model.storedSnapshot?.reports ?? []
-                let resetCreditSummary = ResetCreditSurfaceAdvisor.appSummary(
-                    reports: reports,
-                    limits: snapshot.limits,
-                    now: Date()
-                )
                 ForEach(Provider.allCases) { provider in
+                    let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
-                    if shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
-                        ProviderSidebarRow(
-                            provider: provider,
-                            limitCount: summaries.count,
-                            resetCreditSummary: provider == .openAI ? resetCreditSummary : nil
-                        )
-                            .tag(AppNavigationSelection.provider(provider))
-                        ForEach(summaries.sortedForSidebar) { summary in
-                            SidebarRateLimitRow(
-                                summary: summary,
-                                status: providerStatusIncludingAccessAlerts(
-                                    provider: provider,
-                                    baseStatuses: [summary.status],
-                                    alerts: model.providerAccessAlerts
-                                )
-                            )
-                                .tag(AppNavigationSelection.mainLimit(summary.id))
+                    if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                ProviderBadge(provider: provider)
+                                Text(provider.accountDisplayName).font(.system(size: 13, weight: .semibold))
+                            }
+                            if let total = totals.first(where: { $0.provider == provider }) {
+                                Text(AccountTerms.sidebarRemaining(total))
+                                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text(AccountTerms.unknown).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .tag(AppNavigationSelection.provider(provider))
+                        ForEach(accounts) { account in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(account.metadata.label).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                                Text(AccountTerms.tightest + " " + account.remainingText + " " + AccountTerms.left)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(.leading, 12)
+                            .tag(AppNavigationSelection.providerAccount(provider, account.id))
+                            .accessibilityLabel(account.accessibilityText)
                         }
                     }
                 }

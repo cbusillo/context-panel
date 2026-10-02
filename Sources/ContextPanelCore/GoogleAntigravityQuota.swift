@@ -852,6 +852,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
 
     private static func displayComponent(_ component: String) -> String {
         switch component.lowercased() {
+        case "3p": "Third-party models"
         case "ai": "AI"
         case "agy": "AGY"
         case "gpt": "GPT"

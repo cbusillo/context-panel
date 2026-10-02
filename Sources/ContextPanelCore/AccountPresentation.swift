@@ -4,6 +4,25 @@ import Foundation
 /// Mac app, widgets, iPhone, Watch, TV and the agent snapshot. A surface may show less,
 /// never different words or numbers for the same thing.
 public enum AccountTerms {
+    /// Expand the AGY bridge's historical abbreviation, including already saved readings.
+    public static func modelName(_ label: String?, provider: Provider) -> String? {
+        provider == .google && label?.lowercased() == "3p" ? "Third-party models" : label
+    }
+
+    /// Same mean share as the dashboard, never a sum of incompatible account plans.
+    public static func sidebarRemaining(_ total: AccountProviderTotal) -> String {
+        var windows: [String] = []
+        if let remaining = total.longRemaining {
+            windows.append(longColumn(weekly: total.longIsWeekly) + " " + AccountNumbers.percentWithSign(remaining) + " " + left)
+        }
+        if let remaining = total.shortRemaining {
+            windows.append(fiveHour + " " + AccountNumbers.percentWithSign(remaining) + " " + left)
+        }
+        if windows.isEmpty { windows.append(unknown) }
+        if !countedSuffix(total).isEmpty { windows.append(countedSuffix(total) + " current") }
+        return windows.joined(separator: " · ")
+    }
+
     /// The app's name. Widgets carry it as their header: on the desktop nothing else says which
     /// app a widget belongs to, and every widget already shows accounts.
     public static let appName = "Context Panel"

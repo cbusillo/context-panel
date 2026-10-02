@@ -136,7 +136,7 @@ public struct AccountOverview: Equatable, Sendable {
             }.max { $0.generatedAt < $1.generatedAt }
             let windows = limits.map { limit in
                 Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id),
-                       label: ConnectorRedactor.safeErrorDescription([limit.modelLabel, limit.windowLabel ?? limit.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")),
+                       label: ConnectorRedactor.safeErrorDescription([AccountTerms.modelName(limit.modelLabel, provider: limit.provider), limit.windowLabel ?? limit.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")),
                        used: limit.used, limit: limit.limit, unit: limit.unit,
                        remainingFraction: limit.usageRatio.map { min(1, max(0, 1 - $0)) },
                        naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
@@ -144,7 +144,7 @@ public struct AccountOverview: Equatable, Sendable {
                        // sampleCount 0 is the estimator's window-average fallback, not observed history.
                        burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
-                       }, modelLabel: limit.modelLabel.map { ConnectorRedactor.safeErrorDescription($0) },
+                       }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
                        periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) })
             }
             let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt
