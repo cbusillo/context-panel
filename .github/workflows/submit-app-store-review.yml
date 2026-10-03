@@ -285,9 +285,28 @@ jobs:
             --version "${INPUT_VERSION}" \
             --build-number "${INPUT_BUILD_NUMBER}"
 
+      - name: Require Completed Approval Setup
+        env:
+          RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
+        run: scripts/release-approval-config.sh
+
+  approve:
+    name: Approve Release Intent
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: release-approval
+    permissions:
+      contents: read
+    steps:
+      - name: Record Approved Intent
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+
   submit:
     name: Submit App Store Review
-    needs: guard
+    needs: [guard, approve]
     runs-on: macos-26
     environment: release
 

@@ -28,25 +28,26 @@ Expected GitHub settings:
   `errors` or security alerts at `high_or_higher`.
 - Code quality gate on `main`: enabled for `errors`.
 - Force pushes and branch deletion: blocked for `main`.
-- Release environment: active environment named `release` with a required
-  repository-owner review, administrator bypass disabled, and deployment
-  branches restricted to protected branches only. Because `main` is the only
-  protected branch, secret-bearing release jobs cannot run from tags or task
-  branches.
-- Ship channel environment: `release-channels`, with no required reviewer or
-  wait timer, and a selected deployment **Branch** rule for `main` only. Channel
-  signing/upload secrets belong here and in `release` for standalone recovery;
-  repository-level copies are removed by the owner after setup.
-- Activation variable: repository Actions variable `RELEASE_CHANNELS_CONFIGURED`
-  is `true` only after the owner confirms channel environment setup. Unset or
-  false retains reviewed `release` for each channel; deleting it rolls approval
-  routing back without deleting credentials.
-- Release environment secret:
-  `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY` in both environments, containing at
-  least 32 bytes of
-  high-entropy key material shared with the operator Keychain entry used to seal
-  Production CloudKit schema receipts. Do not store the value in repository
-  files or repository-level secrets.
+- Review environment: `release-approval`, with `cbusillo` as required reviewer,
+  self-review allowed, administrator bypass disabled, no wait timer and no
+  secrets. Selected deployment **Branch** rule: `main` only.
+- Secret environment: existing `release`, with no reviewer or wait timer and a
+  selected deployment **Branch** rule for protected `main` only. Every GitHub
+  release secret lives only here. Ship preflight and all six standalone/channel
+  workflows use it after a secretless review gate. No duplicated secret store.
+- Activation variable: repository Actions variable `RELEASE_APPROVALS_CONFIGURED`
+  is exactly `true` only after the owner confirms the role move and secret-name
+  inventory. Unset/false pauses new release workflows before environment jobs.
+  Removing it does not restore reviewer settings or stop an already running job.
+  Previous `RELEASE_CHANNELS_CONFIGURED` is obsolete and should be removed.
+- `release-channels` is unused; confirmed duplicate secrets there and at
+  repository level are removed by the owner after older runs finish. Leave
+  existing `release` values untouched; stop on a missing sole-store name.
+- Release environment secret: `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`, at
+  least 32 bytes of high-entropy key material shared with the operator Keychain
+  entry that seals Production CloudKit schema receipts. Its sole GitHub copy
+  belongs in `release`; never store its value in repository files.
+
 - Immutable Releases: enabled so newly published GitHub Releases lock their tag,
   title, notes, and assets after publication.
 

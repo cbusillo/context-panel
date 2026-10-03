@@ -105,9 +105,28 @@ jobs:
             --version "${INPUT_VERSION}" \
             --build-number "${INPUT_BUILD_NUMBER}"
 
+      - name: Require Completed Approval Setup
+        env:
+          RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
+        run: scripts/release-approval-config.sh
+
+  approve:
+    name: Approve Release Intent
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: release-approval
+    permissions:
+      contents: read
+    steps:
+      - name: Record Approved Intent
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+
   validate:
     name: Validate Release Intent
-    needs: guard
+    needs: approve
     runs-on: ubuntu-latest
     environment: release
     outputs:
@@ -152,7 +171,6 @@ jobs:
       create_github_release: true
       notarize: ${{ inputs.notarize_github_release }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   app-store-upload:
     name: Mac App Store Connect Build Upload Channel
@@ -164,7 +182,6 @@ jobs:
       build_number: ${{ needs.validate.outputs.build_number }}
       upload: ${{ inputs.app_store_channel == 'upload' }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   companion-app-store-upload:
     name: Companion App Store Connect Build Upload Channel
@@ -177,7 +194,6 @@ jobs:
       platform: ${{ inputs.companion_platform }}
       upload: ${{ inputs.companion_app_store_channel == 'upload' }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   testflight-beta:
     name: TestFlight Beta Distribution Channel
@@ -208,7 +224,6 @@ jobs:
       include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
       dry_run: false
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   summary:
     name: Release Summary

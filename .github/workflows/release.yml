@@ -82,13 +82,36 @@ jobs:
             --version "${INPUT_VERSION}" \
             --build-number "${INPUT_BUILD_NUMBER}"
 
+      - name: Require Completed Approval Setup
+        env:
+          RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
+        run: scripts/release-approval-config.sh
+
+  approve:
+    name: Approve Release Intent
+    needs: guard
+    # Ship already reviewed this exact caller intent; all other callers need review.
+    if: ${{ !(github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository)) }}
+    runs-on: ubuntu-latest
+    environment: release-approval
+    permissions:
+      contents: read
+    steps:
+      - name: Record Approved Intent
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+
   macos:
     name: Build macOS App
-    needs: guard
+    needs: [guard, approve]
     runs-on: macos-26
-    # Reusable workflows receive the caller identity; direct dispatch keeps review.
-    environment: >-
-      ${{ github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository) && vars.RELEASE_CHANNELS_CONFIGURED == 'true' && 'release-channels' || 'release' }}
+    if: >-
+      ${{ !cancelled() && needs.guard.result == 'success' &&
+          (needs.approve.result == 'success' ||
+           (github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository) && needs.approve.result == 'skipped')) }}
+    environment: release
     permissions:
       contents: write
 
