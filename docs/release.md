@@ -33,6 +33,9 @@ GitHub's `release` environment with Chris as required reviewer. Its channel
 calls depend on successful intent validation. GitHub packaging, Mac and
 companion uploads, and TestFlight distribution then use `release-channels`,
 which has no required reviewer and permits only the protected `main` branch.
+Re-running a failed channel in that same approved Ship run does not request
+another approval; a new Ship dispatch requires its own intent approval.
+Cancelling a run prevents its TestFlight join from starting or continuing.
 
 Channel workflows choose the environment from `github.workflow_ref`, GitHub's
 caller workflow identity, not a user-supplied input,
@@ -55,10 +58,14 @@ checked-out commit, main ancestry, version, and build number. The one-approval
 contract assumes the operator environment setup below; GitHub environment rules
 are external configuration, not created by a workflow. Protected-main workflow
 changes remain trusted: GitHub environment branch rules do not restrict secrets
-to a particular workflow file.
+to a particular workflow file. When adding a release channel, classify its
+workflow and approval dependencies in the checker with the same model review
+required for approval changes; the checker rejects unclassified direct access
+to `release-channels`.
 
 `scripts/check-release-approvals.py` checks the parsed workflow graph in the
 CI and prints the all-channel approval plan without running a release.
+It also prints the referenced secret names per environment without values.
 It rejects channel calls without successful intent dependencies, additional
 reviewed Ship jobs, and unreviewed standalone paths. This is a structural dry
 run, not evidence of a live GitHub approval prompt.
@@ -75,7 +82,9 @@ Keep `main` protected and leave the existing `release` reviewer unchanged.
 Under **Environment secrets → Add environment secret**, add the channel secret
 names referenced by the four channel workflows, using their original private
 credential sources. GitHub cannot reveal an existing secret value; agents must
-never read or copy one. Retain the matching secrets in `release` for standalone
+never read or copy one. Populate matching secrets in `release` too when they
+currently exist only at
+repository level; retain existing environment entries for standalone
 recovery workflows and Ship's App Store version preflight. Remove any
 repository-level duplicates only after both environments are populated, so
 other workflows cannot inherit signing/upload secrets without an environment.

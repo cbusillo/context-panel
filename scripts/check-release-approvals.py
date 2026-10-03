@@ -10,9 +10,11 @@ This checks workflow configuration, not live GitHub environment settings.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 import json
 from pathlib import Path
 import re
+import shlex
 
 CHANNEL_ENVIRONMENT = (
     "${{ github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', "
@@ -37,8 +39,27 @@ def environment(job: dict) -> str | None:
     return value.get("name") if isinstance(value, dict) else value
 
 
+def strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from strings(child)
+
+
 def secret_bearing(job: dict) -> bool:
-    return "secrets." in json.dumps(job)
+    return any(re.search(r"\bsecrets\b", body)
+               for value in strings(job)
+               for body in re.findall(r"\$\{\{(.*?)}}", value, re.DOTALL))
+
+
+def secret_names(value: object) -> set[str]:
+    pattern = r"\bsecrets(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\])"
+    return {dot or bracket for text in strings(value)
+            for dot, bracket in re.findall(pattern, text)}
 
 
 def top_level_or(condition: str) -> bool:
@@ -69,8 +90,15 @@ def check(workflows: dict[str, dict]) -> dict:
         require(any(step.get("uses", "").startswith("actions/checkout@")
                     and step.get("with", {}).get("fetch-depth") == 0 for step in steps),
                 f"{workflow_name}: trust guard needs full history")
-        require(any("scripts/release-workflow-guard.sh" in step.get("run", "") for step in steps),
-                f"{workflow_name}: missing executable trusted-source guard")
+        guard_steps = [step for step in steps if "release-workflow-guard.sh" in step.get("run", "")]
+        require(len(guard_steps) == 1, f"{workflow_name}: expected one executable trust guard")
+        step = guard_steps[0]
+        require(not step.get("if") and not step.get("continue-on-error"),
+                f"{workflow_name}: trust guard step cannot be skipped or tolerate failure")
+        command = shlex.split(step["run"].replace("\\\n", ""))
+        expected = ["scripts/release-workflow-guard.sh", "--version", "${INPUT_VERSION}"]
+        require(command in (expected, expected + ["--build-number", "${INPUT_BUILD_NUMBER}"]),
+                f"{workflow_name}: trust guard must be invoked directly with release inputs")
         require(not guard.get("if") and not guard.get("continue-on-error"),
                 f"{workflow_name}: trust guard must run and succeed")
 
@@ -99,8 +127,10 @@ def check(workflows: dict[str, dict]) -> dict:
             # The TestFlight join intentionally runs with skipped upload channels.
             # Its top-level conjunction must still require approved intent success.
             require(condition.startswith(
-                "${{ always() && inputs.testflight_beta && needs.validate.result == 'success' &&"
-            ) and channel == "testflight-beta" and not top_level_or(condition),
+                "${{ !cancelled() && inputs.testflight_beta && needs.validate.result == 'success' &&"
+            ) and channel == "testflight-beta" and not top_level_or(condition)
+                and condition.endswith("}}")
+                and condition.count("${{") == condition.count("}}") == 1,
                     f"{channel}: status condition must require successful intent")
         else:
             require(not condition or re.fullmatch(
@@ -127,8 +157,22 @@ def check(workflows: dict[str, dict]) -> dict:
         for job_id, job in workflows[filename]["jobs"].items():
             require(not secret_bearing(job) or environment(job) == "release",
                     f"{filename}/{job_id}: standalone secrets require release review")
+    channel_names: set[str] = set()
+    for filename in CHANNELS.values():
+        channel_names.update(secret_names(workflows[filename]))
+    reviewed_names = channel_names | secret_names(intent)
+    for filename in STANDALONE_ONLY:
+        reviewed_names.update(secret_names(workflows[filename]))
+    classified = {"ship.yml", *CHANNELS.values(), *STANDALONE_ONLY}
+    for filename, document in workflows.items():
+        if filename not in classified:
+            for job in document.get("jobs", {}).values():
+                require("release-channels" not in (environment(job) or ""),
+                        f"{filename}: unclassified workflow may not select release-channels")
     return {
         "proof": "structural dry-run; live environment configuration is owner-confirmed",
+        "secret_names_by_environment": {"release": sorted(reviewed_names),
+                                        "release-channels": sorted(channel_names)},
         "activation": "Repository variable RELEASE_CHANNELS_CONFIGURED=true after owner setup",
         "fallback": "Unset/false activation keeps every channel on reviewed release",
         "ship": {"reviewed_jobs": ["validate"], "approval_count": 1,
@@ -145,8 +189,9 @@ def main() -> int:
                         default=Path(__file__).resolve().parents[1] / ".github/workflows")
     args = parser.parse_args()
     try:
-        names = ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY)
-        documents = {name: yaml.safe_load((args.workflows_root / name).read_text()) for name in names}
+        documents = {path.name: yaml.safe_load(path.read_text())
+                     for path in sorted([*args.workflows_root.glob("*.yml"),
+                                         *args.workflows_root.glob("*.yaml")])}
         print(json.dumps(check(documents), indent=2))
     except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as error:
         parser.exit(1, f"release approval policy: {error}\n")

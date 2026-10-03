@@ -16,7 +16,7 @@ spec.loader.exec_module(policy)
 def guard() -> dict[str, Any]:
     return {"steps": [
         {"uses": "actions/checkout@v7", "with": {"fetch-depth": 0}},
-        {"run": 'scripts/release-workflow-guard.sh --version "$VERSION"'},
+        {"run": 'scripts/release-workflow-guard.sh --version "${INPUT_VERSION}" --build-number "${INPUT_BUILD_NUMBER}"'},
     ]}
 
 
@@ -58,6 +58,12 @@ class ReleaseApprovalTests(unittest.TestCase):
             lambda d: d["release.yml"]["jobs"]["channel"].update(needs=[]),
             lambda d: d["release.yml"]["jobs"]["guard"].update(**{"continue-on-error": True}),
             lambda d: d["release.yml"]["jobs"].update(leak={"env": {"KEY": "${{ secrets.KEY }}"}}),
+            lambda d: d["release.yml"]["jobs"]["guard"]["steps"][1].update({"if": "${{ false }}"}),
+            lambda d: d["release.yml"]["jobs"]["guard"]["steps"][1].update({"continue-on-error": True}),
+            lambda d: d["release.yml"]["jobs"]["guard"]["steps"][1].update(run="echo scripts/release-workflow-guard.sh"),
+            lambda d: d["release.yml"]["jobs"].update(leak={"env": {"KEY": "${{ secrets['KEY'] }}"}}),
+            lambda d: d["release.yml"]["jobs"].update(leak={"env": {"KEY": "${{ toJSON(secrets) }}"}}),
+            lambda d: d.update({"rogue.yml": {"jobs": {"publish": {"environment": "release-channels"}}}}),
             lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["submit"].update(environment="release-channels"),
         ]
         for index, mutate in enumerate(mutations):
@@ -70,11 +76,14 @@ class ReleaseApprovalTests(unittest.TestCase):
     def test_testflight_join_requires_success_even_when_upload_is_skipped(self) -> None:
         documents = fixture()
         call = documents["ship.yml"]["jobs"]["testflight-beta"]
-        call["if"] = "${{ always() && inputs.testflight_beta && needs.validate.result == 'success' && (inputs.optional || needs.upload.result == 'success') }}"
+        call["if"] = "${{ !cancelled() && inputs.testflight_beta && needs.validate.result == 'success' && (inputs.optional || needs.upload.result == 'success') }}"
         policy.check(documents)
-        call["if"] += " || true"
+        call["if"] += " trailing"
         with self.assertRaises(ValueError):
             policy.check(documents)
-        call["if"] = "${{ always() && inputs.testflight_beta && needs.validate.result != 'success' && inputs.optional }}"
+        call["if"] = call["if"].removesuffix(" trailing") + " || true"
+        with self.assertRaises(ValueError):
+            policy.check(documents)
+        call["if"] = "${{ !cancelled() && inputs.testflight_beta && needs.validate.result != 'success' && inputs.optional }}"
         with self.assertRaises(ValueError):
             policy.check(documents)
