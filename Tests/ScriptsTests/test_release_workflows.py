@@ -15,13 +15,15 @@ import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
 FIXTURE_SIGNING_FINGERPRINT = hashlib.sha1(FIXTURE_SIGNING_CERTIFICATE).hexdigest().upper()
 
 
-def load_script_module(module_name: str, relative_path: str):
+def load_script_module(module_name: str, relative_path: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / relative_path)
     if spec is None or spec.loader is None:
         raise AssertionError(f"could not load script module: {relative_path}")
@@ -211,16 +213,19 @@ def workflow_choice_options(workflow: str, input_name: str) -> tuple[str, ...]:
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
-    def read(self, relative_path: str) -> str:
+    @staticmethod
+    def read(relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
 
-    def cloudkit_schema_receipt_module(self):
+    @staticmethod
+    def cloudkit_schema_receipt_module() -> ModuleType:
         return load_script_module(
             "context_panel_cloudkit_schema_receipt",
             "scripts/cloudkit-schema-receipt.py",
         )
 
-    def github_release_fixture(self, root: Path):
+    @staticmethod
+    def github_release_fixture(root: Path) -> tuple[ModuleType, Any, Path, Path]:
         publisher = load_script_module(
             "context_panel_publish_github_release",
             "scripts/publish-github-release.py",
@@ -265,14 +270,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         return publisher, identity, zip_path, metadata_path
 
+    @staticmethod
     def seed_fake_release(
-        self,
         client: FakeGitHubReleaseClient,
-        publisher,
-        identity,
+        publisher: ModuleType,
+        identity: Any,
         *,
         draft: bool,
-        marker_identity=None,
+        marker_identity: Any = None,
         content_overrides: dict[str, bytes] | None = None,
     ) -> None:
         if not draft:
@@ -302,7 +307,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             )
             client.asset_bytes[asset_id] = content
 
-    def expected_checkout_cache_key(self, checkout_root: Path) -> str:
+    @staticmethod
+    def expected_checkout_cache_key(checkout_root: Path) -> str:
         physical_root = str(checkout_root.resolve())
         return hashlib.sha256(f"{physical_root}\0".encode()).hexdigest()[:16]
 
@@ -445,8 +451,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             timeout=30,
         )
 
+    @staticmethod
     def run_companion_cache_helper(
-        self,
         command: str,
         root: Path | None = None,
         *,
@@ -719,7 +725,8 @@ sleep 30
 
             return completed, invocation_count, sentinel_alive
 
-    def run_companion_upload_script(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    @staticmethod
+    def run_companion_upload_script(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["/bin/bash", str(REPO_ROOT / "scripts/upload-app-store-connect-companion-app.sh"), *args],
             cwd=cwd or REPO_ROOT,
@@ -729,7 +736,8 @@ sleep 30
             check=False,
         )
 
-    def write_minimal_visionos_icon_stack(self, root: Path) -> None:
+    @staticmethod
+    def write_minimal_visionos_icon_stack(root: Path) -> None:
         icon_stack = root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
         icon_stack.mkdir(parents=True, exist_ok=True)
         (icon_stack / "Contents.json").write_text(
@@ -777,7 +785,8 @@ sleep 30
             )
             (image_set / f"{layer_name}.png").write_bytes(b"not-a-real-png")
 
-    def run_runtime_preflight_fixture(self, profile: str, entitlements: str = "app-entitlements.plist") -> subprocess.CompletedProcess[str]:
+    @staticmethod
+    def run_runtime_preflight_fixture(profile: str, entitlements: str = "app-entitlements.plist") -> subprocess.CompletedProcess[str]:
         fixture_dir = REPO_ROOT / "Tests/ScriptsTests/fixtures/runtime-preflight"
         command = f"""
         source scripts/context-panel-runtime-baseline.sh --source-only
@@ -795,7 +804,8 @@ sleep 30
             check=False,
         )
 
-    def run_widget_timeline_freshness_fixture(self, timeline_mtime: int, reference_mtime: int) -> subprocess.CompletedProcess[str]:
+    @staticmethod
+    def run_widget_timeline_freshness_fixture(timeline_mtime: int, reference_mtime: int) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             timeline_dir = root / "timelines/ContextPanelWidget"
@@ -819,8 +829,8 @@ sleep 30
                 check=False,
             )
 
+    @staticmethod
     def run_runtime_replacement_trace(
-        self,
         entry_point: str,
         *,
         production_after: str | None,
@@ -892,8 +902,8 @@ signed_entitlement_value plist_scalar_value section ok note fail "
             )
             return result, trace.read_text().split()
 
+    @staticmethod
     def run_runtime_identity_fixture(
-        self,
         app_entitlements: str | None,
         refresh_entitlements: str | None = None,
         *,
@@ -1003,7 +1013,8 @@ signed_entitlement_value plist_scalar_value section ok note fail "
                 check=False,
             )
 
-    def write_fake_release_tools(self, tool_dir: Path) -> None:
+    @staticmethod
+    def write_fake_release_tools(tool_dir: Path) -> None:
         fake_security = """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "cms" && "${2:-}" == "-D" && "${3:-}" == "-i" ]]; then
@@ -1025,8 +1036,8 @@ exit 42
         for path in tool_dir.iterdir():
             path.chmod(0o755)
 
+    @staticmethod
     def cloudkit_profile_plist(
-        self,
         bundle_id: str,
         services: list[str] | None = None,
         cloudkit_environment: str = "Production",
@@ -1086,7 +1097,8 @@ exit 42
 </plist>
 """
 
-    def widget_profile_plist(self, developer_certificate: bytes = FIXTURE_SIGNING_CERTIFICATE) -> str:
+    @staticmethod
+    def widget_profile_plist(developer_certificate: bytes = FIXTURE_SIGNING_CERTIFICATE) -> str:
         team_id = "MM5YXC7T6E"
         bundle_id = "com.shinycomputers.contextpanel.widget"
         certificate_data = base64.b64encode(developer_certificate).decode()
@@ -1121,8 +1133,8 @@ exit 42
 </plist>
 """
 
+    @staticmethod
     def run_cloudkit_schema_validator_with_fake_cktool(
-        self,
         live_schema: str,
         *,
         management_token: str | None = None,
@@ -1220,7 +1232,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 check=False,
             )
 
-    def test_mutating_workflow_steps_supply_the_schema_receipt_and_key(self):
+    def test_mutating_workflow_steps_supply_the_schema_receipt_and_key(self) -> None:
         # The entrypoints refuse without these; this only checks the workflows hand them over.
         mutation_steps = {
             "release.yml": "Publish GitHub Release",
@@ -1276,7 +1288,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(issued.returncode, 0, issued.stderr)
         return receipt
 
-    def release_environment(self, **overrides: str) -> dict[str, str]:
+    @staticmethod
+    def release_environment(**overrides: str) -> dict[str, str]:
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -1296,7 +1309,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             check=False,
         )
 
-    def test_schema_receipt_gate_accepts_only_a_valid_receipt_for_the_commit(self):
+    def test_schema_receipt_gate_accepts_only_a_valid_receipt_for_the_commit(self) -> None:
         gate = [str(REPO_ROOT / "scripts/require-cloudkit-schema-receipt.sh"), "--source-commit", self.RECEIPT_COMMIT]
         with tempfile.TemporaryDirectory() as directory:
             receipt = self.issue_schema_receipt(Path(directory))
@@ -1371,7 +1384,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             ),
         }
 
-    def test_every_live_release_entrypoint_refuses_without_a_schema_receipt(self):
+    def test_every_live_release_entrypoint_refuses_without_a_schema_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             for name, (live, _) in self.live_release_commands(Path(directory)).items():
                 with self.subTest(name):
@@ -1380,7 +1393,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn("refusing live release mutation: no Production CloudKit schema receipt", result.stdout)
 
-    def test_non_mutating_release_modes_do_not_ask_for_a_schema_receipt(self):
+    def test_non_mutating_release_modes_do_not_ask_for_a_schema_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             for name, (_, harmless) in self.live_release_commands(Path(directory)).items():
                 if harmless is None:
@@ -1391,7 +1404,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertNotIn("refusing live release mutation", result.stdout)
 
-    def test_a_valid_schema_receipt_lets_a_live_entrypoint_proceed(self):
+    def test_a_valid_schema_receipt_lets_a_live_entrypoint_proceed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             receipt = self.issue_schema_receipt(Path(directory))
             result = self.run_release_command(
@@ -1406,7 +1419,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("CloudKit Production schema receipt OK", result.stdout)
         self.assertIn("APP_STORE_CONNECT_KEY_ID", result.stdout)
 
-    def test_operator_wrapper_reuses_a_valid_receipt_and_runs_the_command_with_it(self):
+    def test_operator_wrapper_reuses_a_valid_receipt_and_runs_the_command_with_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             receipt = self.issue_schema_receipt(Path(directory))
             result = self.run_release_command(
@@ -1425,7 +1438,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("CloudKit Production schema receipt OK", result.stdout)
         self.assertNotIn("Issuing a fresh", result.stdout)
 
-    def test_workflow_shell_blocks_do_not_expand_actions_expressions(self):
+    def test_workflow_shell_blocks_do_not_expand_actions_expressions(self) -> None:
         workflow_paths = sorted((REPO_ROOT / ".github/workflows").glob("*.yml"))
         self.assertTrue(workflow_paths)
 
@@ -1434,7 +1447,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 for run_block in workflow_run_blocks(workflow_path.read_text()):
                     self.assertNotIn("${{", run_block)
 
-    def test_release_workflow_guard_rejects_untrusted_inputs_and_refs(self):
+    def test_release_workflow_guard_rejects_untrusted_inputs_and_refs(self) -> None:
         guard = REPO_ROOT / "scripts/release-workflow-guard.sh"
         base_environment = os.environ.copy()
         base_environment.update(
@@ -1488,7 +1501,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(unprotected_ref.returncode, 1)
         self.assertIn("require a protected main branch", unprotected_ref.stdout)
 
-    def test_release_workflow_guard_accepts_only_main_lineage(self):
+    def test_release_workflow_guard_accepts_only_main_lineage(self) -> None:
         guard_source = self.read("scripts/release-workflow-guard.sh")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -1577,7 +1590,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertEqual(untrusted.returncode, 1)
             self.assertIn("outside origin/main", untrusted.stdout)
 
-    def test_release_metadata_seal_records_source_and_payload_digest(self):
+    def test_release_metadata_seal_records_source_and_payload_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _, identity, zip_path, metadata_path = self.github_release_fixture(root)
@@ -1601,7 +1614,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 },
             )
 
-    def test_github_release_publication_is_idempotent(self):
+    def test_github_release_publication_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, _, _ = self.github_release_fixture(Path(directory))
             client = FakeGitHubReleaseClient()
@@ -1631,7 +1644,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertEqual(client.upload_count, 2)
             self.assertEqual(client.publish_count, 1)
 
-    def test_github_release_publication_rejects_mismatched_tag(self):
+    def test_github_release_publication_rejects_mismatched_tag(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, _, _ = self.github_release_fixture(Path(directory))
             client = FakeGitHubReleaseClient()
@@ -1649,7 +1662,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 )
             self.assertIsNone(client.release)
 
-    def test_github_release_publication_rejects_mismatched_build_identity(self):
+    def test_github_release_publication_rejects_mismatched_build_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, _, _ = self.github_release_fixture(Path(directory))
             client = FakeGitHubReleaseClient()
@@ -1679,7 +1692,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     notes="release notes",
                 )
 
-    def test_github_release_publication_rejects_changed_asset_bytes(self):
+    def test_github_release_publication_rejects_changed_asset_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, zip_path, _ = self.github_release_fixture(Path(directory))
             client = FakeGitHubReleaseClient()
@@ -1702,7 +1715,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     notes="release notes",
                 )
 
-    def test_github_release_partial_upload_stays_draft_until_retry(self):
+    def test_github_release_partial_upload_stays_draft_until_retry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, _, metadata_path = self.github_release_fixture(
                 Path(directory)
@@ -1735,7 +1748,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertEqual(client.upload_count, 2)
             self.assertEqual(client.publish_count, 1)
 
-    def test_github_release_remote_verification_failure_keeps_draft(self):
+    def test_github_release_remote_verification_failure_keeps_draft(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, zip_path, _ = self.github_release_fixture(
                 Path(directory)
@@ -1769,7 +1782,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIs(client.release["draft"], False)
             self.assertEqual(client.publish_count, 1)
 
-    def test_github_release_draft_lookup_falls_back_to_release_listing(self):
+    def test_github_release_draft_lookup_falls_back_to_release_listing(self) -> None:
         publisher = load_script_module(
             "context_panel_publish_github_release_draft_lookup",
             "scripts/publish-github-release.py",
@@ -1783,16 +1796,16 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         }
 
         class DraftLookupClient(publisher.GitHubCLIClient):
-            def _api_json(self, endpoint, *, allow_not_found=False):
+            def _api_json(self, endpoint: str, *, allow_not_found: bool = False) -> None:
                 return None
 
-            def _api_pages(self, endpoint):
+            def _api_pages(self, endpoint: str) -> list[dict[str, object]]:
                 return [draft]
 
         client = DraftLookupClient("cbusillo/context-panel")
         self.assertEqual(client.get_release("v1.2.3"), draft)
 
-    def test_github_release_rejects_tagless_published_release(self):
+    def test_github_release_rejects_tagless_published_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, _, _ = self.github_release_fixture(Path(directory))
             client = FakeGitHubReleaseClient()
@@ -1815,8 +1828,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     notes="release notes",
                 )
 
+    @staticmethod
     def run_ship_validate_inputs(
-        self,
         guard_exit: int = 0,
         **overrides: str,
     ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], str]:
@@ -1871,7 +1884,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def guard_platform(call: list[str]) -> str:
         return call[call.index("--platform") + 1]
 
-    def test_ship_preflights_every_companion_platform_the_workflow_offers(self):
+    def test_ship_preflights_every_companion_platform_the_workflow_offers(self) -> None:
         workflow = self.read(".github/workflows/ship.yml")
         platforms = {}
         for option in workflow_choice_options(workflow, "companion_platform"):
@@ -1889,20 +1902,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertEqual(platforms, {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"})
 
-    def test_ship_validate_step_supplies_every_variable_the_script_reads(self):
+    def test_ship_validate_step_supplies_every_variable_the_script_reads(self) -> None:
         workflow = self.read(".github/workflows/ship.yml")
         job = workflow_job(workflow, "validate")
         step = job[job.index("      - name: Validate Inputs\n") :]
         step = step.split("\n      - name:", 1)[0]
         provided = set(re.findall(r"^          ([A-Z][A-Z0-9_]*):", step, re.MULTILINE))
         script = self.read("scripts/ship-validate-inputs.sh")
-        required = set(re.findall(r"\$\{((?:INPUT|APP_STORE_CONNECT)_[A-Z0-9_]+)", script))
+        required = set(re.findall(r"\${((?:INPUT|APP_STORE_CONNECT)_[A-Z0-9_]+)", script))
 
         self.assertIn("        run: scripts/ship-validate-inputs.sh", step)
         self.assertTrue(required)
         self.assertEqual(required - provided, set())
 
-    def test_ship_rejects_an_unknown_companion_platform_without_preflight(self):
+    def test_ship_rejects_an_unknown_companion_platform_without_preflight(self) -> None:
         result, guard_calls, output = self.run_ship_validate_inputs(
             INPUT_COMPANION_APP_STORE_CHANNEL="upload",
             INPUT_COMPANION_PLATFORM="watchos",
@@ -1913,13 +1926,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(guard_calls, [])
         self.assertEqual(output, "")
 
-    def test_ship_preflights_the_mac_app_store_channel(self):
+    def test_ship_preflights_the_mac_app_store_channel(self) -> None:
         result, guard_calls, _ = self.run_ship_validate_inputs(INPUT_APP_STORE_CHANNEL="upload")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual([self.guard_platform(call) for call in guard_calls], ["MAC_OS"])
 
-    def test_ship_stops_when_the_version_guard_rejects_the_version(self):
+    def test_ship_stops_when_the_version_guard_rejects_the_version(self) -> None:
         result, guard_calls, output = self.run_ship_validate_inputs(
             guard_exit=3,
             INPUT_APP_STORE_CHANNEL="upload",
@@ -1929,7 +1942,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(len(guard_calls), 1)
         self.assertEqual(output, "")
 
-    def test_ship_refuses_live_channels_without_required_inputs(self):
+    def test_ship_refuses_live_channels_without_required_inputs(self) -> None:
         cases = {
             "no channel": {},
             "no schema receipt": {
@@ -1955,7 +1968,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(guard_calls, [])
                 self.assertEqual(output, "")
 
-    def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self):
+    def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self) -> None:
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         submit_step = re.search(
             r"      - name: Submit Review\n.*?        run: \|\n(?P<body>.*?)(?=\n      - name:|\Z)",
@@ -2045,7 +2058,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("--release-evidence-report", arguments)
                 self.assertIn("--release-evidence-historical-policy-archive", arguments)
 
-    def test_release_evidence_entrypoints_execute_directly(self):
+    def test_release_evidence_entrypoints_execute_directly(self) -> None:
         for relative_path in (
             "scripts/context-panel-release-gate.py",
             "scripts/validate-release-evidence-report.py",
@@ -2063,17 +2076,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("usage:", result.stdout)
 
-    def test_runtime_gate_accepts_widget_timeline_from_installed_build(self):
+    def test_runtime_gate_accepts_widget_timeline_from_installed_build(self) -> None:
         result = self.run_widget_timeline_freshness_fixture(timeline_mtime=200, reference_mtime=100)
 
         self.assertEqual(result.returncode, 0, result.stdout)
 
-    def test_runtime_gate_rejects_widget_timeline_from_previous_build(self):
+    def test_runtime_gate_rejects_widget_timeline_from_previous_build(self) -> None:
         result = self.run_widget_timeline_freshness_fixture(timeline_mtime=100, reference_mtime=200)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
 
-    def test_runtime_gate_rejects_widget_timeline_without_build_reference(self):
+    def test_runtime_gate_rejects_widget_timeline_without_build_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             timeline_dir = root / "timelines/ContextPanelWidget"
@@ -2094,7 +2107,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
 
-    def test_release_package_rejects_cloudkit_without_profiles_before_building(self):
+    def test_release_package_rejects_cloudkit_without_profiles_before_building(self) -> None:
         result = self.run_package_script_preflight([
             "--identity",
             "Apple Development: Test",
@@ -2104,7 +2117,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Context Panel app uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_ambiguous_auto_identity_before_building(self):
+    def test_release_package_rejects_ambiguous_auto_identity_before_building(self) -> None:
         second_fingerprint = hashlib.sha1(b"second-signing-certificate").hexdigest().upper()
         identities = (
             f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Developer ID Application: Test (MM5YXC7T6E)"\n'
@@ -2118,7 +2131,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("multiple valid Developer ID Application signing certificates are available", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_identity_lookup_failure_before_building(self):
+    def test_release_package_rejects_identity_lookup_failure_before_building(self) -> None:
         identities = f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Developer ID Application: Test (MM5YXC7T6E)"'
 
         result = self.run_package_script_preflight(
@@ -2131,7 +2144,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("could not list valid codesigning identities", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_requires_widget_profile_for_signed_builds(self):
+    def test_release_package_requires_widget_profile_for_signed_builds(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2151,7 +2164,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Context Panel widget requires an embedded provisioning profile", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_each_profile_for_a_different_signing_certificate(self):
+    def test_release_package_rejects_each_profile_for_a_different_signing_certificate(self) -> None:
         mismatch_cases = (
             ("app.plist", "Context Panel app"),
             ("widget.plist", "Context Panel widget"),
@@ -2195,7 +2208,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn(f"{label} provisioning profile does not authorize signing certificate", result.stdout)
                 self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_accepts_one_matching_certificate_profile_set(self):
+    def test_release_package_accepts_one_matching_certificate_profile_set(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2218,7 +2231,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("unexpected fake xcodegen invocation", result.stdout)
         self.assertNotIn("does not authorize signing certificate", result.stdout)
 
-    def test_release_package_allows_ad_hoc_validation_without_cloudkit_profiles(self):
+    def test_release_package_allows_ad_hoc_validation_without_cloudkit_profiles(self) -> None:
         result = self.run_package_script_preflight([
             "--identity",
             "-",
@@ -2228,7 +2241,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("unexpected fake xcodegen invocation", result.stdout)
         self.assertNotIn("uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
 
-    def test_release_package_rejects_ad_hoc_widget_profile_before_building(self):
+    def test_release_package_rejects_ad_hoc_widget_profile_before_building(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2244,7 +2257,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("provisioning profiles requires a non-ad-hoc signing identity", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_ad_hoc_cloudkit_profiles_before_building(self):
+    def test_release_package_rejects_ad_hoc_cloudkit_profiles_before_building(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2264,7 +2277,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("requires a non-ad-hoc signing identity", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_swapped_cloudkit_profile_before_building(self):
+    def test_release_package_rejects_swapped_cloudkit_profile_before_building(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2287,7 +2300,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         )
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_profile_without_cloudkit_service_before_building(self):
+    def test_release_package_rejects_profile_without_cloudkit_service_before_building(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2313,7 +2326,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         )
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_release_package_rejects_wrong_cloudkit_environment_before_building(self):
+    def test_release_package_rejects_wrong_cloudkit_environment_before_building(self) -> None:
         result = self.run_package_script_preflight(
             [
                 "--identity",
@@ -2340,7 +2353,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         )
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_cloudkit_companion_schema_contract_matches_app_constants(self):
+    def test_cloudkit_companion_schema_contract_matches_app_constants(self) -> None:
         schema = json.loads(self.read("CloudKit/companion-sync.schema.json"))
         remote_sync = self.read("Sources/ContextPanelCore/CompanionRemoteSync.swift")
         runtime_sync = self.read("Sources/ContextPanelCore/RuntimeReceiptRemoteSync.swift")
@@ -2394,7 +2407,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             for field in record["fields"]:
                 self.assertIn(f'= "{field["name"]}"', runtime_sync)
 
-    def test_cloudkit_schema_receipt_round_trip_binds_contract_and_source(self):
+    def test_cloudkit_schema_receipt_round_trip_binds_contract_and_source(self) -> None:
         receipt_module = self.cloudkit_schema_receipt_module()
         key = b"cloudkit-schema-receipt-test-key-32-bytes"
         source_commit = "a" * 40
@@ -2432,7 +2445,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(receipt["sourceCommit"], source_commit)
         self.assertRegex(str(receipt["contractDigest"]), r"^sha256:[0-9a-f]{64}$")
 
-    def test_cloudkit_schema_receipt_rejects_tampering_and_identity_drift(self):
+    def test_cloudkit_schema_receipt_rejects_tampering_and_identity_drift(self) -> None:
         receipt_module = self.cloudkit_schema_receipt_module()
         key = b"cloudkit-schema-receipt-test-key-32-bytes"
         source_commit = "a" * 40
@@ -2489,7 +2502,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     now=now,
                 )
 
-    def test_cloudkit_schema_receipt_rejects_stale_future_and_unknown_fields(self):
+    def test_cloudkit_schema_receipt_rejects_stale_future_and_unknown_fields(self) -> None:
         receipt_module = self.cloudkit_schema_receipt_module()
         key = b"cloudkit-schema-receipt-test-key-32-bytes"
         source_commit = "a" * 40
@@ -2535,7 +2548,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         with self.assertRaisesRegex(receipt_module.ReceiptError, "fields"):
             receipt_module.verify_receipt(missing, **verification, now=now)
 
-    def test_cloudkit_schema_receipt_cli_rejects_missing_and_invalid_base64(self):
+    def test_cloudkit_schema_receipt_cli_rejects_missing_and_invalid_base64(self) -> None:
         environment = os.environ.copy()
         environment["CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"] = (
             "cloudkit-schema-receipt-test-key-32-bytes"
@@ -2573,7 +2586,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(invalid.returncode, 1)
         self.assertIn("receipt base64 is invalid", invalid.stderr)
 
-    def test_cloudkit_schema_receipt_accepts_wrapped_base64_transport(self):
+    def test_cloudkit_schema_receipt_accepts_wrapped_base64_transport(self) -> None:
         receipt_module = self.cloudkit_schema_receipt_module()
         key = b"cloudkit-schema-receipt-test-key-32-bytes"
         source_commit = "a" * 40
@@ -2613,7 +2626,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_live_cloudkit_schema_gate_issues_receipt_and_fails_closed(self):
+    def test_live_cloudkit_schema_gate_issues_receipt_and_fails_closed(self) -> None:
         key = "cloudkit-schema-receipt-test-key-32-bytes"
         with tempfile.TemporaryDirectory() as temp_dir:
             receipt_path = Path(temp_dir) / "schema-receipt.json"
@@ -2640,7 +2653,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIn("live schema validation failed", failure.stdout)
             self.assertFalse(failed_receipt_path.exists())
 
-    def test_cloudkit_companion_schema_validator_accepts_ckdb_export(self):
+    def test_cloudkit_companion_schema_validator_accepts_ckdb_export(self) -> None:
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
             self.read("CloudKit/companion-sync.schema.ckdb")
         )
@@ -2648,7 +2661,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("runtime receipt contracts", result.stdout)
 
-    def test_identity_key_schema_rejects_unencrypted_indexed_or_public_key(self):
+    def test_identity_key_schema_rejects_unencrypted_indexed_or_public_key(self) -> None:
         schema = self.read("CloudKit/companion-sync.schema.ckdb")
         for field in ("keyMaterial ENCRYPTED_BYTES", "keyMaterial BYTES", "keyMaterial ENCRYPTED BYTES QUERYABLE", "keyMaterial ENCRYPTED BYTES SORTABLE",
                       'keyMaterial ENCRYPTED BYTES,\n        GRANT READ TO "_world"'):
@@ -2659,7 +2672,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("ContextPanelAccountIdentityKey", result.stdout)
 
-    def test_cloudkit_companion_schema_validator_forwards_management_token(self):
+    def test_cloudkit_companion_schema_validator_forwards_management_token(self) -> None:
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
             self.read("CloudKit/companion-sync.schema.ckdb"),
             management_token="test-management-token",
@@ -2669,7 +2682,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn("test-management-token", result.stdout)
 
-    def test_cloudkit_schema_validator_rejects_non_sortable_retention_field(self):
+    def test_cloudkit_schema_validator_rejects_non_sortable_retention_field(self) -> None:
         live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
             "retentionExpiresAt   TIMESTAMP QUERYABLE SORTABLE",
             "retentionExpiresAt   TIMESTAMP QUERYABLE",
@@ -2681,7 +2694,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("RuntimeReceipt.retentionExpiresAt", result.stdout)
         self.assertIn("not sortable", result.stdout)
 
-    def test_cloudkit_schema_validator_rejects_runtime_public_grant(self):
+    def test_cloudkit_schema_validator_rejects_runtime_public_grant(self) -> None:
         live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
             "        surface              STRING\n    );",
             '        surface              STRING,\n        GRANT READ TO "_world"\n    );',
@@ -2693,7 +2706,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("must not grant public database access", result.stdout)
         self.assertIn("RuntimeReceipt", result.stdout)
 
-    def test_cloudkit_schema_validator_rejects_changed_users_grants(self):
+    def test_cloudkit_schema_validator_rejects_changed_users_grants(self) -> None:
         checked_in_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
             '        GRANT WRITE TO "_creator",\n        GRANT READ TO "_world"\n    );',
             '        GRANT WRITE TO "_creator"\n    );',
@@ -2707,7 +2720,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("grants changed for record type: Users", result.stdout)
 
-    def test_cloudkit_schema_validator_rejects_unexpected_checked_in_record_type(self):
+    def test_cloudkit_schema_validator_rejects_unexpected_checked_in_record_type(self) -> None:
         checked_in_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
             "\n    RECORD TYPE Users (",
             "\n    RECORD TYPE UnexpectedType (\n        value STRING\n    );\n\n    RECORD TYPE Users (",
@@ -2721,7 +2734,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("record types differ from the additive companion/runtime baseline", result.stdout)
 
-    def test_cloudkit_companion_schema_validator_rejects_wrong_ckdb_field_type(self):
+    def test_cloudkit_companion_schema_validator_rejects_wrong_ckdb_field_type(self) -> None:
         live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
             "payload               BYTES QUERYABLE SORTABLE",
             "payload               STRING QUERYABLE SORTABLE",
@@ -2732,7 +2745,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CompanionSyncDocument.payload BYTES", result.stdout)
 
-    def test_cloudkit_companion_schema_validator_rejects_nonqueryable_subscription_field(self):
+    def test_cloudkit_companion_schema_validator_rejects_nonqueryable_subscription_field(self) -> None:
         live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
             "snapshotSchemaVersion INT64 QUERYABLE SORTABLE",
             "snapshotSchemaVersion INT64 SORTABLE",
@@ -2744,7 +2757,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("snapshotSchemaVersion", result.stdout)
         self.assertIn("not queryable", result.stdout)
 
-    def test_cloudkit_schema_validator_rejects_missing_runtime_receipt_boundary(self):
+    def test_cloudkit_schema_validator_rejects_missing_runtime_receipt_boundary(self) -> None:
         live_schema = re.sub(
             r"\n    RECORD TYPE RuntimeReceipt \(.*?\n    \);\n",
             "\n",
@@ -2757,7 +2770,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing record type: RuntimeReceipt", result.stdout)
 
-    def test_commit_gate_namespaces_artifact_cache_by_physical_checkout(self):
+    def test_commit_gate_namespaces_artifact_cache_by_physical_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -2822,7 +2835,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     through_case_alias.stdout,
                 )
 
-    def test_commit_gate_skip_swift_keeps_python_validation_and_runs_no_swift(self):
+    def test_commit_gate_skip_swift_keeps_python_validation_and_runs_no_swift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -2854,7 +2867,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(unknown.returncode, 64, unknown.stdout)
         self.assertEqual(commands(unknown, "swift") + commands(unknown, "python3"), [])
 
-    def test_commit_gate_preserves_override_and_falls_back_without_hash_tool(self):
+    def test_commit_gate_preserves_override_and_falls_back_without_hash_tool(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -2884,7 +2897,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 fallback.stdout,
             )
 
-    def test_companion_validation_namespaces_derived_data_and_preserves_overrides(self):
+    def test_companion_validation_namespaces_derived_data_and_preserves_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -2998,7 +3011,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 f"companion validation DerivedData root: {cli_override}", cli.stdout
             )
 
-    def test_companion_cache_quarantines_minimal_bundle_roots_without_following_symlinks(self):
+    def test_companion_cache_quarantines_minimal_bundle_roots_without_following_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             checkout_root = temp_path / "checkout"
@@ -3076,7 +3089,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 [],
             )
 
-    def test_companion_cache_quarantine_is_a_safe_noop(self):
+    def test_companion_cache_quarantine_is_a_safe_noop(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             checkout_root = Path(temp_dir) / "checkout"
             cache_root = (
@@ -3094,7 +3107,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 (checkout_root / ".context-panel-companion-quarantine").exists()
             )
 
-    def test_companion_cache_keeps_checkout_quarantine_inside_ignored_build_root(self):
+    def test_companion_cache_keeps_checkout_quarantine_inside_ignored_build_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             checkout_root = Path(temp_dir) / "checkout"
             cache_root = (
@@ -3126,7 +3139,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 1,
             )
 
-    def test_companion_cache_rejects_unrelated_root_level_and_symlink_roots(self):
+    def test_companion_cache_rejects_unrelated_root_level_and_symlink_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             unrelated = temp_path / "unrelated"
@@ -3178,7 +3191,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertNotEqual(ancestor_result.returncode, 0)
             self.assertIn("must not traverse symbolic links", ancestor_result.stdout)
 
-    def test_companion_cache_preflight_passes_clean_and_fails_on_residue(self):
+    def test_companion_cache_preflight_passes_clean_and_fails_on_residue(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_root = (
                 Path(temp_dir)
@@ -3198,7 +3211,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIn("preflight=FAIL", dirty.stdout)
             self.assertTrue(residue.is_dir())
 
-    def test_companion_cache_refuses_signed_bundle_material(self):
+    def test_companion_cache_refuses_signed_bundle_material(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_root = (
                 Path(temp_dir)
@@ -3218,7 +3231,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIn("protected-signed-bundles=1", result.stdout)
             self.assertTrue(signed_app.is_dir())
 
-    def test_companion_cache_refuses_inventory_inspection_errors(self):
+    def test_companion_cache_refuses_inventory_inspection_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_root = (
                 Path(temp_dir)
@@ -3238,7 +3251,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertNotIn(str(unreadable_path), result.stdout)
             self.assertTrue(app_path.is_dir())
 
-    def test_companion_cache_rejects_symlinked_quarantine_destination(self):
+    def test_companion_cache_rejects_symlinked_quarantine_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             checkout_root = temp_path / "checkout"
@@ -3263,7 +3276,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertTrue(app_path.is_dir())
             self.assertEqual(list(external_quarantine.iterdir()), [])
 
-    def test_companion_cache_fails_when_nested_bundle_cannot_be_neutralized(self):
+    def test_companion_cache_fails_when_nested_bundle_cannot_be_neutralized(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             checkout_root = temp_path / "checkout"
@@ -3294,7 +3307,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 [],
             )
 
-    def test_companion_cache_preflight_discovers_current_and_legacy_retry_roots(self):
+    def test_companion_cache_preflight_discovers_current_and_legacy_retry_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             runner_temp = temp_path / "runner temp"
@@ -3337,7 +3350,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertTrue(residue.is_dir())
             self.assertTrue(legacy_residue.is_dir())
 
-    def test_companion_validation_quarantines_after_failure(self):
+    def test_companion_validation_quarantines_after_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -3389,7 +3402,7 @@ exit 7
                 1,
             )
 
-    def test_companion_validation_preserves_failure_status_when_cleanup_refuses(self):
+    def test_companion_validation_preserves_failure_status_when_cleanup_refuses(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -3434,7 +3447,7 @@ exit 7
                 (cache_root / "ios/Build/Products/Release-iphoneos/Context Panel.app").is_dir()
             )
 
-    def test_companion_validation_quarantines_after_interruption(self):
+    def test_companion_validation_quarantines_after_interruption(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -3457,7 +3470,7 @@ exit 7
                 (cache_root / "ios/Build/Products/Release-iphoneos/Context Panel.app").exists()
             )
 
-    def test_companion_validation_reports_cleanup_failure_after_success(self):
+    def test_companion_validation_reports_cleanup_failure_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -3489,7 +3502,7 @@ exit 0
             self.assertEqual(result.returncode, 3, result.stdout)
             self.assertIn("protected-signed-bundles=1", result.stdout)
 
-    def test_codeql_namespaces_trusted_swiftpm_cache_by_checkout(self):
+    def test_codeql_namespaces_trusted_swiftpm_cache_by_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             artifact_cache_root = temp_path / "artifact cache"
@@ -3535,7 +3548,7 @@ exit 0
                 missing_hash_tool.stdout,
             )
 
-    def test_companion_build_validation_retries_only_a_stalled_xcodebuild(self):
+    def test_companion_build_validation_retries_only_a_stalled_xcodebuild(self) -> None:
         completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
             """#!/usr/bin/env bash
 set -euo pipefail
@@ -3565,7 +3578,7 @@ echo "** BUILD SUCCEEDED **"
         self.assertIn("xcodebuild produced no output", completed.stdout)
         self.assertIn("Retrying ios validation once with isolated DerivedData", completed.stdout)
 
-    def test_companion_build_validation_does_not_retry_a_build_failure(self):
+    def test_companion_build_validation_does_not_retry_a_build_failure(self) -> None:
         completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
             """#!/usr/bin/env bash
 set -euo pipefail
@@ -3588,7 +3601,7 @@ exit 65
         self.assertTrue(sentinel_alive)
         self.assertNotIn("Retrying ios validation once with isolated DerivedData", completed.stdout)
 
-    def test_companion_build_validation_stops_after_one_failed_retry(self):
+    def test_companion_build_validation_stops_after_one_failed_retry(self) -> None:
         for retry_result in ("stall", "compiler-error"):
             with self.subTest(retry_result=retry_result):
                 completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
@@ -3626,7 +3639,7 @@ wait
                     1,
                 )
 
-    def test_device_profile_cleanup_matches_renamed_development_profiles_by_bundle(self):
+    def test_device_profile_cleanup_matches_renamed_development_profiles_by_bundle(self) -> None:
         query = self.read("scripts/cleanup-context-panel-device-profiles.sh").split("jq -r --arg team_id \"$team_id\" '", 1)[1].split("' \"$profiles_json\"", 1)[0]
         profiles = {
             "result": {
@@ -3719,7 +3732,7 @@ wait
             ],
         )
 
-    def test_companion_upload_ios_does_not_require_visionos_layered_icon(self):
+    def test_companion_upload_ios_does_not_require_visionos_layered_icon(self) -> None:
         result = self.run_companion_upload_script(
             [
                 "--platform",
@@ -3741,7 +3754,7 @@ wait
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
         self.assertNotIn("AppIcon.solidimagestack", result.stdout)
 
-    def test_companion_upload_tvos_uses_dedicated_profile_without_widget(self):
+    def test_companion_upload_tvos_uses_dedicated_profile_without_widget(self) -> None:
         result = self.run_companion_upload_script(
             [
                 "--platform",
@@ -3761,7 +3774,7 @@ wait
         self.assertNotIn("companion widget provisioning profile not found", result.stdout)
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
 
-    def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self):
+    def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             result = self.run_companion_upload_script(
                 [
@@ -3782,7 +3795,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_placeholder_visionos_icon_stack(self):
+    def test_companion_upload_rejects_placeholder_visionos_icon_stack(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
@@ -3807,7 +3820,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_visionos_icon_stack_without_image_files(self):
+    def test_companion_upload_rejects_visionos_icon_stack_without_image_files(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             self.write_minimal_visionos_icon_stack(working_root)
@@ -3834,7 +3847,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_duplicate_visionos_layers(self):
+    def test_companion_upload_rejects_duplicate_visionos_layers(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             self.write_minimal_visionos_icon_stack(working_root)
@@ -3871,7 +3884,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_path_warped_visionos_layer_filename(self):
+    def test_companion_upload_rejects_path_warped_visionos_layer_filename(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             self.write_minimal_visionos_icon_stack(working_root)
@@ -3908,7 +3921,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_path_warped_visionos_image_filename(self):
+    def test_companion_upload_rejects_path_warped_visionos_image_filename(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             self.write_minimal_visionos_icon_stack(working_root)
@@ -3950,7 +3963,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_duplicate_visionos_image_filenames(self):
+    def test_companion_upload_rejects_duplicate_visionos_image_filenames(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             self.write_minimal_visionos_icon_stack(working_root)
@@ -3997,7 +4010,7 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_allows_leading_dash_visionos_icon_filenames(self):
+    def test_companion_upload_allows_leading_dash_visionos_icon_filenames(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
@@ -4067,7 +4080,7 @@ wait
         self.assertIn("companion app provisioning profile not found", result.stdout)
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
 
-    def test_companion_upload_visionos_with_layered_icon_continues_to_profile_preflight(self):
+    def test_companion_upload_visionos_with_layered_icon_continues_to_profile_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
             self.write_minimal_visionos_icon_stack(working_root)
@@ -4093,7 +4106,7 @@ wait
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
         self.assertNotIn("no visionOS layered app icon is present", result.stdout)
 
-    def test_companion_upload_enforces_local_ipa_only_for_export_mode(self):
+    def test_companion_upload_enforces_local_ipa_only_for_export_mode(self) -> None:
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
         result_block = script[script.rindex('if [[ "$upload" == "true" ]]; then') :]
 
@@ -4143,7 +4156,7 @@ wait
             self.assertEqual(exported_ipa_result.returncode, 0, exported_ipa_result.stdout)
             self.assertIn(str(ipa_path), exported_ipa_result.stdout)
 
-    def test_runtime_baseline_rejects_unexpected_bookmark_counts(self):
+    def test_runtime_baseline_rejects_unexpected_bookmark_counts(self) -> None:
         command = """
         source scripts/context-panel-runtime-baseline.sh --source-only
         failures=0
@@ -4168,7 +4181,7 @@ wait
         self.assertIn("strict bookmark gate requires total=3 to equal current=2", result.stdout)
         self.assertIn("strict bookmark gate found legacy=1", result.stdout)
 
-    def test_runtime_baseline_install_and_reset_do_nothing_when_production_is_installed(self):
+    def test_runtime_baseline_install_and_reset_do_nothing_when_production_is_installed(self) -> None:
         for entry_point in ("install_runtime", "reset_runtime"):
             with self.subTest(entry_point=entry_point):
                 result, steps = self.run_runtime_replacement_trace(entry_point, production_after=None)
@@ -4177,7 +4190,7 @@ wait
                 self.assertIn("refusing to replace", result.stdout)
                 self.assertEqual(steps, [])
 
-    def test_runtime_baseline_install_and_reset_recheck_the_guard_after_building(self):
+    def test_runtime_baseline_install_and_reset_recheck_the_guard_after_building(self) -> None:
         for entry_point in ("install_runtime", "reset_runtime"):
             with self.subTest(entry_point=entry_point):
                 result, steps = self.run_runtime_replacement_trace(
@@ -4189,21 +4202,21 @@ wait
                 self.assertIn("refusing to replace", result.stdout)
                 self.assertEqual(steps, ["build_checkout_app", "preflight_built_runtime_profiles"])
 
-    def test_runtime_baseline_install_copy_rechecks_the_guard_before_writing(self):
+    def test_runtime_baseline_install_copy_rechecks_the_guard_before_writing(self) -> None:
         result, steps = self.run_runtime_replacement_trace("install_checkout_app", production_after=None)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("refusing to replace", result.stdout)
         self.assertEqual(steps, [])
 
-    def test_runtime_baseline_install_proceeds_for_a_development_runtime(self):
+    def test_runtime_baseline_install_proceeds_for_a_development_runtime(self) -> None:
         result, steps = self.run_runtime_replacement_trace("install_runtime", production_after="never")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
         self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
 
-    def test_live_review_submission_defaults_to_enforced_release_evidence(self):
+    def test_live_review_submission_defaults_to_enforced_release_evidence(self) -> None:
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         defaults = []
         for trigger in ("workflow_dispatch", "workflow_call"):
@@ -4215,7 +4228,7 @@ wait
         self.assertEqual(defaults, ["enforce", "enforce"])
         self.assertIn('"appStoreReviewReleaseEvidenceDefault": "enforce"', json.dumps(metadata))
 
-    def test_release_workflows_have_no_push_trigger_or_direct_release_mutation(self):
+    def test_release_workflows_have_no_push_trigger_or_direct_release_mutation(self) -> None:
         for workflow_path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
             if workflow_path.name in {"ci.yml", "codeql.yml"}:
                 continue
@@ -4228,7 +4241,7 @@ wait
         for forbidden in ("--clobber", "gh release upload", "gh release edit"):
             self.assertNotIn(forbidden, release)
 
-    def test_runtime_baseline_guard_allows_absent_or_development_runtime(self):
+    def test_runtime_baseline_guard_allows_absent_or_development_runtime(self) -> None:
         absent = self.run_runtime_identity_fixture(None)
         development = self.run_runtime_identity_fixture(
             "app-entitlements.plist",
@@ -4241,7 +4254,7 @@ wait
         self.assertIn("app-cloudkit=Development", development.stdout)
         self.assertIn("existing canonical runtime is verified as Development", development.stdout)
 
-    def test_runtime_baseline_guard_blocks_production_runtime(self):
+    def test_runtime_baseline_guard_blocks_production_runtime(self) -> None:
         result = self.run_runtime_identity_fixture(
             "app-entitlements-production.plist",
             "app-entitlements-production.plist",
@@ -4252,7 +4265,7 @@ wait
         self.assertIn("refusing to replace", result.stdout)
         self.assertIn("check --require-production-runtime", result.stdout)
 
-    def test_runtime_baseline_guard_blocks_production_refresh_agent(self):
+    def test_runtime_baseline_guard_blocks_production_refresh_agent(self) -> None:
         result = self.run_runtime_identity_fixture(
             "app-entitlements.plist",
             "app-entitlements-production.plist",
@@ -4263,7 +4276,7 @@ wait
         self.assertIn("refresh-agent-cloudkit=Production", result.stdout)
         self.assertIn("installed refresh agent uses Production CloudKit", result.stdout)
 
-    def test_runtime_baseline_guard_blocks_testflight_without_embedded_profile(self):
+    def test_runtime_baseline_guard_blocks_testflight_without_embedded_profile(self) -> None:
         result = self.run_runtime_identity_fixture(
             "runtime-testflight-entitlements.plist",
             "app-entitlements-production.plist",
@@ -4273,7 +4286,7 @@ wait
         self.assertIn("distribution=testflight", result.stdout)
         self.assertIn("installed app is a TestFlight runtime", result.stdout)
 
-    def test_runtime_baseline_guard_blocks_store_receipt_even_with_development_entitlements(self):
+    def test_runtime_baseline_guard_blocks_store_receipt_even_with_development_entitlements(self) -> None:
         result = self.run_runtime_identity_fixture(
             "app-entitlements.plist",
             "app-entitlements.plist",
@@ -4284,14 +4297,14 @@ wait
         self.assertIn("distribution=app-store", result.stdout)
         self.assertIn("installed app has an App Store receipt", result.stdout)
 
-    def test_runtime_baseline_guard_fails_closed_for_unverified_runtime(self):
+    def test_runtime_baseline_guard_fails_closed_for_unverified_runtime(self) -> None:
         result = self.run_runtime_identity_fixture("runtime-unknown-entitlements.plist")
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("app-cloudkit=unknown", result.stdout)
         self.assertIn("not verified as Development", result.stdout)
 
-    def test_runtime_baseline_production_check_requires_matching_cloudkit_environments(self):
+    def test_runtime_baseline_production_check_requires_matching_cloudkit_environments(self) -> None:
         production = self.run_runtime_identity_fixture(
             "app-entitlements-production.plist",
             "app-entitlements-production.plist",
@@ -4310,7 +4323,7 @@ wait
         self.assertIn("app must use Production CloudKit", development.stdout)
         self.assertIn("refresh agent must use Production CloudKit", development.stdout)
 
-    def test_runtime_baseline_built_preflight_requires_development_cloudkit(self):
+    def test_runtime_baseline_built_preflight_requires_development_cloudkit(self) -> None:
         development = self.run_runtime_identity_fixture(
             "app-entitlements.plist",
             "app-entitlements.plist",
@@ -4329,7 +4342,7 @@ wait
         self.assertIn("built app must use Development CloudKit", production.stdout)
         self.assertIn("built refresh agent must use Development CloudKit", production.stdout)
 
-    def test_runtime_baseline_discovers_legacy_and_namespaced_companion_caches(self):
+    def test_runtime_baseline_discovers_legacy_and_namespaced_companion_caches(self) -> None:
         script = self.read("scripts/context-panel-runtime-baseline.sh")
         root_function = re.search(
             r"artifact_cache_companion_build_validation_root\(\) \{(?P<body>.*?)\n\}",
@@ -4399,31 +4412,31 @@ wait
                 completed.stdout,
             )
 
-    def test_runtime_baseline_profile_fixture_accepts_matching_explicit_profile(self):
+    def test_runtime_baseline_profile_fixture_accepts_matching_explicit_profile(self) -> None:
         result = self.run_runtime_preflight_fixture("profile-good.plist")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
 
-    def test_runtime_baseline_profile_fixture_accepts_development_wildcard_grants(self):
+    def test_runtime_baseline_profile_fixture_accepts_development_wildcard_grants(self) -> None:
         result = self.run_runtime_preflight_fixture("profile-development-wildcard-grants.plist")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
 
-    def test_runtime_baseline_profile_fixture_accepts_environment_array_grant(self):
+    def test_runtime_baseline_profile_fixture_accepts_environment_array_grant(self) -> None:
         result = self.run_runtime_preflight_fixture("profile-environment-array.plist")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
 
-    def test_runtime_baseline_profile_fixture_rejects_environment_array_without_expected_value(self):
+    def test_runtime_baseline_profile_fixture_rejects_environment_array_without_expected_value(self) -> None:
         result = self.run_runtime_preflight_fixture("profile-environment-array-production-only.plist")
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("does not authorize com.apple.developer.icloud-container-environment", result.stdout)
 
-    def test_runtime_baseline_profile_fixture_rejects_cloudkit_environment_mismatch(self):
+    def test_runtime_baseline_profile_fixture_rejects_cloudkit_environment_mismatch(self) -> None:
         result = self.run_runtime_preflight_fixture(
             "profile-good.plist",
             "app-entitlements-production.plist",
@@ -4432,7 +4445,7 @@ wait
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("does not authorize com.apple.developer.icloud-container-environment", result.stdout)
 
-    def test_runtime_baseline_profile_fixture_rejects_wildcard_profile(self):
+    def test_runtime_baseline_profile_fixture_rejects_wildcard_profile(self) -> None:
         result = self.run_runtime_preflight_fixture("profile-wildcard.plist")
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
