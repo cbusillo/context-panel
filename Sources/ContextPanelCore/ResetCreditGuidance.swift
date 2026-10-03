@@ -161,14 +161,15 @@ public struct ProviderResetCreditSurfaceSummary: Equatable, Sendable {
 
 public enum ResetCreditSurfaceAdvisor {
     public static func appSummary(
+        provider: Provider? = nil,
         reports: [StoredProviderReport],
         limits: [UsageLimit],
         now: Date,
         maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge
     ) -> ProviderResetCreditSurfaceSummary? {
         summary(
-            reports: reports,
-            limits: limits,
+            reports: reports.filter { provider == nil || $0.provider == provider },
+            limits: limits.filter { provider == nil || $0.provider == provider },
             now: now,
             maximumAge: maximumAge,
             includesLastSeen: true

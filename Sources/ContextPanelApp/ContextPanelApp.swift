@@ -2977,12 +2977,11 @@ struct AccountsSidebar: View {
                 let overview = model.accountOverview(at: Date())
                 let totals = overview.providerTotals(now: Date())
                 let reports = model.storedSnapshot?.reports ?? []
-                let resetCreditSummary = ResetCreditSurfaceAdvisor.appSummary(reports: reports, limits: snapshot.limits, now: Date())
                 ForEach(Provider.allCases) { provider in
                     let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                     let providerTotal = totals.first(where: { $0.provider == provider })
-                    let providerResetCredits = provider == .openAI ? resetCreditSummary : nil
+                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: Date())
                     let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
                     if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
                         Button { selection = .provider(provider) } label: {
@@ -2992,10 +2991,10 @@ struct AccountsSidebar: View {
                                 Text(provider.accountDisplayName).font(.system(size: 13, weight: .semibold))
                                 StatusMark(status: providerStatusIncludingAccessAlerts(provider: provider,
                                     baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts), size: 7)
-                                if provider == .openAI, let resetCreditSummary {
+                                if let providerResetCredits {
                                     Image(systemName: "arrow.counterclockwise.circle")
-                                        .help(resetCreditHelpText(resetCreditSummary))
-                                        .accessibilityHidden(true)
+                                        .help(resetCreditHelpText(providerResetCredits))
+                                        .accessibilityLabel(AccountTerms.bankedResets)
                                 }
                             }
                             if let total = totals.first(where: { $0.provider == provider }) {
@@ -4040,8 +4039,8 @@ struct ProviderDashboard: View {
                             Text(provider.accountDisplayName + " · \(summaries.count) main windows · \(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
                                 .font(.system(size: 12))
                                 .foregroundStyle(CPTheme.secondaryText)
-                            if provider == .openAI, let resets = ResetCreditSurfaceAdvisor.appSummary(
-                                reports: model.storedSnapshot?.reports ?? [],
+                            if let resets = ResetCreditSurfaceAdvisor.appSummary(
+                                provider: provider, reports: model.storedSnapshot?.reports ?? [],
                                 limits: summaries.flatMap(\.limits), now: now) {
                                 ResetCreditAvailabilityTag(summary: resets)
                             }

@@ -682,3 +682,19 @@ private func resetGuidanceLimit(
         confidence: .observed
     )
 }
+
+@Test func providerHeaderResetCreditsIncludesClaudeAndNeverBorrowsAnotherProvider() throws {
+    let now = resetGuidanceDate()
+    let openAI = resetGuidanceReport(now: now, count: 2)
+    let claude = resetGuidanceReport(accountID: "claude", now: now, count: 1, provider: .anthropic)
+    let summary = try #require(ResetCreditSurfaceAdvisor.appSummary(provider: .anthropic,
+        reports: [openAI, claude], limits: [], now: now))
+    #expect(summary.provider == .anthropic)
+    #expect(summary.accountCount == 1)
+    #expect(!summary.includesMultipleProviders)
+    for count in [nil, 0] as [Int?] {
+        let noCredits = resetGuidanceReport(accountID: "claude", now: now, count: count, provider: .anthropic)
+        #expect(ResetCreditSurfaceAdvisor.appSummary(provider: .anthropic,
+            reports: [openAI, noCredits], limits: [], now: now) == nil)
+    }
+}
