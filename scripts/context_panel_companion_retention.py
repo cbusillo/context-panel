@@ -195,6 +195,12 @@ def main() -> int:
     try:
         counts = prune(args.validation_root, args.older_than_days, args.apply,
                        now=datetime.now(timezone.utc))
+    except KeyboardInterrupt:
+        # Cancellation can happen between entries or during removal. Do not
+        # imply a transactional rollback or invent an exact deletion count.
+        print("companion-cache prune=INTERRUPTED removed=unknown partial-removal=possible; "
+              "inspect quarantine before retrying", file=sys.stderr)
+        return 130
     except PartialRemovalError as error:
         print(f"companion-cache prune=PARTIAL entry={error.entry} removed={error.removed} error={error.error_type}",
               file=sys.stderr)

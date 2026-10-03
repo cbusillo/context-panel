@@ -261,6 +261,16 @@ class RetentionTests(unittest.TestCase):
         self.assertIn(f"prune=PARTIAL entry={entry.name}", stderr.getvalue())
         self.assertNotIn(str(self.checkout), stderr.getvalue())
 
+    def test_keyboard_interrupt_has_no_traceback_or_rollback_claim(self):
+        stderr = io.StringIO()
+        with patch.object(RETENTION, "prune", side_effect=KeyboardInterrupt), \
+                patch.object(sys, "argv", ["retention", "--validation-root", str(self.root), "--apply"]), \
+                patch.object(sys, "stderr", stderr):
+            self.assertEqual(RETENTION.main(), 130)
+        self.assertIn("prune=INTERRUPTED removed=unknown partial-removal=possible", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertNotIn(str(self.checkout), stderr.getvalue())
+
     def test_shell_command_defaults_to_preview_and_rejects_bad_options(self):
         entry, _ = self.entry()
         helper = REPO / "scripts/context-panel-companion-cache.sh"

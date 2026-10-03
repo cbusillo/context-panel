@@ -958,6 +958,9 @@ with the cache idle; a filesystem error can leave a partially removed eligible
 entry. `prune=PARTIAL` names that timestamped entry without printing host paths;
 inspect it before retrying. `prune=FAILED` reports an inventory failure. Both
 include the count of entries already removed: a run is not transactional.
+Ctrl-C stops promptly with `prune=INTERRUPTED`, an unknown removal count and a
+possible partial removal; inspect the quarantine before retrying. Abrupt process
+termination can also leave partial work.
 
 ### Local Apple Vision Pro Dogfood
 
