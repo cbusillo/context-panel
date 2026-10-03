@@ -6,7 +6,6 @@
 - [Design Direction](design-direction.md)
 - [Local Limit Probe Design](local-limit-probe.md)
 - [Provider Usage Access Research](provider-usage-access.md)
-- [TODO](todo.md)
 - [Validation Authority and Operator Route](validation-authority.md)
 - [Release Path](release.md)
 - [Signed Validation Fingerprints](signed-validation-fingerprints.md)
@@ -18,3 +17,7 @@
 - [Test Lanes](test-lanes.md)
 
 [Shared account identity](shared-account-identity.md) records provider keys, privacy boundaries, and activation qualification.
+
+Open work lives in
+[GitHub issues](https://github.com/cbusillo/context-panel/issues), not in
+local plan files.

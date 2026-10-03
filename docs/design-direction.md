@@ -1,10 +1,50 @@
 # Design Direction
 
-Last updated: 2026-08-02.
+Last updated: 2026-10-03.
 
-## Accepted Direction
+## Current Direction: Horizon
 
-Context Panel should use **Quiet Instrument** as its default visual direction.
+Chris chose the **Horizon** design on
+[#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5943020290)
+and accepted its hand test on build 1.0.69. It reached `main` through #733,
+which carried the #737 refinement and the #741 Horizon build, and #742. The full
+record, including which earlier facts moved where, is
+[docs/evidence/722-horizon/README.md](evidence/722-horizon/README.md).
+
+Horizon makes the account the unit on every surface. It is the default account
+layout on the Mac app, widgets, iPhone, iPad, Vision Pro, Watch, and Apple
+TV. Words, numbers, dates, and colours come from the shared files
+`Sources/ContextPanelCore/AccountPresentation.swift` and `AccountPace.swift`,
+so every surface draws the same picture at a different size.
+
+- **One sentence first.** Each surface leads with the shared headline, such as
+  "2 accounts run out before they reset. The other 4 are fine." Only current
+  readings with observed burn count as fine.
+- **A horizon per account.** Each account follows the long window that runs out
+  first before its reset, otherwise its tightest long window. It shows the
+  share left now, the observed burn, the run-out time when that comes before
+  the reset, and the share to spare at the reset.
+- **Red means one thing:** an account runs out before its reset. It is written
+  in red in one place per surface; rows and cards say the same fact calmly.
+- **Provider identity** is the provider's name in its own hue (teal OpenAI,
+  ochre Claude, violet Google), and each "Use next" card is a calm tint of that
+  hue. Text and hues meet 4.5:1 contrast in light and dark, which a test
+  checks.
+- **Readable words:** at least 12 pt in the app and on iPhone, and 10 pt on
+  widgets and the Watch.
+- **The Mac app** has a fixed sidebar with Overview, Deadlines, and accounts
+  grouped by provider. Account rows fold out to every window and banked reset.
+- **Widgets** default to account rows. The older limit-based layout remains a
+  Display setting named Windows.
+
+Where the sections below disagree with Horizon for the account layout, Horizon
+wins. They still govern the Windows widget layout, Watch complications, Apple
+TV privacy modes, validation galleries, state coverage, and the semantic rules
+for bars, dials, and accessibility.
+
+## Earlier Direction: Quiet Instrument
+
+Context Panel used **Quiet Instrument** as its default visual direction.
 The product should feel like a calm Mac status instrument rather than a billing
 dashboard. It should answer the user's immediate question first: can I keep
 working, which saved limit is my stable reference, does a different limit need
@@ -133,9 +173,10 @@ and ellipsis.
 
 ## App Layout Direction
 
-The native macOS app should stay a work-focused `NavigationSplitView`:
+The native macOS app should stay a work-focused sidebar-and-detail window:
 
-- Sidebar: provider/account groups, account status, and setup entry points.
+- Sidebar: Overview, Deadlines, provider/account groups, account status, and
+  setup entry points.
 - Detail: selected provider/account limits, capacity, reset timing, prompt-cache
   telemetry, fast-mode forecast, refresh status, and history.
 - Settings and diagnostics: credential management, provider setup, account

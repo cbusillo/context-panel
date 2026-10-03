@@ -1,8 +1,9 @@
 # Context Panel
 
 Context Panel is a native macOS app and WidgetKit extension for seeing AI usage
-limits across providers at a glance. The first target providers are OpenAI,
-Anthropic, and Google.
+limits across providers at a glance, with read-only iPhone, iPad, Vision Pro,
+Apple Watch, and Apple TV companions. It supports OpenAI, Anthropic, and
+Google.
 
 The product goal is a small, native Mac utility that can answer the everyday
 question before you prompt: which accounts and models are still available,
@@ -96,10 +97,11 @@ This command produces an ad-hoc validation artifact. Developer ID packaging
 requires the app, widget, and refresh-agent provisioning profiles from the same
 certificate set; see `docs/release.md` for the signed and notarized command.
 
-GitHub Actions also has a `Release` workflow for tag or manual releases. Without
-Apple signing secrets it publishes an ad-hoc signed validation artifact; with
-Developer ID and notarization secrets it can produce the friend-installable
-release artifact.
+GitHub Actions also has a `Release` workflow. It runs only from `main`, either
+dispatched by hand or called by `Ship`; creating a tag does not start it.
+Without Apple signing secrets it produces an ad-hoc signed validation artifact;
+with Developer ID and notarization secrets it produces the friend-installable
+release artifact. See `docs/release.md` for the full release path.
 
 ## Local Provider Probes
 

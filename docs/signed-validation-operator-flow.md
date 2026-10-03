@@ -262,8 +262,10 @@ requirement IDs, and binds the receipt digest to that projection. Placement
 entries remain in the authoritative file but are never captured or claimed as
 shared-view evidence.
 
-The executor uses only throwaway iOS, iPadOS, and visionOS simulators, installs
-a private immutable app snapshot, verifies the installed container, and emits a
+The executor uses only throwaway iOS, iPadOS, visionOS, watchOS, and tvOS
+simulators plus the host-side `macos.widget` renderer. Where it uses a
+simulator, it installs a private immutable app snapshot and verifies the
+installed container. It emits a
 sanitized build-bound receipt. It writes no coordinator, runtime, approval, or
 visual-review state. Unsupported hosts and missing profiles remain explicit;
 capture or cleanup uncertainty never becomes success.

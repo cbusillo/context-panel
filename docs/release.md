@@ -169,6 +169,10 @@ Use `Ship` for normal releases. It accepts:
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
   names; internal groups are included by default.
 - `include_internal_testflight_groups`: include internal TestFlight beta groups.
+- `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
+  receipt. `Ship` forwards it to every selected channel, and each publication,
+  upload, or TestFlight step refuses without it (see "CloudKit Production Schema
+  Gate").
 
 For a normal release, run `Ship` from `main` with GitHub release, App Store
 Connect build upload, and TestFlight beta distribution enabled. That creates the
@@ -192,9 +196,12 @@ Manual dispatch accepts:
 
 - `version`: release version without a leading `v`; blank creates a dated build
   version.
+- `build_number`: optional CFBundleVersion; blank derives one.
 - `create_github_release`: whether to create or update a GitHub Release.
 - `notarize`: whether to run Apple notarization when secrets are configured;
   default is true for friend-installable GitHub releases.
+- `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
+  receipt, required when `create_github_release` is true.
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
 workflow artifact. Before upload, it seals the metadata with the tag, exact
@@ -852,7 +859,7 @@ be useful for pre-release UI smoke, but it does not validate TestFlight
 installability, App Store provisioning, or physical device runtime behavior.
 
 The unsigned companion validation helper watches for Xcode's terminal build or
-archive marker and releases a wedged Xcode 27 process after that marker appears.
+archive marker and releases a wedged Xcode process after that marker appears.
 It streams the build log live, gives successful builds a short natural-exit
 grace period, and then terminates the validation process group plus its known
 descendants. Cleanup escalates from `SIGTERM` to `SIGKILL` on a bounded deadline
@@ -910,6 +917,8 @@ Use inputs:
 - `build_number`: optional; blank uses a UTC timestamp.
 - `platform`: `ios`, `visionos`, or `tvos`.
 - `upload`: `true` to upload, `false` for export-only.
+- `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
+  receipt, required when `upload` is `true`.
 
 Upload mode may not emit a local IPA because Xcode can upload the signed archive
 directly. Export-only mode must emit a local IPA. In either mode, retain the
@@ -1558,7 +1567,7 @@ Panel.app`.
 
 Before treating a fresh macOS train as release-ready:
 
-1. Authorize one configured Codex/Lab auth file and its telemetry directory from
+1. Authorize one configured Codex auth file and its telemetry directory from
    the signed app, then confirm a refresh produces provider limits and
    prompt-cache telemetry.
 2. Run the Production runtime receipt once to inspect the refresh agent's
