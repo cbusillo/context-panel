@@ -195,7 +195,6 @@ import ContextPanelCore
     #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string == "com.shinycomputers.contextpanel")
     #expect(appSettings["CODE_SIGN_ENTITLEMENTS"]?.string == "Config/ContextPanelCompanion.entitlements")
     #expect(appSettings["TARGETED_DEVICE_FAMILY"]?.string == "1,2,7")
-    #expect(appSettings["XROS_DEPLOYMENT_TARGET"]?.string == "26.0")
     #expect(appSettings["APS_ENVIRONMENT"]?.string == "development")
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelCompanion"))
     #expect(appReleaseSettings["APS_ENVIRONMENT"]?.string == "production")
@@ -218,7 +217,6 @@ import ContextPanelCore
             == "Config/ContextPanelCompanionWidget.entitlements"
     )
     #expect(widgetSettings["TARGETED_DEVICE_FAMILY"]?.string == "1,2,7")
-    #expect(widgetSettings["XROS_DEPLOYMENT_TARGET"]?.string == "26.0")
     let widgetReleaseSettings = try #require(
         project.releaseTargetSettings(named: "ContextPanelCompanionWidgetExtension")
     )
@@ -261,7 +259,6 @@ import ContextPanelCore
     #expect(coreTarget["platform"]?.string == "watchOS")
     let coreSettings = try #require(project.targetSettings(named: "ContextPanelCoreWatch"))
     #expect(coreSettings["PRODUCT_MODULE_NAME"]?.string == "ContextPanelCore")
-    #expect(coreSettings["WATCHOS_DEPLOYMENT_TARGET"]?.string == "10.0")
 
     let cloudKitTarget = try #require(project.target(named: "ContextPanelCloudKitSyncWatch"))
     #expect(cloudKitTarget["platform"]?.string == "watchOS")
@@ -270,13 +267,11 @@ import ContextPanelCore
 
     let appTarget = try #require(project.target(named: "ContextPanelWatch"))
     #expect(appTarget["platform"]?.string == "watchOS")
-    #expect(appTarget["deploymentTarget"]?.string == "10.0")
 
     let appSettings = try #require(project.targetSettings(named: "ContextPanelWatch"))
     #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string == "com.shinycomputers.contextpanel.watch")
     #expect(appSettings["CODE_SIGN_ENTITLEMENTS"]?.string == "Config/ContextPanelWatch.entitlements")
     #expect(appSettings["INFOPLIST_FILE"]?.string == "Config/ContextPanelWatch-Info.plist")
-    #expect(appSettings["WATCHOS_DEPLOYMENT_TARGET"]?.string == "10.0")
     #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"]?.string == "AppIcon")
     #expect(appSettings["SKIP_INSTALL"]?.bool == true)
     #expect(appSettings["TARGETED_DEVICE_FAMILY"] == nil)
@@ -315,7 +310,6 @@ import ContextPanelCore
         watchWidgetSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelWatchWidget.entitlements"
     )
-    #expect(watchWidgetSettings["WATCHOS_DEPLOYMENT_TARGET"]?.string == "10.0")
     #expect(watchWidgetSettings["SKIP_INSTALL"]?.bool == true)
     let watchWidgetReleaseSettings = try #require(
         project.releaseTargetSettings(named: "ContextPanelWatchWidgetExtension")
@@ -351,10 +345,8 @@ import ContextPanelCore
 
     let coreTarget = try #require(project.target(named: "ContextPanelCoreTV"))
     #expect(coreTarget["platform"]?.string == "tvOS")
-    #expect(coreTarget["deploymentTarget"]?.string == "17.0")
     let coreSettings = try #require(project.targetSettings(named: "ContextPanelCoreTV"))
     #expect(coreSettings["PRODUCT_MODULE_NAME"]?.string == "ContextPanelCore")
-    #expect(coreSettings["TVOS_DEPLOYMENT_TARGET"]?.string == "17.0")
 
     let cloudKitTarget = try #require(project.target(named: "ContextPanelCloudKitSyncTV"))
     #expect(cloudKitTarget["platform"]?.string == "tvOS")
@@ -372,13 +364,11 @@ import ContextPanelCore
 
     let appTarget = try #require(project.target(named: "ContextPanelTV"))
     #expect(appTarget["platform"]?.string == "tvOS")
-    #expect(appTarget["deploymentTarget"]?.string == "17.0")
 
     let appSettings = try #require(project.targetSettings(named: "ContextPanelTV"))
     #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string == "com.shinycomputers.contextpanel")
     #expect(appSettings["CODE_SIGN_ENTITLEMENTS"]?.string == "Config/ContextPanelTV.entitlements")
     #expect(appSettings["INFOPLIST_FILE"]?.string == "Config/ContextPanelTV-Info.plist")
-    #expect(appSettings["TVOS_DEPLOYMENT_TARGET"]?.string == "17.0")
     #expect(appSettings["TARGETED_DEVICE_FAMILY"]?.string == "3")
     #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"]?.string == "App Icon & Top Shelf Image")
     #expect(appSettings["APS_ENVIRONMENT"]?.string == "development")
@@ -440,7 +430,6 @@ import ContextPanelCore
     let topShelfTarget = try #require(project.target(named: "ContextPanelTVTopShelfExtension"))
     #expect(topShelfTarget["type"]?.string == "app-extension")
     #expect(topShelfTarget["platform"]?.string == "tvOS")
-    #expect(topShelfTarget["deploymentTarget"]?.string == "17.0")
     let topShelfSettings = try #require(project.targetSettings(named: "ContextPanelTVTopShelfExtension"))
     #expect(
         topShelfSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string
@@ -454,7 +443,6 @@ import ContextPanelCore
         topShelfSettings["INFOPLIST_FILE"]?.string
             == "Config/ContextPanelTVTopShelf-Info.plist"
     )
-    #expect(topShelfSettings["TVOS_DEPLOYMENT_TARGET"]?.string == "17.0")
     #expect(topShelfSettings["TARGETED_DEVICE_FAMILY"]?.string == "3")
     #expect(topShelfSettings["SKIP_INSTALL"]?.bool == true)
     #expect(topShelfSettings["APPLICATION_EXTENSION_API_ONLY"]?.bool == true)
@@ -503,6 +491,45 @@ import ContextPanelCore
     #expect(topShelfEntitlements["aps-environment"] == nil)
     #expect(topShelfEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
     #expect(topShelfEntitlements["com.apple.developer.icloud-services"] == nil)
+}
+
+/// Every target for a platform declares one minimum OS, in both the XcodeGen
+/// `deploymentTarget` and its explicit build setting, so an embedded extension or
+/// library can never require a newer OS than the app that ships it. The value
+/// itself lives only in `project.yml`; bumping it consistently needs no test edit.
+@Test func everyPlatformDeclaresOneDeploymentTarget() throws {
+    let project = try loadProjectSpec()
+    let buildSettingKeys = [
+        "macOS": "MACOSX_DEPLOYMENT_TARGET",
+        "iOS": "IPHONEOS_DEPLOYMENT_TARGET",
+        "visionOS": "XROS_DEPLOYMENT_TARGET",
+        "watchOS": "WATCHOS_DEPLOYMENT_TARGET",
+        "tvOS": "TVOS_DEPLOYMENT_TARGET",
+    ]
+    var declared: [String: [String: String]] = [:]
+
+    for targetName in project.targetNames {
+        let target = try #require(project.target(named: targetName))
+        let platforms = target["supportedDestinations"]?.stringArray
+            ?? [target["platform"]?.string].compactMap { $0 }
+        let allSettings = project.allTargetSettings(named: targetName) ?? []
+        for platform in platforms {
+            let settingKey = try #require(buildSettingKeys[platform], "\(targetName): \(platform)")
+            let fromTarget = target["deploymentTarget"]?.string
+                ?? target["deploymentTarget"]?.object?[platform]?.string
+            let values = [fromTarget].compactMap { $0 }
+                + allSettings.compactMap { $0[settingKey]?.string }
+            #expect(!values.isEmpty, "\(targetName) declares no \(platform) deployment target")
+            for (index, value) in values.enumerated() {
+                declared[platform, default: [:]]["\(targetName)#\(index)"] = value
+            }
+        }
+    }
+
+    #expect(Set(declared.keys) == Set(buildSettingKeys.keys))
+    for (platform, values) in declared {
+        #expect(Set(values.values).count == 1, "\(platform) deployment targets disagree: \(values)")
+    }
 }
 
 @Test func appAndRefreshAgentDoNotWriteRawErrorsToPublicLogs() throws {
@@ -705,6 +732,10 @@ private struct ProjectSpec: Sendable {
             throw ProjectSpecError.missingTargets
         }
         return ProjectSpec(targets: targets)
+    }
+
+    var targetNames: [String] {
+        targets.keys.sorted()
     }
 
     func target(named targetName: String) -> [String: ProjectSpecValue]? {

@@ -5,12 +5,13 @@ import json
 import os
 import re
 import subprocess
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SUPPORTED_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSION = 3
 EVIDENCE_CLASSES = {
     "shared-view",
     "actual-runtime",
@@ -32,7 +33,6 @@ RESIDUAL_RISK_CLASSES = {
 }
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
-GIT_VERSION_PATTERN = re.compile(r"git version ([0-9]+(?:\.[0-9]+){2,3})\n?")
 UUID_PATTERN = re.compile(
     r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
 )
@@ -293,12 +293,11 @@ def _require_known_surfaces(value: Any, capabilities: dict[str, set[str]], label
     return sorted(surfaces)
 
 
-def _git_output(arguments: list[str]) -> str:
+def _git_bytes(arguments: list[str]) -> bytes:
     environment = {
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_SYSTEM": "/dev/null",
-        "GIT_ATTR_NOSYSTEM": "1",
         "GIT_NO_REPLACE_OBJECTS": "1",
         "GIT_NO_LAZY_FETCH": "1",
         "HOME": os.environ.get("HOME", "/tmp"),
@@ -311,40 +310,21 @@ def _git_output(arguments: list[str]) -> str:
         [
             "git",
             "-c",
-            "color.ui=false",
-            "-c",
-            "core.quotePath=true",
-            "-c",
-            "core.attributesFile=/dev/null",
-            "-c",
-            "diff.algorithm=myers",
-            "-c",
-            "diff.context=3",
-            "-c",
-            "diff.noprefix=false",
-            "-c",
-            "diff.renames=false",
-            "-c",
-            "diff.indentHeuristic=true",
-            "-c",
-            "diff.interHunkContext=0",
-            "-c",
-            "diff.orderFile=/dev/null",
-            "-c",
-            "diff.suppressBlankEmpty=false",
-            "-c",
             "log.showSignature=false",
             *arguments,
         ],
         cwd=REPO_ROOT,
         capture_output=True,
         env=environment,
-        text=True,
         check=False,
     )
     if completed.returncode != 0:
         raise CorpusError("offline repository citation validation failed")
     return completed.stdout
+
+
+def _git_output(arguments: list[str]) -> str:
+    return _git_bytes(arguments).decode("utf-8", errors="surrogateescape")
 
 
 def _git_succeeds(arguments: list[str]) -> bool:
@@ -355,77 +335,64 @@ def _git_succeeds(arguments: list[str]) -> bool:
     return True
 
 
-def _added_patch_lines(patch: str) -> list[str]:
+def _tree_changes(base: str, commit: str) -> list[dict[str, str]]:
+    # Raw diff-tree output names blob object IDs, so it does not depend on how
+    # a Git version renders patches.
+    fields = _git_output(["diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", base, commit]).split("\0")
+    if fields[-1] != "" or len(fields) % 2 != 1:
+        raise CorpusError("offline repository citation validation failed")
+    changes: list[dict[str, str]] = []
+    for header, path in zip(fields[0:-1:2], fields[1:-1:2], strict=True):
+        parts = header.split(" ")
+        if len(parts) != 5 or not parts[0].startswith(":") or not path:
+            raise CorpusError("offline repository citation validation failed")
+        changes.append(
+            {
+                "newBlob": parts[3],
+                "newMode": parts[1],
+                "oldBlob": parts[2],
+                "oldMode": parts[0][1:],
+                "path": path,
+            }
+        )
+    return sorted(changes, key=lambda change: change["path"])
+
+
+def _blob_lines(mode: str, object_id: str) -> list[str]:
+    if mode in {"000000", "160000"}:
+        return []
+    contents = _git_bytes(["cat-file", "blob", object_id])
+    if b"\0" in contents[:8000]:
+        return []
+    lines = contents.decode("utf-8", errors="surrogateescape").split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _added_lines(change: dict[str, str]) -> list[str]:
+    # A line is added when the new blob holds more copies of it than the old
+    # one; this needs no diff algorithm, so every Git version agrees.
+    remaining = Counter(_blob_lines(change["oldMode"], change["oldBlob"]))
     added_lines: list[str] = []
-    in_hunk = False
-    for line in patch.splitlines():
-        if line.startswith("diff --git "):
-            in_hunk = False
-        elif line.startswith("@@ "):
-            in_hunk = True
-        elif in_hunk and line.startswith("+"):
-            added_lines.append(line)
+    for line in _blob_lines(change["newMode"], change["newBlob"]):
+        if remaining[line]:
+            remaining[line] -= 1
+        else:
+            added_lines.append(f"+{line}")
     return added_lines
 
 
-def _commit_change(
-    commit: str,
-    *,
-    base_commit: str | None = None,
-    attr_source: str | None = None,
-) -> dict[str, Any]:
+def _commit_change(commit: str, *, base_commit: str | None = None) -> dict[str, Any]:
     _git_output(["cat-file", "-e", f"{commit}^{{commit}}"])
     base = base_commit or f"{commit}^"
     _git_output(["cat-file", "-e", f"{base}^{{commit}}"])
-    paths = sorted(
-        filter(
-            None,
-            _git_output(["diff", "--name-only", "--no-renames", base, commit]).splitlines(),
-        )
-    )
-    immutable_attr_source = attr_source or commit
-    patch = _git_output(
-        [
-            f"--attr-source={immutable_attr_source}",
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            "--full-index",
-            "--src-prefix=a/",
-            "--dst-prefix=b/",
-            "--unified=3",
-            base,
-            commit,
-        ]
-    )
-    added_lines_by_path = {
-        path: _added_patch_lines(
-            _git_output(
-                [
-                    f"--attr-source={immutable_attr_source}",
-                    "diff",
-                    "--no-color",
-                    "--no-ext-diff",
-                    "--no-textconv",
-                    "--no-renames",
-                    "--unified=0",
-                    base,
-                    commit,
-                    "--",
-                    path,
-                ]
-            )
-        )
-        for path in paths
-    }
+    tree_changes = _tree_changes(base, commit)
     return {
-        "addedLinesByPath": added_lines_by_path,
+        "addedLinesByPath": {change["path"]: _added_lines(change) for change in tree_changes},
+        "changeDigest": canonical_digest(tree_changes),
         "commit": commit,
-        "patch": patch,
-        "patchDigest": hashlib.sha256(patch.encode("utf-8")).hexdigest(),
-        "paths": paths,
+        "paths": [change["path"] for change in tree_changes],
     }
 
 
@@ -433,7 +400,6 @@ def _combine_commit_changes(
     commits: list[str],
     *,
     base_commits: list[str] | None = None,
-    attr_source: str | None = None,
 ) -> dict[str, Any]:
     if base_commits is not None and len(base_commits) != len(commits):
         raise CorpusError("citation change bases are invalid")
@@ -441,16 +407,14 @@ def _combine_commit_changes(
         _commit_change(
             commit,
             base_commit=None if base_commits is None else base_commits[index],
-            attr_source=attr_source,
         )
         for index, commit in enumerate(commits)
     ]
     return {
         "commits": [
-            {"commit": change["commit"], "patchDigest": change["patchDigest"], "paths": change["paths"]}
+            {"changeDigest": change["changeDigest"], "commit": change["commit"], "paths": change["paths"]}
             for change in changes
         ],
-        "patch": "\n".join(change["patch"] for change in changes),
         "addedLinesByPath": {
             path: [
                 line
@@ -459,18 +423,14 @@ def _combine_commit_changes(
             ]
             for path in sorted({path for change in changes for path in change["paths"]})
         },
-        "patchDigest": canonical_digest(
-            [{"commit": change["commit"], "patchDigest": change["patchDigest"]} for change in changes]
+        "changeDigest": canonical_digest(
+            [{"changeDigest": change["changeDigest"], "commit": change["commit"]} for change in changes]
         ),
         "paths": sorted({path for change in changes for path in change["paths"]}),
     }
 
 
-def _combine_citation_changes(
-    citations: list[dict[str, Any]],
-    *,
-    attr_source: str | None = None,
-) -> dict[str, Any]:
+def _combine_citation_changes(citations: list[dict[str, Any]]) -> dict[str, Any]:
     commits = [citation["implementationCommit"] for citation in citations]
     base_commits = [
         _git_output(
@@ -478,16 +438,12 @@ def _combine_citation_changes(
         ).split()[0]
         for citation in citations
     ]
-    return _combine_commit_changes(
-        commits,
-        base_commits=base_commits,
-        attr_source=attr_source,
-    )
+    return _combine_commit_changes(commits, base_commits=base_commits)
 
 
 def _compiled_change(change: dict[str, Any]) -> dict[str, Any]:
     result = {
-        "patchDigest": change["patchDigest"],
+        "changeDigest": change["changeDigest"],
         "paths": change["paths"],
     }
     if "commits" in change:
@@ -773,7 +729,7 @@ def _validate_near_miss(
     if len(_git_output(["show", "--no-show-signature", "-s", "--format=%P", commit]).split()) != 1:
         raise CorpusError(f"{label}.commit must be a single-parent commit")
     return {
-        "change": _commit_change(commit, attr_source=curated_through_commit),
+        "change": _commit_change(commit),
         "commit": commit,
         "expectedEvidence": expected_evidence,
         "id": near_miss_id,
@@ -821,10 +777,7 @@ def _validate_incident(
         incident=True,
         curated_through_commit=curated_through_commit,
     )
-    positive_change = _combine_citation_changes(
-        citations,
-        attr_source=curated_through_commit,
-    )
+    positive_change = _combine_citation_changes(citations)
     positive_decision = evaluate_candidate_policy(candidate_policy, positive_change)
     if not positive_decision["matches"] or positive_decision["expectedEvidence"] != candidate_policy["evidenceOracle"]:
         raise CorpusError("incident cited implementation diffs do not match its candidate policy")
@@ -909,7 +862,6 @@ def normalize_corpus(source: dict[str, Any], surface_policy_path: Path) -> dict[
         {
             "corpusVersion",
             "curatedThroughCommit",
-            "gitVersion",
             "incidents",
             "residualRisks",
             "schemaVersion",
@@ -925,26 +877,11 @@ def normalize_corpus(source: dict[str, Any], surface_policy_path: Path) -> dict[
     if not isinstance(curated_through_commit, str) or SHA_PATTERN.fullmatch(curated_through_commit) is None:
         raise CorpusError("curated through commit must be a full SHA")
     _git_output(["cat-file", "-e", f"{curated_through_commit}^{{commit}}"])
-    info_attributes_path = Path(
-        _git_output(["rev-parse", "--git-path", "info/attributes"]).strip()
-    )
-    if not info_attributes_path.is_absolute():
-        info_attributes_path = REPO_ROOT / info_attributes_path
-    if info_attributes_path.is_file() and info_attributes_path.read_text().strip():
-        raise CorpusError("repository-local Git attributes must be empty")
     grafts_path = Path(_git_output(["rev-parse", "--git-path", "info/grafts"]).strip())
     if not grafts_path.is_absolute():
         grafts_path = REPO_ROOT / grafts_path
     if grafts_path.is_file() and grafts_path.read_text().strip():
         raise CorpusError("repository-local Git grafts must be empty")
-    git_version = source["gitVersion"]
-    actual_git_version = _git_output(["--version"])
-    match = GIT_VERSION_PATTERN.fullmatch(actual_git_version)
-    if not isinstance(git_version, str) or match is None or match.group(1) != git_version:
-        actual = match.group(1) if match is not None else actual_git_version.strip()
-        raise CorpusError(
-            f"installed Git version {actual} does not match corpus-required version {git_version}"
-        )
     surface_policy, policy_digest = _load_surface_policy(
         surface_policy_path,
         revision=curated_through_commit,
@@ -980,7 +917,6 @@ def normalize_corpus(source: dict[str, Any], surface_policy_path: Path) -> dict[
         "schemaVersion": SUPPORTED_SCHEMA_VERSION,
         "corpusVersion": corpus_version,
         "curatedThroughCommit": curated_through_commit,
-        "gitVersion": git_version,
         "incidents": sorted(normalized_incidents, key=lambda incident: incident["id"]),
         "residualRisks": sorted(normalized_risks, key=lambda risk: risk["id"]),
         "surfacePolicyDigest": policy_digest,
@@ -1029,7 +965,6 @@ def compile_corpus(source_path: Path, surface_policy_path: Path) -> dict[str, An
             {
                 "corpusVersion": normalized["corpusVersion"],
                 "curatedThroughCommit": normalized["curatedThroughCommit"],
-                "gitVersion": normalized["gitVersion"],
                 "incidents": normalized["incidents"],
                 "residualRisks": normalized["residualRisks"],
                 "schemaVersion": normalized["schemaVersion"],
@@ -1037,7 +972,6 @@ def compile_corpus(source_path: Path, surface_policy_path: Path) -> dict[str, An
         ),
         "corpusVersion": normalized["corpusVersion"],
         "curatedThroughCommit": normalized["curatedThroughCommit"],
-        "gitVersion": normalized["gitVersion"],
         "residualRisks": normalized["residualRisks"],
         "schemaVersion": SUPPORTED_SCHEMA_VERSION,
         "summary": {

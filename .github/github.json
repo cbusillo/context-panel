@@ -50,6 +50,8 @@
     },
     "validate": {
       "default": "scripts/commit-gate.sh",
+      "ciChangeScope": "python3 scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
+      "companionUploadFixtureTools": "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR=<dir> scripts/upload-app-store-connect-companion-app.sh --export-only <other arguments> (test-only seam for fixture xcodebuild and codesign; refused for uploads)",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
       "sharedAccountIdentityContract": "docs/shared-account-identity.md (provider primary keys, credential-qualified history, Mac receiving, scoped migration/removal and live qualification gates)",
       "cloudKitSchemaReceiptGate": "scripts/require-cloudkit-schema-receipt.sh (called by every live release entrypoint; local live runs use scripts/with-cloudkit-schema-receipt.sh -- <command>)",
