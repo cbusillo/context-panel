@@ -1,4 +1,5 @@
 import base64
+import errno
 import hashlib
 import importlib.util
 import json
@@ -702,6 +703,19 @@ sleep 30
                     sentinel.wait(timeout=5)
                 if sentinel.stdin is not None:
                     sentinel.stdin.close()
+                # A broken descendant cleanup must not leave a reader blocked
+                # forever after its fixture directory disappears.
+                try:
+                    blocked_writer = os.open(blocked_path, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError as error:
+                    if error.errno != errno.ENXIO:
+                        raise
+                else:
+                    try:
+                        os.write(blocked_writer, b"release fixture child\n")
+                    finally:
+                        os.close(blocked_writer)
+                    self.fail("watchdog left a blocked xcodebuild descendant alive")
 
             return completed, invocation_count, sentinel_alive
 
@@ -3539,8 +3553,8 @@ if ((count == 1)); then
     printf 'stall\n' > "${FAKE_XCODEBUILD_EVENTS:?}"
     wait
 fi
-echo "** BUILD SUCCEEDED **"
 printf 'exit\n' > "${FAKE_XCODEBUILD_EVENTS:?}"
+echo "** BUILD SUCCEEDED **"
 """,
             stall_seconds=1,
         )
@@ -3562,8 +3576,8 @@ if [[ -f "$counter" ]]; then
 fi
 count=$((count + 1))
 printf '%s' "$count" > "$counter"
-echo "** BUILD FAILED **"
 printf 'exit\n' > "${FAKE_XCODEBUILD_EVENTS:?}"
+echo "** BUILD FAILED **"
 exit 65
 """,
             stall_seconds=1,
@@ -3588,8 +3602,8 @@ fi
 count=$((count + 1))
 printf '%s' "$count" > "$counter"
 if ((count == 2)) && [[ "{retry_result}" == "compiler-error" ]]; then
-    echo "** BUILD FAILED **"
     printf 'exit\\n' > "${{FAKE_XCODEBUILD_EVENTS:?}}"
+    echo "** BUILD FAILED **"
     exit 65
 fi
 echo "fake xcodebuild started"
