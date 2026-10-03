@@ -34,7 +34,8 @@ def fixture() -> dict[str, Any]:
             "validate": {"environment": "release", "needs": "approve"}}
     documents = {"ship.yml": {"jobs": ship}}
     for channel, filename in policy.CHANNELS.items():
-        ship[channel] = {"uses": f"./.github/workflows/{filename}", "needs": "validate"}
+        ship[channel] = {"uses": f"./.github/workflows/{filename}", "needs": "validate",
+                         "permissions": {"contents": "read", "actions": "read"}}
         documents[filename] = {
             "on": {"workflow_dispatch": {}, "workflow_call": {}},
             "jobs": {"guard": guard(), "approve": dict(approval, **{"if": policy.STANDALONE_APPROVAL}),
@@ -60,6 +61,7 @@ class ReleaseApprovalTests(unittest.TestCase):
 
     def test_approval_bypasses_and_extra_prompts_fail(self) -> None:
         mutations = [
+            lambda d: d["ship.yml"]["jobs"]["github-release"]["permissions"].pop("actions"),
             lambda d: d["ship.yml"]["jobs"]["approve"].update(**{"if": "${{ false }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][3].update(**{"if": "${{ false }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][3]["env"].update(GH_TOKEN="${{ secrets.OPERATOR_TOKEN }}"),
@@ -158,6 +160,21 @@ class ReleaseApprovalTests(unittest.TestCase):
             mutate(document)
             with self.assertRaises(ValueError):
                 metadata.check(document, "owner")
+        secret_store = {"deployment_branch_policy": {"protected_branches": True,
+                                                     "custom_branch_policies": False}}
+        metadata.check_branches(secret_store, [{"name": "main"}])
+        for branches in [[], [{"name": "main"}, {"name": "task"}]]:
+            with self.assertRaises(ValueError):
+                metadata.check_branches(secret_store, branches)
+        with self.assertRaises(ValueError):
+            metadata.check_branches({}, [{"name": "main"}])
+        metadata.check_branches({"deployment_branch_policy": {"protected_branches": False,
+                                                             "custom_branch_policies": True}},
+                                [{"name": "main", "type": "branch"}])
+        hidden_review = copy.deepcopy(good)
+        hidden_review["protection_rules"][0]["reviewers"][0]["reviewer"] = None
+        with self.assertRaises(ValueError):
+            metadata.check_fields(hidden_review)
         with patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=1)):
             with self.assertRaises(ValueError):
-                metadata.fetch_environment("owner/repo", "release-approval")
+                metadata.fetch_metadata("repos/owner/repo/environments/release-approval")

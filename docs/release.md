@@ -40,7 +40,8 @@ The four reusable channels identify Ship through `github.workflow_ref`,
 GitHub's caller workflow identity, rather than a dispatch input. Only this
 repository's `ship.yml` on `refs/heads/main` skips their standalone `approve`
 job; their caller jobs must depend on successful Ship validation. Every other
-caller and direct dispatch requires its own secretless reviewed gate before
+caller must grant `actions: read` and `contents: read` for the metadata and
+checkout guards; direct dispatch requires its own secretless reviewed gate before
 using `release`. App Store Review submission and screenshots always require
 that gate, including reusable calls. Channel jobs explicitly reject failed or
 cancelled guards and failed standalone approvals; the skipped-gate path is
@@ -54,12 +55,14 @@ unless the repository variable `RELEASE_APPROVALS_CONFIGURED` is exactly `true`.
 Before any environment job, a read-only metadata check also requires
 `release-approval` to exist, name the repository owner as sole required reviewer,
 allow solo self-review and disable administrator bypass. Missing rules, a missing
-environment or an unavailable API fail closed. CI probes this metadata read using
+environment or an unavailable API fail closed. The check also verifies that
+`release` accepts only `main`, and the CI probe proves the required metadata
+fields are visible. CI probes this metadata read using
 the built-in workflow token; no operator credential or secret endpoint is used.
 Set activation only after the owner finishes the role move below. Removing it
-pauses new release runs; it does not re-add an environment reviewer. Each pending channel
-guard reads the variable again, so removing it can also block a channel in an
-approved run. Jobs whose guards already passed are unaffected. The previous
+pauses new release runs; it does not re-add an environment reviewer. Each pending
+channel guard reads the variable again, so removing it can also block a channel
+in an approved run. Jobs whose guards already passed are unaffected. The previous
 `RELEASE_CHANNELS_CONFIGURED` variable and `release-channels` environment are
 unused by this design.
 
@@ -130,7 +133,10 @@ The one-approval contract applies after the role move is complete.
 5. In **Settings → Secrets and variables → Actions → Variables**, delete the
    obsolete `RELEASE_CHANNELS_CONFIGURED` variable if present. Click **New
    repository variable**, name it `RELEASE_APPROVALS_CONFIGURED`, enter `true`,
-   and click **Add variable** (or edit/save an existing variable). Do this last.
+   and click **Add variable** (or edit/save an existing variable). Do this last
+   for the final role move. On an owner-chosen interim route, enable it after
+   step 2 and the inventory/duplicate cleanup while keeping `release` reviewed;
+   complete step 3 only at the recorded migration time.
 6. Confirm configuration and names on #747 from `cbusillo`, never values. No
    release dispatch is required or authorized for this setup task.
 

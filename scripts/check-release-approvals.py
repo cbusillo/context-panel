@@ -153,6 +153,9 @@ def check(workflows: dict[str, dict]) -> dict:
                 f"{channel}: channel must use the same-commit local workflow")
         require("validate" in needs(call), f"{channel}: missing intent dependency")
         require(not call.get("continue-on-error"), f"{channel}: cannot tolerate failure")
+        require(call.get("permissions", {}).get("actions") == "read"
+                and call.get("permissions", {}).get("contents") in ("read", "write"),
+                f"{channel}: caller must grant metadata read and checkout permissions")
         condition = re.sub(r"\s+", " ", call.get("if", "")).strip()
         if re.search(r"\b(always|failure|cancelled)\s*\(", condition):
             # The TestFlight join intentionally runs with skipped upload channels.
