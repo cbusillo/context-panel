@@ -38,7 +38,10 @@ Expected GitHub settings:
 - Activation variable: repository Actions variable `RELEASE_APPROVALS_CONFIGURED`
   is exactly `true` only after the owner confirms the role move and secret-name
   inventory. Unset/false pauses new release workflows before environment jobs.
-  Removing it does not restore reviewer settings or stop an already running job.
+  Removing it does not restore reviewer settings or stop an already running job;
+  it blocks any channel guard that has not yet passed, even in an approved run.
+  Never delete or unprotect `release-approval` while activation is true. Unset
+  activation first and finish/cancel pending release runs before changing it.
   The owner may explicitly enable an interim route with both environments
   reviewed while historical runs age out; that route still has extra prompts.
   Previous `RELEASE_CHANNELS_CONFIGURED` is obsolete and should be removed.

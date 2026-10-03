@@ -52,8 +52,9 @@ secretless trust guard verifies the protected ref, checked-out commit, main
 ancestry, version, and build number. A second secretless check refuses new runs
 unless the repository variable `RELEASE_APPROVALS_CONFIGURED` is exactly `true`.
 Set it only after the owner finishes the role move below. Removing it pauses new
-release runs; it does not re-add an environment reviewer or affect an already
-approved run. The previous `RELEASE_CHANNELS_CONFIGURED` variable and
+release runs; it does not re-add an environment reviewer. Each pending channel
+guard reads the variable again, so removing it can also block a channel in an
+approved run. Jobs whose guards already passed are unaffected. The previous `RELEASE_CHANNELS_CONFIGURED` variable and
 `release-channels` environment are unused by this design.
 
 Retry failed channel jobs within the original approved run to retain its review;
@@ -94,9 +95,14 @@ The one-approval contract applies after the role move is complete.
 
 1. In **Settings → Environments → release**, inspect secret **names only**.
    Confirm the enabled channels' names from the checker are already here. If a
-   needed name exists only in repository secrets or another environment, stop
-   and report the name on #747 before removing any reviewer or activating. The
-   agent cannot verify this inventory or recover GitHub's write-only values.
+   needed name exists only elsewhere, use its original private source yourself:
+   **Environment secrets → Add environment secret** in `release`, enter its name
+   and value, and click **Add secret** once. Then remove the old copy after
+   confirming this destination name. This exception needs one entry, never two
+   maintained copies. If its original source is unavailable, report the name on
+   #747 before removing any reviewer or activating; do not rotate it. The agent
+   never reads, copies or re-enters a value. Skip this entry entirely when the
+   existing `release` inventory is complete.
 2. In **Settings → Environments → New environment**, enter `release-approval`
    and click **Configure environment**. Enable **Required reviewers**, select
    `cbusillo`, and save protection rules. Keep self-review allowed for the solo
@@ -104,7 +110,8 @@ The one-approval contract applies after the role move is complete.
    secrets. Under **Deployment branches and tags**, choose **Selected branches
    and tags** → **Add deployment branch or tag rule** → **Branch**, enter `main`,
    and save.
-3. Return to **release**. Set the same selected **Branch** rule for `main` only.
+3. Only after the direction#24 decision is recorded on #747, return to
+   **release**. Set the same selected **Branch** rule for `main` only.
    Uncheck **Required reviewers**, keep wait timer off, and save protection rules.
    Leave every environment secret untouched. The required reviewer now sits on
    `release-approval`, while all secret jobs continue reading `release`.

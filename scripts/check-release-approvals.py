@@ -112,7 +112,7 @@ def check(workflows: dict[str, dict]) -> dict:
                 f"{workflow_name}: owner-confirmed setup is required before environment jobs")
 
     def approval_check(jobs: dict, workflow_name: str, reusable: bool = False) -> None:
-        approval = jobs["approve"]
+        approval = jobs.get("approve", {})
         require(environment(approval) == "release-approval" and not secret_bearing(approval),
                 f"{workflow_name}: review gate must be secretless in release-approval")
         require(needs(approval) == ["guard"] and not approval.get("continue-on-error"),
@@ -180,11 +180,11 @@ def check(workflows: dict[str, dict]) -> dict:
             require("uses" not in job, f"{filename}: nested channels require approval policy review")
         require(count == 1, f"{filename}: expected one guarded channel job")
     for filename in STANDALONE_ONLY:
-        jobs = workflows[filename]["jobs"]
-        guard_check(jobs, filename)
-        approval_check(jobs, filename)
-        require(len(jobs) == 3, f"{filename}: classify additional jobs before adding them")
-        for job_id, job in jobs.items():
+        standalone_jobs = workflows[filename]["jobs"]
+        guard_check(standalone_jobs, filename)
+        approval_check(standalone_jobs, filename)
+        require(len(standalone_jobs) == 3, f"{filename}: classify additional jobs before adding them")
+        for job_id, job in standalone_jobs.items():
             if job_id not in ("guard", "approve"):
                 require(environment(job) == "release",
                         f"{filename}/{job_id}: standalone secrets require the sole release store")
@@ -204,7 +204,9 @@ def check(workflows: dict[str, dict]) -> dict:
                      if environment(job) == "release-approval"]
     return {
         "proof": "structural dry-run; live environment configuration is owner-confirmed",
-        "secret_names_by_environment": {"release": sorted(all_names), "release-approval": []},
+        "secret_names_by_environment": {"release": sorted(all_names), "release-approval": sorted(set().union(*(
+            secret_names(workflows[filename]["jobs"]["approve"])
+            for filename in ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY))))},
         "activation": "RELEASE_APPROVALS_CONFIGURED=true only after owner moves reviewer role",
         "fallback": "Unset/false activation refuses new release workflows before any environment job",
         "ship": {"reviewed_jobs": reviewed_jobs, "approval_count": len(reviewed_jobs),
