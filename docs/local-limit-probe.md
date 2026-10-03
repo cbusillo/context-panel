@@ -2,6 +2,13 @@
 
 Last updated: 2026-05-09.
 
+This is the original design, kept as history. The shipped probe is the
+OpenAI-only `OpenAILimitProbe` executable: it has no provider choice, and its
+buttons are `Open ChatGPT`, `Scan Visible Text`, `Record Manual Observation`,
+and `Save Redacted Report`. Its signal model and Markdown report are defined in
+`Sources/ContextPanelCore/LimitProbe.swift`; the Capture Model and Report Shape
+sections below are the planned design, not the shipped format.
+
 ## Goal
 
 Context Panel needs to know whether subscription limits are exposed anywhere a
@@ -60,7 +67,7 @@ WKWebView cannot observe enough.
 6. User navigates to the relevant UI, such as ChatGPT model picker.
 7. Probe scans visible text and sanitized network metadata for usage/reset
    signals.
-8. User can press `Record Observation` to save a sanitized event.
+8. User can press `Record Manual Observation` to save a sanitized event.
 9. User can press `Save Redacted Report` to write a local Markdown report to
    `.local/limit-probes/openai/latest.md`, then optionally export it elsewhere
    through the file picker.

@@ -1,6 +1,6 @@
 # Architecture
 
-Context Panel is expected to split into a few native boundaries:
+Context Panel is split into these native boundaries:
 
 - `ContextPanelCore`: provider-neutral domain models, limit math, and refresh
   policy.
@@ -20,6 +20,11 @@ Context Panel is expected to split into a few native boundaries:
   and emits user intent through closures; app-group storage, widget reloads,
   sync, permissions, credentials, and provider administration stay in the host
   app models.
+- `ContextPanelCloudKitSync`: the CloudKit stores for the companion document,
+  runtime receipts, and shared account identity.
+- `ContextPanelCompanionSupport`, `ContextPanelWatchSupport`, and
+  `ContextPanelTVSupport`: shared presentation and support code for the
+  iPhone/iPad/Vision Pro companion, Apple Watch, and Apple TV targets.
 - Account store: multiple logins per provider, local credential references,
   display names, and enabled/disabled state.
 - Provider adapters: small clients that retrieve or normalize usage state for
@@ -144,9 +149,11 @@ and storage code.
 
 MVP connectors:
 
-- `CodexRateLimitConnector`: reads Codex and Codex Lab auth roots such as
-  `~/.codex` or `~/.codex-lab`, calls the live Codex usage endpoint, and normalizes primary,
-  secondary, and additional percent-window buckets.
+- `CodexRateLimitConnector`: reads the `auth.json` of a user-selected Codex
+  home (`~/.codex`, an account home under `~/.codex-accounts`, or an existing
+  Codex Lab home) or an account's selected sessions folder, calls the live Codex
+  usage endpoint, and normalizes primary, secondary, and additional
+  percent-window buckets.
 - Google provider: retired Gemini CLI credential files, Context Panel Google
   OAuth, Antigravity Keychain access, and private Cloud Code Assist requests are
   removed. AGY invokes the signed refresh agent through its documented custom
@@ -439,12 +446,12 @@ and skip intervals that cross resets.
 ## Account Configuration
 
 The MVP account configuration is also local JSON. It stores account labels,
-enabled/disabled state, connector kind, and local auth-file paths only for
-file-backed OpenAI/Codex accounts. It does not store provider secrets. Google
-Antigravity setup stores no credential or external path: AGY publishes a
-privacy-filtered quota observation into Context Panel's App Group through the
-signed refresh agent. Claude usage uses Context Panel-owned OAuth credentials
-stored in Keychain.
+enabled/disabled state, connector kind, and local auth-file paths and optional
+sessions-folder paths (`codexQuotaPath`) only for OpenAI/Codex accounts. It does
+not store provider secrets. Google Antigravity setup stores no credential or
+external path: AGY publishes a privacy-filtered quota observation into Context
+Panel's App Group through the signed refresh agent. Claude usage uses Context
+Panel-owned OAuth credentials stored in Keychain.
 
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay

@@ -14,8 +14,13 @@ Expected GitHub settings:
 - Dependabot: enabled for Swift Package Manager and GitHub Actions.
 - CodeQL: enabled for Swift on pull requests, pushes to `main`, weekly schedule,
   and manual dispatch.
-- Default branch ruleset: active ruleset named `Protect main` targeting the
-  default branch.
+- Default branch rulesets, all active:
+  - `Protect main`: the rules below, with merge commits as the only merge
+    method.
+  - `Code-owner review for DIRECTION.md`: requires code-owner review for files
+    a `CODEOWNERS` file assigns. This repository has no `CODEOWNERS` or
+    `DIRECTION.md` file today, so it adds no reviewer.
+  - `Only the owner and automation update the default branch`.
 - Required pull requests: enabled for `main`.
 - Required status checks on `main`: `swift` and `Analyze Swift`, with strict
   status checks enabled.

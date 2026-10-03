@@ -186,7 +186,7 @@ profiles, screenshots, raw receipts, or credentials.
 
 ## Signed Train Replay
 
-Issue #609 adds sidecar replay without changing release decisions. Tier B
+Issue #609 added sidecar replay without changing release decisions. Tier B
 rechecks the three-root projection; Tier A freezes it and derives the report.
 `check` and `verify` are gates; reference-only evidence stays
 `sources-unverified`.

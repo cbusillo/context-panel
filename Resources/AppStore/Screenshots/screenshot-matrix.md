@@ -301,6 +301,34 @@ Apple Watch checksums:
 5065ad9c1b29ca18a7e47fbccc391ce619ac05e9c02fd57bd7c33819630d1404  watch/watch-ultra-limited.png
 ```
 
+## Approved Apple TV Captures
+
+Added on 2026-07-14 as approved tvOS App Store screenshots. All three are
+1920 x 1080 and form the uploader's `tvos` set.
+
+- `tvos/tvos-1-runway-full-detail.png`
+  - Surface: Apple TV runway
+  - State: Full Detail privacy mode
+- `tvos/tvos-2-provider-hide-account-names.png`
+  - Surface: Apple TV provider detail
+  - State: Hide Account Names privacy mode
+- `tvos/tvos-3-runway-percentages-only.png`
+  - Surface: Apple TV runway
+  - State: Percentages Only privacy mode
+
+Apple TV checksums:
+
+```text
+eb5eaf7a708cbf62714fdba1471409a3cb5e1eb6248216ed280a2fa739ec21c2  tvos/tvos-1-runway-full-detail.png
+c7ca00321202c8edee3e52549069e852bc3cedd7a988d7d36ad04331dc1649a6  tvos/tvos-2-provider-hide-account-names.png
+53f947a2f145d5cc6393b3d878a43b2a58cfb949bdcc25c15cc2482c5b58138b  tvos/tvos-3-runway-percentages-only.png
+```
+
+## Preview Copies
+
+`previews/` holds 800 x 500 copies of the five Mac screenshots for quick
+viewing. They are not uploaded.
+
 ## Current Upload Mapping
 
 This matrix has Chris-approved local candidates for release upload. Direct local
@@ -373,6 +401,10 @@ Staged Apple Watch upload candidates:
   `watch/watch-ultra-limited.png`.
 
 ## Remaining Matrix Gaps
+
+This section is a dated snapshot from 2026-07-08. Later releases have shipped
+since; check App Store Connect directly, as `docs/release.md` describes, before
+acting on it. These screenshots also predate the Horizon design (#722).
 
 Verified ASC image state on 2026-07-08 after iOS App Review approval:
 

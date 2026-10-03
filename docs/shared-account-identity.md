@@ -9,7 +9,7 @@ primary. Explicit linking is reserved for a provider that truly has no ID.
 | --- | --- | --- |
 | OpenAI | Authenticated `chatgpt_account_id`, falling back to the auth tokens' `account_id` | Require the canonical `chatgpt_user_id` from either ID or access token, rejecting conflicts, independent of plan. Missing user claims retain separate, publisher-scoped local sources without minting an account-only alternative namespace. |
 | Anthropic | `account.uuid` from Context Panel's own authenticated `/api/oauth/profile` response, scoped by required `organization.uuid` | Profile uses the same access token as the successful usage request, including after refresh. Missing or malformed identity leaves quota usable and identity unavailable. |
-| Google / Antigravity | Proposed Google OIDC issuer plus `sub` | The current status-line connector exposes email/LDAP, not a subject ID. No email hash is treated as a provider ID. A supported subject export or a bound Context Panel-owned Google login remains to be qualified. Owner question #7225951844161. |
+| Google / Antigravity | Proposed Google OIDC issuer plus `sub` | The current status-line connector exposes email/LDAP, not a subject ID. No email hash is treated as a provider ID. A supported subject export or a bound Context Panel-owned Google login remains to be qualified. [Owner question on #722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5951844161). |
 | OpenAI session-only quota | Not yet qualified | A session quota event does not carry a provider account ID. A current login cannot by itself identify a historical event from a switched login. Retain an unverified local lane until account-specific attribution is established. |
 
 ## Private shared key
@@ -29,16 +29,21 @@ still wins. The local Keychain cache is scoped to the verified iCloud user.
 The encrypted payload also binds its key to that iCloud user scope; a foreign-scope payload is rejected. Every resolution rechecks the remote key and user scope. No rotation or deletion
 UI is implemented.
 
-The existing schema receipt binds both complete schema files, so the new encrypted
-contract changes its digest. No entitlements or container are widened. Static
-validation and fake-server tests do not prove Apple's live schema or encrypted
-record access. Production promotion awaits Owner question #7225952078955.
+The existing schema receipt binds both complete schema files, so the new
+encrypted contract changes its digest. No entitlements or container are widened.
+Static validation and fake-server tests do not prove Apple's live schema or
+encrypted record access. Chris approved the Production promotion
+([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5964341341));
+it is a CloudKit Console deploy tracked on #722.
 
 ## Functional integration
 
-Normal app and refresh-agent connectors now receive the shared resolver. Provider
-quota remains usable when identity/key/schema access is unavailable; no local-only
-shared key is generated. The installed AF hand-test build predates this integration.
+Normal app and refresh-agent connectors now receive the shared resolver.
+Provider quota remains usable when identity/key/schema access is unavailable; no
+local-only shared key is generated. Chris accepted the hand test of build
+1.0.69, which includes this integration
+([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5963957732)),
+and #733 is merged.
 
 Local history uses a separate source and authenticated-material digest. Temporary
 shared-key failure does not change that history membership. Claude profile material
@@ -84,18 +89,22 @@ withhold unconfirmed remote-only accounts.
 
 ## Remaining qualification and owner boundaries
 
-- Google subject export/bound sign-in remains Owner question #7225951844161.
+- Google subject export/bound sign-in remains an open
+  [owner question on #722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5951844161).
   Antigravity quota continues locally; email/LDAP is not promoted to identity.
 - Session-only OpenAI events remain unverified; current credentials cannot prove
   attribution of historical events from a switched login.
-- The additive encrypted Production schema promotion awaits #7225952078955.
-  Source integration and fake-key/merge tests do not prove Apple's encrypted field
-  support or live schema access. No live schema has been changed.
+- Chris approved the additive encrypted Production schema promotion
+  ([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5964341341)).
+  The Development schema is prepared and its live canaries passed; the
+  Production deploy is tracked on #722. Source integration and fake-key/merge
+  tests do not prove Apple's encrypted field support or live Production schema
+  access.
 - Verify both Claude profiles and all configured OpenAI accounts from an exact
   canonical signed Production build, then duplicate-lane checks in all active
   storage roots and physical companions. Mixed old/new client fleets and manually
   copied unverified setups need qualification; no cross-host merging is inferred
   from a label or copied configuration ID.
-- Chris's Horizon/rename hand test and marking #733 ready remain owner actions.
-  Matching companion/runtime/release gates precede publication. No entitlements,
+- Chris's Horizon/rename hand test is accepted and #733 is merged. Matching
+  companion/runtime/release gates precede publication. No entitlements,
   Production schema or release gates are widened by this integration.

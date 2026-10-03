@@ -3,9 +3,10 @@
 ## Product Shape
 
 Context Panel is a native macOS app plus WidgetKit extension for tracking AI
-usage limits across providers. Treat multi-account support as a core product
-requirement, not a later enhancement. The initial provider set is OpenAI,
-Anthropic, and Google.
+usage limits across providers, with read-only iPhone, iPad, Vision Pro, Apple
+Watch, and Apple TV companions. Treat multi-account support as a core product
+requirement, not a later enhancement. The provider set is OpenAI, Anthropic,
+and Google.
 
 The widget is for glanceable state: remaining capacity, limit pressure, reset
 time, and whether refreshes are healthy. The app is for setup and detail:
@@ -29,6 +30,10 @@ history, and settings.
 
 ## UX Direction
 
+`docs/design-direction.md` is the design authority. The accepted Horizon
+design (#722) is the default account layout; the points below are the
+standing product rules.
+
 - The widget should be beautiful, dense, and calm: compact charts, rings, bars,
   sparklines, reset countdowns, and provider/account grouping where useful.
 - For weekly or rolling account limits, include forecast language that helps the
@@ -37,8 +42,11 @@ history, and settings.
   troubleshooting, raw details, and long histories in the app.
 - Clicking the widget should open the app to the most relevant provider/account
   detail.
-- Prefer plain status language: available, close to limit, limited, unknown,
-  stale, refreshing.
+- Prefer plain language over status jargon. In the account layout, say when an
+  account runs out or how much it has to spare at its reset, and keep red for
+  an account that runs out before its reset. Account state words come from
+  `Sources/ContextPanelCore/AccountOverviewText.swift` (for example Available,
+  Close to limit, Saved, Paused, Not updating, Unknown).
 
 ## Validation
 
@@ -164,7 +172,7 @@ acceptable.
 - Auto-review or agent worktrees must not leave globally registered WidgetKit or
   LaunchServices bundles behind. Prefer `swift build`/`swift test` for review
   work. If an agent must build the Xcode app target, check for stale
-  `.code/working`, DerivedData, `/tmp`, and repo `.build` app/widget registrations
+  DerivedData, `/tmp`, and repo `.build` app/widget registrations
   afterward. Apply the runtime-specific cleanup rules above; do not run
   `install` or `reset` while preserving a signed Production publisher.
 - For signed/App Store-style validation, terminal success is not proof that the
@@ -370,9 +378,9 @@ someone makes an intended change.
   of truth, or do not test it.
 - No new test may assert workflow, config, script, doc, or Swift source text.
   Enforce a rule where it executes: the workflow itself, a helper script with
-  its own behavioural test, or a linter. Existing text tests are being removed
-  under issue #695; the only ones kept on purpose are negative privacy and
-  security scans that still lack a linter or executable replacement.
+  its own behavioural test, or a linter. Issue #695 removed the existing text
+  tests; the only ones kept on purpose are negative privacy and security scans
+  that still lack a linter or executable replacement.
 - Verification and loading code, and the tests for it, must not depend on
   working-tree or Git state; check live state only on the path that acts on
   it. Release and runtime receipts bound to an exact commit are that acting
