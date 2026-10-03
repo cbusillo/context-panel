@@ -69,6 +69,7 @@
       "Tests/ScriptsTests/test_release_approvals.py"
     ],
     "routine-ci-python": [
+      "Tests/ScriptsTests/test_companion_quarantine_retention.py",
       "Tests/ScriptsTests/test_app_store_version_guard.py",
       "Tests/ScriptsTests/test_distribute_testflight_beta.py",
       "Tests/ScriptsTests/test_release_evidence_gate.py",

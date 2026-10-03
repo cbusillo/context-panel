@@ -932,6 +932,36 @@ as another installed build. Signed bundle material causes cleanup to fail closed
 rather than moving release artifacts. The original validation failure remains
 the command's exit status if cleanup also fails.
 
+Quarantine retention is an explicit operator command; builds do not delete it.
+Keep seven days of unsigned generated bundles for diagnosis. Preview an exact
+root, then repeat with `--apply` to delete eligible entries:
+
+```sh
+scripts/context-panel-companion-cache.sh prune \
+  --root <absolute-.build-or-derived-data/companion-build-validation-root>
+scripts/context-panel-companion-cache.sh prune \
+  --root <same-root> --apply
+```
+
+Use `--older-than-days N` to retain a longer window (minimum one day). Only
+timestamped entries in that root's quarantine are eligible, and both their
+creation stamp and all content modification/change times must be older than
+the window. Signed or non-neutralized bundles, hard-linked files, unrecognized
+content outside quarantined bundles, recent writes, and entry symlinks are
+preserved. Empty failed entries and ordinary Finder `.DS_Store` files can age
+out with the entry. Directory
+opens and deletion never follow symlinks; links within recognized bundle trees
+are unlinked without opening their targets. Symlinked ancestry or quarantine
+roots and inventory errors fail closed. No compiler caches, active DerivedData,
+manifests, receipts, installed apps, or production storage are deleted. Run this
+with the cache idle; a filesystem error can leave a partially removed eligible
+entry. `prune=PARTIAL` names that timestamped entry without printing host paths;
+inspect it before retrying. `prune=FAILED` reports an inventory failure. Both
+include the count of entries already removed: a run is not transactional.
+Ctrl-C stops promptly with `prune=INTERRUPTED`, an unknown removal count and a
+possible partial removal; inspect the quarantine before retrying. Abrupt process
+termination can also leave partial work.
+
 ### Local Apple Vision Pro Dogfood
 
 Use the local dogfood helper when the goal is to install the Debug companion app
