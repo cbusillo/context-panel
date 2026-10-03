@@ -119,12 +119,12 @@ shape, the summary count from the usage response remains available as count-only
 evidence and no detail timing is retained.
 
 Persistence and companion sync are deliberately narrow: available count,
-observation time, coverage (`countOnly`, `partial`, or `complete`), and earliest
-known expiry. Provider credit IDs, status/reset-type strings, titles,
-descriptions, and raw rows are discarded. Companion payloads attach the same
-optional sanitized summary to the matching account observation without changing
-the strict schema version; older payloads decode as no companion signal, and
-older readers ignore the additive field.
+observation time, coverage (`countOnly`, `partial`, or `complete`), and known
+expiry dates, including the earliest. Provider credit IDs, status/reset-type
+strings, titles, descriptions, and raw rows are discarded. Companion payloads
+attach the same optional sanitized summary to the matching account observation
+without changing the strict schema version; older payloads decode as no
+companion signal, and older readers ignore the additive field.
 
 After a full account refresh failure, storage may retain only the prior count
 with its original observation time. Detail coverage is reduced to `countOnly`
@@ -190,9 +190,10 @@ auth/telemetry source. Historical snapshots remain readable.
 
 ## Codex and Codex Lab setup
 
-New installations offer Codex (`~/.codex/auth.json`, enabled) and Codex Lab
-(`~/.codex-lab/auth_accounts.json`, initially off). Explicit `CODEX_HOME` and
-`CODEX_LAB_HOME` directories are respected when available to the process.
+New installations offer Codex (`~/.codex/auth.json`, enabled), Claude, and
+Antigravity; they no longer add a Codex Lab source. Existing Codex Lab entries
+keep working. An explicit `CODEX_HOME` (or `CODEX_LAB_HOME` for an existing Lab
+entry) is respected when available to the process.
 Signed apps launched by macOS do not inherit arbitrary terminal environment
 variables; their saved account configuration and user-approved bookmarks are
 what determine access. Both sources use the existing live Codex limits connector.
@@ -216,8 +217,9 @@ Context Panel does not bypass client credential encryption.
 Existing Every Code configurations are retained as disabled migration records,
 with IDs, paths, imported credentials, bookmarks, and stored history preserved.
 They are excluded from settings, provider polling, credential import, and cache
-collection. Missing Codex/Lab setup choices are added disabled; existing modern
-client settings remain unchanged. Codex Lab appears first in account settings.
+collection. When an Every Code record exists, a missing Codex setup choice is
+added disabled unless it was explicitly removed; existing modern client settings
+remain unchanged. Account settings keep the saved configuration order.
 Explicit client metadata takes precedence over path inference, so a modern
 client using a custom path or a historical configured ID remains supported.
 The configuration stays schema 1. No automatic `CODE_HOME` or `.code/usage`
@@ -497,13 +499,14 @@ Preferred v1 connector scope:
 
 ### Anthropic account and banked-reset findings (2026-10-01)
 
-Each Claude account uses its own Context Panel OAuth connection. The existing
-**Add Claude Account** control creates an independent Keychain identity; connect
-each entry separately. Signing into Claude Code or Desktop does not connect that
-entry. The signed publisher's normalized snapshot was observed to contain one
-healthy Claude account with session and weekly utilization/natural reset times;
-its configuration had no second Claude entry. This does not verify a second
-account, and a candidate build has not yet passed signed native acceptance.
+Each Claude account uses its own Context Panel OAuth connection. Choosing Claude
+in **Add account** and signing in creates an independent Keychain identity;
+connect each entry separately. Signing into Claude Code or Desktop does not
+connect that entry. The signed publisher's normalized snapshot was observed to
+contain one healthy Claude account with session and weekly utilization/natural
+reset times; its configuration had no second Claude entry. This does not verify
+a second account, and a candidate build has not yet passed signed native
+acceptance.
 
 Anthropic's [limit reset documentation](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset)
 places banked reset offers and their expiry in web/Desktop **Settings → Usage**.
@@ -557,7 +560,8 @@ an explicitly removed default entry. Account controls pause while removal commit
 so a queued name/toggle edit cannot restore the old whole list. Re-adding an
 OpenAI or Claude entry requires selecting its source or signing in again; retained
 credentials are not automatically attached to the new entry.
-Use Add OpenAI Account, Add Claude Account or Add Antigravity Account to set up a
+Use **Add account**, choose the provider, then pick a Codex sign-in (OpenAI),
+sign in (Claude), or add Antigravity and use **Copy Setup** to set up a
 replacement. Antigravity has one configured bridge source at a time.
 
 An imported login can continue supplying current API quotas after its original
@@ -600,19 +604,21 @@ The publisher must have saved `accounts.json` (for example after an account
 setting is edited). An unsaved default configuration deliberately fails closed;
 the reader does not invent default accounts or persist them.
 
-Schema 1 has `readAt`, `savedAt`, `accounts`, `answers` and `deadlines`. Each row has an opaque local ID,
-provider, typed local label (including email-like names), shared panel `state`, observation time, windows,
-and a stable opaque `configurationID` for the configured source. The row `id`
-identifies its current logical lane and can change when a connection first
-establishes the account or a catalog source gains or loses members. Track the
-source using `configurationID`; multiple catalog members can share that value.
-Rows also include reported usage credits and a separate `bankedResets` object. Account states are
-`available`, `closeToLimit`, `limited`, `unknown`, `stale`, `refreshing`,
-`unavailable`, `notConnected` and `off`. Every configured non-retired account is
-included; the reader does not invent unconfigured accounts. Membership and
-states use the shared `AccountOverview` projection over `AccountCapacity` membership,
-and burn uses `AccountBurnRateEstimator`, matching
-the account overview.
+Schema 1 has `schemaVersion`, `readAt`, `savedAt`, `accounts`, `answers`,
+`deadlines`, `providers` and `headline`. `answers.tightestAccountID` repeats
+`closestAccountID` under the word the UI uses. Each row has an opaque local ID,
+provider, typed local label (including email-like names), shared panel `state`,
+observation time, windows, and a stable opaque `configurationID` for the
+configured source. The row `id` identifies its current logical lane and can
+change when a connection first establishes the account or a catalog source gains
+or loses members. Track the source using `configurationID`; multiple catalog
+members can share that value. Rows also include reported usage credits and a
+separate `bankedResets` object. Account states are `available`, `closeToLimit`,
+`limited`, `unknown`, `stale`, `refreshing`, `unavailable`, `notConnected` and
+`off`. Every configured non-retired account is included; the reader does not
+invent unconfigured accounts. Membership and states use the shared
+`AccountOverview` projection over `AccountCapacity` membership, and burn uses
+`AccountBurnRateEstimator`, matching the account overview.
 
 Windows include their own observation time, unit, used/limit quantities,
 `naturalResetAt` and nullable `burn` (units per hour, observation duration,
@@ -702,15 +708,15 @@ issues or PRs.
 
 ## Multiple local account entries
 
-The Mac Settings pane can add OpenAI and Claude accounts and edit their local
-names. The overview's **All Accounts** card includes OpenAI, Claude, and Antigravity entries even
-before their first successful read, independently of widget window selection.
-Off, unavailable, stale, and unknown entries remain visible. Usage and next
-reset dates are shown for every reported window. Burn estimates filter both
-current and historical observations to the same logical account; a window
-average is labeled separately from measured history. Missing evidence stays
-unknown. A source-level failure applies to its last-known members without
-creating an extra account lane.
+The Mac Settings pane can add OpenAI and Claude accounts and one Antigravity
+entry, and edit their local names. The overview's **All Accounts** card includes
+OpenAI, Claude, and Antigravity entries even before their first successful read,
+independently of widget window selection. Off, unavailable, stale, and unknown
+entries remain visible. Usage and next reset dates are shown for every reported
+window. Burn estimates filter both current and historical observations to the
+same logical account; a window average is labeled separately from measured
+history. Missing evidence stays unknown. A source-level failure applies to its
+last-known members without creating an extra account lane.
 
 Account rows use the shared app freshness policy for stale status and burn-rate
 visibility. Editing an auth path keeps a draft until **Apply path** is pressed;

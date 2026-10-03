@@ -450,11 +450,11 @@ deadline provenance, exact complication families, tvOS local-cache provenance,
 Top Shelf privacy/freshness state, exact refresh evidence, session expiration,
 loaded-executable-aware throttling, process ordering, tamper rejection,
 host-only relay, de-duplication, retry acknowledgement, remote inbox isolation,
-and per-session retention. Script tests verify every shipping process hook,
-required App Group routing, strict local/remote receipt validation, and the
-operator session/sync/export lifecycle. The checked-in CloudKit gate covers the
-companion snapshot plus the dedicated runtime session and receipt record types.
-Its `--live --environment production` form is read-only and must pass before a
-signed release relies on the relay.
-Generic iOS, visionOS, watchOS, and tvOS Xcode builds remain required because
-SwiftPM tests run only host-compatible modules.
+and per-session retention. Script tests verify that `sync` refuses without a
+valid Production schema receipt, strict local/remote receipt export validation,
+and the operator start/status/export/stop/sync lifecycle. The checked-in
+CloudKit gate covers the companion snapshot plus the dedicated runtime session
+and receipt record types. Its `--live --environment production` form is
+read-only and must pass before a signed release relies on the relay. Generic
+iOS, visionOS, watchOS, and tvOS Xcode builds remain required because SwiftPM
+tests run only host-compatible modules.

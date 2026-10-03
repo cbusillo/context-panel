@@ -86,31 +86,33 @@ requirements for the coordinator. Projected IDs and requirement bodies must
 exactly match the matrix planner output; placement entries are ignored by
 capture and remain structurally unable to satisfy shared-view work.
 
-The executor captures only `ios`, `ipados`, `visionos`, and `watchos` shared
-app/widget-gallery requirements on throwaway simulators. It never builds,
+The executor captures `ios`, `ipados`, `visionos`, `watchos`, and `tvos` shared
+app/widget-gallery requirements on throwaway simulators, and `macos.widget`
+through the host renderer described below. It never builds the app,
 starts a coordinator session, records a visual decision, reads runtime receipts,
 or claims runtime or placement evidence.
 
-The private schema-v2 config contains only `ios`, `ipados`, `visionos`, or
-`watchos` profiles with `runtimeIdentifier`, `deviceTypeIdentifier`, and an
-absolute non-symlink `appBundle`. The iPhone, iPad, and Vision profiles use the
-Context Panel bundle identifier. The Watch profile must use
-`com.shinycomputers.contextpanel.watch`, `WatchSimulator`, device family `4`,
-a `watchOS` runtime, and an `Apple Watch` simulator device family. The visionOS
-profile additionally requires an absolute non-symlink `uiTestRun`. It must be
-the single app-associated shared-view UI-test run in the same bounded test
-products root as the configured app bundle. Product-path templates accept
-`__TESTROOT__` and, where a test host is available, `__TESTHOST__`; other
-double-underscore sequences in the template are rejected before expansion.
-Literal double underscores in the resolved root or host paths are preserved.
-Expanded paths must still exist and stay within the bounded products root.
-Every bundle
-must use bounded numeric version/build values that match the source manifest,
-the expected simulator platform and device family, and the exact embedded
-manifest derived from the supplied canonical current source manifest. The source
-manifest must use the repository policy's fixed algorithm, digest domain,
-toolchain, archive layouts, evidence policy, ignored inputs, and policy digest;
-self-consistent manifests in a caller-selected digest domain are rejected.
+The private schema-v2 config contains only `ios`, `ipados`, `visionos`,
+`watchos`, `tvos`, or `macos` profiles. Simulator profiles carry
+`runtimeIdentifier`, `deviceTypeIdentifier`, and an absolute non-symlink
+`appBundle`; the `macos` profile carries only `sourceRoot`. The iPhone, iPad,
+and Vision profiles use the Context Panel bundle identifier. The Watch profile
+must use `com.shinycomputers.contextpanel.watch`, `WatchSimulator`, device
+family `4`, a `watchOS` runtime, and an `Apple Watch` simulator device family.
+The iOS, iPadOS, and visionOS profiles additionally require an absolute
+non-symlink `uiTestRun`. It must be the single app-associated shared-view
+UI-test run in the same bounded test products root as the configured app bundle.
+Product-path templates accept `__TESTROOT__` and, where a test host is
+available, `__TESTHOST__`; other double-underscore sequences in the template are
+rejected before expansion. Literal double underscores in the resolved root or
+host paths are preserved. Expanded paths must still exist and stay within the
+bounded products root. Every bundle must use bounded numeric version/build
+values that match the source manifest, the expected simulator platform and
+device family, and the exact embedded manifest derived from the supplied
+canonical current source manifest. The source manifest must use the repository
+policy's fixed algorithm, digest domain, toolchain, archive layouts, evidence
+policy, ignored inputs, and policy digest; self-consistent manifests in a
+caller-selected digest domain are rejected.
 
 ```sh
 scripts/context-panel-validation.py capture-shared-view-evidence \
