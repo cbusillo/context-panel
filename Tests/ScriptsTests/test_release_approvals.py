@@ -34,7 +34,7 @@ def fixture() -> dict[str, Any]:
         }
     for filename in policy.STANDALONE_ONLY:
         documents[filename] = {"jobs": {"guard": guard(), "submit": {
-            "environment": "release", "env": {"KEY": "${{ secrets.KEY }}"},
+            "environment": "release", "needs": "guard", "env": {"KEY": "${{ secrets.KEY }}"},
         }}}
     return documents
 
@@ -64,6 +64,8 @@ class ReleaseApprovalTests(unittest.TestCase):
             lambda d: d["release.yml"]["jobs"].update(leak={"env": {"KEY": "${{ secrets['KEY'] }}"}}),
             lambda d: d["release.yml"]["jobs"].update(leak={"env": {"KEY": "${{ toJSON(secrets) }}"}}),
             lambda d: d.update({"rogue.yml": {"jobs": {"publish": {"environment": "release-channels"}}}}),
+            lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["submit"].update(needs=[]),
+            lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["submit"].update({"if": "${{ always() }}"}),
             lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["submit"].update(environment="release-channels"),
         ]
         for index, mutate in enumerate(mutations):

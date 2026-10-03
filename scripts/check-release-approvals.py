@@ -155,8 +155,11 @@ def check(workflows: dict[str, dict]) -> dict:
     for filename in STANDALONE_ONLY:
         guard_check(workflows[filename]["jobs"], filename)
         for job_id, job in workflows[filename]["jobs"].items():
-            require(not secret_bearing(job) or environment(job) == "release",
-                    f"{filename}/{job_id}: standalone secrets require release review")
+            if secret_bearing(job):
+                require(environment(job) == "release",
+                        f"{filename}/{job_id}: standalone secrets require release review")
+                require(needs(job) == ["guard"] and not job.get("if"),
+                        f"{filename}/{job_id}: standalone secrets require successful guard")
     channel_names: set[str] = set()
     for filename in CHANNELS.values():
         channel_names.update(secret_names(workflows[filename]))
@@ -169,15 +172,21 @@ def check(workflows: dict[str, dict]) -> dict:
             for job in document.get("jobs", {}).values():
                 require("release-channels" not in (environment(job) or ""),
                         f"{filename}: unclassified workflow may not select release-channels")
+    reviewed_jobs = [job_id for job_id, job in ship.items() if environment(job) == "release"]
+    standalone = {
+        filename: next("release" if environment(job) == CHANNEL_ENVIRONMENT else environment(job)
+                       for job in workflows[filename]["jobs"].values() if secret_bearing(job))
+        for filename in (*CHANNELS.values(), *STANDALONE_ONLY)
+    }
     return {
         "proof": "structural dry-run; live environment configuration is owner-confirmed",
         "secret_names_by_environment": {"release": sorted(reviewed_names),
                                         "release-channels": sorted(channel_names)},
         "activation": "Repository variable RELEASE_CHANNELS_CONFIGURED=true after owner setup",
         "fallback": "Unset/false activation keeps every channel on reviewed release",
-        "ship": {"reviewed_jobs": ["validate"], "approval_count": 1,
+        "ship": {"reviewed_jobs": reviewed_jobs, "approval_count": len(reviewed_jobs),
                  "channel_environment": "release-channels", "channels": list(CHANNELS)},
-        "standalone": {name: "release" for name in (*CHANNELS.values(), *STANDALONE_ONLY)},
+        "standalone": standalone,
     }
 
 
