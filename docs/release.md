@@ -28,21 +28,72 @@ App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
 is explicit.
 
-All secret-bearing release jobs use the protected GitHub environment named
-`release`. That environment accepts only protected branches, and `main` is the
-only protected branch. Dispatch `Ship` and every lower-level release workflow
-from `main`; task branches, arbitrary refs, and tags are rejected before signing
-or App Store Connect credentials are available. A separate secretless guard job
-also validates the protected ref, checked-out commit, main ancestry, version,
-and build number before each secret-bearing job starts. Repository-level release
-secrets remain usable by environment-gated jobs; move them to environment
-secrets only through an explicit credential-rotation operation.
+A normal `Ship` run requires **one approval**: `Validate Release Intent` uses
+GitHub's `release` environment with Chris as required reviewer. Its channel
+calls depend on successful intent validation. GitHub packaging, Mac and
+companion uploads, and TestFlight distribution then use `release-channels`,
+which has no required reviewer and permits only the protected `main` branch.
+Re-running a failed channel in that same approved Ship run does not request
+another approval; a new Ship dispatch requires its own intent approval.
+Cancelling a run prevents its TestFlight join from starting or continuing.
 
-GitHub approves environment deployments per job. A multi-channel `Ship` run can
-therefore pause separately for release intent validation, GitHub packaging,
-App Store uploads, and TestFlight distribution. Approve only the channel jobs
-expected for that run; a later pause is another explicit credential boundary,
-not a hung workflow.
+Channel workflows choose the environment from `github.workflow_ref`, GitHub's
+caller workflow identity, not a user-supplied input,
+and the repository variable
+`RELEASE_CHANNELS_CONFIGURED=true` set by Chris after environment setup. Only
+this repository's
+`ship.yml` on `refs/heads/main` with completed setup selects
+`release-channels`.
+Until that variable is `true`, all channels retain reviewed `release`; this
+avoids auto-creating an unconfigured environment during the transition. A direct
+dispatch of
+Release, either upload workflow, or TestFlight uses `release` and still needs
+review. App Store Review submission and screenshot upload always use `release`
+and remain separate approvals, even if called by another workflow.
+
+Dispatch every release workflow from `main`; task branches, arbitrary refs, and
+tags are rejected by a separate secretless guard before signing or App Store
+Connect credentials are available. That guard validates the protected ref,
+checked-out commit, main ancestry, version, and build number. The one-approval
+contract assumes the operator environment setup below; GitHub environment rules
+are external configuration, not created by a workflow. Protected-main workflow
+changes remain trusted: GitHub environment branch rules do not restrict secrets
+to a particular workflow file. When adding a release channel, classify its
+workflow and approval dependencies in the checker with the same model review
+required for approval changes; the checker rejects unclassified direct access
+to `release-channels`.
+
+`scripts/check-release-approvals.py` checks the parsed workflow graph in the
+CI and prints the all-channel approval plan without running a release.
+It also prints the referenced secret names per environment without values.
+It rejects channel calls without successful intent dependencies, additional
+reviewed Ship jobs, and unreviewed standalone paths. This is a structural dry
+run, not evidence of a live GitHub approval prompt.
+
+## One-time channel environment setup (owner only)
+
+Wait until the active 1.0.69 Ship run and any standalone release jobs finish.
+In repository **Settings → Environments → New environment**, create
+`release-channels`. Leave required reviewers and wait timer off. Under
+**Deployment branches and tags**, choose **Selected branches and tags**, click
+**Add deployment branch or tag rule**, choose **Branch**, enter `main`, and save.
+Keep `main` protected and leave the existing `release` reviewer unchanged.
+
+Under **Environment secrets → Add environment secret**, add the channel secret
+names referenced by the four channel workflows, using their original private
+credential sources. GitHub cannot reveal an existing secret value; agents must
+never read or copy one. Populate matching secrets in `release` too when they
+currently exist only at
+repository level; retain existing environment entries for standalone
+recovery workflows and Ship's App Store version preflight. Remove any
+repository-level duplicates only after both environments are populated, so
+other workflows cannot inherit signing/upload secrets without an environment.
+Do not rotate or invent credentials as part of this setup. The owner confirms
+names, branch restrictions, and reviewers only; secret values stay private.
+Finally open **Settings → Secrets and variables → Actions → Variables → New
+repository variable**, name it `RELEASE_CHANNELS_CONFIGURED`, value `true`, and
+click **Add variable**. Set it only after setup is complete. Delete this variable
+to restore per-channel review without changing or removing credentials.
 
 The lower-level workflows remain callable for recovery and validation:
 
