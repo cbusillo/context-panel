@@ -1,4 +1,5 @@
 import base64
+import errno
 import hashlib
 import importlib.util
 import json
@@ -610,6 +611,10 @@ sleep 30
             bin_path = temp_path / "bin"
             bin_path.mkdir()
             counter_path = temp_path / "xcodebuild-count"
+            events_path = temp_path / "xcodebuild-events"
+            blocked_path = temp_path / "blocked-build"
+            os.mkfifo(events_path)
+            os.mkfifo(blocked_path)
             fake_xcodebuild = bin_path / "xcodebuild"
             fake_xcodebuild.write_text(fake_xcodebuild_body)
             fake_xcodebuild.chmod(0o755)
@@ -623,6 +628,40 @@ sleep 30
             fixture_script = fixture_script.replace(
                 "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
             )
+            # Patch only the isolated script copy. The production watchdog and
+            # retry policy still execute, but host scheduling cannot consume its
+            # stall budget before the fake build has even started.
+            fixture_script = re.sub(r"\bSECONDS\b", "fixture_seconds", fixture_script)
+            fixture_script = fixture_script.replace("/bin/sleep", "fixture_sleep")
+            fixture_script = textwrap.dedent("""\
+                fixture_seconds=0
+                fixture_job_pid=""
+                fixture_event=""
+                exec 9<>"${FAKE_XCODEBUILD_EVENTS:?}"
+                fixture_sleep() {
+                    if [[ -z "${active_xcodebuild_pid:-}" ]]; then
+                        return 0
+                    fi
+                    if [[ "$fixture_job_pid" != "$active_xcodebuild_pid" ]]; then
+                        fixture_job_pid="$active_xcodebuild_pid"
+                        read -r fixture_event <&9
+                    fi
+                    case "$fixture_event" in
+                    stall)
+                        fixture_seconds=$((fixture_seconds + $1))
+                        ;;
+                    exit)
+                        # Wait for the pipeline (including tee) to finish, so
+                        # the next poll observes all terminal output.
+                        wait "$active_xcodebuild_pid" 2>/dev/null || true
+                        ;;
+                    *)
+                        echo "unexpected fixture event: $fixture_event" >&2
+                        exit 2
+                        ;;
+                    esac
+                }
+                """) + fixture_script
             fixture_path = scripts_path / "validate-companion-builds.sh"
             fixture_path.write_text(fixture_script)
             fixture_path.chmod(0o755)
@@ -635,12 +674,16 @@ sleep 30
 
             environment = os.environ.copy()
             environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)
+            environment["FAKE_XCODEBUILD_EVENTS"] = str(events_path)
+            environment["FAKE_XCODEBUILD_BLOCKED"] = str(blocked_path)
             environment["CONTEXT_PANEL_XCODEBUILD_STALL_SECONDS"] = str(stall_seconds)
             environment["PATH"] = f"{bin_path}:{environment.get('PATH', '')}"
             environment["RUNNER_TEMP"] = str(temp_path)
             environment["TMPDIR"] = str(temp_path)
 
-            sentinel = subprocess.Popen(["/bin/sleep", "30"])
+            sentinel = subprocess.Popen(
+                ["/bin/bash", "-c", "read -r sentinel_input"], stdin=subprocess.PIPE
+            )
             try:
                 completed = subprocess.run(
                     ["/bin/bash", str(fixture_path), "--configuration", "Debug", "ios"],
@@ -658,6 +701,21 @@ sleep 30
                 if sentinel.poll() is None:
                     sentinel.terminate()
                     sentinel.wait(timeout=5)
+                if sentinel.stdin is not None:
+                    sentinel.stdin.close()
+                # A broken descendant cleanup must not leave a reader blocked
+                # forever after its fixture directory disappears.
+                try:
+                    blocked_writer = os.open(blocked_path, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError as error:
+                    if error.errno != errno.ENXIO:
+                        raise
+                else:
+                    try:
+                        os.write(blocked_writer, b"release fixture child\n")
+                    finally:
+                        os.close(blocked_writer)
+                    self.fail("watchdog left a blocked xcodebuild descendant alive")
 
             return completed, invocation_count, sentinel_alive
 
@@ -3491,9 +3549,11 @@ printf '%s' "$count" > "$counter"
 if ((count == 1)); then
     echo "fake xcodebuild started"
     set -m
-    /bin/sleep 30 &
+    /bin/bash -c 'read -r blocked < "${FAKE_XCODEBUILD_BLOCKED:?}"' &
+    printf 'stall\n' > "${FAKE_XCODEBUILD_EVENTS:?}"
     wait
 fi
+printf 'exit\n' > "${FAKE_XCODEBUILD_EVENTS:?}"
 echo "** BUILD SUCCEEDED **"
 """,
             stall_seconds=1,
@@ -3516,16 +3576,55 @@ if [[ -f "$counter" ]]; then
 fi
 count=$((count + 1))
 printf '%s' "$count" > "$counter"
+printf 'exit\n' > "${FAKE_XCODEBUILD_EVENTS:?}"
 echo "** BUILD FAILED **"
 exit 65
 """,
-            stall_seconds=60,
+            stall_seconds=1,
         )
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(invocation_count, 1)
         self.assertTrue(sentinel_alive)
         self.assertNotIn("Retrying ios validation once with isolated DerivedData", completed.stdout)
+
+    def test_companion_build_validation_stops_after_one_failed_retry(self):
+        for retry_result in ("stall", "compiler-error"):
+            with self.subTest(retry_result=retry_result):
+                completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
+                    f"""#!/usr/bin/env bash
+set -euo pipefail
+counter="${{FAKE_XCODEBUILD_COUNTER:?}}"
+count=0
+if [[ -f "$counter" ]]; then
+    count="$(cat "$counter")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$counter"
+if ((count == 2)) && [[ "{retry_result}" == "compiler-error" ]]; then
+    printf 'exit\\n' > "${{FAKE_XCODEBUILD_EVENTS:?}}"
+    echo "** BUILD FAILED **"
+    exit 65
+fi
+echo "fake xcodebuild started"
+set -m
+/bin/bash -c 'read -r blocked < "${{FAKE_XCODEBUILD_BLOCKED:?}}"' &
+printf 'stall\\n' > "${{FAKE_XCODEBUILD_EVENTS:?}}"
+wait
+""",
+                    stall_seconds=1,
+                )
+
+                if retry_result == "stall":
+                    self.assertEqual(completed.returncode, 124, completed.stdout)
+                else:
+                    self.assertNotIn(completed.returncode, (0, 124), completed.stdout)
+                self.assertEqual(invocation_count, 2)
+                self.assertTrue(sentinel_alive)
+                self.assertEqual(
+                    completed.stdout.count("Retrying ios validation once with isolated DerivedData"),
+                    1,
+                )
 
     def test_device_profile_cleanup_matches_renamed_development_profiles_by_bundle(self):
         query = self.read("scripts/cleanup-context-panel-device-profiles.sh").split("jq -r --arg team_id \"$team_id\" '", 1)[1].split("' \"$profiles_json\"", 1)[0]
