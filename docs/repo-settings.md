@@ -30,7 +30,9 @@ Expected GitHub settings:
 - Force pushes and branch deletion: blocked for `main`.
 - Review environment: `release-approval`, with `cbusillo` as required reviewer,
   self-review allowed, administrator bypass disabled, no wait timer and no
-  secrets. Selected deployment **Branch** rule: `main` only.
+  secrets. Selected deployment **Branch** rule: `main` only. Every release trust
+  guard verifies the required reviewer and disabled bypass through read-only
+  environment metadata before the reviewed job can start.
 - Secret environment: existing `release`, with no reviewer or wait timer and a
   selected deployment **Branch** rule for protected `main` only. Every GitHub
   release secret lives only here. Ship preflight and all six standalone/channel

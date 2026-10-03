@@ -50,7 +50,7 @@
     },
     "validate": {
       "default": "scripts/commit-gate.sh",
-      "releaseApprovalPolicy": "uv run scripts/check-release-approvals.py (structural dry-run: one secretless Ship approval; standalone gates; one release secret store; owner role move and RELEASE_APPROVALS_CONFIGURED=true required)",
+      "releaseApprovalPolicy": "uv run scripts/check-release-approvals.py (structural dry-run: one secretless Ship approval; standalone gates; one release secret store; live review-metadata check; owner role move and RELEASE_APPROVALS_CONFIGURED=true required)",
       "ciChangeScope": "python3 scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
       "companionUploadFixtureTools": "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR=<dir> scripts/upload-app-store-connect-companion-app.sh --export-only <other arguments> (test-only seam for fixture xcodebuild and codesign; refused for uploads)",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",

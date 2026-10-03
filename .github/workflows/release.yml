@@ -66,6 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -86,6 +87,11 @@ jobs:
         env:
           RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
         run: scripts/release-approval-config.sh
+
+      - name: Verify Required Review Environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-release-approval-environment.py
 
   approve:
     name: Approve Release Intent

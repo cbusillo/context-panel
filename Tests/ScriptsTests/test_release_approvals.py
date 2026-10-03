@@ -4,6 +4,8 @@ from pathlib import Path
 import unittest
 import os
 import subprocess
+from unittest.mock import patch
+from types import SimpleNamespace
 from typing import Any
 
 spec = importlib.util.spec_from_file_location(
@@ -16,11 +18,13 @@ spec.loader.exec_module(policy)
 
 
 def guard() -> dict[str, Any]:
-    return {"steps": [
+    return {"permissions": {"actions": "read"}, "steps": [
         {"uses": "actions/checkout@v7", "with": {"fetch-depth": 0}},
         {"run": 'scripts/release-workflow-guard.sh --version "${INPUT_VERSION}" --build-number "${INPUT_BUILD_NUMBER}"'},
         {"run": "scripts/release-approval-config.sh",
          "env": {"RELEASE_APPROVALS_CONFIGURED": "${{ vars.RELEASE_APPROVALS_CONFIGURED }}"}},
+        {"run": "python3 scripts/check-release-approval-environment.py",
+         "env": {"GH_TOKEN": "${{ github.token }}"}},
     ]}
 
 
@@ -56,6 +60,12 @@ class ReleaseApprovalTests(unittest.TestCase):
 
     def test_approval_bypasses_and_extra_prompts_fail(self) -> None:
         mutations = [
+            lambda d: d["ship.yml"]["jobs"]["approve"].update(**{"if": "${{ false }}"}),
+            lambda d: d["release.yml"]["jobs"]["guard"]["steps"][3].update(**{"if": "${{ false }}"}),
+            lambda d: d["release.yml"]["jobs"]["guard"]["steps"][3]["env"].update(GH_TOKEN="${{ secrets.OPERATOR_TOKEN }}"),
+            lambda d: d.update({"rogue.yml": {"jobs": {"gate": {"environment": "release-approval"}}}}),
+            lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"].update(extra={}),
+            lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["submit"].update(needs="guard"),
             lambda d: d["release.yml"]["jobs"]["approve"].update(**{"continue-on-error": True}),
             lambda d: d["release.yml"]["jobs"]["approve"].update(needs=[]),
             lambda d: d["release.yml"]["jobs"].pop("approve"),
@@ -121,3 +131,33 @@ class ReleaseApprovalTests(unittest.TestCase):
                     env["RELEASE_APPROVALS_CONFIGURED"] = value
                 result = subprocess.run([str(script)], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, succeeds)
+
+    def test_live_review_metadata_refuses_missing_or_bypassed_review(self) -> None:
+        metadata_spec = importlib.util.spec_from_file_location(
+            "approval_environment", Path(__file__).resolve().parents[2]
+            / "scripts/check-release-approval-environment.py"
+        )
+        if metadata_spec is None or metadata_spec.loader is None:
+            raise RuntimeError("environment module could not be loaded")
+        metadata = importlib.util.module_from_spec(metadata_spec)
+        metadata_spec.loader.exec_module(metadata)
+        good = {"name": "release-approval", "can_admins_bypass": False,
+                "protection_rules": [{"type": "required_reviewers", "prevent_self_review": False,
+                                      "reviewers": [{"type": "User", "reviewer": {"login": "owner"}}]}]}
+        metadata.check(good, "owner")
+        mutations = [
+            lambda d: d.update(protection_rules=[]),
+            lambda d: d.update(can_admins_bypass=True),
+            lambda d: d.pop("can_admins_bypass"),
+            lambda d: d["protection_rules"][0].update(reviewers=[]),
+            lambda d: d["protection_rules"][0]["reviewers"][0]["reviewer"].update(login="someone_else"),
+            lambda d: d["protection_rules"][0].update(prevent_self_review=True),
+        ]
+        for mutate in mutations:
+            document = copy.deepcopy(good)
+            mutate(document)
+            with self.assertRaises(ValueError):
+                metadata.check(document, "owner")
+        with patch.object(metadata.subprocess, "run", return_value=SimpleNamespace(returncode=1)):
+            with self.assertRaises(ValueError):
+                metadata.fetch_environment("owner/repo", "release-approval")

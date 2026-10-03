@@ -110,6 +110,13 @@ def check(workflows: dict[str, dict]) -> dict:
                 and setup_steps[0].get("env", {}).get("RELEASE_APPROVALS_CONFIGURED")
                 == "${{ vars.RELEASE_APPROVALS_CONFIGURED }}",
                 f"{workflow_name}: owner-confirmed setup is required before environment jobs")
+        metadata_steps = [step for step in steps if step.get("run")
+                          == "python3 scripts/check-release-approval-environment.py"]
+        require(len(metadata_steps) == 1 and not metadata_steps[0].get("if")
+                and not metadata_steps[0].get("continue-on-error")
+                and metadata_steps[0].get("env", {}).get("GH_TOKEN") == "${{ github.token }}"
+                and guard.get("permissions", {}).get("actions") == "read",
+                f"{workflow_name}: live required-review metadata must be checked")
 
     def approval_check(jobs: dict, workflow_name: str, reusable: bool = False) -> None:
         approval = jobs.get("approve", {})

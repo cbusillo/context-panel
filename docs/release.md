@@ -51,7 +51,12 @@ Dispatch release workflows from `main`. Before any environment job, the
 secretless trust guard verifies the protected ref, checked-out commit, main
 ancestry, version, and build number. A second secretless check refuses new runs
 unless the repository variable `RELEASE_APPROVALS_CONFIGURED` is exactly `true`.
-Set it only after the owner finishes the role move below. Removing it pauses new
+Before any environment job, a read-only metadata check also requires
+`release-approval` to exist, name the repository owner as sole required reviewer,
+allow solo self-review and disable administrator bypass. Missing rules, a missing
+environment or an unavailable API fail closed. CI probes this metadata read using
+the built-in workflow token; no operator credential or secret endpoint is used.
+Set activation only after the owner finishes the role move below. Removing it pauses new
 release runs; it does not re-add an environment reviewer. Each pending channel
 guard reads the variable again, so removing it can also block a channel in an
 approved run. Jobs whose guards already passed are unaffected. The previous
