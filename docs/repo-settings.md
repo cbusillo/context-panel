@@ -39,6 +39,8 @@ Expected GitHub settings:
   is exactly `true` only after the owner confirms the role move and secret-name
   inventory. Unset/false pauses new release workflows before environment jobs.
   Removing it does not restore reviewer settings or stop an already running job.
+  The owner may explicitly enable an interim route with both environments
+  reviewed while historical runs age out; that route still has extra prompts.
   Previous `RELEASE_CHANNELS_CONFIGURED` is obsolete and should be removed.
 - `release-channels` is unused; confirmed duplicate secrets there and at
   repository level are removed by the owner after older runs finish. Leave
@@ -47,7 +49,6 @@ Expected GitHub settings:
   least 32 bytes of high-entropy key material shared with the operator Keychain
   entry that seals Production CloudKit schema receipts. Its sole GitHub copy
   belongs in `release`; never store its value in repository files.
-
 - Immutable Releases: enabled so newly published GitHub Releases lock their tag,
   title, notes, and assets after publication.
 

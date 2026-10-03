@@ -56,6 +56,8 @@ class ReleaseApprovalTests(unittest.TestCase):
 
     def test_approval_bypasses_and_extra_prompts_fail(self) -> None:
         mutations = [
+            lambda d: d["release.yml"].update(env={"KEY": "${{ secrets.KEY }}"}),
+            lambda d: d["release.yml"].update(defaults={"run": {"working-directory": "${{ secrets.KEY }}"}}),
             lambda d: d["ship.yml"]["jobs"]["github-release"].update(needs="guard"),
             lambda d: d["ship.yml"]["jobs"]["validate"].update(**{"continue-on-error": True}),
             lambda d: d["ship.yml"]["jobs"]["validate"].update(**{"if": "${{ false }}"}),

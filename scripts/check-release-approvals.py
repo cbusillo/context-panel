@@ -120,6 +120,10 @@ def check(workflows: dict[str, dict]) -> dict:
         require(approval.get("if", "") == (STANDALONE_APPROVAL if reusable else ""),
                 f"{workflow_name}: only the exact Ship caller may skip standalone review")
 
+    for filename in ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY):
+        document = workflows[filename]
+        require(not secret_bearing({"env": document.get("env"), "defaults": document.get("defaults")}),
+                f"{filename}: workflow-level secrets would reach the secretless gates")
     ship = workflows["ship.yml"]["jobs"]
     guard_check(ship, "ship.yml")
     approval_check(ship, "ship.yml")
@@ -205,9 +209,14 @@ def check(workflows: dict[str, dict]) -> dict:
         "fallback": "Unset/false activation refuses new release workflows before any environment job",
         "ship": {"reviewed_jobs": reviewed_jobs, "approval_count": len(reviewed_jobs),
                  "secret_environment": "release", "channels": list(CHANNELS)},
-        "standalone": {filename: {"reviewed_jobs": ["approve"], "approval_count": 1,
-                                  "secret_environment": "release"}
-                       for filename in (*CHANNELS.values(), *STANDALONE_ONLY)},
+        "standalone": {
+            filename: {"reviewed_jobs": [job_id for job_id, job in workflows[filename]["jobs"].items()
+                                        if environment(job) == "release-approval"],
+                       "approval_count": sum(environment(job) == "release-approval"
+                                             for job in workflows[filename]["jobs"].values()),
+                       "secret_environment": "release"}
+            for filename in (*CHANNELS.values(), *STANDALONE_ONLY)
+        },
     }
 
 

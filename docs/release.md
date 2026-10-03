@@ -79,6 +79,19 @@ and this redesign has merged. Do not follow the earlier duplicate-secret setup.
 The preferred hand step leaves the existing `release` secret entries in place:
 no secret value is read, copied, rotated, or re-entered.
 
+Historical runs use their original workflow commit when re-run. For up to
+[30 days after the initial run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
+a pre-redesign run can still reference `release` without the new secretless gate.
+Before removing its reviewer, Chris decides the historical-run treatment in
+[direction#24](https://github.com/cbusillo/direction/issues/24) and records it on
+#747. Waiting for that window to end preserves logs; deleting runs would require
+Chris's explicit choice and evidence preservation. The agent performs neither.
+Do not remove the reviewer or activate the final one-approval configuration
+before that decision. If Chris chooses a waiting period, he can first configure
+the new gate and confirm the secret inventory, leave `release` reviewed, and set
+the new variable to continue releasing with extra approvals during the transition.
+The one-approval contract applies after the role move is complete.
+
 1. In **Settings → Environments → release**, inspect secret **names only**.
    Confirm the enabled channels' names from the checker are already here. If a
    needed name exists only in repository secrets or another environment, stop
