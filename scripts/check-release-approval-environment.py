@@ -13,7 +13,7 @@ def fetch_environment(repository: str, name: str) -> dict:
     # gh uses the built-in workflow token supplied as GH_TOKEN by Actions.
     result = subprocess.run(
         ["gh", "api", "--method", "GET", f"repos/{repository}/environments/{quote(name, safe='')}"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True,
     )
     if result.returncode:
         raise ValueError("environment metadata is unavailable; refusing release")

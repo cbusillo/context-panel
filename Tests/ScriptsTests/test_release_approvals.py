@@ -158,6 +158,6 @@ class ReleaseApprovalTests(unittest.TestCase):
             mutate(document)
             with self.assertRaises(ValueError):
                 metadata.check(document, "owner")
-        with patch.object(metadata.subprocess, "run", return_value=SimpleNamespace(returncode=1)):
+        with patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=1)):
             with self.assertRaises(ValueError):
                 metadata.fetch_environment("owner/repo", "release-approval")
