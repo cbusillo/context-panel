@@ -593,13 +593,34 @@ with explicit guidance to select a home for automatic banked-reset data.
 
 ### Agent-readable account snapshot
 
-`swift run ContextPanelAccountSnapshot` emits a versioned JSON projection of
-the canonical App Group `Context Panel` store. `--storage-root <directory>`
+The installed Mac app provides a headless snapshot reader at its stable executable
+path. It updates with the app; no separately compiled reader is required:
+
+```sh
+"/Applications/Context Panel.app/Contents/MacOS/Context Panel" --account-snapshot
+```
+
+For a launcher that accepts a command array, configure the executable path as the
+first element and `--account-snapshot` as the second. Invoke the executable
+directly so stdout and the exit status reach the caller; `open -a` does not relay
+them. Existing launchers using a separately built reader continue to work until
+their private command configuration is changed after installing an app with this
+mode. The command exits before SwiftUI, the app delegate, provider services, or
+refresh-agent registration are initialized, including when the app is already
+open. It uses the app's existing signing, sandbox and App Group access; no new
+entitlements or provisioning profiles are required.
+
+`swift run ContextPanelAccountSnapshot` remains available for source development
+and uses the same command implementation. Both emit a versioned JSON projection
+of the canonical App Group `Context Panel` store. `--storage-root <directory>`
 selects an explicit store containing `accounts.json` and
 `Snapshots/current-snapshot.json`; it is useful for fixtures or another private
 operator-selected root. The command reads saved normalized history for burn
-estimates. It requires ordinary filesystem read access; it adds no app
-entitlement and cannot bypass macOS access restrictions.
+estimates. The directory must be readable in the caller's execution context;
+the installed app remains sandboxed and cannot bypass macOS access restrictions.
+Use `--account-snapshot --help` on the app for reader usage. Invalid arguments
+exit with status 64, and unavailable or unsupported storage exits with status 1;
+only a successful read writes snapshot JSON to stdout.
 The publisher must have saved `accounts.json` (for example after an account
 setting is edited). An unsaved default configuration deliberately fails closed;
 the reader does not invent default accounts or persist them.

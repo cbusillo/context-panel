@@ -18,6 +18,24 @@ private func reloadContextPanelWidgetTimeline() {
 }
 
 @main
+enum ContextPanelEntryPoint {
+    @MainActor
+    static func main() {
+        if let result = accountSnapshotResult(arguments: Array(CommandLine.arguments.dropFirst())) {
+            FileHandle.standardOutput.write(result.standardOutput)
+            FileHandle.standardError.write(result.standardError)
+            exit(result.exitCode)
+        }
+        ContextPanelApp.main()
+    }
+
+    /// Dispatch before SwiftUI constructs the delegate, model, or any services.
+    static func accountSnapshotResult(arguments: [String], now: Date = Date()) -> AgentAccountSnapshotCommand.Result? {
+        guard arguments.first == "--account-snapshot" else { return nil }
+        return AgentAccountSnapshotCommand.run(arguments: Array(arguments.dropFirst()), now: now)
+    }
+}
+
 struct ContextPanelApp: App {
     @NSApplicationDelegateAdaptor(ContextPanelAppDelegate.self) private var appDelegate
 

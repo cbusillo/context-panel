@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ContextPanelCore
+@testable import ContextPanelApp
 
 private let agentNow = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -15,6 +16,64 @@ private func agentLimit(_ id: String, used: Int, at: Date, provider: Provider = 
     UsageLimit(provider: provider, accountID: id, configuredAccountID: id,
         accountName: "Ignored", label: "Weekly", windowLabel: "Weekly", unit: .percent,
         used: used, limit: 100, resetsAt: agentNow.addingTimeInterval(86_400), lastUpdatedAt: at)
+}
+
+@Test func agentSnapshotAppCommandEmitsTheSharedProjectionWithoutWriting() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [
+        agentConfiguration("a"), agentConfiguration("b", provider: .anthropic)
+    ])
+    try AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")).save(config)
+    let stored = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow,
+        limits: [agentLimit("a", used: 20, at: agentNow)]))
+    try JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots")).save(stored)
+    let files = [root.appending(path: "accounts.json"), root.appending(path: "Snapshots/current-snapshot.json")]
+    let original = try files.map { try Data(contentsOf: $0) }
+    let arguments = ["--storage-root", root.path]
+    let result = try #require(ContextPanelEntryPoint.accountSnapshotResult(
+        arguments: ["--account-snapshot"] + arguments, now: agentNow))
+    let developer = AgentAccountSnapshotCommand.run(arguments: arguments, now: agentNow)
+    #expect(result.exitCode == 0)
+    #expect(result.standardError.isEmpty)
+    #expect(result.standardOutput == developer.standardOutput)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    encoder.dateEncodingStrategy = .iso8601
+    var expected = try encoder.encode(AgentAccountSnapshot.read(rootDirectory: root, now: agentNow))
+    expected.append(0x0A)
+    #expect(result.standardOutput == expected)
+    #expect(try files.map { try Data(contentsOf: $0) } == original)
+    #expect(!FileManager.default.fileExists(atPath: root.appending(path: "file-bookmarks.json").path))
+
+    try Data("private-secret malformed payload".utf8).write(to: files[1])
+    let failed = try #require(ContextPanelEntryPoint.accountSnapshotResult(
+        arguments: ["--account-snapshot"] + arguments, now: agentNow))
+    #expect(failed.exitCode == 1)
+    #expect(failed.standardOutput.isEmpty)
+    #expect(!failed.standardError.isEmpty)
+    #expect(!String(decoding: failed.standardError, as: UTF8.self).contains(root.path))
+    #expect(!String(decoding: failed.standardError, as: UTF8.self).contains("private-secret"))
+}
+
+@Test func agentSnapshotAppCommandHelpAndArgumentErrorsDoNotReadStorage() throws {
+    #expect(ContextPanelEntryPoint.accountSnapshotResult(arguments: []) == nil)
+    #expect(ContextPanelEntryPoint.accountSnapshotResult(arguments: ["--unregister-refresh-agent"]) == nil)
+    #expect(ContextPanelEntryPoint.accountSnapshotResult(arguments: ["--refresh-local-connectors"]) == nil)
+    let help = try #require(ContextPanelEntryPoint.accountSnapshotResult(arguments: ["--account-snapshot", "--help"]))
+    #expect(help.exitCode == 0)
+    #expect(!help.standardOutput.isEmpty)
+    #expect(help.standardError.isEmpty)
+    let usage = String(decoding: help.standardOutput, as: UTF8.self)
+    #expect(usage.contains("--account-snapshot"))
+    for arguments in [["--storage-root"], ["--unknown", "private-secret"], ["--help", "--refresh-local-connectors"]] {
+        let result = try #require(ContextPanelEntryPoint.accountSnapshotResult(arguments: ["--account-snapshot"] + arguments))
+        #expect(result.exitCode == 64)
+        #expect(result.standardOutput.isEmpty)
+        #expect(!result.standardError.isEmpty)
+        #expect(!String(decoding: result.standardError, as: UTF8.self).contains("private-secret"))
+    }
 }
 
 @Test func agentSnapshotIncludesAllAccountsAndUsesIndependentBurnAndResetData() throws {
