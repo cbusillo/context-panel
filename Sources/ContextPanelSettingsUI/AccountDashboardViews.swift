@@ -70,12 +70,16 @@ public struct AccountDashboardPanel: View {
     /// The next banked reset to lapse, its countdown and how many are dated: opens Deadlines.
     @ViewBuilder private var bankedLink: some View {
         if let first = overview.deadlines.first {
+            let expiryText: String = AccountTerms.bankedResetExpires + " " + AccountPaceText.when(first.expiresAt, now: now)
+            let countText: String = AccountTerms.dated(overview.deadlines.count)
+            let timingText: String = AccountPaceText.countdown(to: first.expiresAt, now: now) + " · " + countText
+            let spokenText: String = [expiryText, AccountTerms.deadlineLabel(first), countText].joined(separator: ", ")
             Button(action: openDeadlines) {
                 HStack(spacing: 6) {
                     DashboardDiamond(palette: palette, size: 8)
-                    Text(AccountTerms.bankedResetExpires + " " + AccountPaceText.when(first.expiresAt, now: now))
+                    Text(expiryText)
                         .fontWeight(.medium)
-                    Text(AccountPaceText.countdown(to: first.expiresAt, now: now) + " · " + AccountTerms.dated(overview.deadlines.count))
+                    Text(timingText)
                         .foregroundStyle(palette.secondary)
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.tertiary)
                 }
@@ -83,8 +87,7 @@ public struct AccountDashboardPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(AccountTerms.bankedResetExpires + " " + AccountPaceText.when(first.expiresAt, now: now) + ", "
-                + AccountTerms.deadlineLabel(first) + ", " + AccountTerms.dated(overview.deadlines.count))
+            .accessibilityLabel(spokenText)
         }
     }
 
