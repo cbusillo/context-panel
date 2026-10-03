@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -63,9 +64,33 @@ jobs:
         run: |
           scripts/release-workflow-guard.sh --version "${INPUT_VERSION}"
 
+      - name: Require Completed Approval Setup
+        env:
+          RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
+        run: scripts/release-approval-config.sh
+
+      - name: Verify Required Review Environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-release-approval-environment.py
+
+  approve:
+    name: Approve Release Intent
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: release-approval
+    permissions:
+      contents: read
+    steps:
+      - name: Record Approved Intent
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+
   upload:
     name: Upload Screenshots
-    needs: guard
+    needs: [guard, approve]
     runs-on: ubuntu-latest
     environment: release
 

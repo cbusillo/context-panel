@@ -11,6 +11,7 @@ name: CI
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -52,6 +53,12 @@ jobs:
 
       - name: Set up uv for release approval policy lint
         uses: astral-sh/setup-uv@v7
+
+      - name: Verify environment metadata read capability
+        if: ${{ github.repository == 'cbusillo/context-panel' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-release-approval-environment.py --probe
 
       - name: Check release approval graph
         run: uv run scripts/check-release-approvals.py

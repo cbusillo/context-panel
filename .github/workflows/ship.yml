@@ -89,6 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -105,9 +106,33 @@ jobs:
             --version "${INPUT_VERSION}" \
             --build-number "${INPUT_BUILD_NUMBER}"
 
+      - name: Require Completed Approval Setup
+        env:
+          RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
+        run: scripts/release-approval-config.sh
+
+      - name: Verify Required Review Environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-release-approval-environment.py
+
+  approve:
+    name: Approve Release Intent
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: release-approval
+    permissions:
+      contents: read
+    steps:
+      - name: Record Approved Intent
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+
   validate:
     name: Validate Release Intent
-    needs: guard
+    needs: approve
     runs-on: ubuntu-latest
     environment: release
     outputs:
@@ -146,38 +171,42 @@ jobs:
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write
+      actions: read
     with:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}
       create_github_release: true
       notarize: ${{ inputs.notarize_github_release }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   app-store-upload:
     name: Mac App Store Connect Build Upload Channel
     needs: validate
     if: ${{ inputs.app_store_channel != 'skip' }}
     uses: ./.github/workflows/app-store-connect-upload.yml
+    permissions:
+      contents: read
+      actions: read
     with:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}
       upload: ${{ inputs.app_store_channel == 'upload' }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   companion-app-store-upload:
     name: Companion App Store Connect Build Upload Channel
     needs: validate
     if: ${{ inputs.companion_app_store_channel != 'skip' }}
     uses: ./.github/workflows/app-store-connect-companion-upload.yml
+    permissions:
+      contents: read
+      actions: read
     with:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}
       platform: ${{ inputs.companion_platform }}
       upload: ${{ inputs.companion_app_store_channel == 'upload' }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   testflight-beta:
     name: TestFlight Beta Distribution Channel
@@ -198,6 +227,9 @@ jobs:
         )
       }}
     uses: ./.github/workflows/testflight-beta-distribution.yml
+    permissions:
+      contents: read
+      actions: read
     with:
       version: ${{ inputs.version }}
       build_number: >-
@@ -208,7 +240,6 @@ jobs:
       include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
       dry_run: false
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
-    secrets: inherit
 
   summary:
     name: Release Summary
