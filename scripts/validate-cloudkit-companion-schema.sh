@@ -347,7 +347,7 @@ validate_ckdb_schema() {
 		fi
 	fi
 
-	if ! live_schema_has_field_type "$schema" "$identity_key_record_type" keyMaterial ENCRYPTED_BYTES; then
+	if ! live_schema_has_field_type "$schema" "$identity_key_record_type" keyMaterial 'ENCRYPTED[[:space:]]+BYTES'; then
 		echo "$label schema is missing encrypted ContextPanelAccountIdentityKey.keyMaterial" >&2
 		return 1
 	fi

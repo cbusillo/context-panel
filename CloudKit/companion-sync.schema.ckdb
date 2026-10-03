@@ -49,5 +49,5 @@ DEFINE SCHEMA
     );
 
     RECORD TYPE ContextPanelAccountIdentityKey (
-        keyMaterial ENCRYPTED_BYTES
+        keyMaterial ENCRYPTED BYTES
     );
