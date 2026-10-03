@@ -20,7 +20,7 @@ Snapshots carry only `cp-account-v1:<provider>:<key UUID>:<digest>` and qualific
 metadata. Different iCloud users have independently generated keys.
 
 `ContextPanelAccountIdentityKey.v1` is a fixed private record of type
-`ContextPanelAccountIdentityKey`. Its `keyMaterial` field is `ENCRYPTED_BYTES`,
+`ContextPanelAccountIdentityKey`. Its `keyMaterial` field is `ENCRYPTED_BYTES` in the JSON contract (`ENCRYPTED BYTES` in cktool schema syntax),
 without public grants or indexes. It is separate from companion usage records.
 Conditional first creation and conflict readback select one server key. An
 unavailable store never generates a local-only namespace. An established local
