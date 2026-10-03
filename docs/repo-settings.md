@@ -28,8 +28,17 @@ Expected GitHub settings:
   branches restricted to protected branches only. Because `main` is the only
   protected branch, secret-bearing release jobs cannot run from tags or task
   branches.
+- Ship channel environment: `release-channels`, with no required reviewer or
+  wait timer, and a selected deployment **Branch** rule for `main` only. Channel
+  signing/upload secrets belong here and in `release` for standalone recovery;
+  repository-level copies are removed by the owner after setup.
+- Activation variable: repository Actions variable `RELEASE_CHANNELS_CONFIGURED`
+  is `true` only after the owner confirms channel environment setup. Unset or
+  false retains reviewed `release` for each channel; deleting it rolls approval
+  routing back without deleting credentials.
 - Release environment secret:
-  `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`, containing at least 32 bytes of
+  `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY` in both environments, containing at
+  least 32 bytes of
   high-entropy key material shared with the operator Keychain entry used to seal
   Production CloudKit schema receipts. Do not store the value in repository
   files or repository-level secrets.

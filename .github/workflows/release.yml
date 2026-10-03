@@ -86,7 +86,9 @@ jobs:
     name: Build macOS App
     needs: guard
     runs-on: macos-26
-    environment: release
+    # Reusable workflows receive the caller identity; direct dispatch keeps review.
+    environment: >-
+      ${{ github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository) && vars.RELEASE_CHANNELS_CONFIGURED == 'true' && 'release-channels' || 'release' }}
     permissions:
       contents: write
 

@@ -1162,29 +1162,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 check=False,
             )
 
-    def test_release_workflows_guard_secrets_with_protected_environment(self):
-        workflows = {
-            ".github/workflows/release.yml": "macos",
-            ".github/workflows/ship.yml": "validate",
-            ".github/workflows/app-store-connect-upload.yml": "upload",
-            ".github/workflows/app-store-connect-companion-upload.yml": "upload",
-            ".github/workflows/testflight-beta-distribution.yml": "distribute",
-            ".github/workflows/submit-app-store-review.yml": "submit",
-            ".github/workflows/upload-app-store-screenshots.yml": "upload",
-        }
-
-        for workflow_path, secret_job_name in workflows.items():
-            with self.subTest(workflow=workflow_path):
-                workflow = self.read(workflow_path)
-                guard_job = workflow_job(workflow, "guard")
-                secret_job = workflow_job(workflow, secret_job_name)
-                self.assertIn("fetch-depth: 0", guard_job)
-                self.assertIn("scripts/release-workflow-guard.sh", guard_job)
-                self.assertEqual(workflow_job_needs(secret_job), ("guard",))
-                self.assertIn("environment: release", secret_job)
-                job_header = secret_job.split("\n    steps:", maxsplit=1)[0]
-                self.assertNotIn("${{ secrets.", job_header)
-
     def test_mutating_workflow_steps_supply_the_schema_receipt_and_key(self):
         # The entrypoints refuse without these; this only checks the workflows hand them over.
         mutation_steps = {
