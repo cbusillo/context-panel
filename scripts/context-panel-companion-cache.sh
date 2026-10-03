@@ -6,6 +6,7 @@ artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 companion_derived_data_root="${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}"
 command_name="${1:-}"
 requested_root=""
+retention_args=()
 
 usage() {
 	cat <<'USAGE'
@@ -15,11 +16,14 @@ Commands:
   preflight      Read-only scan. Exits nonzero when generated companion bundles remain.
   quarantine     Move generated bundle roots to a same-volume quarantine. Requires --root.
   validate-root  Validate one companion-build-validation root without scanning it.
+  prune          Preview expired unsigned quarantine entries. Requires --root.
 
 Options:
   --root PATH    Exact .build/companion-build-validation or
                  derived-data/companion-build-validation root.
   -h, --help     Show this help.
+  --older-than-days N  Retention window for prune (default: 7 days).
+  --apply        Delete eligible entries instead of previewing (prune only).
 USAGE
 }
 
@@ -39,6 +43,14 @@ while [[ $# -gt 0 ]]; do
 		usage
 		exit 0
 		;;
+	--older-than-days)
+		retention_args+=("$1" "${2:?--older-than-days requires a value}")
+		shift 2
+		;;
+	--apply)
+		retention_args+=("$1")
+		shift
+		;;
 	*)
 		echo "unknown option: $1" >&2
 		usage >&2
@@ -48,13 +60,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$command_name" in
-preflight | quarantine | validate-root) ;;
+preflight | quarantine | validate-root | prune) ;;
 *)
 	echo "unknown command: $command_name" >&2
 	usage >&2
 	exit 2
 	;;
 esac
+
+if [[ "$command_name" != "prune" && ${#retention_args[@]} -gt 0 ]]; then
+	echo "retention options require prune" >&2
+	exit 2
+fi
 
 if [[ "$command_name" != "preflight" && -z "$requested_root" ]]; then
 	echo "$command_name requires --root" >&2
@@ -411,6 +428,13 @@ print_inventory_summary() {
 		"$prefix" "$bundle_count" "$app_count" "$widget_count" "$refresh_count" "$watch_widget_count" "$top_shelf_count" "$symlink_count"
 	summary_bundle_count="$bundle_count"
 }
+
+if [[ "$command_name" == "prune" ]]; then
+	canonical_root="$(validated_root "$requested_root")"
+	exec python3 "$repo_root/scripts/context_panel_companion_retention.py" \
+		--validation-root "$canonical_root" \
+		${retention_args[@]+"${retention_args[@]}"}
+fi
 
 inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-companion-cache.XXXXXX")"
 move_inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-companion-moves.XXXXXX")"
