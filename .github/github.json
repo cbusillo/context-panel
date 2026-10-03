@@ -64,6 +64,8 @@
       "validationGalleryIsolation": "scripts/check-validation-gallery-isolation.sh --products-root <derived-data>/Build/Products (run by validate-companion-builds.sh after every build or archive)",
       "companionCachePreflight": "scripts/context-panel-companion-cache.sh preflight",
       "companionCacheQuarantine": "scripts/context-panel-companion-cache.sh quarantine --root <absolute-.build-or-derived-data/companion-build-validation-root>",
+      "companionCacheRetention": "scripts/context-panel-companion-cache.sh prune --root <absolute-.build-or-derived-data/companion-build-validation-root> [--older-than-days N] [--apply] (default: preview unsigned quarantine entries older than seven days; apply is explicit)",
+      "companionCacheRetentionTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_companion_quarantine_retention",
       "signedValidationCoordinator": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number>",
       "signedValidationSharedViewPlan": "scripts/context-panel-validation.py plan-shared-view-evidence --surface-comparison <comparison.json> [--base-requirements <placement-requirements.json>] --output <visual-review-requirements.json>",
       "signedValidationSharedViewCapture": "scripts/context-panel-validation.py capture-shared-view-evidence --surface-comparison <comparison.json> --current-manifest <current-surface-manifest.json> --requirements <visual-review-requirements.json> --capture-config <private-capture-config.json> --artifact-root <absolute-private-artifact-root> --output <absolute-shared-view-capture-receipt.json>",
