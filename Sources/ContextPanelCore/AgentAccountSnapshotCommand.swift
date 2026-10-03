@@ -11,7 +11,11 @@ public enum AgentAccountSnapshotCommand {
     public static func run(arguments: [String], now: Date = Date()) -> Result {
         if arguments == ["--help"] {
             return Result(exitCode: 0, standardOutput: Data(
-                "usage: ContextPanelAccountSnapshot [--storage-root <Context Panel storage directory>]\n".utf8
+                """
+                usage: ContextPanelAccountSnapshot [--storage-root <Context Panel storage directory>]
+                installed app: "/Applications/Context Panel.app/Contents/MacOS/Context Panel" --account-snapshot [--storage-root <Context Panel storage directory>]
+
+                """.utf8
             ), standardError: Data())
         }
 

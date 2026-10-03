@@ -65,6 +65,8 @@ private func agentLimit(_ id: String, used: Int, at: Date, provider: Provider = 
     #expect(help.exitCode == 0)
     #expect(!help.standardOutput.isEmpty)
     #expect(help.standardError.isEmpty)
+    let usage = String(decoding: help.standardOutput, as: UTF8.self)
+    #expect(usage.contains("--account-snapshot"))
     for arguments in [["--storage-root"], ["--unknown", "private-secret"], ["--help", "--refresh-local-connectors"]] {
         let result = try #require(ContextPanelEntryPoint.accountSnapshotResult(arguments: ["--account-snapshot"] + arguments))
         #expect(result.exitCode == 64)
