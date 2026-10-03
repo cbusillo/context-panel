@@ -33,8 +33,9 @@ The existing schema receipt binds both complete schema files, so the new
 encrypted contract changes its digest. No entitlements or container are widened.
 Static validation and fake-server tests do not prove Apple's live schema or
 encrypted record access. Chris approved the Production promotion
-([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5964341341));
-it is a CloudKit Console deploy tracked on #722.
+([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5964341341))
+and deployed it through CloudKit Console on 2026-10-03
+([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5969404754)).
 
 ## Functional integration
 
@@ -94,12 +95,12 @@ withhold unconfirmed remote-only accounts.
   Antigravity quota continues locally; email/LDAP is not promoted to identity.
 - Session-only OpenAI events remain unverified; current credentials cannot prove
   attribution of historical events from a switched login.
-- Chris approved the additive encrypted Production schema promotion
-  ([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5964341341)).
-  The Development schema is prepared and its live canaries passed; the
-  Production deploy is tracked on #722. Source integration and fake-key/merge
-  tests do not prove Apple's encrypted field support or live Production schema
-  access.
+- Chris approved and deployed the additive encrypted Production schema on
+  2026-10-03
+  ([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5969404754)),
+  after its Development canaries passed.
+  Source integration and fake-key/merge tests do not prove Apple's encrypted
+  field support or live Production record access.
 - Verify both Claude profiles and all configured OpenAI accounts from an exact
   canonical signed Production build, then duplicate-lane checks in all active
   storage roots and physical companions. Mixed old/new client fleets and manually
