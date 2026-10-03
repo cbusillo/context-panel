@@ -151,9 +151,11 @@ MVP connectors:
 
 - `CodexRateLimitConnector`: reads the `auth.json` of a user-selected Codex
   home (`~/.codex`, an account home under `~/.codex-accounts`, or an existing
-  Codex Lab home) or an account's selected sessions folder, calls the live Codex
-  usage endpoint, and normalizes primary, secondary, and additional
-  percent-window buckets.
+  Codex Lab home), calls the live Codex usage endpoint, and normalizes primary,
+  secondary, and additional percent-window buckets.
+- `CodexSessionQuotaConnector`: for an account set to a sessions folder, reads
+  the quota observations in that folder's local session files instead of
+  calling the usage endpoint.
 - Google provider: retired Gemini CLI credential files, Context Panel Google
   OAuth, Antigravity Keychain access, and private Cloud Code Assist requests are
   removed. AGY invokes the signed refresh agent through its documented custom
