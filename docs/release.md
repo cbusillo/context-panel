@@ -946,8 +946,10 @@ scripts/context-panel-companion-cache.sh prune \
 Use `--older-than-days N` to retain a longer window (minimum one day). Only
 timestamped entries in that root's quarantine are eligible, and both their
 creation stamp and all content modification/change times must be older than
-the window. Signed or non-neutralized bundles, unrecognized content outside
-quarantined bundles, recent writes, and entry symlinks are preserved. Directory
+the window. Signed or non-neutralized bundles, hard-linked files, unrecognized
+content outside quarantined bundles, recent writes, and entry symlinks are
+preserved. Empty failed entries and ordinary Finder `.DS_Store` files can age
+out with the entry. Directory
 opens and deletion never follow symlinks; links within recognized bundle trees
 are unlinked without opening their targets. Symlinked ancestry or quarantine
 roots and inventory errors fail closed. No compiler caches, active DerivedData,

@@ -26,7 +26,9 @@ BUNDLE_NAMES = {
     "ContextPanelWatchWidgetExtension.appex.quarantined",
     "ContextPanelTVTopShelfExtension.appex.quarantined",
 }
-PROTECTED_NAMES = {"embedded.mobileprovision", "_CodeSignature", "CodeResources"}
+PROTECTED_NAMES = {
+    "embedded.mobileprovision", "embedded.provisionprofile", "_CodeSignature", "CodeResources",
+}
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
@@ -87,17 +89,18 @@ def inventory(descriptor: int, cutoff: float, inside_bundle: bool = False) -> di
             raise UnsafeEntry("signed or non-neutralized material")
         if info.st_mtime >= cutoff or info.st_ctime >= cutoff:
             raise UnsafeEntry("recently modified material")
+        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            raise UnsafeEntry("hard-linked material")
         is_bundle = inside_bundle or name in BUNDLE_NAMES
         children = None
         if stat.S_ISDIR(info.st_mode):
             with directory(name, descriptor) as child:
                 children = inventory(child, cutoff, is_bundle)
-        elif not is_bundle or not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+        elif not ((is_bundle and (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)))
+                  or (name == ".DS_Store" and stat.S_ISREG(info.st_mode))):
             raise UnsafeEntry("unrecognized material outside a quarantined bundle")
         result[name] = (info.st_dev, info.st_ino, info.st_mode, info.st_size,
                         info.st_mtime_ns, info.st_ctime_ns, children)
-    if not inside_bundle and not result:
-        raise UnsafeEntry("empty unrecognized routing directory")
     return result
 
 
@@ -140,6 +143,7 @@ def prune(validation_root: str, days: int, apply: bool, *, now: datetime) -> dic
                     or info.st_mtime >= cutoff or info.st_ctime >= cutoff):
                 counts["preserved"] += 1
                 continue
+            removal_started = False
             try:
                 with directory(name, base) as entry:
                     if (os.fstat(entry).st_dev, os.fstat(entry).st_ino) != (info.st_dev, info.st_ino):
@@ -148,6 +152,7 @@ def prune(validation_root: str, days: int, apply: bool, *, now: datetime) -> dic
                     if apply:
                         if snapshot != inventory(entry, cutoff):
                             raise UnsafeEntry("entry changed after inventory")
+                        removal_started = True
                         remove_contents(entry, snapshot)
                 if apply:
                     current = os.stat(name, dir_fd=base, follow_symlinks=False)
@@ -157,6 +162,8 @@ def prune(validation_root: str, days: int, apply: bool, *, now: datetime) -> dic
                     counts["removed"] += 1
                 counts["eligible"] += 1
             except UnsafeEntry:
+                if removal_started:
+                    raise
                 counts["preserved"] += 1
     return counts
 

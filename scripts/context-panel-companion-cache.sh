@@ -324,7 +324,7 @@ bundle_contains_signature_material() {
 	[[ -L "$bundle" ]] && return 1
 	marker_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-signature-scan.XXXXXX")" || return 2
 	if ! /usr/bin/find -P "$bundle" \
-		\( -name embedded.mobileprovision -o -path '*/_CodeSignature/CodeResources' \) \
+		\( -name embedded.mobileprovision -o -name embedded.provisionprofile -o -path '*/_CodeSignature/CodeResources' \) \
 		-type f -print >"$marker_file" 2>/dev/null; then
 		/bin/rm -f "$marker_file"
 		return 2

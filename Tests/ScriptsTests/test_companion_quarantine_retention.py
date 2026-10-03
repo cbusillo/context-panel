@@ -67,7 +67,8 @@ class RetentionTests(unittest.TestCase):
         self.assertTrue(entry.exists())
 
     def test_signed_or_active_bundle_material_is_preserved(self):
-        for marker in ("embedded.mobileprovision", "_CodeSignature/CodeResources", "Watch.app/Info.plist"):
+        for marker in ("embedded.mobileprovision", "Contents/embedded.provisionprofile",
+                       "_CodeSignature/CodeResources", "Watch.app/Info.plist"):
             with self.subTest(marker=marker):
                 entry, bundle = self.entry(suffix=f"SIG{len(list(self.base.iterdir())):03}")
                 protected = bundle / marker
@@ -99,6 +100,36 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(self.prune()["removed"], 1)
         self.assertFalse(entry.exists())
         self.assertEqual((external / "keep").read_text(), "untouched")
+
+    def test_hard_links_preserve_entry_before_any_deletion(self):
+        entry, bundle = self.entry()
+        os.link(bundle / "binary", bundle / "linked-binary")
+        self.assertEqual(self.prune()["removed"], 0)
+        self.assertTrue(entry.exists())
+        self.assertEqual((bundle / "binary").read_bytes(), b"build output")
+        self.assertEqual((bundle / "linked-binary").read_bytes(), b"build output")
+
+    def test_finder_metadata_and_empty_failed_entries_can_age_out(self):
+        entry, _ = self.entry()
+        (entry / ".DS_Store").write_bytes(b"finder metadata")
+        empty, bundle = self.entry(suffix="EMPTY0")
+        (bundle / "binary").unlink()
+        bundle.rmdir()
+        self.assertEqual(self.prune()["removed"], 2)
+        self.assertFalse(entry.exists())
+        self.assertFalse(empty.exists())
+
+    def test_quarantine_refuses_macos_profile_before_moving_bundle(self):
+        bundle = self.root / "Build/Products/Context Panel.app"
+        profile = bundle / "Contents/embedded.provisionprofile"
+        profile.parent.mkdir(parents=True)
+        profile.write_text("profile fixture")
+        result = subprocess.run([str(REPO / "scripts/context-panel-companion-cache.sh"),
+                                 "quarantine", "--root", str(self.root)],
+                                text=True, capture_output=True, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(profile.exists())
+        self.assertIn("protected-signed-bundles", result.stderr)
 
     def test_entry_symlink_is_preserved(self):
         entry, _ = self.entry()
@@ -169,6 +200,13 @@ class RetentionTests(unittest.TestCase):
         self.root.symlink_to(self.base, target_is_directory=True)
         with self.assertRaises(OSError):
             self.prune()
+        self.assertTrue(entry.exists())
+
+    def test_removal_failure_is_reported_instead_of_clean_preservation(self):
+        entry, _ = self.entry()
+        with patch.object(RETENTION, "remove_contents", side_effect=RETENTION.UnsafeEntry("changed")):
+            with self.assertRaises(RETENTION.UnsafeEntry):
+                self.prune()
         self.assertTrue(entry.exists())
 
     def test_shell_command_defaults_to_preview_and_rejects_bad_options(self):
