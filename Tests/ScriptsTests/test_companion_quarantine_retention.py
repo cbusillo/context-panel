@@ -2,10 +2,12 @@
 
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import io
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -179,12 +181,13 @@ class RetentionTests(unittest.TestCase):
     def test_changed_inventory_is_preserved_before_deletion(self):
         entry, bundle = self.entry()
         original = RETENTION.inventory
+        identity = entry.stat().st_ino
         calls = 0
 
         def changing_inventory(descriptor, cutoff, inside_bundle=False):
             nonlocal calls
             result = original(descriptor, cutoff, inside_bundle)
-            if not inside_bundle:
+            if os.fstat(descriptor).st_ino == identity:
                 calls += 1
                 if calls == 1:
                     (bundle / "binary").write_text("changed during preview")
@@ -205,9 +208,20 @@ class RetentionTests(unittest.TestCase):
     def test_removal_failure_is_reported_instead_of_clean_preservation(self):
         entry, _ = self.entry()
         with patch.object(RETENTION, "remove_contents", side_effect=RETENTION.UnsafeEntry("changed")):
-            with self.assertRaises(RETENTION.UnsafeEntry):
+            with self.assertRaises(RETENTION.PartialRemovalError):
                 self.prune()
         self.assertTrue(entry.exists())
+
+    def test_partial_removal_reports_the_entry_without_host_paths(self):
+        entry, _ = self.entry()
+        error = RETENTION.PartialRemovalError(entry.name, PermissionError(str(entry)))
+        stderr = io.StringIO()
+        with patch.object(RETENTION, "prune", side_effect=error), \
+                patch.object(sys, "argv", ["retention", "--validation-root", str(self.root), "--apply"]), \
+                patch.object(sys, "stderr", stderr):
+            self.assertEqual(RETENTION.main(), 3)
+        self.assertIn(f"prune=PARTIAL entry={entry.name}", stderr.getvalue())
+        self.assertNotIn(str(self.checkout), stderr.getvalue())
 
     def test_shell_command_defaults_to_preview_and_rejects_bad_options(self):
         entry, _ = self.entry()
@@ -218,10 +232,12 @@ class RetentionTests(unittest.TestCase):
         self.assertIn("mode=dry-run", result.stdout)
         self.assertTrue(entry.exists())
         for args in (["prune"], ["prune", "--root", str(self.root), "--older-than-days", "0"],
+                     ["prune", "--root", str(self.root), "--older-than-days", "99999999"],
                      ["quarantine", "--root", str(self.root), "--apply"]):
             with self.subTest(args=args):
                 result = subprocess.run([str(helper), *args], capture_output=True, check=False)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(b"Traceback", result.stderr)
         self.assertTrue(entry.exists())
 
 

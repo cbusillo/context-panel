@@ -36,6 +36,13 @@ class UnsafeEntry(ValueError):
     """Preserve content that is not demonstrably disposable build output."""
 
 
+class PartialRemovalError(RuntimeError):
+    def __init__(self, entry: str, error: Exception):
+        super().__init__("quarantine removal started but did not complete")
+        self.entry = entry
+        self.error_type = type(error).__name__
+
+
 @contextmanager
 def directory(name: str, parent: int) -> Iterator[int]:
     descriptor = os.open(name, DIRECTORY_FLAGS, dir_fd=parent)
@@ -161,8 +168,10 @@ def prune(validation_root: str, days: int, apply: bool, *, now: datetime) -> dic
                     os.rmdir(name, dir_fd=base)
                     counts["removed"] += 1
                 counts["eligible"] += 1
-            except UnsafeEntry:
+            except (OSError, UnsafeEntry) as error:
                 if removal_started:
+                    raise PartialRemovalError(name, error) from error
+                if isinstance(error, OSError):
                     raise
                 counts["preserved"] += 1
     return counts
@@ -177,7 +186,11 @@ def main() -> int:
     try:
         counts = prune(args.validation_root, args.older_than_days, args.apply,
                        now=datetime.now(timezone.utc))
-    except (OSError, ValueError) as error:
+    except PartialRemovalError as error:
+        print(f"companion-cache prune=PARTIAL entry={error.entry} error={error.error_type}",
+              file=sys.stderr)
+        return 3
+    except (OSError, ValueError, OverflowError) as error:
         # Do not print host paths from OS exceptions.
         print(f"companion-cache prune=REFUSED {type(error).__name__}", file=sys.stderr)
         return 3
