@@ -956,7 +956,8 @@ roots and inventory errors fail closed. No compiler caches, active DerivedData,
 manifests, receipts, installed apps, or production storage are deleted. Run this
 with the cache idle; a filesystem error can leave a partially removed eligible
 entry. `prune=PARTIAL` names that timestamped entry without printing host paths;
-inspect it before retrying.
+inspect it before retrying. `prune=FAILED` reports an inventory failure. Both
+include the count of entries already removed: a run is not transactional.
 
 ### Local Apple Vision Pro Dogfood
 

@@ -133,6 +133,25 @@ class RetentionTests(unittest.TestCase):
         self.assertTrue(profile.exists())
         self.assertIn("protected-signed-bundles", result.stderr)
 
+    def test_real_quarantine_output_ages_out_including_nested_bundles_and_links(self):
+        bundle = self.root / "ios/Build/Products/Context Panel.app"
+        nested = bundle / "Watch/Context Panel.app/PlugIns/ContextPanelWatchWidgetExtension.appex"
+        nested.mkdir(parents=True)
+        (nested / "binary").write_text("widget fixture")
+        outside = self.checkout / "outside-widget"
+        outside.mkdir()
+        (outside / "keep").write_text("untouched")
+        (bundle.parent / "ContextPanelCompanionWidgetExtension.appex").symlink_to(outside)
+        result = subprocess.run([str(REPO / "scripts/context-panel-companion-cache.sh"),
+                                 "quarantine", "--root", str(self.root)],
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list(self.base.iterdir())), 1)
+        self.assertEqual(self.prune(False)["eligible"], 1)
+        self.assertEqual(self.prune()["removed"], 1)
+        self.assertEqual(list(self.base.iterdir()), [])
+        self.assertEqual((outside / "keep").read_text(), "untouched")
+
     def test_entry_symlink_is_preserved(self):
         entry, _ = self.entry()
         link = self.base / entry.name.replace("ABC123", "LINK00")
@@ -177,6 +196,25 @@ class RetentionTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.prune()
         self.assertTrue(entry.exists())
+
+    def test_later_inventory_failure_reports_prior_completed_deletions(self):
+        removed, _ = self.entry(age=9)
+        failed, _ = self.entry(age=8, suffix="FAILED")
+        inode = failed.stat().st_ino
+        original = RETENTION.inventory
+
+        def fail_second(descriptor, cutoff, inside_bundle=False):
+            if os.fstat(descriptor).st_ino == inode:
+                raise PermissionError("fixture")
+            return original(descriptor, cutoff, inside_bundle)
+
+        with patch.object(RETENTION, "inventory", side_effect=fail_second):
+            with self.assertRaises(RETENTION.PruneRunError) as raised:
+                self.prune()
+        self.assertEqual(raised.exception.removed, 1)
+        self.assertEqual(raised.exception.entry, failed.name)
+        self.assertFalse(removed.exists())
+        self.assertTrue(failed.exists())
 
     def test_changed_inventory_is_preserved_before_deletion(self):
         entry, bundle = self.entry()

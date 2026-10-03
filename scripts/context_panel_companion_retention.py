@@ -36,11 +36,16 @@ class UnsafeEntry(ValueError):
     """Preserve content that is not demonstrably disposable build output."""
 
 
-class PartialRemovalError(RuntimeError):
-    def __init__(self, entry: str, error: Exception):
-        super().__init__("quarantine removal started but did not complete")
+class PruneRunError(OSError):
+    def __init__(self, entry: str, error: Exception, removed: int = 0):
+        super().__init__("quarantine retention did not complete")
         self.entry = entry
         self.error_type = type(error).__name__
+        self.removed = removed
+
+
+class PartialRemovalError(PruneRunError):
+    """The named entry may have been partially removed."""
 
 
 @contextmanager
@@ -144,7 +149,11 @@ def prune(validation_root: str, days: int, apply: bool, *, now: datetime) -> dic
                     tzinfo=timezone.utc) if match else None
             except ValueError:
                 created = None
-            info = os.stat(name, dir_fd=base, follow_symlinks=False)
+            try:
+                info = os.stat(name, dir_fd=base, follow_symlinks=False)
+            except OSError as error:
+                safe_name = name if created is not None else "unrecognized-entry"
+                raise PruneRunError(safe_name, error, counts["removed"]) from error
             if (created is None or created.timestamp() >= cutoff
                     or not stat.S_ISDIR(info.st_mode)
                     or info.st_mtime >= cutoff or info.st_ctime >= cutoff):
@@ -170,9 +179,9 @@ def prune(validation_root: str, days: int, apply: bool, *, now: datetime) -> dic
                 counts["eligible"] += 1
             except (OSError, UnsafeEntry) as error:
                 if removal_started:
-                    raise PartialRemovalError(name, error) from error
+                    raise PartialRemovalError(name, error, counts["removed"]) from error
                 if isinstance(error, OSError):
-                    raise
+                    raise PruneRunError(name, error, counts["removed"]) from error
                 counts["preserved"] += 1
     return counts
 
@@ -187,7 +196,11 @@ def main() -> int:
         counts = prune(args.validation_root, args.older_than_days, args.apply,
                        now=datetime.now(timezone.utc))
     except PartialRemovalError as error:
-        print(f"companion-cache prune=PARTIAL entry={error.entry} error={error.error_type}",
+        print(f"companion-cache prune=PARTIAL entry={error.entry} removed={error.removed} error={error.error_type}",
+              file=sys.stderr)
+        return 3
+    except PruneRunError as error:
+        print(f"companion-cache prune=FAILED entry={error.entry} removed={error.removed} error={error.error_type}",
               file=sys.stderr)
         return 3
     except (OSError, ValueError, OverflowError) as error:
