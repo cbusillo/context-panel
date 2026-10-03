@@ -54,8 +54,9 @@ unless the repository variable `RELEASE_APPROVALS_CONFIGURED` is exactly `true`.
 Set it only after the owner finishes the role move below. Removing it pauses new
 release runs; it does not re-add an environment reviewer. Each pending channel
 guard reads the variable again, so removing it can also block a channel in an
-approved run. Jobs whose guards already passed are unaffected. The previous `RELEASE_CHANNELS_CONFIGURED` variable and
-`release-channels` environment are unused by this design.
+approved run. Jobs whose guards already passed are unaffected. The previous
+`RELEASE_CHANNELS_CONFIGURED` variable and `release-channels` environment are
+unused by this design.
 
 Retry failed channel jobs within the original approved run to retain its review;
 a new Ship dispatch needs its own approval. Re-running the approval job itself
@@ -85,7 +86,7 @@ Historical runs use their original workflow commit when re-run. For up to
 a pre-redesign run can still reference `release` without the new secretless gate.
 Before removing its reviewer, Chris decides the historical-run treatment in
 [direction#24](https://github.com/cbusillo/direction/issues/24) and records it on
-#747. Waiting for that window to end preserves logs; deleting runs would require
+issue #747. Waiting for that window to end preserves logs; deleting runs would require
 Chris's explicit choice and evidence preservation. The agent performs neither.
 Do not remove the reviewer or activate the final one-approval configuration
 before that decision. If Chris chooses a waiting period, he can first configure
