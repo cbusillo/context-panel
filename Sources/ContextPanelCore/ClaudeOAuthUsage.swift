@@ -277,17 +277,26 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private let httpClient: any ConnectorHTTPClient
     private let credentialStore: any ProviderCredentialStoring
     private let expirationSkew: TimeInterval
+    private let resetReadCooldown: ClaudeResetCreditReadCooldown
+    private let identityResolver: ProviderAccountIdentityResolver?
+    private let identityMaterialStore: ProviderAccountIdentityMaterialStore?
 
     public init(
+        resetReadCooldown: ClaudeResetCreditReadCooldown = .shared,
         accounts: [ClaudeOAuthAccountConfiguration],
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
         credentialStore: any ProviderCredentialStoring,
-        expirationSkew: TimeInterval = 5 * 60
+        expirationSkew: TimeInterval = 5 * 60,
+        identityResolver: ProviderAccountIdentityResolver? = nil,
+        identityMaterialStore: ProviderAccountIdentityMaterialStore? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
         self.credentialStore = credentialStore
         self.expirationSkew = expirationSkew
+        self.resetReadCooldown = resetReadCooldown
+        self.identityResolver = identityResolver
+        self.identityMaterialStore = identityMaterialStore
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -306,14 +315,22 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             var credentials = try loadCredentials(accountID: account.accountID)
             return try await refresh(account: account, credentials: &credentials, now: now, localAccountID: localAccountID)
         } catch {
+            let material = (try? loadCredentials(accountID: account.accountID))?.accessToken.flatMap {
+                identityMaterialStore?.load(provider: .anthropic, configurationID: account.accountID, credential: $0)
+            }
+            let historyAccountID = material?.localHistoryID(configurationID: account.accountID) ?? localAccountID
+            let identity = if let material, let identityResolver { await identityResolver.resolve(material)?.bound(toLocalAccountID: historyAccountID) } else { nil as SharedProviderAccountIdentity? }
             return ProviderConnectorReport(
                 provider: provider,
-                accountID: localAccountID,
+                accountID: historyAccountID,
+                configuredAccountID: account.accountID,
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: [],
                 status: .failure,
-                errorMessage: error.localizedDescription
+                errorMessage: error.localizedDescription,
+                legacyAccountID: localAccountID, sharedAccountIdentity: identity,
+                accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
             )
         }
     }
@@ -332,7 +349,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 "Authorization": "Bearer \(currentAccessToken)",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "claude-code/2.1.141",
+                "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
                 "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                 "anthropic-version": "2023-06-01",
                 "anthropic-client-platform": "context-panel",
@@ -348,7 +365,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                     "Authorization": "Bearer \(refreshedToken)",
                     "Accept": "application/json",
                     "Content-Type": "application/json",
-                    "User-Agent": "claude-code/2.1.141",
+                    "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
                     "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                     "anthropic-version": "2023-06-01",
                     "anthropic-client-platform": "context-panel",
@@ -357,41 +374,97 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             guard (200..<300).contains(retryResponse.statusCode) else {
                 throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: retryResponse.statusCode)
             }
-            let retryUsage = try ClaudeOAuthUsageParser.usageResult(
-                from: retryResponse.data,
-                accountID: localAccountID,
-                accountName: account.accountName,
-                observedAt: now
-            )
-            return ProviderConnectorReport(
-                provider: provider,
-                accountID: localAccountID,
-                accountName: account.accountName,
-                generatedAt: now,
-                limits: retryUsage.limits,
-                status: retryUsage.limits.isEmpty ? .unknown : nil,
-                accessState: retryUsage.accessState
-            )
+            return try await usageReport(data: retryResponse.data, accessToken: refreshedToken,
+                account: account, localAccountID: localAccountID, now: now)
         }
 
         guard (200..<300).contains(response.statusCode) else {
             throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
         }
+        return try await usageReport(data: response.data, accessToken: currentAccessToken,
+            account: account, localAccountID: localAccountID, now: now)
+    }
+
+    private func usageReport(data: Data, accessToken: String, account: ClaudeOAuthAccountConfiguration,
+        localAccountID: String, now: Date) async throws -> ProviderConnectorReport {
+        // Qualify usage before requesting the identity of this exact authenticated login.
+        _ = try ClaudeOAuthUsageParser.usageResult(from: data, accountID: localAccountID,
+            accountName: account.accountName, observedAt: now)
+        let material = await identityMaterial(accessToken: accessToken, configurationID: account.accountID)
+        let historyAccountID = material?.localHistoryID(configurationID: account.accountID) ?? localAccountID
+        let identity: SharedProviderAccountIdentity?
+        if let material, let identityResolver { identity = await identityResolver.resolve(material)?.bound(toLocalAccountID: historyAccountID) }
+        else { identity = nil }
+        let accountID = historyAccountID
         let usage = try ClaudeOAuthUsageParser.usageResult(
-            from: response.data,
-            accountID: localAccountID,
+            from: data,
+            accountID: accountID,
             accountName: account.accountName,
             observedAt: now
         )
         return ProviderConnectorReport(
             provider: provider,
-            accountID: localAccountID,
+            accountID: accountID,
+            configuredAccountID: account.accountID,
             accountName: account.accountName,
             generatedAt: now,
-            limits: usage.limits,
+            limits: usage.limits.map { $0.replacingMissingConfiguredAccountID(with: account.accountID) },
+            resetCredits: await resetCredits(account: account, accessToken: accessToken, now: now),
             status: usage.limits.isEmpty ? .unknown : nil,
-            accessState: usage.accessState
+            accessState: usage.accessState,
+            legacyAccountID: localAccountID,
+            sharedAccountIdentity: identity,
+            accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
         )
+    }
+
+    private func identityMaterial(accessToken: String, configurationID: String) async -> ProviderAccountIdentityMaterial? {
+        guard identityResolver != nil else { return nil }
+        do {
+            let profile = try await httpClient.data(for: ConnectorHTTPRequest(
+                url: URL(string: "https://api.anthropic.com/api/oauth/profile")!, method: "GET",
+                headers: ["Authorization": "Bearer \(accessToken)", "Accept": "application/json",
+                    "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
+                    "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader]))
+            if profile.statusCode == 200, let material = ClaudeOAuthAccountIdentityParser.material(from: profile.data) {
+                identityMaterialStore?.save(material, configurationID: configurationID, credential: accessToken)
+                return material
+            }
+        } catch { }
+        return identityMaterialStore?.load(provider: .anthropic, configurationID: configurationID, credential: accessToken)
+    }
+
+    private func resetCredits(
+        account: ClaudeOAuthAccountConfiguration,
+        accessToken: String,
+        now: Date
+    ) async -> ProviderResetCreditSummary? {
+        guard await resetReadCooldown.begin(accountID: account.accountID, endpoint: account.usageEndpoint, now: now) else {
+            return nil
+        }
+        guard var components = URLComponents(url: account.usageEndpoint, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        var query = (components.queryItems ?? []).filter { !["cedar_ember", "skip_spend"].contains($0.name) }
+        query.append(contentsOf: [URLQueryItem(name: "cedar_ember", value: "1"), URLQueryItem(name: "skip_spend", value: "1")])
+        components.queryItems = query
+        guard let url = components.url else { return nil }
+        // Optional inventory read: no token rotation, retry, raw-response logging or consuming POST.
+        guard let response = try? await httpClient.data(for: ConnectorHTTPRequest(
+            url: url,
+            method: "GET",
+            headers: [
+                "Authorization": "Bearer \(accessToken)",
+                "Accept": "application/json",
+                "User-Agent": ClaudeOAuthMetadata.optionalResetUserAgent,
+                "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
+                "anthropic-version": "2023-06-01",
+            ],
+            timeoutInterval: 3
+        )), (200..<300).contains(response.statusCode) else { return nil }
+        guard let summary = ClaudeResetCreditParser.summary(from: response.data, observedAt: now) else { return nil }
+        await resetReadCooldown.succeeded(accountID: account.accountID, endpoint: account.usageEndpoint)
+        return summary
     }
 
     private func loadCredentials(accountID: String) throws -> ClaudeOAuthCredentials {
@@ -445,6 +518,9 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             )
         }
         let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: response.data)
+        let previousMaterial = credentials.accessToken.flatMap {
+            identityMaterialStore?.load(provider: .anthropic, configurationID: account.accountID, credential: $0)
+        }
         credentials = ClaudeOAuthCredentials(
             accessToken: token.accessToken,
             refreshToken: token.refreshToken ?? refreshToken,
@@ -452,6 +528,8 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             scopes: token.scopes.isEmpty ? credentials.scopes : token.scopes
         )
         try saveCredentials(credentials, accountID: account.accountID)
+        // The provider accepted this exact refresh grant; carry only its existing binding.
+        if let previousMaterial { identityMaterialStore?.save(previousMaterial, configurationID: account.accountID, credential: token.accessToken) }
         return token.accessToken
     }
 
@@ -491,6 +569,8 @@ private func encodeClaudeOAuthCredentials(_ credentials: ClaudeOAuthCredentials)
 }
 
 public enum ClaudeOAuthMetadata {
+    public static let usageUserAgent = "claude-code/2.1.141"
+    public static let optionalResetUserAgent = "claude-cli/2.1.286 (external, cli)"
     public static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     public static let authorizationEndpoint = URL(string: "https://claude.com/cai/oauth/authorize")!
     public static let tokenEndpoint = URL(string: "https://platform.claude.com/v1/oauth/token")!

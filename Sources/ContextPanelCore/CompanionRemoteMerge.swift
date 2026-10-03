@@ -5,12 +5,16 @@ public extension CompanionSyncDocument {
         existing: CompanionSyncDocument?,
         now: Date
     ) -> CompanionSyncDocument {
-        let incomingDocument = normalizedForRemotePublish()
+        let compatible = existing?.cloudKitUserScope == cloudKitUserScope ? existing : nil
+        let removalDates = (compatible?.accountRemovalDates ?? [:]).merging(accountRemovalDates ?? [:]) { max($0, $1) }
+        let restorationDates = (compatible?.accountRestorationDates ?? [:]).merging(accountRestorationDates ?? [:]) { max($0, $1) }
+        let identityAliases = Self.mergedIdentityAliases(existing?.cloudKitUserScope == cloudKitUserScope ? existing?.accountIdentityAliases ?? [] : [], accountIdentityAliases ?? [])
+        let incomingDocument = normalizedForRemotePublish().retiringLegacyMemberships(using: identityAliases).applyingGlobalRemovals()
         let existingDocument = existing
             .flatMap { existing in
                 existing.cloudKitUserScope == cloudKitUserScope ? existing : nil
             }?
-            .normalizedForRemotePublish()
+            .normalizedForRemotePublish().retiringLegacyMemberships(using: identityAliases).applyingGlobalRemovals()
         let existingDegradedAccountKeys = existingDocument?.snapshot.degradedAccountKeysForRemotePublish ?? []
         let incomingDegradedAccountKeys = snapshot.degradedAccountKeysForRemotePublish
 
@@ -56,8 +60,96 @@ public extension CompanionSyncDocument {
             ),
             fastModeForecastSettings: settingsDocument.fastModeForecastSettings,
             accountRetentionStates: retained.states,
-            cloudKitUserScope: incomingDocument.cloudKitUserScope
-        )
+            cloudKitUserScope: incomingDocument.cloudKitUserScope,
+            accountDisplayMetadata: mergedAccountDisplayMetadata(existing: existingDocument,
+                incoming: incomingDocument, retainedSnapshot: retained.snapshot, settingsDocument: settingsDocument),
+            removedDisplayIDs: existingDocument?.removedDisplayIDs == nil && incomingDocument.removedDisplayIDs == nil ? nil
+                : Array(Set(existingDocument?.removedDisplayIDs ?? []).union(incomingDocument.removedDisplayIDs ?? [])).sorted(),
+            accountBurnRates: mergedAccountBurnRates(existing: existingDocument, incoming: incomingDocument, retainedSnapshot: retained.snapshot),
+            accountIdentityAliases: identityAliases.isEmpty ? nil : identityAliases,
+            accountRemovalDates: removalDates.isEmpty ? nil : removalDates,
+            accountRestorationDates: restorationDates.isEmpty ? nil : restorationDates
+        ).applyingGlobalRemovals()
+    }
+
+    private func mergedAccountBurnRates(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
+        retainedSnapshot: CompanionSnapshot) -> [String: [String: ObservedBurnRate]]? {
+        guard existing?.accountBurnRates != nil || incoming.accountBurnRates != nil else { return nil }
+        let retained = companionRemoteAccountData(in: retainedSnapshot)
+        let old = existing.map { companionRemoteAccountData(in: $0.snapshot) } ?? [:]
+        let new = companionRemoteAccountData(in: incoming.snapshot)
+        var result: [String: [String: ObservedBurnRate]] = [:]
+        for (key, selected) in retained {
+            let rates: [String: ObservedBurnRate]?
+            if new[key]?.semanticSelectionData == selected.semanticSelectionData {
+                rates = incoming.accountBurnRates?[key.companionAccountID]
+                    ?? (old[key]?.semanticSelectionData == selected.semanticSelectionData
+                        ? existing?.accountBurnRates?[key.companionAccountID] : nil)
+            } else if old[key]?.semanticSelectionData == selected.semanticSelectionData {
+                rates = existing?.accountBurnRates?[key.companionAccountID]
+            } else { rates = nil }
+            for limit in selected.limits {
+                let id = limit.usageLimit.id
+                guard let rate = rates?[id], rate.limitID == id, rate.sampleCount > 0 else { continue }
+                result[key.companionAccountID, default: [:]][id] = rate
+            }
+        }
+        return result
+    }
+
+    private func mergedAccountDisplayMetadata(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
+                                              retainedSnapshot: CompanionSnapshot,
+                                              settingsDocument: CompanionSyncDocument) -> [AccountDisplayMetadata]? {
+        guard existing?.accountDisplayMetadata != nil || incoming.accountDisplayMetadata != nil else { return nil }
+        let retained = companionRemoteAccountData(in: retainedSnapshot)
+        let oldData = existing.map { companionRemoteAccountData(in: $0.snapshot) } ?? [:]
+        let newData = companionRemoteAccountData(in: incoming.snapshot)
+        let allObservedIDs = Set((Array(oldData.keys) + Array(newData.keys)).map {
+            AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID)
+        })
+        let retainedByID = Dictionary(uniqueKeysWithValues: retained.map { key, data in
+            (AccountDisplayMetadata.safeID(key.provider, key.companionAccountID), (key, data))
+        })
+        let primary = settingsDocument.accountDisplayMetadata ?? []
+        let secondary = settingsDocument == incoming ? existing?.accountDisplayMetadata ?? [] : incoming.accountDisplayMetadata ?? []
+        let observedConfigurations = Set((primary + secondary).filter { retainedByID[$0.id] != nil }.map(\.configurationID))
+        var seen = Set<String>()
+        var result: [AccountDisplayMetadata] = []
+        for entry in primary + secondary {
+            guard seen.insert(entry.id).inserted else { continue }
+            guard let (key, selected) = retainedByID[entry.id] else {
+                // Explicit global tombstones distinguish removal from a different Mac
+                // publishing its own setup. Never-observed rows remain visible.
+                if !allObservedIDs.contains(entry.id), !observedConfigurations.contains(entry.configurationID),
+                   primary.contains(where: { $0.id == entry.id }) || !primary.contains(where: { $0.configurationID == entry.configurationID }) {
+                    result.append(entry)
+                }
+                continue
+            }
+            let older = existing?.accountDisplayMetadata?.first { $0.id == entry.id }
+            let newer = incoming.accountDisplayMetadata?.first { $0.id == entry.id }
+            if let older, let newer, older.configurationID == newer.configurationID {
+                // Settings edits remain authoritative even when an older complete
+                // usage observation wins over a failed/incomplete refresh.
+                result.append(primary.first { $0.id == entry.id } ?? entry)
+            } else if newData[key]?.semanticSelectionData == selected.semanticSelectionData, let newer {
+                result.append(newer)
+            } else if oldData[key]?.semanticSelectionData == selected.semanticSelectionData, let older {
+                result.append(older)
+            } else {
+                result.append(Self.fallbackMetadata(key: key, data: selected))
+            }
+        }
+        for (id, pair) in retainedByID.sorted(by: { $0.key < $1.key }) where !seen.contains(id) {
+            result.append(Self.fallbackMetadata(key: pair.0, data: pair.1))
+        }
+        return result
+    }
+
+    private static func fallbackMetadata(key: CompanionRemoteAccountKey, data: CompanionRemoteAccountData) -> AccountDisplayMetadata {
+        let id = AccountDisplayMetadata.safeID(key.provider, key.companionAccountID)
+        return AccountDisplayMetadata(id: id, configurationID: id, provider: key.provider,
+            label: ConnectorRedactor.safeErrorDescription(data.accountName))
     }
 
     private func preferredSettingsDocument(
@@ -87,14 +179,22 @@ private extension CompanionSyncDocument {
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
-            cloudKitUserScope: cloudKitUserScope
+            cloudKitUserScope: cloudKitUserScope,
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs,
+            accountBurnRates: accountBurnRates,
+            accountIdentityAliases: accountIdentityAliases,
+            accountRemovalDates: accountRemovalDates,
+            accountRestorationDates: accountRestorationDates
         )
     }
 
     var deterministicSettingsSelectionData: Data {
         let payload = CompanionRemoteSettingsSelection(
             widgetDisplayPreferences: widgetDisplayPreferences,
-            fastModeForecastSettings: fastModeForecastSettings
+            fastModeForecastSettings: fastModeForecastSettings,
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -105,6 +205,8 @@ private extension CompanionSyncDocument {
 private struct CompanionRemoteSettingsSelection: Encodable {
     let widgetDisplayPreferences: WidgetDisplayPreferences
     let fastModeForecastSettings: FastModeForecastSettings
+    let accountDisplayMetadata: [AccountDisplayMetadata]?
+    let removedDisplayIDs: [String]?
 }
 
 private struct CompanionRemoteAccountRetentionResult {

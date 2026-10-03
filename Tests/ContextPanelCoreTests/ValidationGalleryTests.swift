@@ -90,7 +90,7 @@ import WidgetKit
     #expect(snapshot.generatedAt == presentationDate.addingTimeInterval(-50))
     #expect(resetDate == presentationDate.addingTimeInterval(38 * 60))
     #expect(resetDate.widgetRelativeText(relativeTo: presentationDate) == "in 38m")
-    #expect(fiveHour.widgetResetConfidenceText(presentationDate: presentationDate) == "38m")
+    #expect(fiveHour.widgetResetConfidenceText(presentationDate: presentationDate) == ContextPanelDateFormatting.resetDeadline(resetDate, compact: true))
     #expect(!snapshot.observedBurnRates.isEmpty)
 }
 

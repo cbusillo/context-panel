@@ -315,12 +315,12 @@ struct TVTopShelfRenderer {
     }
 
     private func drawBackground(context: CGContext, size: CGSize, cards: [TVTopShelfCard]) {
-        context.setFillColor(UIColor(red: 0.018, green: 0.028, blue: 0.052, alpha: 1).cgColor)
+        context.setFillColor(color(.surface).cgColor)
         context.fill(CGRect(origin: .zero, size: size))
 
         let glowWidth = size.width / CGFloat(max(cards.count, 1))
         for (index, card) in cards.enumerated() {
-            let accent = providerColor(card.provider)
+            let accent = accentColor(card)
             context.setFillColor(accent.withAlphaComponent(0.095).cgColor)
             context.fillEllipse(in: CGRect(
                 x: CGFloat(index) * glowWidth - glowWidth * 0.05,
@@ -330,7 +330,7 @@ struct TVTopShelfRenderer {
             ))
         }
 
-        context.setStrokeColor(UIColor.white.withAlphaComponent(0.07).cgColor)
+        context.setStrokeColor(color(.line).cgColor)
         context.setLineWidth(max(size.width / 1920, 1))
         context.move(to: CGPoint(x: size.width * 0.05, y: size.height * 0.19))
         context.addLine(to: CGPoint(x: size.width * 0.95, y: size.height * 0.19))
@@ -354,7 +354,7 @@ struct TVTopShelfRenderer {
                 height: size.height * 0.06
             ),
             font: .systemFont(ofSize: 28 * scale, weight: .bold),
-            color: .white
+            color: color(.primary)
         )
         draw(
             document.collectionTitle(at: now),
@@ -365,7 +365,7 @@ struct TVTopShelfRenderer {
                 height: size.height * 0.05
             ),
             font: .systemFont(ofSize: 22 * scale, weight: .medium),
-            color: UIColor.white.withAlphaComponent(0.62)
+            color: color(.secondary)
         )
         draw(
             document.freshnessText(at: now),
@@ -377,8 +377,8 @@ struct TVTopShelfRenderer {
             ),
             font: .monospacedDigitSystemFont(ofSize: 22 * scale, weight: .semibold),
             color: document.isStale(at: now)
-                ? UIColor(red: 1, green: 0.79, blue: 0.18, alpha: 1)
-                : UIColor.white.withAlphaComponent(0.54),
+                ? color(.saved)
+                : color(.secondary),
             alignment: .right
         )
 
@@ -387,6 +387,29 @@ struct TVTopShelfRenderer {
             return
         }
 
+        if cards.count > 3 {
+            let spacing = 20 * scale
+            let width = (size.width - 2 * horizontalPadding - 2 * spacing) / 3
+            let originY = size.height * 0.24
+            let height = (size.height - originY - size.height * 0.04 - spacing) / 2
+            for (index, card) in cards.enumerated() {
+                let frame = CGRect(x: horizontalPadding + CGFloat(index % 3) * (width + spacing),
+                    y: originY + CGFloat(index / 3) * (height + spacing), width: width, height: height)
+                color(.card).setFill()
+                UIBezierPath(roundedRect: frame, cornerRadius: 18 * scale).fill()
+                draw(card.title, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 12 * scale,
+                    width: frame.width - 36 * scale, height: 30 * scale),
+                    font: .systemFont(ofSize: 23 * scale, weight: .semibold), color: color(.primary), alignment: .left)
+                draw(card.headline, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 48 * scale,
+                    width: frame.width - 36 * scale, height: 62 * scale),
+                    font: .monospacedDigitSystemFont(ofSize: 46 * scale, weight: .semibold),
+                    color: headlineColor(card, isStale: document.isStale(at: now)), alignment: .left)
+                draw(card.detail, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 116 * scale,
+                    width: frame.width - 36 * scale, height: frame.height - 124 * scale),
+                    font: .systemFont(ofSize: 19 * scale, weight: .medium), color: color(.secondary), alignment: .left)
+            }
+            return
+        }
         let spacing = 26 * scale
         let contentWidth = size.width - 2 * horizontalPadding
         let columnWidth = (contentWidth - spacing * 2) / 3
@@ -412,20 +435,20 @@ struct TVTopShelfRenderer {
 
     private func drawSetupCard(size: CGSize, card: TVTopShelfCard, scale: CGFloat) {
         let frame = CGRect(x: 86 * scale, y: 182 * scale, width: size.width - 172 * scale, height: 420 * scale)
-        UIColor.white.withAlphaComponent(0.055).setFill()
+        color(.card).setFill()
         UIBezierPath(roundedRect: frame, cornerRadius: 34 * scale).fill()
         draw(
             card.headline,
             in: CGRect(x: frame.minX + 54 * scale, y: frame.minY + 92 * scale, width: frame.width - 108 * scale, height: 82 * scale),
             font: .systemFont(ofSize: 54 * scale, weight: .bold),
-            color: .white,
+            color: color(.primary),
             alignment: .center
         )
         draw(
             card.detail,
             in: CGRect(x: frame.minX + 110 * scale, y: frame.minY + 196 * scale, width: frame.width - 220 * scale, height: 70 * scale),
             font: .systemFont(ofSize: 25 * scale, weight: .medium),
-            color: UIColor.white.withAlphaComponent(0.68),
+            color: color(.secondary),
             alignment: .center
         )
     }
@@ -436,11 +459,11 @@ struct TVTopShelfRenderer {
         scale: CGFloat,
         isStale: Bool
     ) {
-        let accent = providerColor(card.provider)
+        let accent = accentColor(card)
         let displayedStatus = displayStatus(for: card, isStale: isStale)
         accent.withAlphaComponent(isStale ? 0.045 : 0.075).setFill()
         UIBezierPath(roundedRect: frame, cornerRadius: 30 * scale).fill()
-        UIColor.white.withAlphaComponent(0.075).setStroke()
+        color(.line).setStroke()
         let outline = UIBezierPath(roundedRect: frame.insetBy(dx: 0.5 * scale, dy: 0.5 * scale), cornerRadius: 30 * scale)
         outline.lineWidth = max(scale, 1)
         outline.stroke()
@@ -456,7 +479,7 @@ struct TVTopShelfRenderer {
             card.headline,
             in: CGRect(x: frame.minX + inset, y: frame.minY + 92 * scale, width: frame.width - 2 * inset, height: 96 * scale),
             font: .systemFont(ofSize: 60 * scale, weight: .bold),
-            color: .white
+            color: headlineColor(card, isStale: isStale)
         )
         draw(
             statusText(displayedStatus),
@@ -471,7 +494,7 @@ struct TVTopShelfRenderer {
             width: frame.width - 2 * inset,
             height: 12 * scale
         )
-        UIColor.white.withAlphaComponent(0.13).setFill()
+        color(.track).setFill()
         UIBezierPath(roundedRect: barFrame, cornerRadius: barFrame.height / 2).fill()
         if let remainingPercent = card.remainingPercent {
             let progress = min(max(CGFloat(remainingPercent) / 100, 0), 1)
@@ -489,7 +512,7 @@ struct TVTopShelfRenderer {
             card.detail,
             in: CGRect(x: frame.minX + inset, y: frame.minY + 324 * scale, width: frame.width - 2 * inset, height: 72 * scale),
             font: .systemFont(ofSize: 21 * scale, weight: .medium),
-            color: UIColor.white.withAlphaComponent(0.65)
+            color: color(.secondary)
         )
     }
 
@@ -534,17 +557,15 @@ struct TVTopShelfRenderer {
             .joined(separator: ". ")
     }
 
-    private func providerColor(_ provider: Provider?) -> UIColor {
-        switch provider {
-        case .openAI:
-            UIColor(red: 0.22, green: 0.82, blue: 0.69, alpha: 1)
-        case .anthropic:
-            UIColor(red: 0.95, green: 0.52, blue: 0.33, alpha: 1)
-        case .google:
-            UIColor(red: 0.31, green: 0.64, blue: 1, alpha: 1)
-        case nil:
-            UIColor(red: 0.58, green: 0.63, blue: 0.72, alpha: 1)
-        }
+    private func color(_ token: AccountColorToken) -> UIColor {
+        let rgb = token.rgb(dark: true)
+        return UIColor(red: CGFloat(rgb.red), green: CGFloat(rgb.green), blue: CGFloat(rgb.blue), alpha: token.opacity(dark: true))
+    }
+
+    private func headlineColor(_ card: TVTopShelfCard, isStale: Bool) -> UIColor {
+        let status = displayStatus(for: card, isStale: isStale)
+        if status == .stale || status == .failure { return color(status.accountState.colorToken) }
+        return color(AccountTone.forRemaining(card.remainingPercent.map { Double($0) / 100 }).textToken)
     }
 
     private func displayStatus(for card: TVTopShelfCard, isStale: Bool) -> UsageStatus {
@@ -552,35 +573,10 @@ struct TVTopShelfRenderer {
         return card.remainingPercent == nil && card.status == .healthy ? .unknown : card.status
     }
 
-    private func statusColor(_ status: UsageStatus) -> UIColor {
-        switch status {
-        case .healthy:
-            UIColor(red: 0.39, green: 0.86, blue: 0.43, alpha: 1)
-        case .close, .stale:
-            UIColor(red: 1, green: 0.79, blue: 0.18, alpha: 1)
-        case .limited, .failure:
-            UIColor(red: 1, green: 0.48, blue: 0.12, alpha: 1)
-        case .unknown, .loading:
-            UIColor.white.withAlphaComponent(0.58)
-        }
-    }
+    /// Horizon: a card's accent is its provider's own hue, not a status colour.
+    private func accentColor(_ card: TVTopShelfCard) -> UIColor { color(card.provider?.colorToken ?? .tertiary) }
 
-    private func statusText(_ status: UsageStatus) -> String {
-        switch status {
-        case .healthy:
-            "Available"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Saved"
-        case .unknown:
-            "Unknown"
-        case .failure:
-            "Needs attention"
-        case .loading:
-            "Refreshing"
-        }
-    }
+    private func statusColor(_ status: UsageStatus) -> UIColor { color(status.accountState.colorToken) }
+
+    private func statusText(_ status: UsageStatus) -> String { status.displayText }
 }

@@ -89,9 +89,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let accountName: String
     public let generatedAt: Date
     public let resetCredits: ProviderResetCreditSummary?
+    public let usageCredits: ProviderUsageCreditSummary?
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
+    public let legacyAccountID: String?
+    public let sharedAccountIdentity: SharedProviderAccountIdentity?
+    public let accountIdentityStatus: ProviderAccountIdentityStatus
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -100,9 +104,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         case accountName
         case generatedAt
         case resetCredits
+        case usageCredits
         case status
         case accessState
         case errorMessage
+        case legacyAccountID
+        case sharedAccountIdentity
+        case accountIdentityStatus
     }
 
     public init(
@@ -112,9 +120,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         accountName: String,
         generatedAt: Date,
         resetCredits: ProviderResetCreditSummary? = nil,
+        usageCredits: ProviderUsageCreditSummary? = nil,
         status: UsageStatus,
         accessState: ProviderAccessState = .unknown,
-        errorMessage: String?
+        errorMessage: String?,
+        legacyAccountID: String? = nil,
+        sharedAccountIdentity: SharedProviderAccountIdentity? = nil,
+        accountIdentityStatus: ProviderAccountIdentityStatus = .unverified
     ) {
         self.provider = provider
         self.accountID = accountID
@@ -122,9 +134,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.resetCredits = resetCredits
+        self.usageCredits = usageCredits
         self.status = status
         self.accessState = accessState.retainingCurrentProviderObservation(for: status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.legacyAccountID = legacyAccountID
+        self.sharedAccountIdentity = sharedAccountIdentity?.matches(provider: provider, accountID: accountID) == true ? sharedAccountIdentity : nil
+        self.accountIdentityStatus = SharedProviderAccountIdentity.status(accountIdentityStatus, identity: self.sharedAccountIdentity)
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,9 +151,15 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         accountName = try container.decode(String.self, forKey: .accountName)
         generatedAt = try container.decode(Date.self, forKey: .generatedAt)
         resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
+        usageCredits = try container.decodeIfPresent(ProviderUsageCreditSummary.self, forKey: .usageCredits)
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
+        legacyAccountID = try container.decodeIfPresent(String.self, forKey: .legacyAccountID)
+        let decodedIdentity = try? container.decode(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
+        sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: accountID) == true ? decodedIdentity : nil
+        accountIdentityStatus = SharedProviderAccountIdentity.status(
+            (try? container.decode(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus)) ?? .unverified, identity: sharedAccountIdentity)
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
             .map(ConnectorRedactor.safeErrorDescription)
     }
@@ -150,9 +172,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: report.accountName,
             generatedAt: report.generatedAt,
             resetCredits: report.resetCredits,
+            usageCredits: report.usageCredits,
             status: report.status,
             accessState: report.accessState,
-            errorMessage: report.errorMessage
+            errorMessage: report.errorMessage,
+            legacyAccountID: report.legacyAccountID,
+            sharedAccountIdentity: report.sharedAccountIdentity,
+            accountIdentityStatus: report.accountIdentityStatus
         )
     }
 
@@ -164,9 +190,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             resetCredits: resetCredits,
+            usageCredits: usageCredits,
             status: replacementStatus,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -178,9 +208,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             resetCredits: resetCredits,
+            usageCredits: usageCredits,
             status: status,
             accessState: replacementAccessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -192,9 +226,13 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             resetCredits: replacementResetCredits,
+            usageCredits: usageCredits,
             status: status,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -280,10 +318,7 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
 
     public func resetDisplayText(now: Date = Date()) -> String? {
         guard let resetsAt = accessState.resetsAt else { return nil }
-        if Calendar.current.isDate(resetsAt, inSameDayAs: now) {
-            return resetsAt.formatted(date: .omitted, time: .shortened)
-        }
-        return resetsAt.formatted(date: .abbreviated, time: .shortened)
+        return ContextPanelDateFormatting.resetDeadline(resetsAt)
     }
 
     public func resetAccessibilityText(now: Date = Date()) -> String? {
@@ -786,10 +821,16 @@ public struct JSONSnapshotStore: Sendable {
         let legacyGoogleDefaultAccountIDs = Self.legacyGoogleDefaultAccountIDs(in: current)
         let preservedLimits: [UsageLimit]
         let preservedReports: [StoredProviderReport]
+        // A configured source can change logical identity (auth API -> session
+        // quota). An authoritative refresh replaces its old lanes as a group.
+        let replacedConfigurations = Set(refreshResult.reports.compactMap { report in
+            report.status != .failure ? report.configuredAccountID : nil
+        })
         if preservesUnreportedAccounts {
             preservedLimits = current?.snapshot.limits.filter { limit in
                 let key = ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)
-                return !authoritativeEmptyAccounts.contains(key)
+                return !(limit.configuredAccountID.map(replacedConfigurations.contains) ?? false)
+                    && !authoritativeEmptyAccounts.contains(key)
                     && !replacementAccounts.contains(key)
                     && !refreshResult.reports.contains { report in
                         report.provider == .google
@@ -805,7 +846,8 @@ public struct JSONSnapshotStore: Sendable {
             } ?? []
             preservedReports = current?.reports.filter { report in
                 let key = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
-                return !authoritativeEmptyAccounts.contains(key)
+                return !(report.configuredAccountID.map(replacedConfigurations.contains) ?? false)
+                    && !authoritativeEmptyAccounts.contains(key)
                     && !reportedAccounts.contains(key)
                     && !refreshResult.reports.contains { refreshed in
                         refreshed.provider == .google
@@ -893,20 +935,36 @@ public struct JSONSnapshotStore: Sendable {
                 .deduplicatedByID()
         )
         let refreshedReports = refreshResult.reports.map { report in
-            let storedReport = StoredProviderReport(report: report)
+            var storedReport = StoredProviderReport(report: report)
+            if report.status == .failure, report.sharedAccountIdentity == nil,
+               report.accountID.hasPrefix(report.provider.rawValue + "-history-"),
+               let prior = current?.reports.first(where: { $0.provider == report.provider && $0.accountID == report.accountID && $0.sharedAccountIdentity != nil }) {
+                // A material-qualified history ID proves the same local principal, not a current cloud login.
+                storedReport = StoredProviderReport(provider: storedReport.provider, accountID: storedReport.accountID,
+                    configuredAccountID: storedReport.configuredAccountID, accountName: storedReport.accountName,
+                    generatedAt: storedReport.generatedAt, resetCredits: storedReport.resetCredits, usageCredits: storedReport.usageCredits,
+                    status: storedReport.status, accessState: storedReport.accessState, errorMessage: storedReport.errorMessage,
+                    legacyAccountID: storedReport.legacyAccountID ?? prior.legacyAccountID, sharedAccountIdentity: prior.sharedAccountIdentity)
+            }
             let previousResetCredits = current?.reports.lazy
                 .filter { $0.provider == report.provider && $0.accountID == report.accountID }
                 .compactMap(\.resetCredits)
                 .reduce(nil as ProviderResetCreditSummary?, ProviderResetCreditSummary.preferred)
-            guard report.status == .failure,
-                  report.resetCredits == nil,
+            guard report.resetCredits == nil,
                   let previousResetCredits
             else {
                 return storedReport
             }
-            return storedReport.withResetCredits(previousResetCredits.preservingCountAfterRefreshFailure)
+            return storedReport.withResetCredits(previousResetCredits.presented(at: savedAt))
         }
-        let mergedReports = preservedReports + refreshedReports
+        let existingReportKeys = Set((preservedReports + refreshedReports).map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) })
+        let failureLimitKeys = Set(preservedFailureLimits.map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) })
+        let identifiedFailureReports = current?.reports.compactMap { report -> StoredProviderReport? in
+            let key = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
+            guard report.sharedAccountIdentity != nil, failureLimitKeys.contains(key), !existingReportKeys.contains(key) else { return nil }
+            return report.withStatus(.failure).withResetCredits(report.resetCredits?.presented(at: savedAt))
+        } ?? []
+        let mergedReports = preservedReports + refreshedReports + identifiedFailureReports
         let preservedPromptCacheObservations = current?.promptCacheObservations.filter { observation in
             savedAt.timeIntervalSince(observation.observedAt) <= PromptCacheSummary.defaultMaximumAge
                 && !refreshResult.promptCacheObservations.contains { refreshed in refreshed.id == observation.id }

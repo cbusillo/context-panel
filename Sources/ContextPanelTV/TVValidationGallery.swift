@@ -76,6 +76,16 @@ struct TVValidationGalleryView: View {
         adapter.context(state: state)
     }
 
+    private var accountSnapshot: WidgetSnapshot {
+        let snapshot = context.snapshot
+        return WidgetSnapshot(state: snapshot.state, generatedAt: snapshot.generatedAt, limits: snapshot.limits,
+            reports: snapshot.reports, promptCacheObservations: snapshot.promptCacheObservations,
+            promptCacheWidgetState: snapshot.promptCacheWidgetState, observedBurnRates: snapshot.observedBurnRates,
+            fastModeForecastSettings: snapshot.fastModeForecastSettings, status: snapshot.status, message: snapshot.message,
+            refreshAttentionSummary: snapshot.refreshAttentionSummary, syncErrorMessage: snapshot.syncErrorMessage,
+            accountDisplayMetadata: snapshot.accountOverview(now: context.presentationDate).accounts.map(\.metadata))
+    }
+
     private var presentationMode: TVPresentationMode {
         TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
     }
@@ -199,6 +209,13 @@ struct TVValidationGalleryView: View {
     private var preview: some View {
         switch surface {
         case .runway:
+            if presentationMode == .fullDetail {
+                TVAccountOverviewContent(overview: accountSnapshot.accountOverview(now: context.presentationDate,
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                    presentationModeRawValue: $presentationModeRawValue, isRefreshing: state == .loading,
+                    notice: context.snapshot.syncErrorMessage, onRefresh: {}, openAccount: { _ in },
+                    openDeadlines: {}, openDetails: {})
+            } else {
             TVRunwayContent(
                 presentation: presentation,
                 receivedAt: context.receivedAt,
@@ -208,9 +225,12 @@ struct TVValidationGalleryView: View {
                 noticeMessage: context.result.errorMessage,
                 presentationDate: context.presentationDate,
                 detailActionMode: .readOnly,
-                onRefresh: {}
+                onRefresh: {},
+                snapshotReports: context.snapshot.reports
             )
             .accessibilityElement(children: .contain)
+
+            }
 
         case .provider:
             if let section = selectedProviderSection {
@@ -229,7 +249,7 @@ struct TVValidationGalleryView: View {
 
         case .topShelf:
             TVTopShelfValidationPreview(
-                snapshot: context.snapshot,
+                snapshot: accountSnapshot,
                 preferences: context.displayPreferences,
                 mode: presentationMode,
                 presentationDate: context.presentationDate,

@@ -139,7 +139,7 @@ import Testing
     }
 }
 
-@Test func settingsAccountsHideRetiredSourcesAndPutAllLabAccountsFirstStably() {
+@Test func settingsAccountsHideRetiredSourcesAndPreserveConfiguredOrder() {
     func account(_ id: String, _ client: CodexClient) -> LocalProviderAccountConfiguration {
         LocalProviderAccountConfiguration(id: id, provider: .openAI, connectorKind: .codexRateLimits,
                                          displayName: id, codexClient: client)
@@ -148,6 +148,6 @@ import Testing
         account("codex", .codex), account("old", .everyCode), account("lab-work", .codexLab),
         account("codex-work", .codex), account("lab", .codexLab),
     ])
-    #expect(document.settingsAccounts.map(\.id) == ["lab-work", "lab", "codex", "codex-work"])
+    #expect(document.settingsAccounts.map(\.id) == ["codex", "lab-work", "codex-work", "lab"])
     #expect(document.accounts.map(\.id) == ["codex", "old", "lab-work", "codex-work", "lab"])
 }

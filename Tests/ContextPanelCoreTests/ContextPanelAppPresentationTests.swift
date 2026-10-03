@@ -2,6 +2,9 @@ import AppKit
 import Foundation
 import SwiftUI
 import Testing
+import ContextPanelWatchSupport
+import ContextPanelTVSupport
+@testable import ContextPanelWidgetUI
 
 @testable import ContextPanelApp
 @testable import ContextPanelCore
@@ -407,8 +410,8 @@ import Testing
     #expect(report.status == .failure)
     #expect(resetCredits.availableCount == 1)
     #expect(resetCredits.observedAt == observedAt)
-    #expect(resetCredits.coverage == .countOnly)
-    #expect(resetCredits.earliestKnownExpiry == nil)
+    #expect(resetCredits.coverage == .complete)
+    #expect(resetCredits.earliestKnownExpiry == initialReport.resetCredits?.earliestKnownExpiry)
     #expect(account.status == .failure)
     #expect(shouldShowProviderNavigation(
         provider: .openAI,
@@ -534,4 +537,48 @@ private func presentationTestTemporaryDirectory() throws -> URL {
         .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     return root
+}
+
+@Test func assumedAppResetPreservesTheKnownLocalDeadline() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(3_600)
+    let limit = UsageLimit(provider: .google, accountID: "local", accountName: "Local", label: "Gemini Weekly",
+        windowLabel: "weekly", modelLabel: "Gemini", unit: .percent, used: 0, limit: 100,
+        resetsAt: reset, lastUpdatedAt: now, confidence: .estimated, presentationAssumption: .scheduledReset)
+    let summary = try #require(UsageSnapshot(generatedAt: now, limits: [limit]).mainLimitSummaries.first)
+    #expect(summary.previewResetConfidenceText.contains(ContextPanelDateFormatting.resetDeadline(reset)))
+    #expect(summary.previewResetConfidenceText.contains("assumed"))
+}
+
+@Test func aRealScheduledResetKeepsItsDateAcrossAppWidgetAndWatch() throws {
+    let observed = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = observed.addingTimeInterval(3_600)
+    let now = reset.addingTimeInterval(120)
+    let raw = UsageLimit(provider: .google, accountID: "local", accountName: "Local", label: "Gemini Weekly",
+        windowLabel: "weekly", modelLabel: "Gemini", unit: .percent, used: 80, limit: 100,
+        resetsAt: reset, lastUpdatedAt: observed, confidence: .observed, freshnessMode: .eventDriven)
+    let snapshot = UsageSnapshot(generatedAt: observed, limits: [raw]).presented(at: now)
+    let presented = try #require(snapshot.limits.first)
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    let full = ContextPanelDateFormatting.resetDeadline(reset)
+    let compact = ContextPanelDateFormatting.resetDeadline(reset, compact: true)
+    #expect(presented.isAssumedAfterScheduledReset)
+    #expect(presented.resetsAt == reset)
+    #expect(presented.used == 0)
+    #expect(raw.used == 80)
+    #expect(summary.nextReset(after: now) == nil)
+    #expect(summary.previewResetConfidenceText.contains(full))
+    #expect(summary.usedPressureAccessibilityValue(status: .healthy).contains(full))
+    #expect(presented.remainingCapacityAccessibilityValue.contains(full))
+    #expect(summary.widgetSmallResetConfidenceText(presentationDate: now) == "≈ \(compact)")
+    #expect(summary.widgetCapacityAccessibilityValue(snapshotState: .ready, presentationDate: now).contains(full))
+    let widget = WidgetSnapshot(state: .ready, generatedAt: now, limits: snapshot.limits, status: .healthy, message: "Synced")
+    let watch = try #require(WatchLimitDisplay.rows(from: widget, maximumCount: 1).first)
+    #expect(watch.resetText(now: now)?.contains(compact) == true)
+    #expect(watch.accessibilitySentence(direction: .remaining, now: now).contains(full))
+    #expect(presented.resetText(relativeTo: now).contains("assumed after reset"))
+    let tv = TVRunwayPresentation(snapshot: widget, mode: .fullDetail, now: now)
+    let lane = try #require(tv.sections.first?.lanes.first { $0.isAssumedAfterScheduledReset })
+    #expect(lane.accessibilityResetText?.contains(full) == true)
+    #expect(lane.metrics.allSatisfy { $0.accessibilityResetText?.contains(full) == true })
 }

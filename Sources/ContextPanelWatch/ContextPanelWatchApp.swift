@@ -144,7 +144,21 @@ struct WatchUsageContent: View {
             WatchProviderAccessSection(alert: alert, presentationDate: presentationDate)
         }
 
-        if displayLimits.isEmpty {
+        let accounts = snapshot.accountOverview(now: presentationDate,
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+        if snapshot.accountDisplayMetadata != nil, !accounts.accounts.isEmpty {
+            let nextIDs = Set(Provider.allCases.compactMap { accounts.useNext(provider: $0)?.id })
+            Section(AccountTerms.accounts) {
+                WatchAccountHeadline(overview: accounts, now: presentationDate)
+                if let deadline = accounts.nextDeadline {
+                    WatchBankedLine(deadline: deadline, now: presentationDate)
+                }
+                ForEach(accounts.accounts) { account in
+                    WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: presentationDate,
+                                    deadlines: accounts.deadlines.filter { $0.accountID == account.id })
+                }
+            }
+        } else if displayLimits.isEmpty {
             WatchEmptySection(
                 result: result,
                 hasSourceLimits: !snapshot.limits.isEmpty
@@ -561,7 +575,8 @@ private struct WatchLimitRow: View {
     }
 
     private var usedText: some View {
-        Text(limit.usedTextLabeled)
+        // Every surface says "% left" (AccountTerms); "used" stays only in account detail facts.
+        Text(limit.remainingTextLabeled)
             .font(.caption.weight(.semibold))
             .foregroundStyle(statusColor)
             .accessibilityHidden(true)
@@ -583,7 +598,9 @@ private struct WatchLimitRow: View {
     }
 
     private var resetText: String? {
-        limit.resetText(now: presentationDate).map { "reset \($0)" }
+        limit.resetText(now: presentationDate).map { text in
+            text.hasPrefix("Passed") || text.lowercased().hasPrefix("assumed") ? text : "Resets " + text
+        }
     }
 
     @ViewBuilder
@@ -604,7 +621,7 @@ private struct WatchLimitRow: View {
                     Text(limit.context)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(resetText)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }

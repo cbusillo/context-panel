@@ -108,14 +108,29 @@ without printing secrets or raw provider responses:
 
 ```sh
 swift run CodexRateLimitProbe --auth ~/.codex/auth.json
-swift run CodexRateLimitProbe --auth ~/.codex-lab/auth_accounts.json
-swift run SnapshotStoreProbe --codex-auth ~/.codex-lab/auth_accounts.json
+swift run CodexRateLimitProbe --auth "/path/to/account-home/auth.json"
+swift run SnapshotStoreProbe --codex-auth "/path/to/account-home/auth.json"
 ```
 
 The Codex probe can return live percent-window quota buckets for CLI-backed
 OpenAI accounts. The retired Gemini CLI / legacy Code Assist probe and Claude
 status-line probe have been removed. Claude limits are refreshed through the
 Context Panel-owned Claude OAuth usage connector.
+
+Agents can read the panel's saved account view without credentials:
+
+```sh
+swift run ContextPanelAccountSnapshot
+```
+
+This read-only command emits versioned JSON from the canonical App Group store.
+It includes configured accounts that are disconnected, unavailable, disabled or
+stale, per-window usage/burn/natural resets, and reported banked resets. It does
+not refresh providers or change configuration. Unknown observations stay null;
+optional fields within provider summaries may be absent. A saved `accounts.json`
+is required. Inspect
+each account's state and observation time before relying on its capacity. See the
+[agent snapshot contract](docs/provider-usage-access.md#agent-readable-account-snapshot).
 
 For Google Antigravity, Context Panel uses AGY's documented custom status-line
 command as an opt-in local bridge. The signed refresh agent accepts only the

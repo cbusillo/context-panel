@@ -59,22 +59,27 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
     public let observedAt: Date
     public let coverage: ProviderResetCreditCoverage
     public let earliestKnownExpiry: Date?
+    public let knownExpiries: [Date]
 
     public init(
         availableCount: Int,
         observedAt: Date,
         coverage: ProviderResetCreditCoverage,
-        earliestKnownExpiry: Date? = nil
+        earliestKnownExpiry: Date? = nil,
+        knownExpiries: [Date] = []
     ) {
         let normalizedCount = max(0, availableCount)
         self.availableCount = normalizedCount
         self.observedAt = observedAt
-        if normalizedCount == 0 || earliestKnownExpiry == nil {
+        let dates = Array(knownExpiries.sorted().prefix(normalizedCount))
+        let earliest = dates.first ?? earliestKnownExpiry
+        self.knownExpiries = coverage == .countOnly || normalizedCount == 0 ? [] : dates
+        if normalizedCount == 0 || earliest == nil {
             self.coverage = .countOnly
             self.earliestKnownExpiry = nil
         } else {
             self.coverage = coverage
-            self.earliestKnownExpiry = coverage == .countOnly ? nil : earliestKnownExpiry
+            self.earliestKnownExpiry = coverage == .countOnly ? nil : earliest
         }
     }
 
@@ -84,7 +89,8 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
             availableCount: try container.decode(Int.self, forKey: .availableCount),
             observedAt: try container.decode(Date.self, forKey: .observedAt),
             coverage: try container.decode(ProviderResetCreditCoverage.self, forKey: .coverage),
-            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry)
+            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry),
+            knownExpiries: try container.decodeIfPresent([Date].self, forKey: .knownExpiries) ?? []
         )
     }
 
@@ -103,12 +109,38 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         return (lhs.earliestKnownExpiry ?? .distantFuture) <= (rhs.earliestKnownExpiry ?? .distantFuture) ? lhs : rhs
     }
 
-    var preservingCountAfterRefreshFailure: Self {
-        Self(
-            availableCount: availableCount,
-            observedAt: observedAt,
-            coverage: .countOnly
-        )
+    /// An expired entitlement disappears; this never redeems a reset or changes utilization.
+    public func presented(at now: Date) -> Self {
+        let dates = knownExpiries.isEmpty ? earliestKnownExpiry.map { [$0] } ?? [] : knownExpiries
+        let expired = dates.filter { $0 <= now }
+        guard !expired.isEmpty else { return self }
+        let future = dates.filter { $0 > now }
+        let remaining = max(0, availableCount - expired.count)
+        let coverage: ProviderResetCreditCoverage = future.count == remaining ? .complete : (future.isEmpty ? .countOnly : .partial)
+        return Self(availableCount: remaining, observedAt: observedAt, coverage: coverage, knownExpiries: future)
+    }
+}
+
+public extension Collection where Element == StoredProviderReport {
+    func resetCreditTransitionDates(after now: Date) -> [Date] {
+        Array(Set(flatMap { report -> [Date] in
+            guard let summary = report.resetCredits else { return [] }
+            return summary.knownExpiries.isEmpty
+                ? summary.earliestKnownExpiry.map { [$0] } ?? [] : summary.knownExpiries
+        }.filter { $0 > now })).sorted()
+    }
+}
+
+/// Only normalized credit quantities cross the adapter boundary.
+public struct ProviderUsageCreditSummary: Codable, Equatable, Sendable {
+    public let hasCredits: Bool
+    public let unlimited: Bool
+    public let balance: Double?
+
+    public init(hasCredits: Bool, unlimited: Bool, balance: Double?) {
+        self.hasCredits = hasCredits
+        self.unlimited = unlimited
+        self.balance = balance.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
     }
 }
 
@@ -120,9 +152,13 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public let generatedAt: Date
     public let limits: [UsageLimit]
     public let resetCredits: ProviderResetCreditSummary?
+    public let usageCredits: ProviderUsageCreditSummary?
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
+    public let legacyAccountID: String?
+    public let sharedAccountIdentity: SharedProviderAccountIdentity?
+    public let accountIdentityStatus: ProviderAccountIdentityStatus
 
     public init(
         provider: Provider,
@@ -132,9 +168,13 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         generatedAt: Date,
         limits: [UsageLimit],
         resetCredits: ProviderResetCreditSummary? = nil,
+        usageCredits: ProviderUsageCreditSummary? = nil,
         status: UsageStatus? = nil,
         accessState: ProviderAccessState = .unknown,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        legacyAccountID: String? = nil,
+        sharedAccountIdentity: SharedProviderAccountIdentity? = nil,
+        accountIdentityStatus: ProviderAccountIdentityStatus = .unverified
     ) {
         self.provider = provider
         self.accountID = accountID
@@ -143,9 +183,13 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.generatedAt = generatedAt
         self.limits = limits
         self.resetCredits = resetCredits
+        self.usageCredits = usageCredits
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
         self.accessState = accessState.retainingCurrentProviderObservation(for: self.status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.legacyAccountID = legacyAccountID
+        self.sharedAccountIdentity = sharedAccountIdentity?.matches(provider: provider, accountID: accountID) == true ? sharedAccountIdentity : nil
+        self.accountIdentityStatus = SharedProviderAccountIdentity.status(accountIdentityStatus, identity: self.sharedAccountIdentity)
     }
 }
 
@@ -310,9 +354,13 @@ private extension ProviderConnectorReport {
             generatedAt: generatedAt,
             limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback, accountName: replacementAccountName) },
             resetCredits: resetCredits,
+            usageCredits: usageCredits,
             status: status,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 
@@ -326,14 +374,18 @@ private extension ProviderConnectorReport {
             generatedAt: generatedAt,
             limits: limits,
             resetCredits: replacement,
+            usageCredits: usageCredits,
             status: status,
             accessState: accessState,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 }
 
-private extension UsageLimit {
+extension UsageLimit {
     func replacingMissingConfiguredAccountID(with fallback: String, accountName replacementAccountName: String? = nil) -> UsageLimit {
         guard configuredAccountID != fallback || replacementAccountName != nil else { return self }
         return UsageLimit(
@@ -367,12 +419,14 @@ public struct ConnectorHTTPRequest: Sendable {
     public let method: String
     public let headers: [String: String]
     public let body: Data?
+    public let timeoutInterval: TimeInterval?
 
-    public init(url: URL, method: String, headers: [String: String] = [:], body: Data? = nil) {
+    public init(url: URL, method: String, headers: [String: String] = [:], body: Data? = nil, timeoutInterval: TimeInterval? = nil) {
         self.url = url
         self.method = method
         self.headers = headers
         self.body = body
+        self.timeoutInterval = timeoutInterval
     }
 }
 
@@ -401,7 +455,7 @@ public struct URLSessionConnectorHTTPClient: ConnectorHTTPClient {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
-        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.timeoutInterval = request.timeoutInterval ?? timeoutInterval
         for (key, value) in request.headers {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
@@ -424,7 +478,11 @@ public enum ConnectorRedactor {
     }
 
     public static func safeErrorDescription(_ value: String) -> String {
-        EvidenceRedactor.redact(value)
+        safeErrorDescription(value, preservingTypedEmail: false)
+    }
+
+    public static func safeErrorDescription(_ value: String, preservingTypedEmail: Bool) -> String {
+        EvidenceRedactor.redact(value, preservingTypedEmail: preservingTypedEmail)
             .replacingOccurrences(
                 of: #"https?://[^\s]+"#,
                 with: "[url redacted]",

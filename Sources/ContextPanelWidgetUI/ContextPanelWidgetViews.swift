@@ -50,6 +50,22 @@ public struct ContextPanelWidgetLinks: Sendable {
     public let cacheStatsSettings: URL
     public let resetCreditInteraction: ContextPanelResetCreditInteraction
 
+    public func account(_ provider: Provider, id: String) -> URL {
+        var components = URLComponents()
+        components.scheme = overview.scheme
+        components.host = "provider"
+        components.path = "/\(provider.rawValue)"
+        components.queryItems = [URLQueryItem(name: "account", value: id)]
+        return components.url ?? overview
+    }
+
+    public var deadlines: URL {
+        var components = URLComponents()
+        components.scheme = overview.scheme
+        components.host = "deadlines"
+        return components.url ?? overview
+    }
+
     public init(
         overview: URL,
         reconnect: URL,
@@ -99,19 +115,47 @@ public struct ContextPanelWidgetContentView: View {
     public var body: some View {
         content
             .environment(\.cpwPresentationDate, presentationDate)
-            .widgetURL(snapshot.widgetDeepLinkURL(links: links))
+            .widgetURL(widgetDestination)
+    }
+
+    private var widgetDestination: URL? {
+        if displayPreferences.usesAccountRows {
+            let accounts = snapshot.accountOverview(now: presentationDate, widgetsOnly: true,
+                maximumAge: resetCreditMaximumAge)
+            if family == .systemSmall, let account = accounts.closest ?? accounts.accounts.first {
+                return links.account(account.metadata.provider, id: account.id)
+            }
+            return links.overview
+        }
+        guard family == .systemSmall, showsResetCreditSurfaces,
+              snapshot.widgetProblemText(presentationDate: presentationDate) == nil,
+              snapshot.widgetDeepLinkURL(links: links) == links.overview,
+              let deadline = snapshot.resetCreditSurfaceSummary(now: presentationDate, maximumAge: resetCreditMaximumAge)?.primaryDeadlineGuidance else {
+            return snapshot.widgetDeepLinkURL(links: links)
+        }
+        return switch links.resetCreditInteraction {
+        case .native: deadline.widgetDeepLinkURL
+        case let .destination(destination, _): destination
+        case .none: nil
+        }
     }
 
     @ViewBuilder
     private var content: some View {
-        if snapshot.shouldShowSetupPlaceholder {
+        if displayPreferences.usesAccountRows {
+            AccountGlanceWidget(family: family, snapshot: snapshot, links: links,
+                now: presentationDate, maximumAge: resetCreditMaximumAge,
+                showsBanked: showsResetCreditSurfaces)
+        } else if snapshot.shouldShowSetupPlaceholder {
             CPWSetupPlaceholderWidget(family: family)
         } else {
             switch family {
             case .systemSmall:
                 ContextPanelSmallWidget(
                     snapshot: snapshot,
-                    displayPreferences: displayPreferences
+                    displayPreferences: displayPreferences,
+                    showsResetCreditSurfaces: showsResetCreditSurfaces,
+                    resetCreditMaximumAge: resetCreditMaximumAge
                 )
             case .systemLarge, .systemExtraLarge:
                 ContextPanelLargeWidget(
@@ -194,6 +238,8 @@ struct ContextPanelSmallWidget: View {
     @Environment(\.cpwPresentationDate) private var presentationDate
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
+    let showsResetCreditSurfaces: Bool
+    let resetCreditMaximumAge: TimeInterval
 
     var body: some View {
         let selection = displayPreferences.mainLimitAnswerSelection(
@@ -201,12 +247,18 @@ struct ContextPanelSmallWidget: View {
         )
         let primary = selection.primary
         let supporting = selection.compactSupportingLanes(maximumCount: 2)
+        let deadline = showsResetCreditSurfaces
+            ? snapshot.resetCreditSurfaceSummary(now: presentationDate, maximumAge: resetCreditMaximumAge)?.primaryDeadlineGuidance : nil
 
         VStack(alignment: .leading, spacing: 5) {
             if let problem = snapshot.widgetProblemText(presentationDate: presentationDate) {
                 CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
             }
-            if let primary, supporting.isEmpty {
+            if let primary, let deadline {
+                CPWSmallSingleLimitView(lane: primary, snapshotState: snapshot.state)
+                Divider()
+                CPWResetDeadlineFooter(guidance: deadline, interaction: .none)
+            } else if let primary, supporting.isEmpty {
                 CPWSmallSingleLimitView(lane: primary, snapshotState: snapshot.state)
                     .frame(maxHeight: .infinity, alignment: .top)
             } else if let primary {
@@ -214,6 +266,10 @@ struct ContextPanelSmallWidget: View {
                 ForEach(supporting) { lane in
                     CPWSmallRemainingLimitRow(lane: lane, snapshotState: snapshot.state)
                 }
+            } else if let deadline {
+                Text("Usage unknown").font(.system(size: 22, weight: .semibold))
+                Spacer(minLength: 0)
+                CPWResetDeadlineFooter(guidance: deadline, interaction: .none)
             } else {
                 Text("No limit data")
                     .font(.system(size: 22, weight: .semibold))
@@ -474,8 +530,9 @@ struct ContextPanelMediumWidget: View {
         let resetCreditSummary = showsResetCreditSurfaces
             ? snapshot.resetCreditSurfaceSummary(now: now, maximumAge: resetCreditMaximumAge)
             : nil
+        VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: resetCreditSummary?.primaryDeadlineGuidance == nil ? 5 : 3) {
                 if let problem = snapshot.widgetProblemText(presentationDate: presentationDate) {
                     CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                 }
@@ -488,13 +545,13 @@ struct ContextPanelMediumWidget: View {
                 Text(hasPooledForecast
                     ? keepWorkingForecast.outcomeCopy(density: .compact) ?? "Measuring recent use"
                     : snapshot.fastModeVerdict)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: resetCreditSummary?.primaryDeadlineGuidance == nil ? 13 : 11, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(2)
                 Text(hasPooledForecast
                     ? keepWorkingForecast.isLimited
                         ? "Available after reset"
-                        : keepWorkingForecast.paceCopy(density: .compact) ?? "Not enough recent data yet"
+                        : keepWorkingForecast.paceCopy(density: .compact) ?? "Pace unknown"
                     : snapshot.fastModeWidgetDetail)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
@@ -521,7 +578,7 @@ struct ContextPanelMediumWidget: View {
                 CPWSectionHeader(title: "Limits") {
                     CPWMainLimitHeaderAccessory(
                         layout: .medium,
-                        resetCreditSummary: resetCreditSummary,
+                        resetCreditSummary: nil,
                         now: now,
                         state: snapshot.promptCacheWidgetState,
                         summary: snapshot.promptCacheSummary,
@@ -536,6 +593,11 @@ struct ContextPanelMediumWidget: View {
                     }
                 }
             }
+        }
+        if let deadline = resetCreditSummary?.primaryDeadlineGuidance {
+            Divider()
+            CPWResetDeadlineFooter(guidance: deadline, interaction: links.resetCreditInteraction)
+        }
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -770,6 +832,53 @@ private struct CPWMainLimitHeaderAccessory: View {
     }
 }
 
+private struct CPWResetDeadlineFooter: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
+    let guidance: ProviderResetCreditGuidance
+    let interaction: ContextPanelResetCreditInteraction
+
+    var body: some View {
+        switch interaction {
+        case .native:
+            Link(destination: guidance.widgetDeepLinkURL) { content }.buttonStyle(.plain)
+        case let .destination(destination, _):
+            Link(destination: destination) { content }.buttonStyle(.plain)
+        case .none:
+            content
+        }
+    }
+
+    private var deadlineTone: Color {
+        switch guidance.state {
+        case .considerUsingNow, .considerBefore: CPWTheme.statusColor(.close)
+        case .hold, .refresh: CPWTheme.secondaryText(variant: themeVariant)
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 4) {
+                CPWProviderBadge(provider: guidance.provider, compact: true)
+                Text(guidance.accountName)
+                    .font(.system(size: 9, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Text("\(guidance.resetCredits.availableCount) resets")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .fixedSize()
+            }
+            .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
+            Text(guidance.resetCredits.earliestKnownExpiry.map {
+                "Next expiry \(ContextPanelDateFormatting.resetDeadline($0, compact: true))"
+            } ?? "Expiry unknown")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(deadlineTone)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct CPWResetCreditHeaderToken: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
     let layout: CPWMainLimitHeaderLayout
@@ -793,7 +902,7 @@ private struct CPWResetCreditHeaderToken: View {
     }
 
     private var guidance: ProviderResetCreditGuidance? {
-        summary.primaryActionableGuidance
+        summary.primaryActionableGuidance ?? summary.primaryDeadlineGuidance
     }
 
     private var status: UsageStatus? {
@@ -819,7 +928,7 @@ private struct CPWResetCreditHeaderToken: View {
 
     private var nativeAccessibilityHint: String {
         guidance == nil
-            ? "Opens OpenAI detail in Context Panel"
+            ? "Opens \(summary.provider.displayName) detail in Context Panel"
             : "Opens account detail in Context Panel"
     }
 
@@ -880,7 +989,7 @@ private struct CPWResetCreditHeaderToken: View {
                     Text(layout == .medium ? "\(guidance.resetCredits.availableCount)×" : guidance.countText)
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
-                    if let actionText = guidance.glanceActionText {
+                    if let actionText = deadlineText(for: guidance) {
                         Text("· \(actionText)")
                             .font(.system(size: 8, weight: .semibold))
                             .lineLimit(1)
@@ -898,19 +1007,22 @@ private struct CPWResetCreditHeaderToken: View {
                     Text("\(guidance.resetCredits.availableCount)×")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
+                    if let expiry = deadlineText(for: guidance) {
+                        Text(expiry).font(.system(size: 8, weight: .medium)).lineLimit(1)
+                    }
                 }
             } else {
                 switch density {
                 case .standard:
                     if layout != .medium {
                         CPWProviderBadge(provider: summary.provider, compact: true)
-                        Text("Reset credits · \(compactAccountCountText)")
+                        Text(AccountTerms.bankedResets + " · \(compactAccountCountText)")
                             .font(.system(size: 8, weight: .semibold))
                             .lineLimit(1)
                     } else {
                         Image(systemName: "arrow.counterclockwise.circle.fill")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Credits · \(summary.accountCountText)")
+                        Text(AccountTerms.bankedResets + " · \(summary.accountCountText)")
                             .font(.system(size: 8, weight: .semibold))
                             .lineLimit(1)
                     }
@@ -928,17 +1040,11 @@ private struct CPWResetCreditHeaderToken: View {
     }
 
     private func compactTokenActionText(for guidance: ProviderResetCreditGuidance) -> String? {
-        guard layout == .medium else {
-            return guidance.glanceActionText
-        }
-        return switch guidance.state {
-        case .considerUsingNow:
-            "now"
-        case let .considerBefore(expiry):
-            expiry.formatted(.dateTime.month(.abbreviated).day())
-        case .hold, .refresh:
-            nil
-        }
+        deadlineText(for: guidance)
+    }
+
+    private func deadlineText(for guidance: ProviderResetCreditGuidance) -> String? {
+        guidance.resetCredits.earliestKnownExpiry.map { ContextPanelDateFormatting.resetDeadline($0, compact: true) }
     }
 
     private var compactAccountCountText: String {
@@ -969,7 +1075,7 @@ private struct CPWResetCreditHeaderToken: View {
 
     private var accessibilityText: String {
         guard let guidance else {
-            return "Reset credits are available on \(summary.providerAccountCountText)."
+            return "\(AccountTerms.bankedResets) are available on \(summary.providerAccountCountText)."
         }
         let expiry = guidance.resetCredits.earliestKnownExpiry
             .map { "Earliest known expiry \($0.formatted(date: .long, time: .shortened))." }
@@ -1910,15 +2016,14 @@ extension UsageLimit {
     }
 
     func widgetResetText(presentationDate: Date) -> String? {
-        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else {
+            if isAssumedAfterScheduledReset { return "assumed reset · date unknown" }
             if status == .failure { return "refresh failed" }
             return provider == .anthropic ? nil : "unknown reset"
         }
-        if resetsAt < presentationDate.addingTimeInterval(-60) {
-            return "reset passed"
-        }
-        return resetsAt.widgetCompactResetText(relativeTo: presentationDate)
+        let deadline = resetsAt.widgetCompactResetText(relativeTo: presentationDate)
+        if isAssumedAfterScheduledReset { return "Assumed · \(deadline)" }
+        return resetsAt <= presentationDate ? "Passed \(deadline)" : deadline
     }
 
     var widgetResetConfidenceText: String? {
@@ -1926,7 +2031,7 @@ extension UsageLimit {
     }
 
     func widgetResetConfidenceText(presentationDate: Date) -> String? {
-        if isAssumedAfterScheduledReset { return "assumed after reset" }
+        if isAssumedAfterScheduledReset { return resetsAt.map { "≈ " + $0.widgetCompactResetText(relativeTo: presentationDate) } ?? "assumed reset date unknown" }
         guard let resetText = widgetResetText(presentationDate: presentationDate), !resetText.isEmpty else { return nil }
         if confidence.shouldShowWidgetResetQualifier {
             return "\(resetText) · \(confidence.widgetLabel)"
@@ -2229,7 +2334,7 @@ extension MainLimitSummary {
             parts.append(freshness)
         }
         if hasAssumedScheduledResetCapacity {
-            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
+            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown"))
         } else if let reset = widgetResetConfidenceText(presentationDate: presentationDate) {
             parts.append("Reset \(reset)")
         }
@@ -2255,7 +2360,7 @@ extension MainLimitSummary {
             parts.append(freshness)
         }
         if hasAssumedScheduledResetCapacity {
-            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
+            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown"))
         } else if let reset = widgetResetConfidenceText(presentationDate: presentationDate) {
             parts.append("Reset \(reset)")
         }
@@ -2277,22 +2382,17 @@ extension MainLimitSummary {
     }
 
     func widgetSmallResetConfidenceText(presentationDate: Date) -> String? {
-        if hasAssumedScheduledResetCapacity { return "≈ reset" }
         guard let resetsAt else {
             if status == .failure {
                 return "failed"
             }
             return provider == .anthropic ? nil : "reset ?"
         }
+        if hasAssumedScheduledResetCapacity { return "≈ " + ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true) }
         if resetsAt < presentationDate.addingTimeInterval(-60) {
-            return "passed"
+            return "Passed \(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
         }
-        let relative = resetsAt.widgetRelativeText(relativeTo: presentationDate)
-        let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if confidence.shouldShowWidgetResetQualifier {
-            return "\(compactRelative) · \(confidence.widgetSmallLabel)"
-        }
-        return compactRelative
+        return "\(hasAssumedScheduledResetCapacity ? "≈ " : "")\(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
     }
 
     var widgetWindowName: String {
@@ -2308,7 +2408,6 @@ extension MainLimitSummary {
     }
 
     func widgetResetText(presentationDate: Date) -> String? {
-        if hasAssumedScheduledResetCapacity { return "assumed reset" }
         guard let resetsAt else {
             if status == .failure {
                 return "refresh failed"
@@ -2318,10 +2417,11 @@ extension MainLimitSummary {
             }
             return "unknown reset"
         }
+        if hasAssumedScheduledResetCapacity { return "≈ " + resetsAt.widgetDateTimeText }
         if resetsAt < presentationDate.addingTimeInterval(-60) {
-            return "reset passed"
+            return "Passed \(resetsAt.widgetDateTimeText)"
         }
-        return resetsAt.widgetCompactResetText(relativeTo: presentationDate)
+        return "\(hasAssumedScheduledResetCapacity ? "≈ " : "")\(resetsAt.widgetCompactResetText(relativeTo: presentationDate))"
     }
 
     var widgetResetConfidenceText: String? {
@@ -2329,7 +2429,7 @@ extension MainLimitSummary {
     }
 
     func widgetResetConfidenceText(presentationDate: Date) -> String? {
-        if hasAssumedScheduledResetCapacity { return "assumed after reset" }
+        if hasAssumedScheduledResetCapacity { return widgetResetText(presentationDate: presentationDate) }
         guard let resetText = widgetResetText(presentationDate: presentationDate), !resetText.isEmpty else {
             return nil
         }
@@ -2477,12 +2577,7 @@ extension Date {
     }
 
     func widgetCompactResetText(relativeTo presentationDate: Date) -> String {
-        let relative = widgetRelativeText(relativeTo: presentationDate)
-        let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if shouldShowWidgetDateTime(relativeTo: presentationDate) {
-            return "\(compactRelative) · \(widgetDateTimeText)"
-        }
-        return compactRelative
+        widgetDateTimeText
     }
 
     var widgetDateTimeWithRelativeText: String {
@@ -2492,29 +2587,12 @@ extension Date {
     func widgetDateTimeWithRelativeText(relativeTo presentationDate: Date) -> String {
         let relative = widgetRelativeText(relativeTo: presentationDate)
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if shouldShowWidgetDateTime(relativeTo: presentationDate) {
-            return "\(widgetDateTimeText) (\(compactRelative))"
-        }
-        return compactRelative
-    }
-
-    var shouldShowWidgetDateTime: Bool {
-        shouldShowWidgetDateTime(relativeTo: Date())
-    }
-
-    func shouldShowWidgetDateTime(relativeTo presentationDate: Date) -> Bool {
-        abs(timeIntervalSince(presentationDate)) >= 24 * 3_600
+        return "\(widgetDateTimeText) (\(compactRelative))"
     }
 
     var widgetDateTimeText: String {
-        Self.widgetDateTimeFormatter.string(from: self)
+        ContextPanelDateFormatting.resetDeadline(self, compact: true)
     }
-
-    private static let widgetDateTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.setLocalizedDateFormatFromTemplate("EEEjmm")
-        return formatter
-    }()
 
     private static func formatDaysAndHours(hours: Int) -> String {
         let days = hours / 24

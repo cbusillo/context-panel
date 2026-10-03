@@ -273,14 +273,14 @@ import Testing
         limits: [weekly],
         now: now
     ))
-    let elapsedGuidance = try #require(ResetCreditGuidanceAdvisor.guidance(
+    let elapsedGuidance = ResetCreditGuidanceAdvisor.guidance(
         report: elapsed,
         limits: [weekly],
         now: now
-    ))
+    )
 
     #expect(inconsistentGuidance.state == .refresh(.inconsistentObservation))
-    #expect(elapsedGuidance.state == .refresh(.expiryElapsed))
+    #expect(elapsedGuidance == nil)
 }
 
 @Test func resetCreditGuidanceCopyRemainsAdvisoryAndReadOnly() throws {
@@ -614,6 +614,21 @@ private func resetGuidanceDate() -> Date {
     Date(timeIntervalSince1970: 1_800_000_000)
 }
 
+@Test func resetCreditMixedProviderAvailabilityDoesNotNameEveryAccountAfterTheFirstProvider() throws {
+    let now = resetGuidanceDate()
+    let openAI = resetGuidanceReport(now: now, count: 2)
+    let claude = resetGuidanceReport(accountID: "claude", now: now, count: 1, provider: .anthropic)
+    let limits = [resetGuidanceLimit(accountID: openAI.accountID, window: .weekly, used: 20,
+                                   resetsAt: now.addingTimeInterval(86_400))]
+    let mixed = try #require(ResetCreditSurfaceAdvisor.appSummary(reports: [openAI, claude], limits: limits, now: now))
+    #expect(mixed.accountCount == 2)
+    #expect(mixed.includesMultipleProviders)
+    #expect(mixed.providerAccountCountText == mixed.accountCountText)
+    let single = try #require(ResetCreditSurfaceAdvisor.appSummary(reports: [openAI], limits: limits, now: now))
+    #expect(!single.includesMultipleProviders)
+    #expect(single.providerAccountCountText.contains(single.provider.displayName))
+}
+
 private func resetGuidanceReport(
     accountID: String = "account-a",
     configuredAccountID: String? = nil,
@@ -623,10 +638,11 @@ private func resetGuidanceReport(
     count: Int?,
     coverage: ProviderResetCreditCoverage = .countOnly,
     expiry: Date? = nil,
-    status: UsageStatus = .healthy
+    status: UsageStatus = .healthy,
+    provider: Provider = .openAI
 ) -> StoredProviderReport {
     StoredProviderReport(
-        provider: .openAI,
+        provider: provider,
         accountID: accountID,
         configuredAccountID: configuredAccountID,
         accountName: accountName,
@@ -665,4 +681,20 @@ private func resetGuidanceLimit(
         lastUpdatedAt: resetGuidanceDate(),
         confidence: .observed
     )
+}
+
+@Test func providerHeaderResetCreditsIncludesClaudeAndNeverBorrowsAnotherProvider() throws {
+    let now = resetGuidanceDate()
+    let openAI = resetGuidanceReport(now: now, count: 2)
+    let claude = resetGuidanceReport(accountID: "claude", now: now, count: 1, provider: .anthropic)
+    let summary = try #require(ResetCreditSurfaceAdvisor.appSummary(provider: .anthropic,
+        reports: [openAI, claude], limits: [], now: now))
+    #expect(summary.provider == .anthropic)
+    #expect(summary.accountCount == 1)
+    #expect(!summary.includesMultipleProviders)
+    for count in [nil, 0] as [Int?] {
+        let noCredits = resetGuidanceReport(accountID: "claude", now: now, count: count, provider: .anthropic)
+        #expect(ResetCreditSurfaceAdvisor.appSummary(provider: .anthropic,
+            reports: [openAI, noCredits], limits: [], now: now) == nil)
+    }
 }

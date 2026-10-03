@@ -26,6 +26,9 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
         guard let path else { return nil }
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
         let home = url.deletingLastPathComponent().lastPathComponent
+        if url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == ".codex-accounts" {
+            return .codex
+        }
         if home == ".codex-lab" || home.hasPrefix(".codex-lab-") { return .codexLab }
         if home == ".codex" || home.hasPrefix(".codex-") { return .codex }
         if home == ".code" || home.hasPrefix(".code-") { return .everyCode }
@@ -61,6 +64,9 @@ public extension LocalProviderAccountConfiguration {
     }
 
     var promptCacheDirectory: URL? {
+        if connectorKind == .codexRateLimits, let path = codexQuotaPath {
+            return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true)
+        }
         guard let client = effectiveCodexClient, client != .everyCode, let path = effectiveAuthPath else { return nil }
         return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .deletingLastPathComponent()
@@ -71,8 +77,6 @@ public extension LocalProviderAccountConfiguration {
 public extension AccountConfigurationDocument {
     /// Presentation only: keep the complete stored document when saving settings.
     var settingsAccounts: [LocalProviderAccountConfiguration] {
-        let available = accounts.filter { !$0.isRetiredSource }
-        return available.filter { $0.effectiveCodexClient == .codexLab }
-            + available.filter { $0.effectiveCodexClient != .codexLab }
+        accounts.filter { !$0.isRetiredSource }
     }
 }

@@ -17,6 +17,10 @@
     "testLanes": "docs/test-lanes.md",
     "localLimitProbe": "docs/local-limit-probe.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
+    "multiAccountSetup": "docs/provider-usage-access.md#multiple-local-account-entries",
+    "codexSessionQuota": "docs/provider-usage-access.md#per-account-codex-session-quota",
+    "currentCodexHomes": "docs/provider-usage-access.md#current-codex-homes-and-openai-recovery",
+    "agentAccountSnapshot": "docs/provider-usage-access.md#agent-readable-account-snapshot",
     "repoSettings": "docs/repo-settings.md"
   },
   "qualityGate": {
@@ -49,6 +53,7 @@
       "ciChangeScope": "python3 scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
       "companionUploadFixtureTools": "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR=<dir> scripts/upload-app-store-connect-companion-app.sh --export-only <other arguments> (test-only seam for fixture xcodebuild and codesign; refused for uploads)",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
+      "sharedAccountIdentityContract": "docs/shared-account-identity.md (provider primary keys, credential-qualified history, Mac receiving, scoped migration/removal and live qualification gates)",
       "cloudKitSchemaReceiptGate": "scripts/require-cloudkit-schema-receipt.sh (called by every live release entrypoint; local live runs use scripts/with-cloudkit-schema-receipt.sh -- <command>)",
       "cloudKitProductionSchemaReceipt": "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=\"$(security find-generic-password -a \"$USER\" -s com.shinycomputers.contextpanel.cloudkit-schema-receipt -w)\" scripts/validate-cloudkit-companion-schema.sh --live --environment production --source-commit \"$(git rev-parse HEAD)\" --receipt-output .build/cloudkit-production-schema-receipt.json",
       "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",

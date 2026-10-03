@@ -29,15 +29,25 @@ public struct CompanionSnapshot: Codable, Equatable, Sendable {
         self.promptCacheSummaries = promptCacheSummaries
     }
 
-    public init(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date()) {
+    public init(storedSnapshot original: StoredUsageSnapshot, publishedAt: Date = Date(), configuration: [LocalProviderAccountConfiguration] = [], publisherID: String? = nil) {
+        let storedSnapshot = original.selectingSharedAccountObservations()
         self.init(
             generatedAt: storedSnapshot.snapshot.generatedAt,
             publishedAt: publishedAt,
-            limits: storedSnapshot.snapshot.limits.map(CompanionLimit.init(limit:)),
-            providerStatuses: storedSnapshot.reports.map(CompanionProviderStatus.init(report:)),
+            limits: storedSnapshot.snapshot.limits.map { limit in
+                CompanionLimit(limit: limit, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
+                    provider: limit.provider, rawID: limit.accountID, configuredID: limit.configuredAccountID,
+                    configuration: configuration, publisherID: publisherID),
+                    sharedIdentity: storedSnapshot.reports.first { $0.provider == limit.provider && $0.accountID == limit.accountID }?.sharedAccountIdentity)
+            },
+            providerStatuses: storedSnapshot.reports.map { report in
+                CompanionProviderStatus(report: report, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
+                    provider: report.provider, rawID: report.accountID, configuredID: report.configuredAccountID,
+                    configuration: configuration, publisherID: publisherID))
+            },
             promptCacheSummaries: CompanionPromptCacheSummary.summaries(
                 observations: storedSnapshot.promptCacheObservations,
-                accountAliases: CompanionPromptCacheAccountAliases(storedSnapshot: storedSnapshot)
+                accountAliases: CompanionPromptCacheAccountAliases(storedSnapshot: storedSnapshot, configuration: configuration, publisherID: publisherID)
             )
         )
     }
@@ -53,6 +63,12 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let fastModeForecastSettings: FastModeForecastSettings
     public let accountRetentionStates: [CompanionAccountRetentionState]?
     public let cloudKitUserScope: CompanionCloudKitUserScope?
+    public let accountDisplayMetadata: [AccountDisplayMetadata]?
+    public let removedDisplayIDs: [String]?
+    public let accountBurnRates: [String: [String: ObservedBurnRate]]?
+    public let accountIdentityAliases: [CompanionAccountIdentityAlias]?
+    public let accountRemovalDates: [String: Date]?
+    public let accountRestorationDates: [String: Date]?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -62,6 +78,12 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case fastModeForecastSettings
         case accountRetentionStates
         case cloudKitUserScope
+        case accountDisplayMetadata
+        case removedDisplayIDs
+        case accountBurnRates
+        case accountIdentityAliases
+        case accountRemovalDates
+        case accountRestorationDates
     }
 
     public init(
@@ -70,7 +92,13 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
-        cloudKitUserScope: CompanionCloudKitUserScope? = nil
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil,
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
+        removedDisplayIDs: [String]? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil,
+        accountIdentityAliases: [CompanionAccountIdentityAlias]? = nil,
+        accountRemovalDates: [String: Date]? = nil,
+        accountRestorationDates: [String: Date]? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
@@ -79,6 +107,12 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         self.fastModeForecastSettings = fastModeForecastSettings
         self.accountRetentionStates = accountRetentionStates
         self.cloudKitUserScope = cloudKitUserScope
+        self.accountDisplayMetadata = accountDisplayMetadata
+        self.removedDisplayIDs = removedDisplayIDs
+        self.accountBurnRates = accountBurnRates
+        self.accountIdentityAliases = accountIdentityAliases
+        self.accountRemovalDates = accountRemovalDates
+        self.accountRestorationDates = accountRestorationDates
     }
 
     public init(
@@ -88,7 +122,13 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         accountRetentionStates: [CompanionAccountRetentionState]? = nil,
-        cloudKitUserScope: CompanionCloudKitUserScope? = nil
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil,
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
+        removedDisplayIDs: [String]? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil,
+        accountIdentityAliases: [CompanionAccountIdentityAlias]? = nil,
+        accountRemovalDates: [String: Date]? = nil,
+        accountRestorationDates: [String: Date]? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
@@ -96,7 +136,13 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
-            cloudKitUserScope: cloudKitUserScope
+            cloudKitUserScope: cloudKitUserScope,
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs,
+            accountBurnRates: accountBurnRates,
+            accountIdentityAliases: accountIdentityAliases,
+            accountRemovalDates: accountRemovalDates,
+            accountRestorationDates: accountRestorationDates
         )
     }
 
@@ -114,6 +160,12 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             [CompanionAccountRetentionState].self,
             forKey: .accountRetentionStates
         )
+        accountDisplayMetadata = try container.decodeIfPresent([AccountDisplayMetadata].self, forKey: .accountDisplayMetadata)
+        removedDisplayIDs = try container.decodeIfPresent([String].self, forKey: .removedDisplayIDs)
+        accountBurnRates = try container.decodeIfPresent([String: [String: ObservedBurnRate]].self, forKey: .accountBurnRates)
+        accountIdentityAliases = try? container.decode([CompanionAccountIdentityAlias].self, forKey: .accountIdentityAliases)
+        accountRemovalDates = try container.decodeIfPresent([String: Date].self, forKey: .accountRemovalDates)
+        accountRestorationDates = try container.decodeIfPresent([String: Date].self, forKey: .accountRestorationDates)
         cloudKitUserScope = try container.decodeIfPresent(
             CompanionCloudKitUserScope.self,
             forKey: .cloudKitUserScope
@@ -127,7 +179,13 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates,
-            cloudKitUserScope: scope
+            cloudKitUserScope: scope,
+            accountDisplayMetadata: accountDisplayMetadata,
+            removedDisplayIDs: removedDisplayIDs,
+            accountBurnRates: accountBurnRates,
+            accountIdentityAliases: accountIdentityAliases,
+            accountRemovalDates: accountRemovalDates,
+            accountRestorationDates: accountRestorationDates
         )
     }
 }
@@ -1105,13 +1163,19 @@ public struct CompanionSyncPublisher: Sendable {
     public let remoteStore: CompanionRemoteSyncStore?
     public let widgetPreferencesStore: WidgetDisplayPreferencesStore
     public let fastModeForecastSettingsStore: FastModeForecastSettingsStore
+    public let accountConfigurationURL: URL?
+    public let sharedAccountCache: MacSharedAccountCache?
 
     public init(
         stores: CompanionSyncStoreSet,
         remoteStore: CompanionRemoteSyncStore? = nil,
         widgetPreferencesStore: WidgetDisplayPreferencesStore,
-        fastModeForecastSettingsStore: FastModeForecastSettingsStore
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore,
+        accountConfigurationURL: URL? = nil,
+        sharedAccountCache: MacSharedAccountCache? = nil
     ) {
+        self.accountConfigurationURL = accountConfigurationURL
+        self.sharedAccountCache = sharedAccountCache
         self.stores = stores
         self.remoteStore = remoteStore
         self.widgetPreferencesStore = widgetPreferencesStore
@@ -1127,7 +1191,9 @@ public struct CompanionSyncPublisher: Sendable {
             ),
             fastModeForecastSettingsStore: FastModeForecastSettingsStore(
                 settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
-            )
+            ),
+            accountConfigurationURL: ContextPanelLocations.accountConfigurationURL(),
+            sharedAccountCache: MacSharedAccountCache(cacheURL: ContextPanelLocations.accountConfigurationURL().deletingLastPathComponent().appending(path: MacSharedAccountCache.filename))
         )
     }
 
@@ -1135,12 +1201,14 @@ public struct CompanionSyncPublisher: Sendable {
     public func publish(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date = Date(),
-        observedBurnRates: [String: ObservedBurnRate] = [:]
+        observedBurnRates: [String: ObservedBurnRate] = [:],
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     ) -> CompanionSyncSaveResult {
         publish(document: makeDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
-            observedBurnRates: observedBurnRates
+            observedBurnRates: observedBurnRates,
+            accountBurnRates: accountBurnRates
         ))
     }
 
@@ -1155,32 +1223,147 @@ public struct CompanionSyncPublisher: Sendable {
     public func publishAll(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date = Date(),
-        observedBurnRates: [String: ObservedBurnRate] = [:]
+        observedBurnRates: [String: ObservedBurnRate] = [:],
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     ) async -> CompanionSyncSaveResult {
+        let scope = await remoteStore?.currentUserScope()
+        if let scope, let accountConfigurationURL {
+            let store = AccountConfigurationStore(configurationURL: accountConfigurationURL)
+            let result = store.load(now: publishedAt)
+            if result.status == .healthy, !result.document.globalRemovedDisplayIDs.isEmpty {
+                var configuration = result.document
+                if let previous = configuration.removalUserScope, previous != scope {
+                    configuration.removedDisplayIDs = []
+                    configuration.removedDisplayDates = [:]
+                    configuration.restoredDisplayDates = [:]
+                }
+                configuration.removedDisplayIDs = Array(Set(configuration.removedDisplayIDs ?? []).union(configuration.pendingRemovedDisplayIDs ?? [])).sorted()
+                configuration.pendingRemovedDisplayIDs = nil
+                configuration.removalUserScope = scope
+                if configuration != result.document { try? store.save(configuration) }
+            }
+        }
         let document = makeDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
-            observedBurnRates: observedBurnRates
+            observedBurnRates: observedBurnRates,
+            removalUserScope: scope,
+            accountBurnRates: accountBurnRates
         )
         var result = publish(document: document)
         if let remoteStore {
-            let remoteOutcome = await remoteStore.save(document)
-            result = result.appending(storeOutcome: remoteOutcome.storeOutcome)
+            if remoteStore.accountIdentityResolver != nil && scope == nil {
+                result = result.appending(storeOutcome: CompanionSyncStoreOutcome(storeRole: remoteStore.storeRole,
+                    isAvailable: false, succeeded: false, errorMessage: "iCloud account identity is unavailable. Local usage is still available."))
+            } else {
+                let remoteOutcome = await remoteStore.save(document)
+                result = result.appending(storeOutcome: remoteOutcome.storeOutcome)
+                if remoteOutcome.succeeded { _ = await receiveSharedAccounts(now: publishedAt) }
+            }
         }
         return result
+    }
+
+    @discardableResult
+    public func receiveSharedAccounts(now: Date) async -> CompanionSyncDocument? {
+        guard let remoteStore, let scope = await remoteStore.currentUserScope() else {
+            sharedAccountCache?.invalidate()
+            return nil
+        }
+        let remote = await remoteStore.load(now: now)
+        guard remote.outcome.succeeded, let document = remote.result.document,
+              document.cloudKitUserScope == scope, await remoteStore.currentUserScope() == scope else {
+            sharedAccountCache?.invalidate()
+            return nil
+        }
+        try? sharedAccountCache?.save(document, verifiedScope: scope, checkedAt: now)
+        return document
+    }
+
+    public func receiveGlobalRemovals(accountStore: AccountConfigurationStore, storedSnapshot: StoredUsageSnapshot?, now: Date) async throws {
+        guard let document = await receiveSharedAccounts(now: now), let scope = document.cloudKitUserScope else { return }
+        try accountStore.receiveSharedAccountIntents(document, scope: scope, now: now)
+        try accountStore.applyGlobalRemovals(Array(document.effectiveRemovedDisplayIDs), storedSnapshot: storedSnapshot, now: now, userScope: scope)
+    }
+
+    public func presentationDocument(storedSnapshot: StoredUsageSnapshot, now: Date,
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:]) -> CompanionSyncDocument {
+        let cached = sharedAccountCache?.load(now: now)?.verifiedAccountsOnly()
+        let local = makeDocument(storedSnapshot: storedSnapshot, publishedAt: now,
+            observedBurnRates: observedBurnRates, removalUserScope: cached?.cloudKitUserScope, accountBurnRates: accountBurnRates)
+        return local.mergingForRemotePublish(existing: cached, now: now)
     }
 
     private func makeDocument(
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date,
-        observedBurnRates: [String: ObservedBurnRate]
+        observedBurnRates: [String: ObservedBurnRate],
+        removalUserScope: CompanionCloudKitUserScope? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     ) -> CompanionSyncDocument {
-        CompanionSyncDocument(
-            storedSnapshot: storedSnapshot,
-            publishedAt: publishedAt,
+        let scopedReports = storedSnapshot.reports.filter { report in
+            guard let bound = report.sharedAccountIdentity?.userScope, let removalUserScope else { return true }
+            return bound == removalUserScope
+        }
+        let rejected = Set(storedSnapshot.reports.filter { !scopedReports.contains($0) }.map { $0.provider.rawValue + ":" + $0.accountID })
+        let storedSnapshot = StoredUsageSnapshot(savedAt: storedSnapshot.savedAt,
+            snapshot: UsageSnapshot(generatedAt: storedSnapshot.snapshot.generatedAt,
+                limits: storedSnapshot.snapshot.limits.filter { !rejected.contains($0.provider.rawValue + ":" + $0.accountID) }),
+            reports: scopedReports, promptCacheObservations: storedSnapshot.promptCacheObservations)
+        let configuration = accountConfigurationURL.flatMap { url in
+            (try? Data(contentsOf: url)).flatMap {
+                try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
+            }
+        }
+        let snapshot = CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
+            configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)
+        var transportedRates: [String: [String: ObservedBurnRate]] = [:]
+        for local in storedSnapshot.selectingSharedAccountObservations().snapshot.limits {
+            guard let rate = accountBurnRates[local.accountID]?[local.id], rate.sampleCount > 0 else { continue }
+            let report = storedSnapshot.reports.first { $0.provider == local.provider && $0.accountID == local.accountID }
+            let key = report?.sharedAccountIdentity?.accountID
+                ?? CompanionLimit(limit: local, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
+                    provider: local.provider, rawID: local.accountID, configuredID: local.configuredAccountID,
+                    configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)).companionAccountID
+            guard let transported = snapshot.limits.first(where: { $0.provider == local.provider && $0.companionAccountID == key
+                && $0.label == local.label && $0.lastUpdatedAt == local.lastUpdatedAt && $0.used == local.used }) else { continue }
+            let limitID = transported.usageLimit.id
+            transportedRates[transported.companionAccountID, default: [:]][limitID] = ObservedBurnRate(
+                limitID: limitID, unitsPerHour: rate.unitsPerHour,
+                observedDurationHours: rate.observedDurationHours, sampleCount: rate.sampleCount)
+        }
+        return CompanionSyncDocument(
+            snapshot: snapshot,
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             observedBurnRates: observedBurnRates,
-            fastModeForecastSettings: fastModeForecastSettingsStore.load()
+            fastModeForecastSettings: fastModeForecastSettingsStore.load(),
+            cloudKitUserScope: removalUserScope,
+            accountDisplayMetadata: configuration.map {
+                AccountDisplayMetadata.companion(configuration: $0.accounts, stored: storedSnapshot, now: publishedAt, publisherID: $0.publisherID).filteringSharedPresentationMetadata(stored: storedSnapshot, configuration: $0.accounts, publisherID: $0.publisherID)
+            },
+            removedDisplayIDs: configuration.flatMap { configuration in
+                if remoteStore != nil {
+                    guard let removalUserScope, configuration.removalUserScope == removalUserScope else { return nil }
+                    return configuration.removedDisplayIDs
+                }
+                return configuration.globalRemovedDisplayIDs
+            },
+            accountBurnRates: transportedRates.isEmpty ? nil : transportedRates,
+            accountIdentityAliases: configuration.map { CompanionAccountIdentityAlias.verifiedAliases(stored: storedSnapshot, configuration: $0.accounts, publisherID: $0.publisherID) },
+            accountRemovalDates: configuration?.removedDisplayDates,
+            accountRestorationDates: configuration.map { configuration in
+                var dates = configuration.removalUserScope == removalUserScope ? configuration.restoredDisplayDates ?? [:] : [:]
+                for account in configuration.accounts {
+                    guard let requested = account.restorationRequestedAt else { continue }
+                    for report in storedSnapshot.reports where account.matchesProviderReport(report) && report.status != .failure {
+                        guard let identity = report.sharedAccountIdentity,
+                              storedSnapshot.snapshot.limits.contains(where: { $0.provider == report.provider && $0.accountID == report.accountID }) else { continue }
+                        let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
+                        dates[key] = max(dates[key] ?? .distantPast, requested)
+                    }
+                }
+                return dates
+            }
         )
     }
 
@@ -1225,13 +1408,14 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
     public let freshnessMode: UsageFreshnessMode?
     public let status: UsageStatus
 
-    public init(limit: UsageLimit) {
+    public init(limit: UsageLimit) { self.init(limit: limit, identityConfiguredAccountID: nil) }
+
+    public init(limit: UsageLimit, identityConfiguredAccountID: String?, sharedIdentity: SharedProviderAccountIdentity? = nil) {
         provider = limit.provider
-        companionAccountID = CompanionAccountIdentity.id(
-            provider: limit.provider,
-            accountID: limit.accountID,
-            configuredAccountID: limit.configuredAccountID
-        )
+        companionAccountID = sharedIdentity?.matches(provider: limit.provider, accountID: limit.accountID) == true
+            ? sharedIdentity!.accountID : CompanionAccountIdentity.id(
+                provider: limit.provider, accountID: limit.accountID,
+                configuredAccountID: identityConfiguredAccountID ?? limit.configuredAccountID)
         accountName = CompanionAccountIdentity.displayName(limit.accountName)
         label = limit.label
         windowLabel = limit.windowLabel
@@ -1279,6 +1463,8 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let resetCredits: ProviderResetCreditSummary?
+    public let sharedAccountIdentity: SharedProviderAccountIdentity?
+    public let accountIdentityStatus: ProviderAccountIdentityStatus
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -1288,20 +1474,24 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         case status
         case accessState
         case resetCredits
+        case sharedAccountIdentity
+        case accountIdentityStatus
     }
 
-    public init(report: StoredProviderReport) {
+    public init(report: StoredProviderReport) { self.init(report: report, identityConfiguredAccountID: nil) }
+
+    public init(report: StoredProviderReport, identityConfiguredAccountID: String?) {
         provider = report.provider
-        companionAccountID = CompanionAccountIdentity.id(
-            provider: report.provider,
-            accountID: report.accountID,
-            configuredAccountID: report.configuredAccountID
-        )
+        companionAccountID = report.sharedAccountIdentity?.accountID ?? CompanionAccountIdentity.id(
+            provider: report.provider, accountID: report.accountID,
+            configuredAccountID: identityConfiguredAccountID ?? report.configuredAccountID)
         accountName = CompanionAccountIdentity.displayName(report.accountName)
         generatedAt = report.generatedAt
         status = report.status
         accessState = report.accessState.retainingCurrentProviderObservation(for: report.status)
         resetCredits = report.resetCredits
+        sharedAccountIdentity = report.sharedAccountIdentity?.bound(toLocalAccountID: nil)
+        accountIdentityStatus = report.accountIdentityStatus
     }
 
     public init(from decoder: Decoder) throws {
@@ -1314,6 +1504,10 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
         resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
+        let decodedIdentity = try? container.decode(SharedProviderAccountIdentity.self, forKey: .sharedAccountIdentity)
+        sharedAccountIdentity = decodedIdentity?.matches(provider: provider, accountID: companionAccountID) == true ? decodedIdentity : nil
+        accountIdentityStatus = SharedProviderAccountIdentity.status(
+            (try? container.decode(ProviderAccountIdentityStatus.self, forKey: .accountIdentityStatus)) ?? .unverified, identity: sharedAccountIdentity)
     }
 
     public var storedProviderReport: StoredProviderReport {
@@ -1326,7 +1520,9 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
             resetCredits: resetCredits,
             status: status,
             accessState: accessState,
-            errorMessage: nil
+            errorMessage: nil,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
         )
     }
 }
@@ -1524,7 +1720,7 @@ private struct CompanionPromptCacheGroup: Hashable {
 private struct CompanionPromptCacheAccountAliases: Sendable {
     private let configuredAccountIDsByRawKey: [ProviderAccountKey: String]
 
-    init(storedSnapshot: StoredUsageSnapshot? = nil) {
+    init(storedSnapshot: StoredUsageSnapshot? = nil, configuration: [LocalProviderAccountConfiguration] = [], publisherID: String? = nil) {
         guard let storedSnapshot else {
             configuredAccountIDsByRawKey = [:]
             return
@@ -1532,11 +1728,11 @@ private struct CompanionPromptCacheAccountAliases: Sendable {
 
         var aliases: [ProviderAccountKey: String] = [:]
         for limit in storedSnapshot.snapshot.limits {
-            guard let configuredAccountID = limit.configuredAccountID else { continue }
+            guard let configuredAccountID = AccountDisplayMetadata.companionIdentityOverride(provider: limit.provider, rawID: limit.accountID, configuredID: limit.configuredAccountID, configuration: configuration, publisherID: publisherID) ?? limit.configuredAccountID else { continue }
             aliases[ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)] = configuredAccountID
         }
         for report in storedSnapshot.reports {
-            guard let configuredAccountID = report.configuredAccountID else { continue }
+            guard let configuredAccountID = AccountDisplayMetadata.companionIdentityOverride(provider: report.provider, rawID: report.accountID, configuredID: report.configuredAccountID, configuration: configuration, publisherID: publisherID) ?? report.configuredAccountID else { continue }
             aliases[ProviderAccountKey(provider: report.provider, accountID: report.accountID)] = configuredAccountID
         }
         configuredAccountIDsByRawKey = aliases
@@ -1554,6 +1750,7 @@ private struct ProviderAccountKey: Hashable, Sendable {
 
 private enum CompanionAccountIdentity {
     static func id(provider: Provider, accountID: String, configuredAccountID: String?) -> String {
+        if SharedProviderAccountIdentity.isSharedAccountID(accountID, provider: provider) { return accountID }
         let stableID = "companion:" + ProviderAccountIdentity.unique(
             accountID: accountID,
             configuredAccountID: configuredAccountID
@@ -1570,5 +1767,69 @@ private enum CompanionAccountIdentity {
         guard !displayName.isEmpty else { return "Account" }
         let pathRedacted = NSString(string: displayName).lastPathComponent
         return pathRedacted.isEmpty ? "Account" : pathRedacted
+    }
+}
+
+public extension AccountDisplayMetadata {
+    static func companion(configuration: [LocalProviderAccountConfiguration], stored: StoredUsageSnapshot, now: Date, publisherID: String? = nil) -> [Self] {
+        let local = Self.local(configuration: configuration, stored: stored, now: now)
+        return local.map { entry in
+            let limit = stored.snapshot.limits.first { $0.provider == entry.provider && safeID($0.provider, $0.accountID) == entry.id }
+            let report = stored.reports.first { $0.provider == entry.provider && safeID($0.provider, $0.accountID) == entry.id }
+            // Match the existing companion identity formula, including legacy records without a configuration key.
+            let rawID = limit?.accountID ?? report?.accountID ?? configuration.first {
+                safeID($0.provider, $0.id) == entry.configurationID
+            }?.id ?? entry.id
+            let setup = configuration.first { safeID($0.provider, $0.id) == entry.configurationID }
+            let placeholderID = setup.map { companionMembershipKey($0, publisherID: publisherID) } ?? rawID
+            let identity = limit == nil && report == nil ? nil : companionIdentityOverride(provider: entry.provider, rawID: rawID,
+                configuredID: limit?.configuredAccountID ?? report?.configuredAccountID,
+                configuration: configuration, publisherID: publisherID) ?? limit?.configuredAccountID ?? report?.configuredAccountID
+            let companionID = report?.sharedAccountIdentity?.accountID ?? CompanionAccountIdentity.id(provider: entry.provider,
+                accountID: limit == nil && report == nil ? placeholderID : rawID,
+                configuredAccountID: identity)
+            return Self(id: safeID(entry.provider, companionID),
+                        configurationID: setup.map { companionConfigurationID($0, publisherID: publisherID) } ?? entry.configurationID,
+                        provider: entry.provider, label: entry.label, isEnabled: entry.isEnabled,
+                        showInWidgets: entry.showInWidgets, useLast: entry.useLast,
+                        sourceConfigured: entry.sourceConfigured, readState: entry.readState)
+        }
+    }
+}
+
+public extension AccountDisplayMetadata {
+    static func companionMembershipKey(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
+        guard account.isSharedDefaultMembership, let publisherID else { return account.id }
+        return "publisher:" + publisherID + ":" + account.id
+    }
+    static func companionConfigurationID(_ account: LocalProviderAccountConfiguration, publisherID: String?) -> String {
+        safeID(account.provider, companionMembershipKey(account, publisherID: publisherID))
+    }
+}
+
+public extension AccountDisplayMetadata {
+    /// Source-derived IDs identify a setup, not a provider login. Scope built-in defaults by publisher.
+    static func companionIdentityOverride(provider: Provider, rawID: String, configuredID: String?,
+        configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> String? {
+        guard let publisherID, let setup = configuration.first(where: {
+            $0.provider == provider && ($0.id == configuredID || $0.id == rawID || $0.providerReportAccountIDs.contains(rawID))
+        }) else { return nil }
+        if provider == .openAI && rawID.hasPrefix("openai-unverified-source:") {
+            return "publisher:" + publisherID + ":" + setup.id
+        }
+        guard setup.isSharedDefaultMembership else { return nil }
+        let sourceDerived = provider != .openAI || rawID == setup.id
+            || rawID == ConnectorRedactor.localAccountID(provider: provider, stableID: setup.id)
+            || setup.providerReportAccountIDs.contains(rawID)
+        return sourceDerived ? companionMembershipKey(setup, publisherID: publisherID) : nil
+    }
+
+    static func legacyUnidentifiedDisplayIDs(_ setup: LocalProviderAccountConfiguration) -> [String] {
+        let sourceIDs = Set(setup.providerReportAccountIDs + [ConnectorRedactor.localAccountID(provider: setup.provider, stableID: setup.id)])
+        return sourceIDs.flatMap { raw in
+            [nil, setup.id].map { configured in
+                safeID(setup.provider, CompanionAccountIdentity.id(provider: setup.provider, accountID: raw, configuredAccountID: configured))
+            }
+        }
     }
 }

@@ -247,9 +247,9 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.accountID = accountID
         self.configuredAccountID = configuredAccountID
         self.accountName = accountName
-        self.label = label
+        self.label = AccountTerms.modelName(label, provider: provider) ?? label
         self.windowLabel = windowLabel
-        self.modelLabel = modelLabel
+        self.modelLabel = AccountTerms.modelName(modelLabel, provider: provider)
         self.unit = unit
         self.used = used
         self.limit = limit
@@ -269,9 +269,9 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         accountID = try container.decode(String.self, forKey: .accountID)
         configuredAccountID = try container.decodeIfPresent(String.self, forKey: .configuredAccountID)
         accountName = try container.decode(String.self, forKey: .accountName)
-        label = try container.decode(String.self, forKey: .label)
+        label = AccountTerms.modelName(try container.decode(String.self, forKey: .label), provider: provider) ?? ""
         windowLabel = try container.decodeIfPresent(String.self, forKey: .windowLabel)
-        modelLabel = try container.decodeIfPresent(String.self, forKey: .modelLabel)
+        modelLabel = AccountTerms.modelName(try container.decodeIfPresent(String.self, forKey: .modelLabel), provider: provider)
         unit = try container.decode(UsageUnit.self, forKey: .unit)
         used = try container.decodeIfPresent(Int.self, forKey: .used)
         limit = try container.decodeIfPresent(Int.self, forKey: .limit)
@@ -368,7 +368,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
             unit: unit,
             used: 0,
             limit: limit,
-            resetsAt: nil,
+            resetsAt: resetsAt,
             lastUpdatedAt: lastUpdatedAt,
             confidence: .estimated,
             freshnessMode: freshnessMode,
@@ -401,16 +401,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         if let statusOverride {
             return statusOverride
         }
-        guard let ratio = usageRatio else {
-            return .unknown
-        }
-        if ratio >= 1 {
-            return .limited
-        }
-        if ratio >= 0.8 {
-            return .close
-        }
-        return .healthy
+        return UsageStatus.usagePressure(for: usageRatio)
     }
 }
 
@@ -492,5 +483,16 @@ extension UsageStatus {
 extension UsageLimit {
     fileprivate var constraintScore: Double {
         status.sortRank + (usageRatio ?? 0)
+    }
+}
+
+
+public extension UsageStatus {
+    /// Pressure for a numeric window; provider access and refresh failures remain separate signals.
+    static func usagePressure(for ratio: Double?) -> UsageStatus {
+        guard let ratio else { return .unknown }
+        if ratio >= 1 { return .limited }
+        if ratio >= 0.8 { return .close }
+        return .healthy
     }
 }

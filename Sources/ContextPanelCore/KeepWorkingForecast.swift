@@ -251,9 +251,9 @@ public struct KeepWorkingForecast: Equatable, Sendable {
     private static func dateText(_ date: Date, density: KeepWorkingDateDensity) -> String {
         switch density {
         case .full:
-            date.formatted(.dateTime.weekday(.wide).hour().minute())
+            ContextPanelDateFormatting.resetDeadline(date)
         case .compact:
-            date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            ContextPanelDateFormatting.resetDeadline(date, compact: true)
         }
     }
 

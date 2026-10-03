@@ -136,6 +136,7 @@ public enum CompanionRemoteUserScopeResolution: Equatable, Sendable {
 
 public struct CompanionRemoteSyncStore: Sendable {
     public let storeRole: String
+    public let accountIdentityResolver: ProviderAccountIdentityResolver?
     private let saveDocument: @Sendable (CompanionSyncDocument) async -> CompanionRemoteSyncOutcome
     private let loadDocument: @Sendable (Date) async -> CompanionRemoteSyncLoadResult
     private let registerForUpdates: @Sendable () async -> CompanionRemoteSyncOutcome
@@ -148,9 +149,11 @@ public struct CompanionRemoteSyncStore: Sendable {
         registerForUpdates: @escaping @Sendable () async -> CompanionRemoteSyncOutcome = {
             CompanionRemoteSyncOutcome(succeeded: true)
         },
-        resolveUserScope: @escaping @Sendable () async -> CompanionCloudKitUserScope? = { nil }
+        resolveUserScope: @escaping @Sendable () async -> CompanionCloudKitUserScope? = { nil },
+        accountIdentityResolver: ProviderAccountIdentityResolver? = nil
     ) {
         self.storeRole = ConnectorRedactor.redact(storeRole)
+        self.accountIdentityResolver = accountIdentityResolver
         self.saveDocument = saveDocument
         self.loadDocument = loadDocument
         self.registerForUpdates = registerForUpdates
@@ -167,9 +170,11 @@ public struct CompanionRemoteSyncStore: Sendable {
         registerForUpdates: @escaping @Sendable () async -> CompanionRemoteSyncOutcome = {
             CompanionRemoteSyncOutcome(succeeded: true)
         },
-        resolveUserScopeResolution: @escaping @Sendable () async -> CompanionRemoteUserScopeResolution
+        resolveUserScopeResolution: @escaping @Sendable () async -> CompanionRemoteUserScopeResolution,
+        accountIdentityResolver: ProviderAccountIdentityResolver? = nil
     ) {
         self.storeRole = ConnectorRedactor.redact(storeRole)
+        self.accountIdentityResolver = accountIdentityResolver
         self.saveDocument = saveDocument
         self.loadDocument = loadDocument
         self.registerForUpdates = registerForUpdates

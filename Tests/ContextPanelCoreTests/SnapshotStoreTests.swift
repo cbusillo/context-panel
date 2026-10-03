@@ -1355,7 +1355,7 @@ import Testing
     #expect(accountA.resetCredits?.earliestKnownExpiry == nil)
 }
 
-@Test func jsonSnapshotStorePreservesFailedResetCreditsAsStaleSafeCountOnly() throws {
+@Test func jsonSnapshotStorePreservesFailedResetCreditsWithOriginalDeadlines() throws {
     let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let first = Date(timeIntervalSince1970: 100)
     let second = Date(timeIntervalSince1970: 200)
@@ -1381,7 +1381,7 @@ import Testing
 
     #expect((report.status, report.generatedAt, resetCredits.availableCount) == (.failure, second, 2))
     #expect(resetCredits.observedAt < report.generatedAt)
-    #expect((resetCredits.observedAt, resetCredits.coverage, resetCredits.earliestKnownExpiry) == (first, .countOnly, nil))
+    #expect((resetCredits.observedAt, resetCredits.coverage, resetCredits.earliestKnownExpiry) == (first, .complete, Date(timeIntervalSince1970: 500)))
 }
 
 @Test func jsonSnapshotStoreDoesNotCrossMergeSiblingResetCreditsUnderSharedConfiguration() throws {
@@ -1437,8 +1437,8 @@ import Testing
     let creditsB = try #require(accountB.resetCredits)
 
     #expect(current.reports.count == 2)
-    #expect((creditsA.availableCount, creditsA.observedAt, creditsA.coverage) == (2, first, .countOnly))
-    #expect(creditsA.earliestKnownExpiry == nil)
+    #expect((creditsA.availableCount, creditsA.observedAt, creditsA.coverage) == (2, first, .complete))
+    #expect(creditsA.earliestKnownExpiry == Date(timeIntervalSince1970: 500))
     #expect((creditsB.availableCount, creditsB.observedAt) == (6, second))
 }
 
@@ -1905,6 +1905,27 @@ import Testing
     service.importConfiguredAuthFiles(now: Date(timeIntervalSince1970: 200))
 
     #expect(try credentialStore.load(accountID: "openai-code") == currentCredential)
+}
+
+@Test func snapshotRefreshServiceDoesNotImportAuthForSessionQuotaSource() throws {
+    let root = try temporaryDirectory()
+    let authURL = root.appending(path: "auth.json")
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    let cached = Data("synthetic cached credential".utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["session-account": cached])
+    try Data("synthetic changed credential".utf8).write(to: authURL)
+    try bookmarkStore.createAndStoreBookmark(for: authURL, path: authURL.path)
+    try accountStore.save(AccountConfigurationDocument(updatedAt: .distantPast, accounts: [
+        LocalProviderAccountConfiguration(id: "session-account", provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: "Personal", authPath: authURL.path, codexQuotaPath: root.appending(path: "sessions").path),
+    ]))
+    let service = SnapshotRefreshService(accountStore: accountStore,
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))),
+        bookmarkStore: bookmarkStore, credentialStore: credentialStore,
+        promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+    service.importConfiguredAuthFiles()
+    #expect(try credentialStore.load(accountID: "session-account") == cached)
 }
 
 @Test func snapshotRefreshServiceMirrorsPromptCacheFromConfiguredCodexUsageDirectories() async throws {
@@ -3755,5 +3776,37 @@ private final class SnapshotRefreshSourceRecorder: @unchecked Sendable {
         lock.withLock {
             storedValues = values
         }
+    }
+}
+
+@Test(arguments: [Provider.openAI, Provider.anthropic])
+func missingOptionalInventoryKeepsLastObservedDatesAndExpiresThem(provider: Provider) throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let dates = [Date(timeIntervalSince1970: 150), Date(timeIntervalSince1970: 300)]
+    func usage(at now: Date) -> UsageLimit {
+        UsageLimit(provider: provider, accountID: "local", accountName: "Local", label: "Weekly",
+            windowLabel: "weekly", unit: .percent, used: 30, limit: 100,
+            resetsAt: Date(timeIntervalSince1970: 5_000), lastUpdatedAt: now, confidence: .observed)
+    }
+    let initial = ProviderConnectorReport(provider: provider, accountID: "local", accountName: "Local",
+        generatedAt: first, limits: [usage(at: first)], resetCredits: ProviderResetCreditSummary(availableCount: 2,
+            observedAt: first, coverage: .complete, knownExpiries: dates), status: .healthy)
+    try store.save(StoredUsageSnapshot(savedAt: first, refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [initial])))
+    for (timestamp, status, expectedCount) in [(200.0, UsageStatus.failure, 1), (250.0, .healthy, 1), (300.0, .healthy, 0)] {
+        let now = Date(timeIntervalSince1970: timestamp)
+        let missing = ProviderConnectorReport(provider: provider, accountID: "local", accountName: "Local",
+            generatedAt: now, limits: status == .failure ? [] : [usage(at: now)], status: status)
+        try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: now, reports: [missing]),
+            savedAt: now, preservesUnreportedAccounts: false)
+        let report = try #require(store.loadCurrent().snapshot?.reports.first)
+        let inventory = try #require(report.resetCredits)
+        #expect(inventory.availableCount == expectedCount)
+        #expect(inventory.observedAt == first)
+        #expect(inventory.knownExpiries == dates.filter { $0 > now })
+        #expect(report.status == status)
+        #expect(store.loadCurrent().snapshot?.snapshot.limits.first?.used == 30)
     }
 }

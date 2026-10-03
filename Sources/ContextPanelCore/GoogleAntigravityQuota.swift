@@ -726,7 +726,8 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 generatedAt: now,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. Later AGY runs publish quota automatically."
+                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. Later AGY runs publish quota automatically.",
+            accountIdentityStatus: .notExposedByConnector
             )
         }
 
@@ -756,7 +757,8 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 generatedAt: snapshot.observedAt,
                 limits: [],
                 status: .unknown,
-                errorMessage: "The Antigravity bridge is active, but AGY did not report active quota buckets."
+                errorMessage: "The Antigravity bridge is active, but AGY did not report active quota buckets.",
+            accountIdentityStatus: .notExposedByConnector
             )
         }
 
@@ -768,7 +770,8 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             generatedAt: limits.compactMap(\.lastUpdatedAt).max() ?? snapshot.observedAt,
             limits: limits,
             status: nil,
-            errorMessage: nil
+            errorMessage: nil,
+            accountIdentityStatus: .notExposedByConnector
         )
     }
 
@@ -785,7 +788,8 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             generatedAt: now,
             limits: [],
             status: .failure,
-            errorMessage: message
+            errorMessage: message,
+            accountIdentityStatus: .notExposedByConnector
         )
     }
 

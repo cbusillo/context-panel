@@ -192,6 +192,11 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+private enum CompanionAccountRoute: Hashable {
+    case account(String)
+    case deadlines
+}
+
 @MainActor
 private struct CompanionRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -199,6 +204,7 @@ private struct CompanionRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = CompanionSyncModel()
     @State private var galleryRoute: ValidationGalleryRoute?
+    @State private var accountPath: [CompanionAccountRoute] = []
 
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
@@ -251,7 +257,7 @@ private struct CompanionRootView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $accountPath) {
             GeometryReader { geometry in
                 let layoutMode = CompanionLayoutPolicy.mode(
                     availableWidth: geometry.size.width,
@@ -266,7 +272,15 @@ private struct CompanionRootView: View {
                                 model.reload()
                             }
                         }
-                        companionContent(layoutMode: layoutMode)
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
+                                compact: horizontalSizeClass != .regular,
+                                openAccount: { accountPath.append(.account($0.id)) },
+                                openDeadlines: { accountPath.append(.deadlines) })
+                        }
+                        DisclosureGroup("Settings, pace and sync details") {
+                            companionContent(layoutMode: layoutMode).padding(.top, 16)
+                        }
                     }
                         .frame(
                             maxWidth: CompanionLayoutPolicy.maximumContentWidth(
@@ -308,9 +322,30 @@ private struct CompanionRootView: View {
             )) { _ in
                 model.handleCloudKitAccountChange()
             }
+            .navigationDestination(for: CompanionAccountRoute.self) { route in
+                ScrollView {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let overview = accountOverview(at: context.date)
+                        switch route {
+                        case .deadlines:
+                            AccountDeadlinesPanel(overview: overview, now: context.date,
+                                openAccount: { accountPath.append(.account($0)) })
+                        case let .account(id):
+                            if let account = overview.accounts.first(where: { $0.id == id }) {
+                                AccountDashboardDetail(account: account, overview: overview, now: context.date,
+                                    compact: horizontalSizeClass != .regular)
+                            } else { Text("Account is no longer in this snapshot.") }
+                        }
+                    }.padding(pagePadding)
+                }.background(surfacePalette.pageBackground.ignoresSafeArea())
+            }
             .onOpenURL { url in
-                if let route = ValidationGalleryRoute(url: url) {
-                    galleryRoute = route
+                if let route = ValidationGalleryRoute(url: url) { galleryRoute = route }
+                else if url.scheme == CompanionDeepLinks.overview.scheme {
+                    if url.host == "deadlines" { accountPath = [.deadlines] }
+                    else if url.host == "provider", let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "account" })?.value {
+                        accountPath = [.account(id)]
+                    } else { accountPath = [] }
                 }
             }
             .sheet(item: $galleryRoute) { route in
@@ -319,6 +354,10 @@ private struct CompanionRootView: View {
         }
         .environment(\.companionSurfacePalette, surfacePalette)
         .companionVisionOSAppearance(model.appearanceSettings)
+    }
+
+    private func accountOverview(at date: Date) -> AccountOverview {
+        model.snapshot.accountOverview(now: date, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
     }
 
     @ViewBuilder
@@ -351,6 +390,9 @@ private struct CompanionRootView: View {
             }
 
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
+            if !model.snapshot.reports.isEmpty {
+                BankedResetDeadlinesView(reports: model.snapshot.reports, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+            }
             CompanionSyncStatusView(result: model.result)
         }
         .frame(
@@ -398,7 +440,8 @@ private struct CompanionRootView: View {
                 isEditable: model.canEditDisplayPreferences,
                 errorMessage: model.displayPreferencesErrorMessage,
                 onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
-                onMove: model.moveWidgetMainLimits(from:to:)
+                onMove: model.moveWidgetMainLimits(from:to:),
+                onLayoutChange: model.setWidgetAccountLayout(_:)
             )
 
             CompanionRefreshSettingsView(
@@ -570,6 +613,11 @@ private struct CompanionValidationGalleryPreview: View {
             case .overview:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                            compact: true, openAccount: { _ in }, openDeadlines: {})
+                        DisclosureGroup("Settings, pace and sync details") {
+                        VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         ContextPanelWidgetContentView(
                             family: .systemLarge,
                             snapshot: context.snapshot,
@@ -590,7 +638,12 @@ private struct CompanionValidationGalleryPreview: View {
                             CompanionKeepWorkingCard(forecast: forecast)
                         }
                         CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                        if !context.snapshot.reports.isEmpty {
+                            BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+                        }
                         CompanionSyncStatusView(result: result)
+                        }
+                        }
                     }
                     .padding(18)
                 }
@@ -611,7 +664,8 @@ private struct CompanionValidationGalleryPreview: View {
                             isEditable: false,
                             errorMessage: nil,
                             onVisibilityChange: { _, _ in },
-                            onMove: { _, _ in }
+                            onMove: { _, _ in },
+                            onLayoutChange: { _ in }
                         )
                         CompanionRefreshSettingsView(
                             settings: .defaultSettings,
@@ -942,6 +996,12 @@ private final class CompanionSyncModel {
         }
     }
 
+    func setWidgetAccountLayout(_ accountRows: Bool) {
+        var updated = displayPreferences
+        updated.usesAccountRows = accountRows
+        saveDisplayPreferences(updated)
+    }
+
     func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
         var updated = displayPreferences
         updated.setMainLimit(
@@ -1164,6 +1224,7 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
     let errorMessage: String?
     let onVisibilityChange: @MainActor (WidgetMainLimitPreference, Bool) -> Void
     let onMove: @MainActor (IndexSet, Int) -> Void
+    var onLayoutChange: (@MainActor (Bool) -> Void)? = nil
 
     var body: some View {
         CompanionSettingsCard {
@@ -1186,6 +1247,14 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                     .foregroundStyle(palette.secondaryText)
 
                 if isLoaded {
+                    Picker("Widget layout", selection: Binding(get: { preferences.usesAccountRows }, set: { onLayoutChange?($0) })) {
+                        Text("Accounts").tag(true)
+                        Text("Windows").tag(false)
+                    }.pickerStyle(.segmented).disabled(!isEditable || onLayoutChange == nil)
+                    if preferences.usesAccountRows {
+                        Text(accountLayoutScopeText)
+                            .font(.footnote).foregroundStyle(palette.secondaryText)
+                    }
                     WidgetMainLimitSettingsStack(
                         preferences: preferences,
                         colors: palette.settingsControlColors,
@@ -1217,6 +1286,15 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                 }
             }
         }
+    }
+
+    private var accountLayoutScopeText: String {
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            return "Widgets show accounts. These limits still choose what Apple Watch shows."
+        }
+        #endif
+        return "Widgets show accounts. These limit choices apply when you choose Windows."
     }
 
     private var displayPreferencesScopeText: String {

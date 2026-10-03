@@ -2613,6 +2613,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("runtime receipt contracts", result.stdout)
 
+    def test_identity_key_schema_rejects_unencrypted_indexed_or_public_key(self):
+        schema = self.read("CloudKit/companion-sync.schema.ckdb")
+        for field in ("keyMaterial ENCRYPTED_BYTES", "keyMaterial BYTES", "keyMaterial ENCRYPTED BYTES QUERYABLE", "keyMaterial ENCRYPTED BYTES SORTABLE",
+                      'keyMaterial ENCRYPTED BYTES,\n        GRANT READ TO "_world"'):
+            with self.subTest(field=field):
+                result = self.run_cloudkit_schema_validator_with_fake_cktool(
+                    schema.replace("keyMaterial ENCRYPTED BYTES", field)
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("ContextPanelAccountIdentityKey", result.stdout)
+
     def test_cloudkit_companion_schema_validator_forwards_management_token(self):
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
             self.read("CloudKit/companion-sync.schema.ckdb"),

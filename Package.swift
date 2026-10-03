@@ -33,6 +33,10 @@ let package = Package(
             targets: ["SnapshotStoreProbe"]
         ),
         .executable(
+            name: "ContextPanelAccountSnapshot",
+            targets: ["ContextPanelAccountSnapshot"]
+        ),
+        .executable(
             name: "PromptCacheTelemetryMirror",
             targets: ["PromptCacheTelemetryMirror"]
         ),
@@ -104,8 +108,13 @@ let package = Package(
         .executableTarget(
             name: "ContextPanelSharedViewRenderer",
             dependencies: [
+                "ContextPanelCore",
+                "ContextPanelWidgetUI",
+                "ContextPanelSettingsUI",
+                "ContextPanelTVSupport",
                 "ContextPanelValidationFixtures",
                 "ContextPanelValidationGalleryUI",
+                "ContextPanelWatchSupport",
             ],
             path: "Tools/ContextPanelSharedViewRenderer"
         ),
@@ -120,6 +129,11 @@ let package = Package(
         .executableTarget(
             name: "SnapshotStoreProbe",
             dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "ContextPanelAccountSnapshot",
+            dependencies: ["ContextPanelCore"],
+            path: "Tools/ContextPanelAccountSnapshot"
         ),
         .executableTarget(
             name: "PromptCacheTelemetryMirror",

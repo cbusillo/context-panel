@@ -310,7 +310,7 @@ final class RefreshAgentRegistrationCoordinator {
 
         let build = currentBuild()
         let initialStatus = service.status
-        if stateStore.repairedBuild == build, initialStatus == .enabled {
+        if stateStore.repairedBuild == build, initialStatus == .enabled, isAgentRunning() {
             stateStore.clearDiagnostic()
             return .verifiedEnabled
         }

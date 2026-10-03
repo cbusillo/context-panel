@@ -237,7 +237,7 @@ import Testing
     #expect(rawSnapshot.limits.first?.presentationAssumption == nil)
     #expect(presentedLimit.used == 0)
     #expect(presentedLimit.remaining == 100)
-    #expect(presentedLimit.resetsAt == nil)
+    #expect(presentedLimit.resetsAt == rawLimit.resetsAt)
     #expect(presentedLimit.lastUpdatedAt == observedAt)
     #expect(presentedLimit.confidence == .estimated)
     #expect(presentedLimit.presentationAssumption == .scheduledReset)

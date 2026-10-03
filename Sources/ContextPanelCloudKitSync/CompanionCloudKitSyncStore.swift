@@ -41,12 +41,14 @@ public enum CompanionCloudKitSyncStoreFactory {
             legacyRecordNames: legacyRecordNames,
             storeRole: storeRole
         )
+        let identityStore = SharedAccountIdentityCloudKitStore(containerIdentifier: containerIdentifier)
         return CompanionRemoteSyncStore(
             storeRole: storeRole,
             saveDocument: { document in await client.save(document, now: Date()) },
             loadDocument: { now in await client.load(now: now) },
             registerForUpdates: { await client.registerSubscription() },
-            resolveUserScopeResolution: { await client.currentUserScopeResolution() }
+            resolveUserScopeResolution: { await client.currentUserScopeResolution() },
+            accountIdentityResolver: ProviderAccountIdentityResolver { await identityStore.resolve($0) }
         )
     }
 }

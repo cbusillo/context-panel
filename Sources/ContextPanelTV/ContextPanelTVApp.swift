@@ -110,6 +110,20 @@ private struct TVRootView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
+            Group {
+                if presentationMode == .fullDetail {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TVAccountOverviewContent(
+                            overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                            now: context.date,
+                            presentationModeRawValue: $presentationModeRawValue,
+                            isRefreshing: model.isLoading, notice: visibleNoticeMessage,
+                            onRefresh: { model.reload() },
+                            openAccount: { navigationPath.append("account:" + $0) },
+                            openDeadlines: { navigationPath.append("deadlines") },
+                            openDetails: { navigationPath.append("details") })
+                    }
+                } else {
             TVRunwayContent(
                 presentation: presentation,
                 receivedAt: model.lastReceivedAt,
@@ -119,8 +133,11 @@ private struct TVRootView: View {
                 noticeMessage: visibleNoticeMessage,
                 presentationDate: nil,
                 detailActionMode: .navigation,
-                onRefresh: { model.reload() }
+                onRefresh: { model.reload() },
+                snapshotReports: model.snapshot.reports
             )
+                }
+            }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
                     model.reload()
@@ -146,6 +163,23 @@ private struct TVRootView: View {
             .navigationDestination(for: String.self) { providerRawValue in
                 if providerRawValue == tvValidationGalleryNavigationValue {
                     TVValidationGalleryView()
+                } else if providerRawValue.hasPrefix("account:") || providerRawValue == "deadlines" {
+                    if presentationMode == .fullDetail {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TVAccountDetailContent(
+                            overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                            accountID: providerRawValue == "deadlines" ? nil : String(providerRawValue.dropFirst(8)))
+                    }
+                    } else {
+                        ContentUnavailableView("Account details hidden", systemImage: "eye.slash",
+                            description: Text("Choose Full detail on the overview to show named accounts and deadlines."))
+                    }
+                } else if providerRawValue == "details" {
+                    TVRunwayContent(presentation: presentation, receivedAt: model.lastReceivedAt,
+                        keepWorkingForecast: keepWorkingForecast, isRefreshing: model.isLoading,
+                        presentationModeRawValue: $presentationModeRawValue, noticeMessage: visibleNoticeMessage,
+                        presentationDate: nil, detailActionMode: .navigation,
+                        onRefresh: { model.reload() }, snapshotReports: model.snapshot.reports)
                 } else if let section = presentation.sections.first(where: { $0.provider.rawValue == providerRawValue }) {
                     TVProviderDetailView(
                         section: section,
@@ -166,6 +200,12 @@ private struct TVRootView: View {
                 case .runway:
                     pendingProviderRawValue = nil
                     navigationPath = []
+                case let .account(_, id):
+                    pendingProviderRawValue = nil
+                    navigationPath = ["account:" + id]
+                case .deadlines:
+                    pendingProviderRawValue = nil
+                    navigationPath = ["deadlines"]
                 case let .provider(provider):
                     pendingProviderRawValue = provider.rawValue
                     resolvePendingProviderRoute()
@@ -188,6 +228,116 @@ private struct TVRootView: View {
     }
 }
 
+struct TVAccountOverviewContent: View {
+    let overview: AccountOverview
+    var now = Date()
+    @Binding var presentationModeRawValue: String
+    let isRefreshing: Bool
+    let notice: String?
+    let onRefresh: () -> Void
+    let openAccount: (String) -> Void
+    let openDeadlines: () -> Void
+    let openDetails: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 30) {
+                HStack {
+                    Text("Accounts").font(.system(size: 58, weight: .semibold))
+                    Spacer()
+                    Button(isRefreshing ? "Updating" : "Refresh", action: onRefresh).disabled(isRefreshing)
+                    Menu("Display") {
+                        Picker("Presentation", selection: $presentationModeRawValue) {
+                            ForEach(TVPresentationMode.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }
+                    }
+                    Button("Details", action: openDetails)
+                }
+                if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
+                TVAccountAnswers(overview: overview, now: now)
+                if overview.accounts.isEmpty { Text("Add an account on your Mac, then refresh.") }
+                let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
+                    ForEach(overview.accounts) { account in
+                        TVAccountOverviewCard(account: account, deadlines: overview.deadlines.filter { $0.accountID == account.id },
+                                              isNext: nextIDs.contains(account.id), now: now,
+                                              showsPace: AccountOverview.Account.hasBurn(in: overview)) {
+                            openAccount(account.id)
+                        }
+                    }
+                }
+                if let deadline = overview.nextDeadline {
+                    Button(action: openDeadlines) {
+                        HStack {
+                            Text(AccountTerms.bankedResetExpires + " · " + deadline.label)
+                            Spacer()
+                            Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
+                        }
+                    }
+                } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
+                    Button("Banked reset dates unknown", action: openDeadlines)
+                }
+            }.padding(.horizontal, 72).padding(.vertical, 40)
+        }.background(TVTheme.background.ignoresSafeArea())
+    }
+}
+
+private struct TVAccountOverviewCard: View {
+    let account: AccountOverview.Account
+    let deadlines: [AccountOverview.Deadline]
+    let isNext: Bool
+    let now: Date
+    let showsPace: Bool
+    let open: () -> Void
+    @FocusState private var isFocused: Bool
+    var body: some View {
+        // Focus changes only the outline, so percentages never move.
+        Button(action: open) {
+            TVAccountTile(account: account, isNext: isNext, now: now, showsPace: showsPace, deadlines: deadlines)
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(isFocused ? Color.white : Color.white.opacity(0.16),
+                                                                  lineWidth: isFocused ? 4 : 1))
+        }.buttonStyle(.plain).focusEffectDisabled().focused($isFocused)
+    }
+}
+
+private struct TVAccountDetailContent: View {
+    let overview: AccountOverview
+    let accountID: String?
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let accountID, let account = overview.accounts.first(where: { $0.id == accountID }) {
+                    Text(account.metadata.label).font(.largeTitle)
+                    Text(account.metadata.provider.accountDisplayName + " · " + account.state.displayText)
+                    ForEach(account.windows) { window in
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(window.label).font(.headline)
+                            Text(AccountNumbers.window(window) + " " + AccountTerms.left).font(.title)
+                            Text(AccountTerms.reset(window, now: Date()).map { AccountTerms.resets + " " + $0 } ?? AccountTerms.resets + " " + AccountTerms.unknown)
+                            if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
+                        }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
+                    }
+                    Text(account.bankedResets.map { AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) } ?? AccountTerms.bankedResets + " " + AccountTerms.unknown)
+                    if (account.unknownExpiryCount ?? 0) > 0 { Text("Some banked reset dates are unknown.").foregroundStyle(.secondary) }
+                } else { Text(accountID == nil ? "Deadlines" : "Account no longer in this snapshot").font(.largeTitle) }
+                ForEach(overview.deadlines.filter { accountID == nil || $0.accountID == accountID }) { deadline in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(deadline.label + " · " + deadline.provider.accountDisplayName).font(.headline)
+                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: Date()))
+                        if deadline.state != .available { Text("Last seen " + ContextPanelDateFormatting.accountReset(deadline.observedAt)).foregroundStyle(.secondary) }
+                    }
+                }
+                if accountID == nil {
+                    ForEach(overview.accounts.filter { ($0.unknownExpiryCount ?? 0) > 0 }) { account in
+                        Text(account.metadata.label + ": banked reset dates unknown").foregroundStyle(.secondary)
+                    }
+                }
+            }.padding(72).frame(maxWidth: .infinity, alignment: .leading)
+        }.background(TVTheme.background.ignoresSafeArea())
+    }
+}
+
 enum TVDetailActionMode: Equatable {
     case navigation
     case readOnly
@@ -203,6 +353,7 @@ struct TVRunwayContent: View {
     let presentationDate: Date?
     let detailActionMode: TVDetailActionMode
     let onRefresh: () -> Void
+    var snapshotReports: [StoredProviderReport] = []
 
     private var presentationMode: TVPresentationMode {
         TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
@@ -236,6 +387,9 @@ struct TVRunwayContent: View {
                                 mode: presentationMode,
                                 detailActionMode: detailActionMode
                             )
+                            if presentationMode == .fullDetail, !snapshotReports.isEmpty {
+                                TVBankedResetDeadlinesView(reports: snapshotReports, presentationDate: presentationDate)
+                            }
                         }
                     }
                     .padding(.bottom, noticeMessage == nil ? 48 : 160)
@@ -1995,22 +2149,5 @@ private struct TVFocusButtonStyle: ButtonStyle {
 }
 
 private extension UsageStatus {
-    var tvStatusLabel: String {
-        switch self {
-        case .healthy:
-            "Available"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Stale"
-        case .unknown:
-            "Unknown"
-        case .failure:
-            "Needs attention"
-        case .loading:
-            "Refreshing"
-        }
-    }
+    var tvStatusLabel: String { displayText }
 }

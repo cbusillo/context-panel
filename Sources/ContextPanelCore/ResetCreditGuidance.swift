@@ -50,8 +50,7 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     }
 
     public var countText: String {
-        let noun = resetCredits.availableCount == 1 ? "reset credit" : "reset credits"
-        return "\(resetCredits.availableCount) \(noun)"
+        AccountTerms.bankedResetCount(resetCredits.availableCount)
     }
 
     public var recommendationTitle: String {
@@ -120,11 +119,11 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     }
 
     private static func dateText(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
+        ContextPanelDateFormatting.resetDeadline(date)
     }
 
     private static func compactDateText(_ date: Date) -> String {
-        date.formatted(.dateTime.month(.abbreviated).day())
+        ContextPanelDateFormatting.resetDeadline(date, compact: true)
     }
 
     private static func relativeText(_ date: Date, now: Date) -> String {
@@ -143,15 +142,18 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
 public struct ProviderResetCreditSurfaceSummary: Equatable, Sendable {
     public let provider: Provider
     public let accountCount: Int
+    public let includesMultipleProviders: Bool
     public let isLastSeenOnly: Bool
     public let primaryActionableGuidance: ProviderResetCreditGuidance?
+    public let primaryDeadlineGuidance: ProviderResetCreditGuidance?
 
     public var accountCountText: String {
         accountCount == 1 ? "1 account" : "\(accountCount) accounts"
     }
 
     public var providerAccountCountText: String {
-        accountCount == 1
+        if includesMultipleProviders { return accountCountText }
+        return accountCount == 1
             ? "1 \(provider.displayName) account"
             : "\(accountCount) \(provider.displayName) accounts"
     }
@@ -159,14 +161,15 @@ public struct ProviderResetCreditSurfaceSummary: Equatable, Sendable {
 
 public enum ResetCreditSurfaceAdvisor {
     public static func appSummary(
+        provider: Provider? = nil,
         reports: [StoredProviderReport],
         limits: [UsageLimit],
         now: Date,
         maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge
     ) -> ProviderResetCreditSurfaceSummary? {
         summary(
-            reports: reports,
-            limits: limits,
+            reports: reports.filter { provider == nil || $0.provider == provider },
+            limits: limits.filter { provider == nil || $0.provider == provider },
             now: now,
             maximumAge: maximumAge,
             includesLastSeen: true
@@ -201,13 +204,16 @@ public enum ResetCreditSurfaceAdvisor {
             now: now,
             maximumAge: maximumAge
         ).filter { $0.state.supportsResetCreditGlance }
-        guard !guidance.isEmpty else { return [] }
+        let freshnessTransitions = reports.compactMap { $0.resetCredits?.observedAt.addingTimeInterval(maximumAge + 1) }.filter { $0 > now }
+        let expiryTransitions = reports.resetCreditTransitionDates(after: now) + freshnessTransitions
+        guard !guidance.isEmpty else { return expiryTransitions }
 
         let transitions = guidance.flatMap { guidance -> [Date] in
             var transitions = [guidance.resetCredits.observedAt.addingTimeInterval(maximumAge + 1)]
             if let expiry = guidance.resetCredits.earliestKnownExpiry {
                 transitions.append(expiry)
             }
+            transitions.append(contentsOf: guidance.resetCredits.knownExpiries)
             if guidance.state.isActionable,
                let weeklyReset = guidance.weeklyResetsAt {
                 transitions.append(
@@ -217,7 +223,7 @@ public enum ResetCreditSurfaceAdvisor {
             return transitions
         }
         .filter { $0 > now }
-        return Array(Set(transitions)).sorted()
+        return Array(Set(transitions + expiryTransitions)).sorted()
     }
 
     public static func nextGlanceTransitionDate(
@@ -241,12 +247,22 @@ public enum ResetCreditSurfaceAdvisor {
         maximumAge: TimeInterval,
         includesLastSeen: Bool
     ) -> ProviderResetCreditSurfaceSummary? {
-        let guidance = ResetCreditGuidanceAdvisor.guidance(
+        var guidance = ResetCreditGuidanceAdvisor.guidance(
             reports: reports,
             limits: limits,
             now: now,
             maximumAge: maximumAge
         )
+        guidance.append(contentsOf: reports.filter { $0.provider != .openAI }.compactMap { report in
+            guard report.status != .failure, report.status != .stale, report.status != .loading,
+                  let credits = report.resetCredits?.presented(at: now), credits.availableCount > 0,
+                  credits.observedAt <= now.addingTimeInterval(60),
+                  now.timeIntervalSince(credits.observedAt) <= maximumAge,
+                  abs(credits.observedAt.timeIntervalSince(report.generatedAt)) <= 1 else { return nil }
+            return ProviderResetCreditGuidance(provider: report.provider, accountID: report.accountID,
+                configuredAccountID: report.configuredAccountID, accountName: report.accountName,
+                resetCredits: credits, weeklyResetsAt: nil, state: .refresh(.weeklyLimitUnknown))
+        })
         let trustworthy = guidance.filter { $0.state.supportsResetCreditGlance }
         let displayed: [ProviderResetCreditGuidance]
         let isLastSeenOnly: Bool
@@ -260,15 +276,21 @@ public enum ResetCreditSurfaceAdvisor {
             return nil
         }
         return ProviderResetCreditSurfaceSummary(
-            provider: .openAI,
+            provider: displayed.first?.provider ?? .openAI,
             accountCount: displayed.count,
+            includesMultipleProviders: Set(displayed.map(\.provider)).count > 1,
             isLastSeenOnly: isLastSeenOnly,
             primaryActionableGuidance: ResetCreditGuidanceAdvisor.primaryActionableGuidance(
                 reports: reports,
                 limits: limits,
                 now: now,
                 maximumAge: maximumAge
-            )
+            ),
+            primaryDeadlineGuidance: trustworthy.min { lhs, rhs in
+                let left = lhs.resetCredits.earliestKnownExpiry ?? .distantFuture
+                let right = rhs.resetCredits.earliestKnownExpiry ?? .distantFuture
+                return left == right ? lhs.id < rhs.id : left < right
+            }
         )
     }
 }
@@ -325,7 +347,7 @@ public enum ResetCreditGuidanceAdvisor {
     ) -> ProviderResetCreditGuidance? {
         precondition(maximumAge >= 0, "maximumAge must not be negative")
         guard report.provider == .openAI,
-              let resetCredits = report.resetCredits,
+              let resetCredits = report.resetCredits?.presented(at: now),
               resetCredits.availableCount > 0
         else {
             return nil

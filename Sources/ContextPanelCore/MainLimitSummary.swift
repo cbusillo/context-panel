@@ -116,7 +116,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
 
     public func resetCountdownText(now: Date) -> String? {
         guard let resetsAt, resetsAt >= now.addingTimeInterval(-60) else { return nil }
-        return Self.compactResetDistance(until: resetsAt, now: now)
+        return "\(Self.compactResetDistance(until: resetsAt, now: now)) · \(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
     }
 
     public var primaryLimit: UsageLimit? {
@@ -355,7 +355,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     public var lastKnownCapacityLimits: [UsageLimit] {
         limits.compactMap { limit in
             guard limit.used != nil, limit.limit != nil else { return nil }
-            if let resetsAt = limit.resetsAt, resetsAt <= generatedAt.addingTimeInterval(-60) {
+            if !limit.isAssumedAfterScheduledReset, let resetsAt = limit.resetsAt, resetsAt <= generatedAt.addingTimeInterval(-60) {
                 return nil
             }
             guard !hasLastKnownExhaustedLongerWindow(for: limit) else { return nil }
@@ -634,7 +634,7 @@ public extension UsageLimit {
         if status == .failure || status == .stale || status == .unknown {
             return false
         }
-        if let resetsAt, resetsAt <= date.addingTimeInterval(-60) {
+        if !isAssumedAfterScheduledReset, let resetsAt, resetsAt <= date.addingTimeInterval(-60) {
             return false
         }
         return true

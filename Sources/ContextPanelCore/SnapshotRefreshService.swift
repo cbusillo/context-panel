@@ -163,12 +163,13 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
-        try await refreshIfNeededWithEvidence(now: now).decision
+        return try await refreshIfNeededWithEvidence(now: now).decision
     }
 
     public func refreshIfNeededWithEvidence(
         now: Date = Date()
     ) async throws -> SnapshotRefreshRunEvidence {
+        await service.receiveSharedAccounts(now: now)
         service.importConfiguredAuthFiles(now: now)
         let stalenessPolicy = effectiveStalenessPolicy()
         let current = service.loadCurrent(policy: stalenessPolicy, now: now)
@@ -526,6 +527,7 @@ public struct SnapshotRefreshService: Sendable {
     private let refreshDiagnosticsStore: RefreshDiagnosticsStateStore?
     private let promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)?
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
+    private let connectorFactory: (@Sendable (AccountConfigurationDocument) -> [any ProviderConnector])?
 
     public init(
         accountStore: AccountConfigurationStore,
@@ -534,6 +536,7 @@ public struct SnapshotRefreshService: Sendable {
         credentialStore: (any ProviderCredentialStoring)? = nil,
         googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)? = nil,
         companionSyncPublisher: CompanionSyncPublisher? = nil,
+        connectorFactory: (@Sendable (AccountConfigurationDocument) -> [any ProviderConnector])? = nil,
         refreshDiagnosticsStore: RefreshDiagnosticsStateStore? = nil,
         promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)? = nil,
         promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
@@ -546,6 +549,7 @@ public struct SnapshotRefreshService: Sendable {
         self.credentialStore = credentialStore
         self.googleAntigravitySnapshotLoader = googleAntigravitySnapshotLoader
         self.companionSyncPublisher = companionSyncPublisher
+        self.connectorFactory = connectorFactory
         self.refreshDiagnosticsStore = refreshDiagnosticsStore
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
@@ -573,9 +577,18 @@ public struct SnapshotRefreshService: Sendable {
         )
     }
 
+    public func invalidateSharedAccounts() { companionSyncPublisher?.sharedAccountCache?.invalidate() }
+    public func receiveSharedAccounts(now: Date) async { _ = await companionSyncPublisher?.receiveSharedAccounts(now: now) }
+    public func sharedAccountPresentation(stored: StoredUsageSnapshot, now: Date,
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:]) -> WidgetSnapshot? {
+        guard let publisher = companionSyncPublisher else { return nil }
+        let document = publisher.presentationDocument(storedSnapshot: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates)
+        return WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: document, status: .healthy), now: now)
+    }
+
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
         let result = accountStore.load(now: now)
-        migrateClaudeStateIfNeeded(accounts: result.document.accounts, now: now)
+        migrateClaudeStateIfNeeded(document: result.document, now: now)
         return result
     }
 
@@ -631,7 +644,7 @@ public struct SnapshotRefreshService: Sendable {
         let accountDocument = accountStore.load(now: now).document
         for account in accountDocument.accounts where account.isEnabled && !account.isRetiredSource {
             guard account.connectorKind.importsAuthFileCredential,
-                  let authPath = account.authPath
+                  let authPath = account.effectiveAuthPath
             else { continue }
             let expanded = NSString(string: authPath).expandingTildeInPath
             guard let data = try? bookmarkStore.readData(for: expanded) else { continue }
@@ -648,24 +661,54 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
+        try await companionSyncPublisher?.receiveGlobalRemovals(accountStore: accountStore,
+            storedSnapshot: stores.primary.loadCurrent().snapshot, now: now)
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
         let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
         let previousLoadResult = stores.primary.loadCurrent()
-        let previousStoredSnapshot = previousLoadResult.snapshot
-        migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
-        let connectors = AccountConnectorFactory.connectors(
+        var previousStoredSnapshot = previousLoadResult.snapshot
+        migrateClaudeStateIfNeeded(document: accountResult.document, now: now)
+        let connectors = connectorFactory?(accountResult.document) ?? AccountConnectorFactory.connectors(
             from: accountResult.document,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
             googleAntigravitySnapshotLoader: googleAntigravitySnapshotLoader,
-            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
+            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox,
+            identityResolver: companionSyncPublisher?.remoteStore?.accountIdentityResolver
         )
         RefreshDiagnostics.logRefreshStarted(
             enabledAccountCount: enabledAccountCount,
             connectorCount: connectors.count
         )
-        let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
+        let rawConnectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
+        // Resolve setup membership from this raw read before discarding removed lanes.
+        let rawStored = StoredUsageSnapshot(savedAt: now, snapshot: rawConnectorResult.snapshot,
+            reports: rawConnectorResult.reports.map { StoredProviderReport(report: $0) })
+        try accountStore.applyGlobalRemovals(accountResult.document.globalRemovedDisplayIDs,
+            storedSnapshot: rawStored, now: now, userScope: accountResult.document.removalUserScope)
+        let refreshedConfiguration = accountStore.load(now: now).document
+        let removals = Set(refreshedConfiguration.globalRemovedDisplayIDs).filter { key in
+            guard let restored = refreshedConfiguration.restoredDisplayDates?[key] else { return true }
+            return (refreshedConfiguration.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) >= restored
+        }
+        if let previous = previousStoredSnapshot {
+            let pruned = previous.excludingRemovedSharedAccounts(removals)
+            if pruned != previous {
+                // Preserve the original observation times; removal is not a quota reading.
+                try stores.primary.save(pruned)
+                mirrorSnapshotToFallbackStores(pruned)
+                previousStoredSnapshot = pruned
+            }
+        }
+        let connectorResult = ConnectorRefreshResult(generatedAt: rawConnectorResult.generatedAt, reports: rawConnectorResult.reports.filter { report in
+            guard let identity = report.sharedAccountIdentity else { return true }
+            let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
+            if let setup = accountResult.document.accounts.first(where: { $0.id == report.configuredAccountID }),
+               let requested = setup.restorationRequestedAt, report.status != .failure, !report.limits.isEmpty,
+               requested > (accountResult.document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) { return true }
+            return !removals.contains(key)
+        })
         let refreshResult = ConnectorRefreshResult(
             generatedAt: connectorResult.generatedAt,
             reports: connectorResult.reports,
@@ -681,6 +724,13 @@ public struct SnapshotRefreshService: Sendable {
                     savedAt: now,
                     preservesUnreportedAccounts: false
                 )
+            }
+            // Setup-only publications carry never-connected rows and explicit removals,
+            // even before this Mac has obtained its first usage observation.
+            if accountResult.status == .healthy, let companionSyncPublisher {
+                _ = await companionSyncPublisher.publishAll(storedSnapshot: previousStoredSnapshot
+                    ?? StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: .distantPast, limits: []), reports: []),
+                    publishedAt: now)
             }
             RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)
             return SnapshotRefreshOutcome(
@@ -714,7 +764,9 @@ public struct SnapshotRefreshService: Sendable {
                     observedBurnRates: companionObservedBurnRates(
                         storedSnapshot: storedSnapshot,
                         savedAt: savedAt
-                    )
+                    ),
+                    accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: storedSnapshot.snapshot,
+                        history: stores.primary.loadHistory(query: SnapshotStoreQuery(since: min(savedAt, storedSnapshot.snapshot.generatedAt).addingTimeInterval(-24 * 3_600))), now: savedAt)
                 )
             } else {
                 nil
@@ -801,15 +853,15 @@ public struct SnapshotRefreshService: Sendable {
         )
     }
 
-    private func migrateClaudeStateIfNeeded(accounts: [LocalProviderAccountConfiguration], now: Date) {
+    private func migrateClaudeStateIfNeeded(document: AccountConfigurationDocument, now: Date) {
         if let credentialStore {
             ClaudeAccountMigration.migrateClaudeCredentials(credentialStore)
         }
         let migratedDocument = ClaudeAccountMigration.migrateAccountConfiguration(
-            AccountConfigurationDocument(updatedAt: now, accounts: accounts),
+            document,
             now: now
         )
-        if migratedDocument.accounts != accounts {
+        if migratedDocument.accounts != document.accounts {
             try? accountStore.save(migratedDocument)
         }
     }

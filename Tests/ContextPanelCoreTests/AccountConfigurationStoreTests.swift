@@ -9,10 +9,9 @@ import Testing
     let result = store.load(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.status == .unknown)
-    #expect(result.document.accounts.count == 4)
     #expect(!result.document.accounts.contains { $0.effectiveCodexClient == .everyCode })
     #expect(result.document.accounts.contains { $0.id == "openai-codex-default" && $0.displayName == "Codex" && $0.isEnabled && $0.codexClient == .codex })
-    #expect(result.document.accounts.contains { $0.id == "openai-codex-lab-default" && $0.displayName == "Codex Lab" && !$0.isEnabled && $0.codexClient == .codexLab })
+    #expect(!result.document.accounts.contains { $0.effectiveCodexClient == .codexLab })
     #expect(result.document.accounts.contains { $0.connectorKind == .googleAntigravityQuota && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.connectorKind == .claudeOAuthUsage && $0.effectiveAuthPath == nil })
 }
@@ -164,16 +163,15 @@ func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAc
     #expect(preserved == retired)
     #expect(preserved.providerReportAccountIDs == legacy.providerReportAccountIDs)
     #expect(preserved.codexClient == nil)
-    #expect(migrated.document.accounts.map(\.id) == ["openai-code-default", "openai-codex-default", "openai-codex-lab-default"])
     #expect(migrated.document.accounts.dropFirst().allSatisfy { !$0.isEnabled })
-    #expect(migrated.document.accounts.dropFirst().map(\.effectiveCodexClient) == [.codex, .codexLab])
+    #expect(migrated.document.accounts.dropFirst().map(\.effectiveCodexClient) == [.codex])
 
     let savedBytes = try Data(contentsOf: store.configurationURL)
     let reloaded = store.load(now: Date(timeIntervalSince1970: 30))
 
     #expect(reloaded.document == migrated.document)
     #expect(try Data(contentsOf: store.configurationURL) == savedBytes)
-    #expect(Set(reloaded.document.accounts.map(\.id)).count == 3)
+    #expect(Set(reloaded.document.accounts.map(\.id)).count == reloaded.document.accounts.count)
 }
 
 @Test func accountConfigurationStorePreservesExistingDisabledAndCustomClientChoices() throws {
@@ -202,7 +200,9 @@ func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAc
     var expected = document
     expected.accounts[0].isEnabled = false
     expected.updatedAt = Date(timeIntervalSince1970: 20)
-    #expect(result.document == expected)
+    #expect(result.document.accounts == expected.accounts)
+    #expect(result.document.updatedAt == expected.updatedAt)
+    #expect(result.document.removedAccountIDs == expected.removedAccountIDs)
     #expect(!result.document.accounts.contains { $0.id == "openai-codex-lab-default" })
 }
 
@@ -709,13 +709,10 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
 @Test func defaultAccountPathsUseConfiguredClientHomes() throws {
     let document = AccountConfigurationStore.defaultDocument(now: Date(timeIntervalSince1970: 0))
 
-    let lab = try #require(document.accounts.first { $0.id == "openai-codex-lab-default" })
     let codex = try #require(document.accounts.first { $0.id == "openai-codex-default" })
     let google = try #require(document.accounts.first { $0.id == "google-antigravity-default" })
 
-    #expect(lab.authPath == CodexClient.codexLab.homeDirectory().appending(path: "auth_accounts.json").path)
     #expect(codex.authPath == CodexClient.codex.homeDirectory().appending(path: "auth.json").path)
-    #expect(lab.isEnabled == false)
     #expect(codex.isEnabled)
     #expect(google.authPath == nil)
     #expect(google.effectiveAuthPath == nil)
@@ -729,7 +726,7 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
     let result = AccountConfigurationStore(configurationURL: url).load(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.status == .failure)
-    #expect(result.document.accounts.count == 4)
+    #expect(result.document.accounts == AccountConfigurationStore.defaultDocument(now: Date(timeIntervalSince1970: 0)).accounts)
     #expect(result.errorMessage?.isEmpty == false)
 }
 
@@ -762,12 +759,12 @@ private struct ThrowingProviderCredentialStore: ProviderCredentialStoring {
     try store.save(AccountConfigurationDocument(updatedAt: .distantPast, accounts: [retired]))
     var document = store.load().document
     #expect(!document.accounts[0].isEnabled)
-    #expect(document.settingsAccounts.map(\.effectiveCodexClient) == [.codexLab, .codex])
+    #expect(document.settingsAccounts.map(\.effectiveCodexClient) == [.codex])
     let codex = try #require(document.accounts.firstIndex { $0.effectiveCodexClient == .codex })
     document.accounts[codex].isEnabled = true
     try store.save(document)
     let reloaded = store.load().document
-    #expect(reloaded.accounts.count == 3)
+    #expect(reloaded.accounts.count == document.accounts.count)
     var expected = retired
     expected.isEnabled = false
     #expect(reloaded.accounts[0] == expected)

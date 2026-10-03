@@ -495,6 +495,174 @@ Preferred v1 connector scope:
 
 ## Product Decisions
 
+### Anthropic account and banked-reset findings (2026-10-01)
+
+Each Claude account uses its own Context Panel OAuth connection. The existing
+**Add Claude Account** control creates an independent Keychain identity; connect
+each entry separately. Signing into Claude Code or Desktop does not connect that
+entry. The signed publisher's normalized snapshot was observed to contain one
+healthy Claude account with session and weekly utilization/natural reset times;
+its configuration had no second Claude entry. This does not verify a second
+account, and a candidate build has not yet passed signed native acceptance.
+
+Anthropic's [limit reset documentation](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset)
+places banked reset offers and their expiry in web/Desktop **Settings → Usage**.
+These offers are separate from the weekly natural reset schedule and usage
+credit balances. Read-only inspection of Claude Desktop 2.16120.0 program assets
+found a settings usage GET with `cedar_ember=1&skip_spend=1` and a `cedar_ember`
+grant inventory. Current Claude Code 2.1.286 program strings also contain the OAuth
+cedar_ember/skip_spend read route and the `claude-cli/` compatibility User-Agent
+format. The optional adapter uses that observed format; ordinary usage headers
+remain unchanged. This header alignment is a source lead, not proof of either
+private account’s offers. After ordinary OAuth usage succeeds, the connector now makes
+one optional GET to the same OAuth usage endpoint with those flags, using only
+that account's Context Panel-owned access token. It does not retry, rotate tokens
+or log raw responses for the optional request. That request has a three-second
+timeout. Failed, unsupported or malformed inventory reads have a six-hour
+process-local cooldown per account/endpoint, shared across newly constructed
+connectors; ordinary utilization continues on every refresh. Restarting the
+publisher permits one new probe. A successful read repeats on the next ordinary
+refresh; watch installed acceptance for vendor throttling before adding a
+success cache interval. OAuth support for this inventory
+has not yet been verified by a signed canonical runtime; the web/Desktop source
+is static schema evidence, not authenticated proof for either account.
+
+A valid eligible inventory supplies remaining resets, deduplicated by transient
+grant ID, and each offer's `ends_at`. Paused/expired offers are excluded; zero-left
+offers count only when claimable under the vendor's limit/blocking/cooldown
+conditions. Malformed or absent inventory and rejected optional requests leave
+the known usage windows intact. IDs and provider metadata are discarded; only
+count, observation, coverage and dates enter the shared sanitized snapshot.
+The consuming reset POST is never used. When no prior summary exists, absence of an inventory is **Banked resets unknown**,
+including on a connected Claude account. It is not a zero balance. If an optional
+read is missing or fails after an inventory was observed, keep its original dates
+and observation time as **Last observed**. Known expired entries stop counting
+even across repeated failures; undated historical counts remain explicitly stale
+and cannot support current widget advice. Do not infer an offer expiry from `seven_day.resets_at`, a spend
+balance, an issue comment or a sibling account. The owner declined manual fallback
+on #719 pending investigation of the automatic source used by Claude web/Desktop
+and additional OAuth usage fields. No manual balances or speculative API fields
+were added. Existing reported reset summaries retain their observation time, coverage
+and known dates.
+
+### Current Codex homes and OpenAI recovery
+
+In **Settings → Accounts**, each entry has an enable switch and **Remove account**.
+Removal changes only panel configuration membership, under the shared refresh
+lock; it does not delete Keychain credentials, bookmarks, CLI logins or home
+folders. A busy refresh asks the user to retry. Removed entries stay removed after
+reloading, and the next full refresh drops their live lanes while history remains.
+Local removal markers prevent the retired-source setup migration from recreating
+an explicitly removed default entry. Account controls pause while removal commits
+so a queued name/toggle edit cannot restore the old whole list. Re-adding an
+OpenAI or Claude entry requires selecting its source or signing in again; retained
+credentials are not automatically attached to the new entry.
+Use Add OpenAI Account, Add Claude Account or Add Antigravity Account to set up a
+replacement. Antigravity has one configured bridge source at a time.
+
+An imported login can continue supplying current API quotas after its original
+auth file disappears. Settings explicitly marks an unavailable configured source
+and distinguishes use of a saved login from a readable source. Rebinding is
+required to receive subsequent changes to that home; valid cached quota data is
+not evidence that the missing folder is readable.
+
+In Mac Settings, **Select Codex Home** binds an account to a user-selected home
+containing `auth.json`. Select the main `.codex` home or an account-specific home
+inside `.codex-accounts`, then repeat for each additional OpenAI entry. Local
+nicknames remain independent of folder names. Paths remain configurable.
+The picker saves the existing read-only security-scoped bookmark for the auth
+file while the selected folder is accessible. It changes no entitlements.
+Rebinding clears that entry's imported credential so a previously cached login
+cannot override the newly selected source. The normal app/refresh-agent adapter
+serializes with this change through the existing refresh lock; if refresh owns
+the lock, retry Connect Home when it finishes. Bookmark readability is checked
+before the binding is saved. The adapter
+then reads quota and automatic banked resets through the existing API routes.
+Credentials are never displayed or logged, and CLI homes/logins are unchanged.
+
+New default configuration no longer adds a Codex Lab source. Historical entries
+remain recoverable in Settings; select their current home or turn them off.
+Shared session history is not an account-attributed quota source; the three
+current homes were observed to resolve to one shared sessions directory.
+The sessions-only route remains available for genuinely separate histories,
+with explicit guidance to select a home for automatic banked-reset data.
+
+### Agent-readable account snapshot
+
+`swift run ContextPanelAccountSnapshot` emits a versioned JSON projection of
+the canonical App Group `Context Panel` store. `--storage-root <directory>`
+selects an explicit store containing `accounts.json` and
+`Snapshots/current-snapshot.json`; it is useful for fixtures or another private
+operator-selected root. The command reads saved normalized history for burn
+estimates. It requires ordinary filesystem read access; it adds no app
+entitlement and cannot bypass macOS access restrictions.
+The publisher must have saved `accounts.json` (for example after an account
+setting is edited). An unsaved default configuration deliberately fails closed;
+the reader does not invent default accounts or persist them.
+
+Schema 1 has `readAt`, `savedAt`, `accounts`, `answers` and `deadlines`. Each row has an opaque local ID,
+provider, typed local label (including email-like names), shared panel `state`, observation time, windows,
+and a stable opaque `configurationID` for the configured source. The row `id`
+identifies its current logical lane and can change when a connection first
+establishes the account or a catalog source gains or loses members. Track the
+source using `configurationID`; multiple catalog members can share that value.
+Rows also include reported usage credits and a separate `bankedResets` object. Account states are
+`available`, `closeToLimit`, `limited`, `unknown`, `stale`, `refreshing`,
+`unavailable`, `notConnected` and `off`. Every configured non-retired account is
+included; the reader does not invent unconfigured accounts. Membership and
+states use the shared `AccountOverview` projection over `AccountCapacity` membership,
+and burn uses `AccountBurnRateEstimator`, matching
+the account overview.
+
+Windows include their own observation time, unit, used/limit quantities,
+`naturalResetAt` and nullable `burn` (units per hour, observation duration,
+sample count). Burn is null when there is insufficient history or the account
+is not current. A burn `sampleCount` of zero means a whole-window average rather
+than measured recent pace, matching the panel's window-average label. Windows
+retain `confidence` and `presentationAssumption` so event-driven scheduled-reset
+estimates match the panel without being mistaken for new provider observations.
+Optional fields inside provider summaries may be absent; absence means unknown.
+Aged polling observations and future observations do not supply live capacity.
+Event-driven AGY idle age alone does not make a reading stale. Event-driven scheduled
+resets remain explicitly estimated. Banked-reset state is independent of usage-window freshness:
+the summary contains provider-reported count, coverage, observation time and
+known expiries. Missing banked data has a null summary and unknown state;
+`unknownExpiryCount` states how many dates are missing, including for older
+publishers whose complete coverage stored only the earliest expiry.
+Known expired offers disappear from the current count and deadline list at the
+expiry instant. Historical observations remain in the stored provider report.
+Saved/failing reads keep unexpired offers explicitly marked last seen. A reported
+zero remains distinguishable from no observation.
+
+Each account also exposes `showInWidgets`, `useLast`, its nullable tightest
+`remainingFraction`, and `limitingWindowID`. `answers.closestAccountID` is null
+without reliable current capacity. `answers.useNext` contains at most one opaque
+account ID per provider: room is required in every window, scheduled-reset
+assumptions and saved/unknown rows are ineligible, and Use last accounts are
+skipped. Saved configuration order breaks ties. `deadlines` is a sorted list of
+known future expiry dates, safe local IDs, typed account labels, observation
+times and states. Unknown expiry dates are never invented. App, widgets and
+companions consume the same account math; widgets alone filter Show in widgets.
+Hiding an active account does not pause collection or limit warnings. Previously
+paused accounts retain their pause and have an explicit Resume updates action.
+
+The companion payload adds optional display metadata containing opaque IDs,
+typed labels and display/availability flags. Older payloads remain decodable.
+No new CloudKit record type, server schema or entitlement is introduced.
+
+No credentials, source paths, raw provider responses, diagnostics, credential-derived
+account identity or transcript/cache payloads are exported. Explicitly typed local
+names and aliases retain email addresses under the Owner decision on #719;
+secret/path patterns in those labels and provider-derived window labels remain redacted. IDs are local opaque projections,
+not provider identifiers. The command does not access Keychain, auth files,
+bookmarks, session files or provider endpoints; it performs no writes, migration
+or refresh. It exits nonzero with a bounded diagnostic if the required files
+cannot be decoded or have unsupported schemas. Missing history means unknown
+burn, not a fabricated zero pace. JSON success proves only a saved-data read;
+consumers must check state and timestamps. The catalog skill can consume this
+contract without provider credentials. Never publish private live exports in
+issues or PRs.
+
 - Treat `unknown`, `manual`, `observed`, and `official` as distinct confidence
   levels in the data model and UI.
 - Never overload quota pressure to answer whether the next provider request can
@@ -531,3 +699,98 @@ Preferred v1 connector scope:
 - [Google Service Usage consumer quota metrics](https://cloud.google.com/service-usage/docs/reference/rest/v1beta1/services.consumerQuotaMetrics/list)
 - [Google Cloud quota usage metrics](https://docs.cloud.google.com/monitoring/alerts/using-quota-metrics)
 - [Cloud Billing export to BigQuery](https://cloud.google.com/billing/docs/how-to/export-data-bigquery)
+
+## Multiple local account entries
+
+The Mac Settings pane can add OpenAI and Claude accounts and edit their local
+names. The overview's **All Accounts** card includes OpenAI, Claude, and Antigravity entries even
+before their first successful read, independently of widget window selection.
+Off, unavailable, stale, and unknown entries remain visible. Usage and next
+reset dates are shown for every reported window. Burn estimates filter both
+current and historical observations to the same logical account; a window
+average is labeled separately from measured history. Missing evidence stays
+unknown. A source-level failure applies to its last-known members without
+creating an extra account lane.
+
+Account rows use the shared app freshness policy for stale status and burn-rate
+visibility. Editing an auth path keeps a draft until **Apply path** is pressed;
+only applying a different path disconnects that entry's imported login. Use
+**Select File** to authorize the replacement source. Typing alone does not
+change the saved source or credential.
+
+Claude entries with no connection evidence yet, or a refresh report requiring
+reconnection, display **Not connected**. They do not borrow a sibling's usage
+or credentials. A provider/network failure remains **Unavailable**.
+
+| Account          | Read route                                                                     | What still needs local setup                         |
+| ---------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| OpenAI account 1 | Existing Codex auth file → read-only Codex usage endpoint                      | Choose its file and local name                       |
+| OpenAI account 2 | Separate existing Codex auth file, or a readable member of an existing catalog | Choose its source; no active-login switching         |
+| OpenAI account 3 | Separate existing Codex auth file, or a readable member of an existing catalog | Choose its source; no active-login switching         |
+| Claude account 1 | Context Panel-owned OAuth credential → OAuth usage endpoint                    | Existing Context Panel connection                    |
+| Claude account 2 | Independent Context Panel-owned OAuth credential → OAuth usage endpoint        | Add an entry; connect it if no credential exists yet |
+
+These are supported routes, not proof that five live accounts are connected on
+a particular machine. Context Panel does not discover private router homes,
+change CLI logins, or read Claude Code credentials. OAuth setup is an explicit
+user action. Disconnecting an additional Claude account touches only its own
+credential key; the legacy default key belongs only to the default account.
+
+Codex labels come from local configuration, never token email/name claims or
+catalog labels. Catalog members receive stable opaque suffixes until named in
+Settings. Per-member aliases are keyed by the existing hashed logical account
+ID. Session-source entries use a stable local configured-account identity. A successful
+source switch replaces the previous logical lanes for that entry, including
+during partial refreshes; unrelated accounts remain intact.
+
+The overview also shows numeric usage-credit balances (when reported) and all
+known reset-credit expiry dates. Missing dates are counted explicitly. The
+usage endpoint does not establish usage-credit expiry dates, so those say
+`expiry not reported`. No recurring weekly reset or future plan entitlement is
+invented. Older stored reset summaries containing only an earliest expiry remain
+readable. Failed refreshes retain a reset count without presenting old dates as
+current timing advice. All credit operations remain read-only.
+
+### Per-account Codex session quota
+
+For each OpenAI entry, choose **Select Codex Sessions** and pick that account's
+`sessions` directory in the native folder picker. The current main home has
+`~/.codex/sessions`; additional homes currently have their own `sessions`
+directory. The mapping is saved as `codexQuotaPath` in local account configuration,
+not hard-coded into discovery. **Change Sessions Folder** can repoint the entry
+when the home layout changes. **Use auth file** returns to the existing adapter.
+Neither action changes a CLI login. Session mode never reads or imports auth files.
+
+The App Store app and refresh agent use the existing read-only user-selected
+folder and app-scoped bookmark entitlements. Selection saves a security-scoped
+bookmark; the adapter resolves it and holds access for the complete read.
+Sandboxed refresh refuses an absent/currently unusable bookmark rather than
+falling back to unrestricted file access. Re-select the folder if access fails.
+No entitlements were added or widened.
+
+Only bounded JSONL tails are decoded, reusing the native session discovery and
+read budgets. Completed `event_msg` / `token_count` records supply primary and
+weekly windows, reset timestamps, and numeric credit balance. Invalid, future,
+and incomplete records are ignored. The newest valid event timestamp is kept;
+repeated polling cannot make old observations fresh. Expired windows stay stale
+until a new event arrives. This is observed session quota, not an active provider
+poll: run Codex on that account to produce fresh data. Reset-credit expiry dates
+are not established by these events and remain unknown.
+
+Quota events have no account identity. Choose a folder used exclusively by the
+named account. Shared histories or histories spanning login switches cannot
+establish attribution. A directory assigned to several enabled entries is refused
+for all of them, including resolved aliases, instead of showing one account's
+quota in every row. Symlinked session files and directories are skipped. If
+codex-skills#886 shares session history, retain separate account-attributed quota
+sources or use the auth-file adapter; this reader cannot infer an account from
+shared token-count events. Independent copied histories also require the user's
+correct source binding. No private account-home paths or session bodies are
+written to reports, logs, or repository fixtures.
+
+When event-driven capacity is assumed after a known natural reset, its original
+passed timestamp is retained and qualified as assumed in app, widget, Watch and
+agent data. It is not a prediction of the next reset: future reset selection
+continues to exclude dates at or before the presentation time. Unknown historical
+reset dates remain unknown. Banked offer expiry is separate and never applies
+a reset or changes utilization.

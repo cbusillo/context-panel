@@ -169,7 +169,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         #expect(limit.presentationAssumption == .scheduledReset)
         #expect(summary.widgetRemainingHeadline == "≈100% left")
         #expect(summary.widgetUsageText == "≈0% used")
-        #expect(summary.widgetResetConfidenceText == "assumed after reset")
+        #expect(summary.widgetResetConfidenceText(presentationDate: now) == summary.widgetResetText(presentationDate: now))
         let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: widget.state)
         #expect(accessibilityValue.contains("approximately 100% left"))
         #expect(accessibilityValue.contains("Assumed after scheduled reset"))
@@ -1848,7 +1848,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "5h")
+    #expect(summary.resetCountdownText(now: now) == "5h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func resetCountdownKeepsNearlyDayLongWindowsCompact() {
@@ -1874,7 +1874,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "24h")
+    #expect(summary.resetCountdownText(now: now) == "24h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func widgetResetTextRoundsFiveHourWindowUp() {
@@ -1901,7 +1901,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         generatedAt: now
     )
 
-    #expect(summary.widgetResetText == "5h")
+    #expect(summary.widgetResetText == ContextPanelDateFormatting.resetDeadline(reset, compact: true))
 }
 
 @Test func anthropicWidgetSnapshotSurfacesConnectedUnknownOAuthStatusWithoutMainLimit() {
@@ -2393,4 +2393,17 @@ private func widgetSnapshotTemporaryDirectory() throws -> URL {
         .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+@Test func aPassedWidgetResetKeepsItsLocalDateAndMinute() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(-1)
+    let limit = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local",
+        label: "Weekly", unit: .percent, used: 40, limit: 100, resetsAt: reset, confidence: .observed)
+    let deadline = ContextPanelDateFormatting.resetDeadline(reset, compact: true)
+    #expect(limit.widgetResetText(presentationDate: now) == "Passed \(deadline)")
+    let assumed = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local",
+        label: "Weekly", unit: .percent, used: 0, limit: 100, resetsAt: reset,
+        confidence: .estimated, presentationAssumption: .scheduledReset)
+    #expect(assumed.widgetResetText(presentationDate: now) == "Assumed · \(deadline)")
 }

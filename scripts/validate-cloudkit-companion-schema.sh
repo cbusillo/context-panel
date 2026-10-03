@@ -117,6 +117,7 @@ fi
 contract_record_type="CompanionSyncDocument"
 runtime_session_record_type="RuntimeValidationSession"
 runtime_receipt_record_type="RuntimeReceipt"
+identity_key_record_type="ContextPanelAccountIdentityKey"
 subscription_query_field="snapshotSchemaVersion"
 required_fields=(
 	payload
@@ -338,7 +339,7 @@ validate_ckdb_schema() {
 	local actual_record_types
 
 	if [[ "$require_exact_record_types" == "true" ]]; then
-		expected_record_types=$'CompanionSyncDocument\nRuntimeReceipt\nRuntimeValidationSession\nUsers'
+		expected_record_types=$'CompanionSyncDocument\nContextPanelAccountIdentityKey\nRuntimeReceipt\nRuntimeValidationSession\nUsers'
 		actual_record_types="$(live_schema_record_types "$schema" | LC_ALL=C sort -u)"
 		if [[ "$actual_record_types" != "$expected_record_types" ]]; then
 			echo "$label schema record types differ from the additive companion/runtime baseline" >&2
@@ -346,6 +347,15 @@ validate_ckdb_schema() {
 		fi
 	fi
 
+	if ! live_schema_has_field_type "$schema" "$identity_key_record_type" keyMaterial 'ENCRYPTED[[:space:]]+BYTES'; then
+		echo "$label schema is missing encrypted ContextPanelAccountIdentityKey.keyMaterial" >&2
+		return 1
+	fi
+	if live_schema_field_is_queryable "$schema" "$identity_key_record_type" keyMaterial || live_schema_field_is_sortable "$schema" "$identity_key_record_type" keyMaterial; then
+		echo "$label schema must not index ContextPanelAccountIdentityKey.keyMaterial" >&2
+		return 1
+	fi
+	if ! validate_ckdb_grants "$schema" "$identity_key_record_type" '' "$label"; then return 1; fi
 	if ! live_schema_has_record_type "$schema" "$contract_record_type"; then
 		echo "$label schema is missing record type: $contract_record_type" >&2
 		return 1
@@ -425,6 +435,10 @@ if [[ "$contract_container" != "$container_id" ]]; then
 fi
 if [[ "$contract_database" != "private" ]]; then
 	echo "schema contract database must be private" >&2
+	exit 1
+fi
+if ! jq -e --arg name "$identity_key_record_type" '.recordTypes[]? | select(.name == $name) | .publicDatabaseGrants == [] and .recordName == "ContextPanelAccountIdentityKey.v1" and any(.fields[]; .name == "keyMaterial" and .type == "ENCRYPTED_BYTES" and (.queryable // false) == false and (.sortable // false) == false)' "$schema_path" >/dev/null; then
+	echo "schema contract requires an encrypted private shared-account key" >&2
 	exit 1
 fi
 contract_record_name="$(jq -r --arg name "$contract_record_type" '.recordTypes[]? | select(.name == $name) | .recordName // empty' "$schema_path")"

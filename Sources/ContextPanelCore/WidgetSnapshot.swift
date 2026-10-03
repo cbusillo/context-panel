@@ -27,6 +27,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let message: String
     public let refreshAttentionSummary: RefreshAttentionSummary?
     public let syncErrorMessage: String?
+    public let accountDisplayMetadata: [AccountDisplayMetadata]?
+    /// Per-account, per-window burn keyed by provider account ID then limit ID. Optional so older payloads decode.
+    public let accountBurnRates: [String: [String: ObservedBurnRate]]?
 
     public init(
         state: WidgetSnapshotState,
@@ -40,7 +43,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         status: UsageStatus,
         message: String,
         refreshAttentionSummary: RefreshAttentionSummary? = nil,
-        syncErrorMessage: String? = nil
+        syncErrorMessage: String? = nil,
+        accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil
     ) {
         self.state = state
         self.generatedAt = generatedAt
@@ -54,6 +59,16 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.message = message
         self.refreshAttentionSummary = refreshAttentionSummary
         self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.accountDisplayMetadata = accountDisplayMetadata
+        self.accountBurnRates = accountBurnRates
+    }
+
+    public func accountOverview(now: Date, widgetsOnly: Bool = false,
+                                maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge) -> AccountOverview {
+        AccountOverview(snapshot: usageSnapshot, reports: reports, metadata: accountDisplayMetadata,
+                        now: now, maximumAge: maximumAge, widgetsOnly: widgetsOnly,
+                        isSavedSnapshot: state == .stale || state == .failure || syncErrorMessage != nil,
+                        accountBurnRates: accountBurnRates ?? [:])
     }
 
     public var usageSnapshot: UsageSnapshot {
@@ -150,8 +165,23 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         history: [StoredUsageSnapshot] = [],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         promptCacheWidgetState: PromptCacheWidgetState? = nil,
-        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+        configuration: [LocalProviderAccountConfiguration]? = nil,
+        sharedDocument: CompanionSyncDocument? = nil,
+        publisherID: String? = nil, accountIntentDocument: AccountConfigurationDocument? = nil
     ) -> WidgetSnapshot {
+        if let sharedDocument, result.snapshot == nil {
+            return MacSharedAccountPresentation.make(stored: StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: []),
+                configuration: configuration ?? [], publisherID: publisherID, remote: sharedDocument, accountIntentDocument: accountIntentDocument,
+                now: now, stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
+        }
+        if let stored = result.snapshot, sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
+            let rates = AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)
+            return MacSharedAccountPresentation.make(stored: stored, configuration: configuration ?? [],
+                publisherID: publisherID, remote: sharedDocument, accountIntentDocument: accountIntentDocument, now: now, rates: rates,
+                observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
+                stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
+        }
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
                 state: result.status == .failure ? .failure : .setupNeeded,
@@ -159,7 +189,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 limits: [],
                 fastModeForecastSettings: fastModeForecastSettings,
                 status: result.status,
-                message: result.errorMessage ?? "Set up Context Panel in the app."
+                message: result.errorMessage ?? "Set up Context Panel in the app.",
+                accountDisplayMetadata: configuration.map {
+                    AccountDisplayMetadata.local(configuration: $0,
+                        stored: StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: [])), now: now)
+                }
             )
         }
 
@@ -205,7 +239,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             fastModeForecastSettings: fastModeForecastSettings,
             status: status,
             message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
-            refreshAttentionSummary: refreshAttentionSummary
+            refreshAttentionSummary: refreshAttentionSummary,
+            accountDisplayMetadata: configuration.map { AccountDisplayMetadata.local(configuration: $0, stored: stored, now: now) },
+            accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)
         )
     }
 
@@ -246,13 +282,16 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             reports: reports,
             promptCacheObservations: promptCacheObservations
         )
-        let rawRefreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let isSetupOnly = companion.generatedAt == .distantPast && limits.isEmpty && reports.isEmpty
+        let rawRefreshAttentionSummary = isSetupOnly ? nil : stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
         let refreshAttentionSummary = companionRefreshAttentionSummary(from: rawRefreshAttentionSummary)
         let companionStatus = document.companionStatus(now: now, stalenessPolicy: stalenessPolicy)
         let usesStaleSavedCache = result.status == .stale
             && (result.transportMetadata?.source == .localCache
                 || result.transportMetadata?.source == .appGroup)
-        let state: WidgetSnapshotState = if usesStaleSavedCache
+        let state: WidgetSnapshotState = if isSetupOnly {
+            .setupNeeded
+        } else if usesStaleSavedCache
             || companionStatus == .stale
             || rawRefreshAttentionSummary?.isSnapshotAgeStale == true {
             .stale
@@ -305,7 +344,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 )
                 : "Showing saved usage because the latest update failed.",
             refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary,
-            syncErrorMessage: result.errorMessage
+            syncErrorMessage: result.errorMessage,
+            accountDisplayMetadata: document.accountDisplayMetadata,
+            accountBurnRates: document.accountBurnRates
         )
     }
 

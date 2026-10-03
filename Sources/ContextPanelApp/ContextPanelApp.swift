@@ -3,6 +3,7 @@ import ContextPanelCloudKitSync
 import ContextPanelSettingsUI
 import ContextPanelValidationGalleryUI
 import AppKit
+import CloudKit
 import Combine
 import os
 import ServiceManagement
@@ -310,12 +311,13 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
 
         let hostingController = NSHostingController(
             rootView: SettingsPane(appModel: model, navigation: settingsNavigation)
-                .frame(minWidth: 520, minHeight: 560)
+                .frame(minWidth: 720, minHeight: 600)
         )
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Context Panel Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 560, height: 620))
+        window.contentMinSize = NSSize(width: 720, height: 600)
+        window.setContentSize(NSSize(width: 720, height: 700))
         window.isReleasedWhenClosed = false
         window.center()
         settingsWindow = window
@@ -354,10 +356,21 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
 
 enum AppNavigationSelection: Hashable {
     case overview
+    case deadlines
     case reconnect
     case provider(Provider)
     case providerAccount(Provider, String)
     case mainLimit(MainLimitSummary.ID)
+
+    func retainingAvailableLimit(in snapshot: UsageSnapshot) -> Self {
+        guard case .mainLimit(let id) = self else { return self }
+        return snapshot.mainLimitSummaries.contains(where: { $0.id == id }) ? self : .overview
+    }
+
+    func sidebarSelection(in snapshot: UsageSnapshot) -> Self {
+        guard case .mainLimit(let id) = self else { return self }
+        return snapshot.mainLimitSummaries.first(where: { $0.id == id }).map { .provider($0.provider) } ?? .overview
+    }
 }
 
 struct AppRoot: View {
@@ -373,7 +386,7 @@ struct AppRoot: View {
             AccountsSidebar(model: model, snapshot: snapshot, selection: $selection)
                 .frame(width: 240)
             Divider()
-            MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview)
+            MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview, openLimit: { selection = .mainLimit($0) })
                 .frame(minWidth: 760)
         }
         .tint(CPTheme.accent)
@@ -381,10 +394,33 @@ struct AppRoot: View {
             selection = request
             model.clearNavigationRequest()
         }
+        .onChange(of: snapshot.mainLimitSummaries.map(\.id)) { _, _ in
+            selection = selection?.retainingAvailableLimit(in: snapshot)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
+            model.invalidateSharedAccounts()
+        }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             model.loadSnapshot(reloadWidgetTimelines: false)
         }
     }
+}
+
+private enum SettingsTab: CaseIterable, Identifiable {
+    case accounts, updates, alerts, display
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .accounts: AccountTerms.accounts
+        case .updates: AccountTerms.updates
+        case .alerts: AccountTerms.alerts
+        case .display: AccountTerms.display
+        }
+    }
+}
+private enum SettingsNameField: Hashable {
+    case account(String)
+    case alias(String, String)
 }
 
 struct SettingsPane: View {
@@ -393,32 +429,85 @@ struct SettingsPane: View {
     @StateObject private var model = SettingsPaneModel()
     @State private var focusedDestination: SettingsNavigationRequest.Destination?
     @State private var galleryRoute: ValidationGalleryRoute?
+    @State private var authPathDrafts: [String: String] = [:]
+    @State private var tab: SettingsTab = .accounts
+    @State private var nameDrafts: [SettingsNameField: String] = [:]
+    @FocusState private var focusedName: SettingsNameField?
+    @State private var nameInputError: String?
+    @State private var showsAddAccount = false
+    @State private var pendingRemovalID: String?
 
     var body: some View {
-        Form {
-            if focusedDestination == .cacheStats {
+        VStack(spacing: 0) {
+            Picker(AccountTerms.settings, selection: $tab) {
+                ForEach(SettingsTab.allCases) { Text($0.title).tag($0) }
+            }.pickerStyle(.segmented).padding(16)
+            Form {
+            if tab == .display && focusedDestination == .cacheStats {
                 cacheStatsSetupSection
             }
 
-            Section("Accounts") {
+            if tab == .accounts {
+            if let nameInputError { Text(nameInputError).foregroundStyle(.red) }
+            Section(AccountTerms.accounts) {
                 ForEach(model.settingsAccounts) { account in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
                             ProviderBadge(provider: account.provider)
-                            Text(account.displayName)
-                                .font(.system(size: 13, weight: .medium))
-                            Spacer()
-                            Toggle("", isOn: Binding(
-                                get: { account.isEnabled },
-                                set: { model.setAccount(account.id, isEnabled: $0) }
+                            TextField("Local account name", text: nameBinding(.account(account.id)))
+                                .labelsHidden().accessibilityLabel("Local account name")
+                                .focused($focusedName, equals: .account(account.id))
+                                .onSubmit { commitName(.account(account.id)) }
+                                .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 160, maxWidth: .infinity)
+                            HStack(spacing: 6) {
+                                Button { model.moveAccount(account.id, offset: -1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
+                                    Image(systemName: "arrow.up")
+                                }
+                                .accessibilityLabel("Move account up")
+                                .help("Move account up")
+                                .disabled(model.settingsAccounts.first?.id == account.id)
+                                Button { model.moveAccount(account.id, offset: 1); appModel.loadSnapshot(reloadWidgetTimelines: false) } label: {
+                                    Image(systemName: "arrow.down")
+                                }
+                                .accessibilityLabel("Move account down")
+                                .help("Move account down")
+                                .disabled(model.settingsAccounts.last?.id == account.id)
+                                Button(AccountTerms.removeAccount, role: .destructive) {
+                                    pendingRemovalID = account.id
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .fixedSize()
+                        }
+                        HStack(spacing: 20) {
+                            Toggle(AccountTerms.showInWidgets, isOn: Binding(
+                                get: { account.showInWidgets ?? account.isEnabled },
+                                set: { model.setWidgetAccountVisibility(account.id, isVisible: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .controlSize(.mini)
+                            .toggleStyle(.checkbox)
+                            .fixedSize()
+                            Toggle(AccountTerms.useLast, isOn: Binding(
+                                get: { account.useLast ?? false },
+                                set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                            ))
+                            .toggleStyle(.checkbox)
+                            .fixedSize()
+                            Spacer(minLength: 0)
+                        }
+                        HStack(spacing: 10) {
+                            if account.connectorKind == .codexRateLimits {
+                                Button(model.hasSavedAuthorization(account) ? AccountTerms.changeCodexHome : AccountTerms.connectCodexHome) {
+                                    model.authorizeCodexHome(for: account) { refreshAfterAuthorization() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .fixedSize()
+                            }
                             if !account.isEnabled {
-                                Text("Off")
+                                Text("Paused")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.tertiaryText)
+                                Button(AccountTerms.resumeUpdates) { model.setAccount(account.id, isEnabled: true); refreshAfterAuthorization() }
                             } else if account.connectorKind == .googleAntigravityQuota {
                                 let authorizationSummary = model.authorizationSummary(
                                     for: account,
@@ -431,20 +520,20 @@ struct SettingsPane: View {
                                     if model.hasSavedAuthorization(account) {
                                         Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                         Button("Forget", role: .destructive) {
                                             model.forgetAntigravityBridgeData()
                                             refreshAfterAuthorization()
                                         }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                     } else {
                                         Button("Copy Setup") { model.copyAntigravityBridgeSetupCommand() }
                                             .buttonStyle(.borderedProminent)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                         Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                     }
                                 }
                             } else if model.hasSavedAuthorization(account) {
@@ -456,17 +545,17 @@ struct SettingsPane: View {
                                     Text(authorizationSummary.text)
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(CPTheme.statusColor(authorizationSummary.status))
-                                    if model.canAuthorizeAuthFile(for: account) {
+                                    if account.connectorKind != .codexRateLimits && model.canAuthorizeAuthFile(for: account) {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                     } else if model.canManageOAuth(for: account) {
                                         Button("Reconnect") { reconnectOAuth(for: account) }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                         Button("Disconnect", role: .destructive) { disconnectOAuth(for: account) }
                                             .buttonStyle(.bordered)
-                                            .controlSize(.small)
+                                            .controlSize(.regular)
                                     }
                                 }
                             } else if model.hasLegacyAuthorization(account) {
@@ -474,19 +563,20 @@ struct SettingsPane: View {
                                     Text("File access needs update")
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(CPTheme.statusColor(.stale))
-                                    Button("Update") { authorizeAuthFile(for: account) }
+                                    Button("Update") {
+                                        if account.connectorKind == .codexRateLimits { model.authorizeCodexHome(for: account) { refreshAfterAuthorization() } }
+                                        else { authorizeAuthFile(for: account) }
+                                    }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 }
                             } else if model.needsAuthorization(account) {
                                 if model.canAuthorizeAuthFile(for: account) {
-                                    Button("Select File") { authorizeAuthFile(for: account) }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                    Text("Connect this account’s Codex home.").foregroundStyle(.secondary)
                                 } else if account.connectorKind == .claudeOAuthUsage {
                                     Button("Connect") { model.authorizeClaudeOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 }
                             } else {
                                 Text(account.isEnabled ? "Enabled" : "Disabled")
@@ -494,6 +584,52 @@ struct SettingsPane: View {
                                     .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
                             }
                         }
+                        if account.connectorKind == .codexRateLimits {
+                            if let warning = model.codexSourceWarning(for: account) {
+                                Text(warning).font(.caption).foregroundStyle(CPTheme.statusColor(.stale))
+                            }
+                            DisclosureGroup(AccountTerms.advanced) {
+                            HStack {
+                                Button(account.codexQuotaPath == nil ? "Select Codex Sessions" : "Change Sessions Folder") {
+                                    model.authorizeCodexQuota(for: account) {
+                                        refreshAfterAuthorization()
+                                    }
+                                }
+                                if account.codexQuotaPath != nil {
+                                    Button("Use auth file") { model.useCodexAuthFile(account.id) }
+                                }
+                            }
+                            if account.codexQuotaPath != nil {
+                                Text("Session quota · " + ConnectorRedactor.redactedPath(account.codexQuotaPath ?? ""))
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                                Text("Use a folder belonging only to this account. Shared or switched-login history cannot identify whose quota was recorded.")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                                Text("For shared session history or automatic banked resets, use Select Codex Home.")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            } else {
+                            HStack {
+                                TextField("Existing auth file path", text: Binding(
+                                    get: { authPathDrafts[account.id] ?? account.authPath ?? "" },
+                                    set: { authPathDrafts[account.id] = $0 }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                                Button("Select auth file") { authorizeAuthFile(for: account) }
+                                Button("Apply path") {
+                                    guard let path = authPathDrafts[account.id] else { return }
+                                    model.setAuthPath(account.id, path: path)
+                                }
+                                .disabled((authPathDrafts[account.id] ?? account.authPath ?? "") == (account.authPath ?? ""))
+                            }
+                            Text("Applying a different path disconnects the imported login. Select File to authorize the new source.")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            }
+                            ForEach(Array(Set((appModel.storedSnapshot?.reports ?? [])
+                                .filter { account.matchesProviderReport($0) }.map(\.accountID))).sorted(), id: \.self) { id in
+                                TextField("Local name for account \(id.suffix(6))", text: nameBinding(.alias(account.id, id)))
+                                .focused($focusedName, equals: .alias(account.id, id))
+                                .onSubmit { commitName(.alias(account.id, id)) }
+                                .textFieldStyle(.roundedBorder)
+                            }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
@@ -511,13 +647,19 @@ struct SettingsPane: View {
                                         .foregroundStyle(CPTheme.statusColor(.healthy))
                                     Button("Change") { authorizePromptCacheUsage(for: account) }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 } else if model.needsPromptCacheUsageAuthorization(account) {
                                     Button("Enable Cache Stats") { authorizePromptCacheUsage(for: account) }
                                         .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                                        .controlSize(.regular)
                                 }
                             }
+                        }
+                        }
+                        }
+                        if account.connectorKind != .codexRateLimits {
+                            Text(model.detailText(for: account)).font(.system(size: 11))
+                                .foregroundStyle(CPTheme.secondaryText).lineLimit(2)
                         }
                         if let refreshSummary = model.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot) {
                             Text(refreshSummary.text)
@@ -526,10 +668,31 @@ struct SettingsPane: View {
                                 .lineLimit(2)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .controlSize(.regular)
+                    .padding(.vertical, 6)
                 }
+                ForEach(model.retiredSettingsAccounts) { account in
+                    HStack {
+                        Text("\(account.displayName) · retired source, off")
+                            .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        Spacer()
+                        Button(AccountTerms.removeAccount, role: .destructive) {
+                            pendingRemovalID = account.id
+                        }
+                        .controlSize(.regular)
+                    }
+                }
+                Button(AccountTerms.addAccount) { showsAddAccount = true }.buttonStyle(.borderedProminent)
+                Text("Hidden accounts still update and warn. Use last excludes an account from Use next. Remove account removes this lane on all Macs and companions after sync, keeping credentials and home folders.")
+                    .font(.caption)
+                    .foregroundStyle(CPTheme.secondaryText)
+                Text("A replacement OpenAI or Claude entry needs its own source selection or sign-in.")
+                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
             }
+            .disabled(model.isRemovingAccount)
 
+            }
+            if tab == .updates {
             Section("Diagnostics") {
                 DetailRow(label: "Status", value: model.status.previewStatusText)
                 DetailRow(label: "Last refresh", value: appModel.lastRefreshText)
@@ -584,11 +747,17 @@ struct SettingsPane: View {
                 }
                 .disabled(!model.backgroundRefreshSettings.isEnabled)
 
+                Button("Repair background updates") {
+                    model.setBackgroundRefreshEnabled(false)
+                    model.setBackgroundRefreshEnabled(true)
+                }.disabled(!model.backgroundRefreshSettings.isEnabled)
                 Text(model.backgroundRefreshStatusText)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
             }
 
+            }
+            if tab == .alerts {
             Section("Limit Warnings") {
                 Toggle(isOn: Binding(
                     get: { model.limitWarningSettings.isEnabled },
@@ -680,6 +849,16 @@ struct SettingsPane: View {
                 }
             }
 
+            }
+            if tab == .display {
+            Section("Widget layout") {
+                Picker("Layout", selection: Binding(get: { model.widgetPreferences.usesAccountRows }, set: { model.setAccountWidgetLayout($0) })) {
+                    Text("Accounts").tag(true)
+                    Text("Windows").tag(false)
+                }
+                Text("Accounts uses every quota window to show the tightest capacity. Window selections below apply to Windows layout.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Widget Main Limits") {
                 Text("Choose which main limits appear in the widget and drag rows to set their priority.")
                     .font(.system(size: 11))
@@ -704,17 +883,30 @@ struct SettingsPane: View {
                 .frame(height: widgetMainLimitListHeight)
             }
 
+            }
         }
         .formStyle(.grouped)
-        .padding(20)
-        .frame(width: 560)
-        .frame(minHeight: 360)
+        }
+        .frame(width: 720)
+        .frame(minHeight: 600)
+        .sheet(isPresented: Binding(
+            get: { pendingRemovalID != nil }, set: { if !$0 { pendingRemovalID = nil } }
+        )) {
+            removalConfirmation
+        }
+        .sheet(isPresented: $showsAddAccount) {
+            AddAccountSheet(model: model, onAdded: refreshAfterAuthorization)
+        }
         .sheet(isPresented: $model.isClaudeOAuthCodeSheetPresented) {
             ClaudeOAuthCodeSheet(model: model) {}
         }
         .sheet(item: $galleryRoute) { route in
             SettingsValidationGallerySheet(route: route)
         }
+        .onChange(of: focusedName) { previous, current in
+            if previous != current, let previous { commitName(previous) }
+        }
+        .onDisappear { for field in Array(nameDrafts.keys) { commitName(field) } }
         .onAppear {
             model.load()
             consumeNavigationRequest(clearWhenEmpty: true)
@@ -732,6 +924,52 @@ struct SettingsPane: View {
         ) { _ in
             model.reloadBackgroundRefreshRegistrationDiagnostic()
         }
+    }
+
+    private var removalConfirmation: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(AccountTerms.removeAccountEverywhereTitle).font(.headline)
+            Text(AccountTerms.removalExplanation).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(AccountTerms.cancel) { pendingRemovalID = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(AccountTerms.removeAccountEverywhere) {
+                    if let id = pendingRemovalID { model.removeAccount(id, onRemoved: refreshAfterAuthorization) }
+                    pendingRemovalID = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(CPTheme.token(.destructiveFill))
+                .foregroundStyle(CPTheme.token(.actionText))
+            }
+        }
+        .padding(24).frame(width: 420)
+    }
+
+    private func nameBinding(_ field: SettingsNameField) -> Binding<String> {
+        AccountNameEditing.binding(for: field, drafts: $nameDrafts, savedName: {
+            switch field {
+            case let .account(id): model.accounts.first { $0.id == id }?.displayName ?? ""
+            case let .alias(id, logical): model.accounts.first { $0.id == id }?.accountAliases?[logical] ?? ""
+            }
+        }, onEdit: { nameInputError = nil })
+    }
+    private func commitName(_ field: SettingsNameField) {
+        guard nameDrafts[field] != nil else { return }
+        let allowsEmpty: Bool
+        switch field {
+        case .account: allowsEmpty = false
+        case .alias: allowsEmpty = true
+        }
+        nameInputError = AccountNameEditing.commit(for: field, drafts: $nameDrafts, allowsEmpty: allowsEmpty) { value in
+            switch field {
+            case let .account(id):
+                let account = model.accounts.first { $0.id == id }
+                let soleLogicalID = account?.soleProviderReportAccountID(in: appModel.storedSnapshot?.reports ?? [])
+                return model.renameAccount(id, name: value, soleLogicalID: soleLogicalID)
+            case let .alias(id, logical): return model.renameAccount(id, name: value, logicalID: logical)
+            }
+        }
+        if nameInputError == nil { appModel.loadSnapshot(reloadWidgetTimelines: false) }
     }
 
     private var widgetMainLimitListHeight: CGFloat {
@@ -754,6 +992,7 @@ struct SettingsPane: View {
             focusedDestination = nil
         } else {
             focusedDestination = request.destination
+            if request.destination == .cacheStats { tab = .display }
         }
     }
 
@@ -947,6 +1186,95 @@ struct MacValidationDiagnosticsPreview: View {
     }
 }
 
+struct AddAccountSheet: View {
+    @ObservedObject var model: SettingsPaneModel
+    let onAdded: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var provider: Provider = .openAI
+    @State private var name = ""
+    @State private var homes: [URL] = []
+    @State private var selectedHome: URL?
+    @State private var scopeRoot: URL?
+    @State private var hasSearched = false
+    @State private var isAdding = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Add account").font(.title2.weight(.semibold))
+            Picker("Provider", selection: $provider) {
+                ForEach(Provider.allCases) { Text($0.accountDisplayName).tag($0) }
+            }.pickerStyle(.segmented)
+            TextField("Local account name", text: $name).textFieldStyle(.roundedBorder)
+            if provider == .openAI {
+                Button("Find Codex sign-ins…") {
+                    model.findCodexHomes { root, results in
+                        scopeRoot = root; homes = results; hasSearched = true; selectedHome = nil
+                    }
+                }
+                if hasSearched && homes.isEmpty { Text("No Codex homes found in that folder.").foregroundStyle(.secondary) }
+                ScrollView {
+                  VStack(spacing: 4) {
+                ForEach(homes, id: \.self) { home in
+                    Button {
+                        selectedHome = home
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedHome == home ? "checkmark.circle.fill" : "circle")
+                            Text(home.lastPathComponent)
+                            Spacer()
+                            if isConnected(home) { Text("Already connected").foregroundStyle(.secondary) }
+                        }.padding(8).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(isConnected(home))
+                }
+                  }
+                }.frame(maxHeight: 140)
+                Text("Folder names identify these choices. Credentials are not displayed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if provider == .anthropic {
+                Text("Sign in with this account’s Claude login.").foregroundStyle(.secondary)
+            } else {
+                Text("Add Antigravity, then use Copy Setup in its account settings.").foregroundStyle(.secondary)
+            }
+            if let error = model.errorMessage { Text(error).font(.caption).foregroundStyle(.red) }
+            Spacer(minLength: 0)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button(provider == .anthropic ? "Sign in" : "Add account") { add() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isAdding || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
+                        || (provider == .openAI && selectedHome == nil)
+                        || (provider == .google && model.settingsAccounts.contains { $0.provider == .google }))
+            }
+        }.padding(24).frame(width: 520, height: 440)
+    }
+    private func isConnected(_ home: URL) -> Bool {
+        model.settingsAccounts.contains { account in
+            guard account.provider == .openAI, let path = account.authPath else { return false }
+            return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).deletingLastPathComponent()
+                .resolvingSymlinksInPath() == home.resolvingSymlinksInPath()
+        }
+    }
+    private func add() {
+        let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .openAI, let selectedHome {
+            isAdding = true
+            model.addCodexAccount(name: label, home: selectedHome, scopeRoot: scopeRoot) { succeeded in
+                isAdding = false
+                if succeeded { onAdded(); dismiss() }
+            }
+            return
+        }
+        let existing = Set(model.accounts.map(\.id))
+        model.addAccount(provider: provider)
+        guard let account = model.accounts.first(where: { !existing.contains($0.id) }) else { return }
+        model.renameAccount(account.id, name: label)
+        if provider == .anthropic { model.authorizeClaudeOAuth(for: account) }
+        onAdded()
+        dismiss()
+    }
+
+}
+
 struct ClaudeOAuthCodeSheet: View {
     @ObservedObject var model: SettingsPaneModel
     let onConnected: () -> Void
@@ -962,6 +1290,7 @@ struct ClaudeOAuthCodeSheet: View {
                 .foregroundStyle(CPTheme.secondaryText)
             if let url = model.pendingClaudeOAuthAuthorizationURL {
                 Link("Open Claude authorization", destination: url)
+                    .foregroundStyle(CPTheme.accentText)
                     .font(.system(size: 12, weight: .medium))
                 Text(url.absoluteString)
                     .font(.system(size: 10, design: .monospaced))
@@ -1050,6 +1379,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
+    @Published private(set) var isRemovingAccount = false
     @Published private(set) var backgroundRefreshRegistrationDiagnostic: RefreshAgentRegistrationDiagnostic?
     @Published private(set) var limitWarningSettings: LimitWarningSettings = .defaultSettings
     @Published private(set) var webhookSettings: LimitWarningWebhookSettings = .defaultSettings
@@ -1388,9 +1718,24 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         AccountConfigurationDocument(updatedAt: .distantPast, accounts: accounts).settingsAccounts
     }
 
+    var retiredSettingsAccounts: [LocalProviderAccountConfiguration] {
+        accounts.filter { $0.isRetiredSource }
+    }
+
     func load() {
         let result = store.load()
         accounts = result.document.accounts
+        let retiredHome = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex-lab")
+        let prefix = retiredHome.standardizedFileURL.path + "/"
+        let stillUsed = accounts.contains { account in
+            [account.authPath, account.codexQuotaPath].compactMap { $0 }.contains {
+                NSString(string: $0).expandingTildeInPath.hasPrefix(prefix)
+            }
+        }
+        if result.status != .failure && !stillUsed {
+            do { try bookmarkStore.removeBookmarks(under: retiredHome) }
+            catch { errorMessage = "The unused Codex Lab folder permission could not be removed. Your account setup is preserved." }
+        }
         var loadedAuthorizedPaths = Set(settingsAccounts.compactMap { account -> String? in
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
@@ -1737,10 +2082,136 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
-    func setAccount(_ accountID: String, isEnabled: Bool) {
-        guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
-        accounts[index].isEnabled = isEnabled
+    func addAccount(provider: Provider) {
+        guard !isRemovingAccount else { return }
+        if provider == .google {
+            guard !settingsAccounts.contains(where: { $0.provider == .google }),
+                  let account = AccountConfigurationStore.defaultDocument().accounts.first(where: { $0.provider == .google }) else { return }
+            accounts.append(LocalProviderAccountConfiguration(id: "local-" + UUID().uuidString.lowercased(),
+                provider: account.provider, connectorKind: account.connectorKind, displayName: account.displayName, restorationRequestedAt: Date()))
+            saveAccounts()
+            return
+        }
+        guard provider == .openAI || provider == .anthropic else { return }
+        accounts.append(LocalProviderAccountConfiguration(
+            id: "local-" + UUID().uuidString.lowercased(), provider: provider,
+            connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
+            displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
+            authPath: nil,
+            codexClient: provider == .openAI ? .codex : nil,
+            restorationRequestedAt: Date()
+        ))
         saveAccounts()
+    }
+
+    func moveAccount(_ accountID: String, offset: Int) {
+        guard !isRemovingAccount, let visibleIndex = settingsAccounts.firstIndex(where: { $0.id == accountID }) else { return }
+        let destination = visibleIndex + offset
+        guard settingsAccounts.indices.contains(destination),
+              let sourceIndex = accounts.firstIndex(where: { $0.id == accountID }),
+              let destinationIndex = accounts.firstIndex(where: { $0.id == settingsAccounts[destination].id }) else { return }
+        accounts.swapAt(sourceIndex, destinationIndex)
+        saveAccounts()
+    }
+
+    @discardableResult
+    func renameAccount(_ accountID: String, name: String, logicalID: String? = nil, soleLogicalID: String? = nil) -> Bool {
+        guard !isRemovingAccount else { return false }
+        guard name.count <= 80,
+              let index = accounts.firstIndex(where: { $0.id == accountID }) else { return false }
+        let previousAccount = accounts[index]
+        if let logicalID {
+            var aliases = accounts[index].accountAliases ?? [:]
+            aliases[logicalID] = name.isEmpty ? nil : name
+            accounts[index].accountAliases = aliases
+        } else {
+            accounts[index].displayName = name
+            if let soleLogicalID {
+                accounts[index].accountAliases?[soleLogicalID] = nil
+                for report in SnapshotRefreshStores.appDefault().primary.loadCurrent().snapshot?.reports ?? []
+                    where report.accountID == soleLogicalID {
+                    if let legacy = report.legacyAccountID { accounts[index].accountAliases?[legacy] = nil }
+                }
+            }
+        }
+        if saveAccounts() { return true }
+        if let retainedIndex = accounts.firstIndex(where: { $0.id == accountID }) {
+            accounts[retainedIndex] = previousAccount
+        }
+        return false
+    }
+
+    func removeAccount(_ accountID: String, onRemoved: @escaping () -> Void) {
+        guard !isRemovingAccount else { return }
+        isRemovingAccount = true
+        Task { @MainActor in
+            defer { isRemovingAccount = false }
+            do {
+                let scope = await CompanionCloudKitSyncStoreFactory.make().currentUserScope()
+                guard let document = try await store.removeAccount(id: accountID, storedSnapshot: SnapshotRefreshStores.appDefault().primary.loadCurrent().snapshot, userScope: scope) else {
+                    errorMessage = "Another refresh is running. Try removing the account again in a moment."
+                    return
+                }
+                if pendingClaudeOAuth?.accountID == accountID { cancelClaudeOAuth() }
+                accounts = document.accounts
+                errorMessage = nil
+                reloadContextPanelWidgetTimeline()
+                onRemoved()
+            } catch {
+                errorMessage = ConnectorRedactor.safeErrorDescription(error)
+            }
+        }
+    }
+
+    func setAuthPath(_ accountID: String, path: String) {
+        guard !isRemovingAccount else { return }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }),
+              path != (accounts[index].authPath ?? "") else { return }
+        // A new source must not continue polling the old imported credential.
+        do {
+            var candidate = accounts[index]
+            candidate.authPath = path
+            if candidate.provider == .openAI, candidate.isEnabled, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = try CodexHomeBinding.usingAuthFile(account: candidate, siblings: accounts)
+            }
+            try credentialStore.delete(accountID: accountID)
+            accounts[index] = candidate
+            saveAccounts()
+        } catch let error as CodexHomeBindingError {
+            errorMessage = error.localizedDescription
+        } catch {
+            errorMessage = "The previous source could not be disconnected."
+        }
+    }
+
+    func setWidgetAccountVisibility(_ accountID: String, isVisible: Bool) {
+        guard !isRemovingAccount, let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].showInWidgets = isVisible
+        // Preserve legacy paused accounts; active accounts keep collecting when hidden.
+        saveAccounts()
+    }
+    func setUseLast(_ accountID: String, useLast: Bool) {
+        guard !isRemovingAccount, let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].useLast = useLast
+        saveAccounts()
+    }
+    func setAccountWidgetLayout(_ accountRows: Bool) {
+        var updated = widgetPreferences
+        updated.usesAccountRows = accountRows
+        saveWidgetPreferences(updated)
+    }
+
+    func setAccount(_ accountID: String, isEnabled: Bool) {
+        guard !isRemovingAccount else { return }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }
+        do {
+            if isEnabled, accounts[index].provider == .openAI,
+               let path = accounts[index].authPath, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = try CodexHomeBinding.usingAuthFile(account: accounts[index], siblings: accounts)
+            }
+            accounts[index].isEnabled = isEnabled
+            saveAccounts()
+        } catch { errorMessage = ConnectorRedactor.safeErrorDescription(error) }
     }
 
     func copyAntigravityBridgeSetupCommand() {
@@ -1802,17 +2273,31 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
-    private func saveAccounts() {
+    @discardableResult
+    private func saveAccounts() -> Bool {
+        guard !isRemovingAccount else { return false }
         do {
-            try store.save(AccountConfigurationDocument(updatedAt: Date(), accounts: accounts))
+            let loaded = store.load()
+            guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+            var document = loaded.document
+            document.updatedAt = Date()
+            accounts.removeAll { document.removedAccountIDs.contains($0.id) }
+            document.accounts = accounts
+            try store.save(document)
             reloadContextPanelWidgetTimeline()
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
     func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
+        if let path = account.codexQuotaPath {
+            let expanded = NSString(string: path).expandingTildeInPath
+            return !bookmarkStore.hasCurrentBookmark(for: expanded) || !bookmarkStore.canResolveBookmark(for: expanded)
+        }
         if account.connectorKind == .claudeOAuthUsage {
             return !hasImportedCredential(for: account)
         }
@@ -1826,6 +2311,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        if let path = account.codexQuotaPath {
+            let expanded = NSString(string: path).expandingTildeInPath
+            return bookmarkStore.hasCurrentBookmark(for: expanded) && bookmarkStore.canResolveBookmark(for: expanded)
+        }
         if account.connectorKind == .claudeOAuthUsage {
             return hasImportedCredential(for: account)
         }
@@ -1858,7 +2347,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func canAuthorizeAuthFile(for account: LocalProviderAccountConfiguration) -> Bool {
-        account.connectorKind.requiresSecurityScopedAuthFile
+        account.connectorKind.requiresSecurityScopedAuthFile && account.codexQuotaPath == nil
     }
 
     func canAuthorizePromptCacheUsage(for account: LocalProviderAccountConfiguration) -> Bool {
@@ -1964,14 +2453,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func oauthCredentialAccountIDs(for account: LocalProviderAccountConfiguration) -> [String] {
-        switch account.connectorKind {
-        case .claudeOAuthUsage:
-            return Array(Set([account.id, "claude-local-default", "claude-oauth-default"]))
-        case .googleAntigravityQuota:
-            return [account.id]
-        case .codexRateLimits:
-            return [account.id]
-        }
+        account.oauthCredentialAccountIDs
     }
 
     func refreshSummary(for account: LocalProviderAccountConfiguration, storedSnapshot: StoredUsageSnapshot?) -> SettingsAccountRefreshSummary? {
@@ -2182,6 +2664,138 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    func useCodexAuthFile(_ accountID: String) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        do {
+            accounts[index] = try CodexHomeBinding.usingAuthFile(account: accounts[index], siblings: accounts)
+            saveAccounts()
+        } catch { errorMessage = ConnectorRedactor.safeErrorDescription(error) }
+    }
+
+    func authorizeCodexHome(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
+        let panel = NSOpenPanel()
+        panel.message = "Select this account's Codex home (.codex or a home inside .codex-accounts). Context Panel uses its existing quota API connector, including banked resets. Login files are never displayed or logged."
+        panel.prompt = "Connect Home"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = ContextPanelLocations.realUserHomeDirectory()
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let home = panel.url else { return }
+            self.connectCodexHome(for: account, home: home, onVerified: onVerified)
+        }
+    }
+
+    func connectCodexHome(for account: LocalProviderAccountConfiguration, home: URL, scopeRoot: URL? = nil,
+                          onVerified: @escaping () -> Void = {}) {
+            Task { @MainActor in
+                let root = scopeRoot ?? home
+                let scoped = root.startAccessingSecurityScopedResource()
+                defer { if scoped { root.stopAccessingSecurityScopedResource() } }
+                do {
+                    guard let revised = try await CodexHomeBinding.commit(
+                        accountID: account.id, home: home, accountStore: self.store,
+                        bookmarkStore: self.bookmarkStore,
+                        deleteImportedCredential: { [credentialStore = self.credentialStore] id in
+                            try credentialStore.delete(accountID: id)
+                        }
+                    ) else {
+                        self.errorMessage = "Another refresh is running. Try connecting the home again in a moment."
+                        return
+                    }
+                    self.accounts = revised.accounts
+                    reloadContextPanelWidgetTimeline()
+                    self.errorMessage = nil
+                    onVerified()
+                } catch {
+                    self.errorMessage = ConnectorRedactor.safeErrorDescription(error)
+                }
+            }
+    }
+
+    func addCodexAccount(name: String, home: URL, scopeRoot: URL?, onCompletion: @escaping (Bool) -> Void) {
+        let account = LocalProviderAccountConfiguration(id: "local-" + UUID().uuidString.lowercased(),
+            provider: .openAI, connectorKind: .codexRateLimits, displayName: name, codexClient: .codex, restorationRequestedAt: Date())
+        Task { @MainActor in
+            let root = scopeRoot ?? home
+            let scoped = root.startAccessingSecurityScopedResource()
+            defer { if scoped { root.stopAccessingSecurityScopedResource() } }
+            do {
+                guard let revised = try await CodexHomeBinding.add(account: account, home: home,
+                    accountStore: store, bookmarkStore: bookmarkStore) else {
+                    errorMessage = "A refresh is running. Your account has not been added; try Add account again in a moment."
+                    onCompletion(false)
+                    return
+                }
+                accounts = revised.accounts
+                errorMessage = nil
+                reloadContextPanelWidgetTimeline()
+                onCompletion(true)
+            } catch {
+                errorMessage = ConnectorRedactor.safeErrorDescription(error)
+                onCompletion(false)
+            }
+        }
+    }
+
+    func findCodexHomes(onFound: @escaping (URL, [URL]) -> Void) {
+        let panel = NSOpenPanel()
+        panel.message = "Choose your Codex accounts folder, or a single Codex home."
+        panel.prompt = "Find accounts"
+        panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false; panel.showsHiddenFiles = true
+        panel.directoryURL = ContextPanelLocations.realUserHomeDirectory()
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let root = panel.url else { return }
+            let scoped = root.startAccessingSecurityScopedResource()
+            defer { if scoped { root.stopAccessingSecurityScopedResource() } }
+            do {
+                let homes = try CodexHomeDiscovery.find(in: root)
+                onFound(root, homes)
+            } catch { self.errorMessage = "This folder could not be searched." }
+        }
+    }
+
+    func authorizeCodexQuota(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
+        let panel = NSOpenPanel()
+        panel.message = "Select this account's sessions folder. Quota events do not identify the login; choose a folder used only by this account. No login files are read or copied."
+        panel.prompt = "Select Sessions"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        if let path = account.codexQuotaPath {
+            panel.directoryURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+        } else if let path = account.authPath {
+            panel.directoryURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+                .deletingLastPathComponent()
+        }
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url,
+                  let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+            guard !CodexHomeBinding.isSharedSessionMismatch(account: accounts[index], sessions: url, siblings: accounts) else {
+                errorMessage = "The main Codex sessions folder mixes logins. Use Select Codex Home for this account instead."
+                return
+            }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                try bookmarkStore.createAndStoreBookmark(for: url, path: url.path)
+                guard bookmarkStore.canResolveBookmark(for: url.path) else {
+                    errorMessage = "Session folder access could not be verified. Select it again."
+                    return
+                }
+                accounts[index].codexQuotaPath = url.path
+                saveAccounts()
+                errorMessage = nil
+                onVerified()
+            } catch {
+                errorMessage = "Session folder access could not be saved. Select it again."
+            }
+        }
+    }
+
     func authorizePromptCacheUsage(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
         guard let usageDirectory = account.promptCacheDirectory else { return }
 
@@ -2221,7 +2835,27 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    func codexSourceWarning(for account: LocalProviderAccountConfiguration) -> String? {
+        guard account.isEnabled, account.connectorKind == .codexRateLimits, account.codexQuotaPath == nil,
+              let path = account.effectiveAuthPath else { return nil }
+        let expanded = NSString(string: path).expandingTildeInPath
+        let available = (!ContextPanelLocations.isRunningInAppSandbox && FileManager.default.isReadableFile(atPath: expanded))
+            || (try? bookmarkStore.withResolvedURL(for: expanded) { url in
+                (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            }) == true
+        return switch CodexHomeBinding.sourceState(account: account, authFileAvailable: available,
+                                                    hasSavedLogin: hasImportedCredential(for: account)) {
+        case .unavailableUsingSavedLogin: "Source unavailable; using saved login. Change Codex home to reconnect."
+        case .unavailable: "Source unavailable. Connect or change this account’s Codex home."
+        default: nil
+        }
+    }
+
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
+        if !account.isEnabled {
+            return "Off · \(ConnectorRedactor.redactedPath(account.effectiveAuthPath ?? detailSourceLabel(for: account)))"
+        }
+        if let warning = codexSourceWarning(for: account) { return warning }
         let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
     }
@@ -2248,6 +2882,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
+        if account.codexQuotaPath != nil { return "Quota from the selected account's token_count events; run Codex on that account for a fresh observation" }
         switch account.connectorKind {
         case .codexRateLimits:
             if account.effectiveCodexClient == .codexLab {
@@ -2323,42 +2958,69 @@ struct AccountsSidebar: View {
     @Binding var selection: AppNavigationSelection?
 
     var body: some View {
-        List(selection: $selection) {
+        List(selection: Binding(
+            get: { selection?.sidebarSelection(in: snapshot) },
+            set: { selection = $0 }
+        )) {
             Section {
                 Label("Overview", systemImage: "gauge.medium")
                     .tag(AppNavigationSelection.overview)
+                Label("Deadlines", systemImage: "calendar.badge.clock")
+                    .tag(AppNavigationSelection.deadlines)
                 if model.shouldShowReconnectNavigation {
                     Label(model.attentionNavigationTitle, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(CPTheme.statusColor(.failure))
                         .tag(AppNavigationSelection.reconnect)
                 }
             }
-            Section("Providers") {
+            Section(AccountTerms.accounts) {
+                let overview = model.accountOverview(at: Date())
+                let totals = overview.providerTotals(now: Date())
                 let reports = model.storedSnapshot?.reports ?? []
-                let resetCreditSummary = ResetCreditSurfaceAdvisor.appSummary(
-                    reports: reports,
-                    limits: snapshot.limits,
-                    now: Date()
-                )
                 ForEach(Provider.allCases) { provider in
+                    let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
-                    if shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
-                        ProviderSidebarRow(
-                            provider: provider,
-                            limitCount: summaries.count,
-                            resetCreditSummary: provider == .openAI ? resetCreditSummary : nil
-                        )
-                            .tag(AppNavigationSelection.provider(provider))
-                        ForEach(summaries.sortedForSidebar) { summary in
-                            SidebarRateLimitRow(
-                                summary: summary,
-                                status: providerStatusIncludingAccessAlerts(
-                                    provider: provider,
-                                    baseStatuses: [summary.status],
-                                    alerts: model.providerAccessAlerts
-                                )
-                            )
-                                .tag(AppNavigationSelection.mainLimit(summary.id))
+                    let providerTotal = totals.first(where: { $0.provider == provider })
+                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: Date())
+                    let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
+                    if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
+                        Button { selection = .provider(provider) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                ProviderBadge(provider: provider)
+                                Text(provider.accountDisplayName).font(.system(size: 13, weight: .semibold))
+                                StatusMark(status: providerStatusIncludingAccessAlerts(provider: provider,
+                                    baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts), size: 7)
+                                if let providerResetCredits {
+                                    Image(systemName: "arrow.counterclockwise.circle")
+                                        .help(resetCreditHelpText(providerResetCredits))
+                                        .accessibilityLabel(AccountTerms.bankedResets)
+                                }
+                            }
+                            if let total = totals.first(where: { $0.provider == provider }) {
+                                Text(AccountTerms.sidebarRemaining(total))
+                                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text(AccountTerms.unknown).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(spokenHeader)
+                        .accessibilityHint("Opens provider usage, limits and history")
+                        .tag(AppNavigationSelection.provider(provider))
+                        ForEach(accounts) { account in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(account.metadata.label).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                                Text(AccountTerms.tightest + " " + account.remainingText + " " + AccountTerms.left)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(.leading, 12)
+                            .tag(AppNavigationSelection.providerAccount(provider, account.id))
+                            .accessibilityLabel(account.accessibilityText)
                         }
                     }
                 }
@@ -2381,77 +3043,13 @@ struct AccountsSidebar: View {
             .padding(12)
         }
     }
-}
 
-struct ProviderSidebarRow: View {
-    let provider: Provider
-    let limitCount: Int
-    let resetCreditSummary: ProviderResetCreditSurfaceSummary?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ProviderBadge(provider: provider)
-            Text(provider.displayName)
-                .font(.system(size: 12, weight: .semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
-            if let resetCreditSummary {
-                Image(systemName: "arrow.counterclockwise.circle")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(CPTheme.tertiaryText)
-                    .help(resetCreditHelpText(resetCreditSummary))
-                    .accessibilityHidden(true)
-            }
-            Spacer()
-            if limitCount > 0 {
-                Text("\(limitCount)")
-                    .font(.system(.caption, design: .monospaced, weight: .medium))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityText)
-    }
-
-    private var accessibilityText: String {
-        var parts = [provider.displayName]
-        if limitCount > 0 {
-            parts.append(limitCount == 1 ? "1 main limit" : "\(limitCount) main limits")
-        }
-        if let resetCreditSummary {
-            parts.append(resetCreditAccessibilityText(resetCreditSummary))
-        }
+    private func providerAccessibilityLabel(provider: Provider, total: AccountProviderTotal?, resetCredits: ProviderResetCreditSurfaceSummary?) -> String {
+        var parts = [total?.accessibilityText(now: Date()) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
+        if let resetCredits { parts.append(resetCreditAccessibilityText(resetCredits)) }
         return parts.joined(separator: ", ")
     }
-}
 
-struct SidebarRateLimitRow: View {
-    let summary: MainLimitSummary
-    let status: UsageStatus
-
-    var body: some View {
-        HStack(spacing: 10) {
-            StatusMark(status: status, size: 7)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(summary.previewWindowLine)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(2)
-                Text(summary.sidebarTimingText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-            Text(summary.compactUsageText)
-                .font(.system(.caption2, design: .monospaced, weight: .medium))
-                .foregroundStyle(.secondary)
-                .assumedResetHelp(summary.hasAssumedScheduledResetCapacity)
-        }
-        .padding(.vertical, 3)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(summary.quantitativeAccessibilityLabel)
-        .accessibilityValue(summary.usedPressureAccessibilityValue(status: status))
-    }
 }
 
 private extension Array where Element == MainLimitSummary {
@@ -2485,22 +3083,20 @@ struct MainContent: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     let selection: AppNavigationSelection
+    var openLimit: (String) -> Void = { _ in }
 
     var body: some View {
         switch selection {
         case .overview:
             OverviewDashboard(model: model, snapshot: snapshot)
+        case .deadlines:
+            AccountDeadlinesDashboard(model: model)
         case .reconnect:
             ReconnectDashboard(appModel: model, snapshot: snapshot)
         case .provider(let provider):
-            ProviderDashboard(model: model, snapshot: snapshot, provider: provider)
+            ProviderDashboard(model: model, snapshot: snapshot, provider: provider, openLimit: openLimit)
         case let .providerAccount(provider, accountID):
-            ProviderDashboard(
-                model: model,
-                snapshot: snapshot,
-                provider: provider,
-                focusedAccountID: accountID
-            )
+            AccountDashboard(model: model, provider: provider, accountID: accountID)
         case .mainLimit(let id):
             if let summary = snapshot.mainLimitSummaries.first(where: { $0.id == id }) {
                 MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
@@ -2514,16 +3110,83 @@ struct MainContent: View {
 struct OverviewDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
+    let presentationDate: Date?
+    init(model: ContextPanelAppModel, snapshot: UsageSnapshot, presentationDate: Date? = nil) {
+        self.model = model; self.snapshot = snapshot; self.presentationDate = presentationDate
+    }
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let now = presentationDate ?? context.date
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    AccountDashboardPanel(overview: model.accountOverview(at: now), now: now, openAccount: { account in
+                        model.navigate(to: .providerAccount(account.metadata.provider, account.id))
+                    }, openDeadlines: { model.navigate(to: .deadlines) })
+                    DisclosureGroup("Pace, cache and window details") {
+                        OverviewTechnicalDetails(model: model, snapshot: snapshot, presentationDate: now).frame(minHeight: 600)
+                    }
+                }.padding(24)
+            }.background(CPTheme.background)
+        }
+    }
+}
+
+struct AccountDeadlinesDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let overview = model.accountOverview(at: context.date)
+            ScrollView {
+                AccountDeadlinesPanel(overview: overview, now: context.date) { id in
+                    if let account = overview.accounts.first(where: { $0.id == id }) {
+                        model.navigate(to: .providerAccount(account.metadata.provider, id))
+                    }
+                }.padding(24)
+            }.background(CPTheme.background)
+        }
+    }
+}
+
+struct AccountDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let provider: Provider
+    let accountID: String
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let overview = model.accountOverview(at: context.date)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
+                        AccountDashboardDetail(account: account, overview: overview, now: context.date)
+                    } else {
+                        Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
+                    }
+                    DisclosureGroup("Provider diagnostics, pace and history") {
+                        ProviderDashboard(model: model, snapshot: model.currentSnapshot, provider: provider,
+                            focusedAccountID: model.rawAccountID(for: accountID) ?? accountID,
+                            showsHorizon: false).frame(minHeight: 600)
+                    }
+                }.padding(24)
+            }.background(CPTheme.background)
+        }
+    }
+}
+
+struct OverviewTechnicalDetails: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
     let presentationDate: Date
+    let usesLiveClock: Bool
 
     init(
         model: ContextPanelAppModel,
         snapshot: UsageSnapshot,
-        presentationDate: Date = Date()
+        presentationDate: Date? = nil
     ) {
         self.model = model
         self.snapshot = snapshot
-        self.presentationDate = presentationDate
+        self.presentationDate = presentationDate ?? Date()
+        self.usesLiveClock = presentationDate == nil
     }
 
     private var savedSummaries: [MainLimitSummary] {
@@ -2546,6 +3209,11 @@ struct OverviewDashboard: View {
                 if keepWorkingForecast.remainingPercent != nil && !keepWorkingForecast.isLimited {
                     UsagePaceCard(keepWorkingForecast: keepWorkingForecast)
                 }
+                AccountCapacityCard(
+                    rows: AccountCapacity.rows(configuration: model.configuredAccounts,
+                        snapshot: snapshot, reports: model.storedSnapshot?.reports ?? [], now: presentationDate),
+                    burnRates: model.accountBurnRates, now: presentationDate, usesLiveClock: usesLiveClock
+                )
                 SetupStatusStrip(model: model)
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
                 PromptCacheOverviewCard(summary: model.promptCacheSummary)
@@ -2877,7 +3545,7 @@ private struct LimitWindowScanCell: View {
 
     private func resetCopy(_ row: KeepWorkingLimitRow) -> String {
         guard let resetsAt = row.resetsAt else { return "Reset unknown" }
-        return resetsAt.formatted(.dateTime.weekday(.wide).hour().minute())
+        return ContextPanelDateFormatting.resetDeadline(resetsAt)
     }
 }
 
@@ -3314,6 +3982,9 @@ struct ProviderDashboard: View {
     let snapshot: UsageSnapshot
     let provider: Provider
     var focusedAccountID: String? = nil
+    var showsHorizon = true
+    var openLimit: ((String) -> Void)? = nil
+    @State private var selectedLimit: MainLimitSummary?
 
     private var summaries: [MainLimitSummary] {
         snapshot.mainLimitSummaries.filter { $0.provider == provider }
@@ -3324,53 +3995,161 @@ struct ProviderDashboard: View {
     }
 
     var body: some View {
+        let start = Date()
+        let reports = (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider }
+        let transitions = reports.resetCreditTransitionDates(after: start)
+            + snapshot.limits.filter { $0.provider == provider }.compactMap(\.resetsAt).filter { $0 > start }
+        TimelineView(.explicit([start] + Array(Set(transitions)).sorted())) { transition in
+            TimelineView(.periodic(from: start, by: 30)) { tick in
+                content(at: max(transition.date, tick.date))
+            }
+        }
+    }
+
+    @ViewBuilder private func content(at now: Date) -> some View {
+        let overallStatus = providerStatusIncludingAccessAlerts(
+            provider: provider, baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 18) {
-                    ProviderHeaderCard(model: model, provider: provider, summaries: summaries)
-                    ProviderAccessAlertsSection(
-                        alerts: model.providerAccessAlerts.filter { $0.provider == provider }
-                    )
-                    SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
-                    VStack(spacing: 10) {
-                        ForEach(summaries) { summary in
-                            MainLimitRow(
-                                summary: summary,
-                                status: providerStatusIncludingAccessAlerts(
-                                    provider: provider,
-                                    baseStatuses: [summary.status],
-                                    alerts: model.providerAccessAlerts
-                                )
-                            )
-                        }
-                    }
-                    if provider == .openAI {
-                        OpenAIAccountLimitsSection(
-                            summaries: summaries,
-                            reports: model.storedSnapshot?.reports ?? [],
-                            now: Date()
+                VStack(alignment: .leading, spacing: 22) {
+                    if showsHorizon {
+                        let overview = model.accountOverview(at: now).filtered(to: provider)
+                        AccountDashboardPanel(
+                            overview: overview,
+                            now: now,
+                            accountDetails: { account in
+                                AnyView(AccountDashboardDetail(account: account, overview: overview, now: now,
+                                    showsHeader: false, showsHorizon: false))
+                            },
+                            openAccount: { account in
+                                model.navigate(to: .providerAccount(account.metadata.provider, account.id))
+                            },
+                            openDeadlines: { model.navigate(to: .deadlines) }
                         )
+                        providerHistoryLinks
+                        ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
+                        if model.storeStatus != .healthy {
+                            TagLabel(model.storeStatus.previewStatusText.capitalized)
+                        }
                     } else {
-                        ProviderAccountLimitsSection(summaries: summaries)
-                    }
-                    if !additionalLimits.isEmpty {
-                        AdditionalLimitsSection(snapshot: snapshot, provider: provider)
+                        HStack(spacing: 8) {
+                            StatusMark(status: overallStatus, size: 8)
+                                .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)
+                                .help("Overall provider status: " + overallStatus.accessibilityStatusText)
+                            Text(provider.accountDisplayName + " · \(summaries.count) main windows · \(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
+                                .font(.system(size: 12))
+                                .foregroundStyle(CPTheme.secondaryText)
+                            if let resets = ResetCreditSurfaceAdvisor.appSummary(
+                                provider: provider, reports: model.storedSnapshot?.reports ?? [],
+                                limits: summaries.flatMap(\.limits), now: now) {
+                                ResetCreditAvailabilityTag(summary: resets)
+                            }
+                            if model.storeStatus != .healthy {
+                                TagLabel(model.storeStatus.previewStatusText.capitalized)
+                            }
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        ProviderAccessAlertsSection(
+                            alerts: model.providerAccessAlerts.filter { $0.provider == provider }
+                        )
+                        SectionHeader(title: "Window details", trailing: "\(summaries.count) windows")
+                        VStack(spacing: 10) {
+                            ForEach(summaries) { summary in
+                                Button {
+                                    if let openLimit { openLimit(summary.id) }
+                                    else { selectedLimit = summary }
+                                } label: {
+                                    MainLimitRow(
+                                        summary: summary,
+                                        status: providerStatusIncludingAccessAlerts(
+                                            provider: provider,
+                                            baseStatuses: [summary.status],
+                                            alerts: model.providerAccessAlerts
+                                        )
+                                    )
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint("Opens limit history and forecast")
+                            }
+                        }
+                        if provider == .openAI {
+                            OpenAIAccountLimitsSection(
+                                summaries: summaries,
+                                reports: model.storedSnapshot?.reports ?? [],
+                                now: now
+                            )
+                        } else {
+                            ProviderAccountLimitsSection(summaries: summaries)
+                            BankedResetDeadlinesView(reports: (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider })
+                        }
+                        if !additionalLimits.isEmpty {
+                            AdditionalLimitsSection(snapshot: snapshot, provider: provider)
+                        }
                     }
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .background(CPTheme.background)
+            .sheet(item: $selectedLimit) { summary in
+                MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
+                    .frame(minWidth: 700, minHeight: 600)
+            }
             .onAppear { scrollToFocusedAccount(using: proxy) }
             .onChange(of: focusedAccountID) { _, _ in scrollToFocusedAccount(using: proxy) }
         }
     }
 
+    private var providerHistoryLinks: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History · pooled windows")
+                .font(.system(size: 12)).foregroundStyle(CPTheme.secondaryText)
+            HStack(spacing: 12) {
+                ForEach(summaries.sorted { lhs, rhs in
+                    if (lhs.window == .weekly) != (rhs.window == .weekly) { return lhs.window == .weekly }
+                    return lhs.previewWindowName < rhs.previewWindowName
+                }) { summary in
+                    Button {
+                        if let openLimit { openLimit(summary.id) }
+                        else { selectedLimit = summary }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                StatusMark(status: providerStatusIncludingAccessAlerts(
+                                    provider: provider, baseStatuses: [summary.status], alerts: model.providerAccessAlerts), size: 6)
+                                Label(summary.previewWindowName + " history", systemImage: "chart.xyaxis.line")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            Text(summary.accountText + " reported · " + summary.previewUsageText)
+                                .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
+                            Text(summary.previewResetConfidenceText)
+                                .font(.system(size: 11)).foregroundStyle(CPTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .background(CPTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(CPTheme.stroke(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(summary.previewWindowName + " pooled window history, " + summary.quantitativeAccessibilityLabel)
+                    .accessibilityValue(summary.usedPressureAccessibilityValue(status: providerStatusIncludingAccessAlerts(
+                        provider: provider, baseStatuses: [summary.status], alerts: model.providerAccessAlerts)))
+                    .accessibilityHint("Opens limit history and forecast")
+                    .help(summary.previewResetConfidenceText)
+                }
+            }
+        }
+    }
+
     private func scrollToFocusedAccount(using proxy: ScrollViewProxy) {
-        guard provider == .openAI, let focusedAccountID else { return }
+        guard let focusedAccountID else { return }
+        let hasBankedResets = (model.storedSnapshot?.reports ?? []).contains {
+            $0.provider == provider && $0.accountID == focusedAccountID && ($0.resetCredits?.presented(at: Date()).availableCount ?? 0) > 0
+        }
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo("openai-account:\(focusedAccountID)", anchor: .center)
+                proxy.scrollTo(hasBankedResets ? "reset-account:\(focusedAccountID)" : "openai-account:\(focusedAccountID)", anchor: .center)
             }
         }
     }
@@ -3509,7 +4288,13 @@ private struct OpenAIAccountLimitRow: View {
             if let resetCreditGuidance {
                 Divider()
                     .overlay(CPTheme.line)
-                OpenAIResetCreditRow(guidance: resetCreditGuidance, now: now)
+                BankedResetDeadlinesView(reports: [StoredProviderReport(
+                    provider: resetCreditGuidance.provider, accountID: resetCreditGuidance.accountID,
+                    configuredAccountID: resetCreditGuidance.configuredAccountID,
+                    accountName: resetCreditGuidance.accountName,
+                    generatedAt: resetCreditGuidance.resetCredits.observedAt,
+                    resetCredits: resetCreditGuidance.resetCredits, status: account.status, errorMessage: nil
+                )], limits: account.limits)
             }
         }
         .padding(10)
@@ -3570,7 +4355,7 @@ private struct OpenAIResetCreditRow: View {
                 .frame(width: 18, height: 18)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Reset credits")
+                    Text(AccountTerms.bankedResets)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(CPTheme.secondaryText)
                     Spacer(minLength: 8)
@@ -3909,83 +4694,6 @@ struct HeaderCard: View {
     }
 }
 
-struct ProviderHeaderCard: View {
-    @ObservedObject var model: ContextPanelAppModel
-    let provider: Provider
-    let summaries: [MainLimitSummary]
-
-    private var tightestSummary: MainLimitSummary? {
-        summaries.sorted { lhs, rhs in
-            (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
-        }.first
-    }
-
-    private var providerStatus: UsageStatus {
-        providerStatusIncludingAccessAlerts(
-            provider: provider,
-            baseStatuses: summaries.map(\.status),
-            alerts: model.providerAccessAlerts
-        )
-    }
-
-    private var resetCreditSummary: ProviderResetCreditSurfaceSummary? {
-        guard provider == .openAI else { return nil }
-        return ResetCreditSurfaceAdvisor.appSummary(
-            reports: model.storedSnapshot?.reports ?? [],
-            limits: summaries.flatMap(\.limits),
-            now: Date()
-        )
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 22) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    ProviderBadge(provider: provider)
-                    Text(provider.displayName)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(CPTheme.primaryText)
-                }
-                Text(providerSummaryText)
-                    .font(.system(size: 13))
-                    .foregroundStyle(CPTheme.secondaryText)
-                HStack(spacing: 8) {
-                    TagLabel("\(summaries.count) main windows")
-                    TagLabel("\(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
-                    if let resetCreditSummary {
-                        ResetCreditAvailabilityTag(summary: resetCreditSummary)
-                    }
-                    if model.storeStatus != .healthy {
-                        TagLabel(model.storeStatus.previewStatusText.capitalized)
-                    }
-                }
-            }
-            Spacer(minLength: 16)
-            if let tightestSummary {
-                MetricDial(
-                    metric: .remainingCapacity(remainingRatio: tightestSummary.remainingCapacityRatio),
-                    status: providerStatus,
-                    accessibilityName: "\(provider.displayName) \(tightestSummary.previewWindowName) \(tightestSummary.accountText) remaining capacity",
-                    sublabel: "remaining",
-                    size: 116
-                )
-            }
-        }
-        .padding(22)
-        .background(CPTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(CPTheme.stroke(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
-    }
-
-    private var providerSummaryText: String {
-        guard !summaries.isEmpty else { return "No main limits available yet." }
-        return summaries
-            .map { "\($0.previewWindowName.lowercased()) \($0.previewRemainingHeadline.lowercased())" }
-            .joined(separator: " · ")
-    }
-}
-
 struct SetupStatusStrip: View {
     @ObservedObject var model: ContextPanelAppModel
 
@@ -4218,7 +4926,7 @@ struct MediumWidgetPreview: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(title: "Main Limits", trailing: "\(snapshot.mainLimitSummaries.count) windows")
+                    SectionHeader(title: "Window details", trailing: "\(snapshot.mainLimitSummaries.count) windows")
                     ForEach(snapshot.mostConstrainedMainLimitSummaries.prefix(4)) { summary in
                         MainLimitRow(summary: summary, compact: true)
                     }
@@ -4262,7 +4970,7 @@ struct LargeWidgetPreview: View {
                 HStack {
                     Text(snapshot.fastModeForecast.copy)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(CPTheme.accent)
+                        .foregroundStyle(CPTheme.accentText)
                         .lineLimit(1)
                     Spacer()
                     Text(snapshot.nearestResetText)
@@ -4570,7 +5278,7 @@ struct DetailCard<Content: View>: View {
             CPLabel(title)
             content
         }
-        .padding(14)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(CPTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -4681,7 +5389,7 @@ struct MainLimitRow: View {
                     Text(compact ? summary.resetText : summary.previewResetConfidenceText)
                         .font(.system(size: 10))
                         .foregroundStyle(presentationStatus == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -4708,6 +5416,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
+    @Published private(set) var accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
@@ -4747,7 +5456,11 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var currentSnapshot: UsageSnapshot {
-        observedSnapshot.presented(at: presentationDate)
+        if fixedPresentationDate == nil, let storedSnapshot,
+           let shared = refreshService.sharedAccountPresentation(stored: storedSnapshot, now: presentationDate, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
+            return shared.usageSnapshot
+        }
+        return observedSnapshot.presented(at: presentationDate)
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
@@ -5054,7 +5767,8 @@ final class ContextPanelAppModel: ObservableObject {
             selectedSource: result.snapshot == nil ? .none : .appGroupSnapshot,
             presentationDigest: RuntimePresentationDigest.storedSnapshot(
                 result.snapshot,
-                status: result.status
+                status: result.status,
+                accountMetadata: result.snapshot.map { AccountDisplayMetadata.local(configuration: configuredAccounts, stored: $0, now: Date()) }
             ),
             stateBranch: stateBranch,
             outcome: outcome
@@ -5072,7 +5786,7 @@ final class ContextPanelAppModel: ObservableObject {
         let generatedAt = currentSnapshot.generatedAt
         observedBurnRatesTask = Task.detached(priority: .userInitiated) { [weak self] in
             let history = refreshService.loadHistory(
-                query: SnapshotStoreQuery(since: now.addingTimeInterval(-24 * 3_600))
+                query: SnapshotStoreQuery(since: min(now, currentSnapshot.generatedAt).addingTimeInterval(-24 * 3_600))
             )
             guard !Task.isCancelled else { return }
             let rates = MainLimitBurnRateEstimator.observedBurnRates(
@@ -5080,12 +5794,42 @@ final class ContextPanelAppModel: ObservableObject {
                 history: history,
                 now: now
             )
+            let accountRates = AccountBurnRateEstimator.observedBurnRates(current: currentSnapshot, history: history, now: now)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self?.observedSnapshot.generatedAt == generatedAt else { return }
                 self?.observedBurnRates = rates
+                self?.accountBurnRates = accountRates
             }
         }
+    }
+
+    func navigate(to selection: AppNavigationSelection) { navigationRequest = selection }
+
+    func invalidateSharedAccounts() {
+        refreshService.invalidateSharedAccounts()
+        loadSnapshot()
+    }
+
+    func accountOverview(at now: Date) -> AccountOverview {
+        let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: []))
+        if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
+            return shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
+        }
+        return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
+            accountBurnRates: accountBurnRates)
+    }
+
+    func rawAccountID(for safeID: String) -> String? {
+        if let report = storedSnapshot?.selectingSharedAccountObservations().reports.first(where: { report in
+            report.sharedAccountIdentity.map { AccountDisplayMetadata.safeID(report.provider, $0.accountID) == safeID } == true
+        }) { return report.accountID }
+        return AccountCapacity.rows(configuration: configuredAccounts, snapshot: observedSnapshot,
+            reports: storedSnapshot?.reports ?? [], now: Date()).first {
+                AccountDisplayMetadata.safeID($0.provider, $0.id) == safeID
+            }?.id
     }
 
     func handleOpenURL(_ url: URL) {
@@ -5096,6 +5840,8 @@ final class ContextPanelAppModel: ObservableObject {
             navigationRequest = .reconnect
         case "overview":
             navigationRequest = .overview
+        case "deadlines":
+            navigationRequest = .deadlines
         case "provider":
             let providerValue = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
             guard let provider = Provider(rawValue: providerValue) else {
@@ -5690,7 +6436,7 @@ private struct ResetCreditAvailabilityTag: View {
     @State private var isHovering = false
 
     private var tone: Color {
-        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.accent
+        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.banked
     }
 
     private var destination: URL {
@@ -5710,7 +6456,7 @@ private struct ResetCreditAvailabilityTag: View {
             .foregroundStyle(tone)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(tone.opacity(isHovering ? 0.15 : 0.08))
+            .background(tone.opacity(isHovering ? 0.05 : 0.03))
             .clipShape(Capsule())
             .overlay {
                 Capsule()
@@ -5721,7 +6467,7 @@ private struct ResetCreditAvailabilityTag: View {
         .buttonStyle(.plain)
         .help(resetCreditHelpText(summary))
         .accessibilityLabel(resetCreditAccessibilityText(summary))
-        .accessibilityHint("Opens OpenAI detail in Context Panel")
+        .accessibilityHint("Opens \(summary.provider.displayName) detail in Context Panel")
         .onHover { isHovering in
             self.isHovering = isHovering
             (isHovering ? NSCursor.pointingHand : NSCursor.arrow).set()
@@ -5730,115 +6476,47 @@ private struct ResetCreditAvailabilityTag: View {
 }
 
 private func resetCreditTagText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
-    let prefix = summary.isLastSeenOnly ? "Reset credits last seen" : "Reset credits"
+    let prefix = AccountTerms.bankedResets + (summary.isLastSeenOnly ? " " + AccountTerms.lastSeen : "")
     return "\(prefix) · \(summary.accountCountText)"
 }
 
 private func resetCreditHelpText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
     summary.isLastSeenOnly
-        ? "Reset credits were last seen on \(summary.accountCountText)."
-        : "Reset credits are available on \(summary.accountCountText)."
+        ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.accountCountText)."
+        : "\(AccountTerms.bankedResets) are available on \(summary.accountCountText)."
 }
 
 private func resetCreditAccessibilityText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
     summary.isLastSeenOnly
-        ? "Reset credits were last seen on \(summary.providerAccountCountText)."
-        : "Reset credits are available on \(summary.providerAccountCountText)."
+        ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.providerAccountCountText)."
+        : "\(AccountTerms.bankedResets) are available on \(summary.providerAccountCountText)."
 }
 
 enum CPTheme {
-    static let background = adaptiveColor(
-        light: NSColor(red: 244 / 255, green: 244 / 255, blue: 245 / 255, alpha: 1),
-        dark: NSColor(red: 22 / 255, green: 23 / 255, blue: 25 / 255, alpha: 1)
-    )
-    static let surface = adaptiveColor(
-        light: .white,
-        dark: NSColor(red: 34 / 255, green: 35 / 255, blue: 38 / 255, alpha: 1)
-    )
-    static let surface2 = adaptiveColor(
-        light: NSColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
-        dark: NSColor(red: 43 / 255, green: 44 / 255, blue: 48 / 255, alpha: 1)
-    )
-    static let line = adaptiveColor(
-        light: NSColor.black.withAlphaComponent(0.07),
-        dark: NSColor.white.withAlphaComponent(0.10)
-    )
-    static let primaryText = adaptiveColor(
-        light: NSColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
-        dark: NSColor(red: 238 / 255, green: 239 / 255, blue: 241 / 255, alpha: 1)
-    )
-    static let secondaryText = adaptiveColor(
-        light: NSColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
-        dark: NSColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
-    )
-    static let tertiaryText = adaptiveColor(
-        light: NSColor(red: 105 / 255, green: 105 / 255, blue: 113 / 255, alpha: 1),
-        dark: NSColor(red: 151 / 255, green: 154 / 255, blue: 164 / 255, alpha: 1)
-    )
-    static let accent = adaptiveColor(
-        light: NSColor(red: 74 / 255, green: 91 / 255, blue: 122 / 255, alpha: 1),
-        dark: NSColor(red: 137 / 255, green: 161 / 255, blue: 211 / 255, alpha: 1)
-    )
+    static let background = token(.surface)
+    static let surface = token(.card)
+    static let surface2 = token(.surface)
+    static let line = token(.line)
+    static let primaryText = token(.primary)
+    static let secondaryText = token(.secondary)
+    static let tertiaryText = token(.tertiary)
+    static let accent = token(.actionFill)
+    static let accentText = token(.next)
+    static let banked = token(.banked)
 
     static func providerColor(_ provider: Provider) -> Color {
-        switch provider {
-        case .openAI:
-            adaptiveColor(
-                light: NSColor(red: 56 / 255, green: 92 / 255, blue: 126 / 255, alpha: 1),
-                dark: NSColor(red: 107 / 255, green: 164 / 255, blue: 218 / 255, alpha: 1)
-            )
-        case .anthropic:
-            adaptiveColor(
-                light: NSColor(red: 139 / 255, green: 102 / 255, blue: 51 / 255, alpha: 1),
-                dark: NSColor(red: 220 / 255, green: 174 / 255, blue: 103 / 255, alpha: 1)
-            )
-        case .google:
-            adaptiveColor(
-                light: NSColor(red: 35 / 255, green: 116 / 255, blue: 106 / 255, alpha: 1),
-                dark: NSColor(red: 83 / 255, green: 183 / 255, blue: 168 / 255, alpha: 1)
-            )
-        }
+        let selected: AccountColorToken = switch provider { case .openAI: .openAI; case .anthropic: .anthropic; case .google: .google }
+        return token(selected)
     }
-
-    static func statusColor(_ status: UsageStatus) -> Color {
-        switch status {
-        case .healthy:
-            adaptiveColor(
-                light: NSColor(red: 61 / 255, green: 111 / 255, blue: 78 / 255, alpha: 1),
-                dark: NSColor(red: 102 / 255, green: 181 / 255, blue: 132 / 255, alpha: 1)
-            )
-        case .close:
-            adaptiveColor(
-                light: NSColor(red: 125 / 255, green: 91 / 255, blue: 26 / 255, alpha: 1),
-                dark: NSColor(red: 217 / 255, green: 173 / 255, blue: 81 / 255, alpha: 1)
-            )
-        case .limited, .failure:
-            adaptiveColor(
-                light: NSColor(red: 132 / 255, green: 62 / 255, blue: 62 / 255, alpha: 1),
-                dark: NSColor(red: 220 / 255, green: 119 / 255, blue: 119 / 255, alpha: 1)
-            )
-        case .stale:
-            adaptiveColor(
-                light: NSColor(red: 112 / 255, green: 84 / 255, blue: 57 / 255, alpha: 1),
-                dark: NSColor(red: 194 / 255, green: 158 / 255, blue: 117 / 255, alpha: 1)
-            )
-        case .unknown, .loading:
-            adaptiveColor(
-                light: NSColor(red: 90 / 255, green: 90 / 255, blue: 99 / 255, alpha: 1),
-                dark: NSColor(red: 170 / 255, green: 173 / 255, blue: 182 / 255, alpha: 1)
-            )
-        }
-    }
-
+    static func statusColor(_ status: UsageStatus) -> Color { token(status.accountState.colorToken) }
     static func stroke(cornerRadius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .stroke(line, lineWidth: 1)
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(line, lineWidth: 1)
     }
-
-    private static func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
+    static func token(_ token: AccountColorToken) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            let best = appearance.bestMatch(from: [.darkAqua, .aqua])
-            return best == .darkAqua ? dark : light
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let rgb = token.rgb(dark: dark)
+            return NSColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: token.opacity(dark: dark))
         })
     }
 }
@@ -5970,19 +6648,16 @@ extension MainLimitSummary {
     }
 
     var resetText: String {
-        if status == .failure { return "refresh failed" }
-        if hasAssumedScheduledResetCapacity { return "assumed reset" }
-        guard let resetsAt else { return "reset not reported" }
-        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
-        if resetsAt.shouldShowWidgetDateTime {
-            return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
-        }
-        return "resets \(resetsAt.widgetRelativeText)"
+        guard let resetsAt else { return hasAssumedScheduledResetCapacity ? "assumed reset · date unknown" : "reset not reported" }
+        let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
+        if status == .failure { return "refresh failed · reset \(deadline)" }
+        if hasAssumedScheduledResetCapacity { return "assumed after reset \(deadline)" }
+        return "\(resetsAt < Date() ? "reset passed" : "resets") \(deadline)"
     }
 
     var previewResetConfidenceText: String {
         if hasAssumedScheduledResetCapacity {
-            return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
+            return resetText
         }
         return "\(resetText) · \(confidence.previewText)"
     }
@@ -6055,7 +6730,7 @@ extension MainLimitSummary {
             usage = "Usage unknown"
         }
         if hasAssumedScheduledResetCapacity {
-            return "\(usage), \(accessibilityStateText(status: status)). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+            return "\(usage), \(accessibilityStateText(status: status)). \(resetAccessibilityText)."
         }
         return "\(usage), \(accessibilityStateText(status: status)). \(resetAccessibilityText). \(confidence.previewText)."
     }
@@ -6076,12 +6751,11 @@ extension MainLimitSummary {
     }
 
     var resetAccessibilityText: String {
-        if status == .failure { return "Refresh failed" }
         if hasAssumedScheduledResetCapacity {
-            return UsagePresentationAssumption.scheduledReset.accessibilityText
+            return UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown")
         }
-        guard let resetsAt else { return "Reset not reported" }
-        return resetsAt.accessibilityResetText
+        guard let resetsAt else { return status == .failure ? "Refresh failed; reset not reported" : "Reset not reported" }
+        return status == .failure ? "Refresh failed; last observed reset " + ContextPanelDateFormatting.resetDeadline(resetsAt) : resetsAt.accessibilityResetText
     }
 
     private var assumptionPrefix: String {
@@ -6094,7 +6768,7 @@ extension MainLimitSummary {
 
     private func accessibilityValueWithAssumption(_ value: String) -> String {
         guard hasAssumedScheduledResetCapacity else { return value }
-        return "\(value). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+        return "\(value). \(resetAccessibilityText)."
     }
 
     private func accessibilityStateText(status: UsageStatus) -> String {
@@ -6305,18 +6979,17 @@ extension UsageLimit {
             capacity = "Remaining capacity unknown"
         }
         if isAssumedAfterScheduledReset {
-            return "\(capacity), \(accessibilityStateText). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+            return "\(capacity), \(accessibilityStateText). \(resetAccessibilityText)."
         }
         return "\(capacity), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
     }
 
     private var resetAccessibilityText: String {
-        if status == .failure { return "Refresh failed" }
         if isAssumedAfterScheduledReset {
-            return UsagePresentationAssumption.scheduledReset.accessibilityText
+            return UsagePresentationAssumption.scheduledReset.accessibilityText + (resetsAt.map { " at " + ContextPanelDateFormatting.resetDeadline($0) } ?? "; date unknown")
         }
-        guard let resetsAt else { return "Reset not reported" }
-        return resetsAt.accessibilityResetText
+        guard let resetsAt else { return status == .failure ? "Refresh failed; reset not reported" : "Reset not reported" }
+        return status == .failure ? "Refresh failed; last observed reset " + ContextPanelDateFormatting.resetDeadline(resetsAt) : resetsAt.accessibilityResetText
     }
 
     private var accessibilityStateText: String {
@@ -6405,20 +7078,17 @@ extension UsageLimit {
 
     func previewResetConfidenceText(relativeTo presentationDate: Date) -> String {
         if isAssumedAfterScheduledReset {
-            return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
+            return resetText(relativeTo: presentationDate)
         }
         return "\(resetText(relativeTo: presentationDate)) · \(confidence.previewText)"
     }
 
     func resetText(relativeTo presentationDate: Date) -> String {
-        if status == .failure { return "refresh failed" }
-        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else { return "reset not reported" }
-        if resetsAt < presentationDate.addingTimeInterval(-60) { return "reset passed" }
-        if resetsAt.shouldShowWidgetDateTime(relativeTo: presentationDate) {
-            return "resets \(resetsAt.widgetRelativeText(relativeTo: presentationDate)) · \(resetsAt.widgetDateTimeText)"
-        }
-        return "resets \(resetsAt.widgetRelativeText(relativeTo: presentationDate))"
+        let deadline = ContextPanelDateFormatting.resetDeadline(resetsAt)
+        if status == .failure { return "refresh failed · reset \(deadline)" }
+        if isAssumedAfterScheduledReset { return "assumed after reset \(deadline)" }
+        return "\(resetsAt < presentationDate ? "reset passed" : "resets") \(deadline)"
     }
 
     private var assumptionPrefix: String {
@@ -6581,32 +7251,16 @@ extension Date {
     var widgetDateTimeWithRelativeText: String {
         let relative = widgetRelativeText
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if shouldShowWidgetDateTime {
-            return "\(widgetDateTimeText) (\(compactRelative))"
-        }
-        return compactRelative
+        return "\(widgetDateTimeText) (\(compactRelative))"
     }
 
     var widgetDateTimeText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE h:mm a"
-        return formatter.string(from: self)
+        ContextPanelDateFormatting.resetDeadline(self, compact: true)
     }
 
     var accessibilityResetText: String {
-        let seconds = Int(timeIntervalSince(Date()))
-        if abs(seconds) < 60 { return "Resets now" }
-        guard seconds > 0 else { return "Reset passed" }
-        let minutes = Self.roundedUpMinutes(seconds: seconds)
-        if minutes < 60 {
-            return "Resets in \(minutes) \(minutes == 1 ? "minute" : "minutes")"
-        }
-        let hours = Self.roundedUpHours(minutes: minutes)
-        if hours <= 24 {
-            return "Resets in \(hours) \(hours == 1 ? "hour" : "hours")"
-        }
-        let days = max(Int(ceil(Double(hours) / 24)), 1)
-        return "Resets in \(days) \(days == 1 ? "day" : "days")"
+        let deadline = ContextPanelDateFormatting.resetDeadline(self)
+        return self <= Date() ? "Reset passed at \(deadline)" : "Resets at \(deadline)"
     }
 
     var accessibilityAgeText: String {
@@ -6645,5 +7299,121 @@ extension Date {
 extension [UsageStatus] {
     var worstStatus: UsageStatus {
         contextPanelWorstStatus
+    }
+}
+
+struct AccountCapacityCard: View {
+    let rows: [AccountCapacity]
+    let burnRates: [String: [String: ObservedBurnRate]]
+    let now: Date
+    var usesLiveClock = true
+
+    var body: some View {
+        if usesLiveClock {
+            TimelineView(.explicit([now] + rows.compactMap(\.report).resetCreditTransitionDates(after: now))) { context in
+                content(at: context.date)
+            }
+        } else {
+            content(at: now)
+        }
+    }
+
+    private func content(at date: Date) -> some View {
+        DetailCard(title: "All Accounts") {
+            VStack(alignment: .leading, spacing: 16) {
+                if rows.isEmpty {
+                    Text("Add your provider accounts in Settings.")
+                }
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            ProviderBadge(provider: row.provider)
+                            Text(row.name).font(.headline)
+                            Spacer()
+                            Text(stateText(row)).font(.caption)
+                                .foregroundStyle(CPTheme.statusColor(row.status))
+                        }
+                        if row.limits.isEmpty {
+                            Text("Usage unknown · burn unknown · next reset unknown")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        }
+                        ForEach(row.limits) { limit in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(limit.label).frame(width: 150, alignment: .leading)
+                                Text(usageText(limit)).monospacedDigit()
+                                Spacer()
+                                Text(burnText(row: row, limit: limit)).monospacedDigit()
+                                Text(limit.resetText(relativeTo: date))
+                                    .frame(minWidth: 180, alignment: .trailing)
+                            }
+                            .font(.caption)
+                            .foregroundStyle(CPTheme.secondaryText)
+                        }
+                        if let credits = row.report?.usageCredits {
+                            Text(creditText(credits) + " · expiry not reported")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        }
+                        if let resets = row.report?.resetCredits?.presented(at: date) {
+                            Text(AccountTerms.bankedResets + ": \(resets.availableCount) · observed \(dateText(resets.observedAt))")
+                                .font(.caption)
+                            let dates = resets.knownExpiries.isEmpty
+                                ? resets.earliestKnownExpiry.map { [$0] } ?? [] : resets.knownExpiries
+                            ForEach(Array(dates.enumerated()), id: \.offset) { _, date in
+                                Text(AccountTerms.bankedResetExpires + " \(dateText(date))")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            }
+                            if dates.count < resets.availableCount {
+                                Text(AccountTerms.bankedResetCount(resets.availableCount - dates.count) + " · expiry dates unknown")
+                                    .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                            }
+                        } else if row.provider == .openAI || row.provider == .anthropic {
+                            Text(AccountTerms.bankedResets + " " + AccountTerms.unknown)
+                                .accessibilityLabel(AccountTerms.bankedResets + " unknown")
+                                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+                        }
+                    }
+                    if row.id != rows.last?.id { Divider() }
+                }
+            }
+        }
+    }
+
+    private func dateText(_ date: Date) -> String {
+        ContextPanelDateFormatting.resetDeadline(date)
+    }
+
+    private func stateText(_ row: AccountCapacity) -> String {
+        switch row.state {
+        case .off: return "Off"
+        case .notConnected: return "Not connected · check Settings"
+        case .unavailable: return "Unavailable · check Settings"
+        case .unknown: return "Unknown · check Settings"
+        case .stale: return "Stale · refresh needed"
+        case .refreshing: return "Refreshing"
+        case .limited: return "Limited"
+        case .closeToLimit: return "Close to limit"
+        case .available: return "Available"
+        }
+    }
+
+    private func usageText(_ limit: UsageLimit) -> String {
+        guard let used = limit.used, let total = limit.limit else { return "Usage unknown" }
+        let prefix = limit.isAssumedAfterScheduledReset ? "≈" : ""
+        return limit.unit == .percent ? "\(prefix)\(used)% used" : "\(prefix)\(used) / \(total) used"
+    }
+
+    private func burnText(row: AccountCapacity, limit: UsageLimit) -> String {
+        guard row.isEnabled, [.healthy, .close, .limited].contains(row.status),
+              let rate = burnRates[row.id]?[limit.id] else { return "Burn unknown" }
+        let unit = limit.unit == .percent ? "%/h" : "units/h"
+        return String(format: "%.1f", rate.unitsPerHour) + unit + (rate.sampleCount == 0 ? " window average" : " observed")
+    }
+
+    private func creditText(_ credits: ProviderUsageCreditSummary) -> String {
+        if credits.unlimited { return "Unlimited usage credits" }
+        if let balance = credits.balance {
+            return "\(balance.formatted()) usage credits"
+        }
+        return credits.hasCredits ? "Usage credits available · balance unknown" : "No usage credits"
     }
 }
