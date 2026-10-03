@@ -40,8 +40,9 @@ The four reusable channels identify Ship through `github.workflow_ref`,
 GitHub's caller workflow identity, rather than a dispatch input. Only this
 repository's `ship.yml` on `refs/heads/main` skips their standalone `approve`
 job; their caller jobs must depend on successful Ship validation. Every other
-caller must grant `actions: read` and `contents: read` for the metadata and
-checkout guards; direct dispatch requires its own secretless reviewed gate before
+caller must grant `actions: read` plus at least `contents: read` for metadata
+and checkout; GitHub Release publication requires `contents: write`. Direct
+dispatch requires its own secretless reviewed gate before
 using `release`. App Store Review submission and screenshots always require
 that gate, including reusable calls. Channel jobs explicitly reject failed or
 cancelled guards and failed standalone approvals; the skipped-gate path is
@@ -56,8 +57,9 @@ Before any environment job, a read-only metadata check also requires
 `release-approval` to exist, name the repository owner as sole required reviewer,
 allow solo self-review and disable administrator bypass. Missing rules, a missing
 environment or an unavailable API fail closed. The check also verifies that
-`release` accepts only `main`, and the CI probe proves the required metadata
-fields are visible. CI probes this metadata read using
+`release` accepts only `main`. The CI probe verifies the secret store's current
+branch policy and protection-field visibility; the release guard checks the
+review gate's actual reviewer settings when it exists. Both use
 the built-in workflow token; no operator credential or secret endpoint is used.
 Set activation only after the owner finishes the role move below. Removing it
 pauses new release runs; it does not re-add an environment reviewer. Each pending

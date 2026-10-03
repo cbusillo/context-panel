@@ -1,12 +1,12 @@
 import copy
 import importlib.util
-from pathlib import Path
-import unittest
 import os
+from pathlib import Path
 import subprocess
-from unittest.mock import patch
 from types import SimpleNamespace
 from typing import Any
+import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "release_approvals", Path(__file__).resolve().parents[2] / "scripts/check-release-approvals.py"
