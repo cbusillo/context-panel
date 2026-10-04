@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterator
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -288,7 +289,8 @@ def main() -> int:
         report = check(documents)
         print(json.dumps(report, indent=2))
         if not report["reusable_workflow_coverage"]["complete"]:
-            print("release approval coverage incomplete: inspect unclassified reusable calls "
+            prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
+            print(prefix + "release approval coverage incomplete: inspect unclassified reusable calls "
                   "in reusable_workflow_coverage; see docs/release.md", file=sys.stderr)
     except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as error:
         parser.exit(1, f"release approval policy: {error}\n")

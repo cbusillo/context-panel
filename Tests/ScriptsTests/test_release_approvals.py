@@ -64,17 +64,21 @@ class ReleaseApprovalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             for filename, document in documents.items():
                 (Path(root) / filename).write_text(json.dumps(document))
-            output, warning = io.StringIO(), io.StringIO()
-            # JSON is YAML-compatible; isolate the optional CLI parser dependency.
-            with patch.dict(sys.modules, {"yaml": SimpleNamespace(
-                safe_load=json.loads, YAMLError=ValueError,
-            )}), patch.object(sys, "argv", ["check-release-approvals", "--workflows-root", root]), \
-                    patch.object(sys, "stdout", output), patch.object(sys, "stderr", warning):
-                self.assertEqual(policy.main(), 0)
-            report = json.loads(output.getvalue())
-            self.assertFalse(report["reusable_workflow_coverage"]["complete"])
-            self.assertEqual(len(report["reusable_workflow_coverage"]["unclassified_calls"]), 1)
-            self.assertIn("coverage incomplete", warning.getvalue())
+            for actions in ("false", "true"):
+                with self.subTest(actions=actions):
+                    output, warning = io.StringIO(), io.StringIO()
+                    # JSON is YAML-compatible; isolate the optional CLI parser dependency.
+                    with patch.dict(sys.modules, {"yaml": SimpleNamespace(
+                        safe_load=json.loads, YAMLError=ValueError,
+                    )}), patch.object(sys, "argv", ["check-release-approvals", "--workflows-root", root]), \
+                            patch.object(sys, "stdout", output), patch.object(sys, "stderr", warning), \
+                            patch.dict(os.environ, {"GITHUB_ACTIONS": actions}):
+                        self.assertEqual(policy.main(), 0)
+                    report = json.loads(output.getvalue())
+                    self.assertFalse(report["reusable_workflow_coverage"]["complete"])
+                    self.assertEqual(len(report["reusable_workflow_coverage"]["unclassified_calls"]), 1)
+                    self.assertIn("coverage incomplete", warning.getvalue())
+                    self.assertEqual(warning.getvalue().startswith("::warning::"), actions == "true")
 
     def test_unclassified_reusable_calls_are_visible_and_remain_supported(self) -> None:
         calls = [

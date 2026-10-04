@@ -104,7 +104,8 @@ the one-approval contract and protected-main trust boundary are unchanged.
 The report's `reusable_workflow_coverage` lists job-level calls outside the
 classified release graph, including local calls and remote calls pinned to a
 commit, tag or branch. These calls remain supported. Any listed call sets
-`complete: false` and prints a coverage warning; exit success still means the
+`complete: false` and prints a coverage warning (an annotation in GitHub Actions);
+exit success still means the
 classified graph passed, not that every called job has an approval gate.
 Step-level actions are not reusable-workflow calls. Local workflow documents
 still receive the environment-name check above, but their unclassified call
