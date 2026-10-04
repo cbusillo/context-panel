@@ -56,6 +56,7 @@ class ReleaseApprovalTests(unittest.TestCase):
         names = [
             "${{ vars.CHANNEL_ENV }}", "${{ inputs.target }}",
             "${{ matrix.environment }}", "${{ needs.prepare.outputs.environment }}",
+            "${{ inputs.target-channel }}", "${{ needs.build-preview.outputs.target }}",
             "${{ format('release-{0}', 'channels') }}",
             "${{ format('{0}{1}', 're', 'lease') }}",
             "${{ inputs.preview && 'preview' || 'release' }}",
@@ -78,7 +79,8 @@ class ReleaseApprovalTests(unittest.TestCase):
     def test_unrelated_environments_have_literal_and_computed_routes(self) -> None:
         names = ["staging", "release-notes", "preview-${{ inputs.target }}",
                  "preview-${{ vars.CHANNEL_ENV }}-${{ matrix.platform }}",
-                 "${{ needs.prepare.outputs.target }}-preview", "PREVIEW-${{ github.ref_name }}"]
+                 "${{ needs.prepare.outputs.target }}-preview", "PREVIEW-${{ github.ref_name }}",
+                 "preview-${{ inputs.target-channel }}", "${{ needs.build-preview.outputs.target }}-preview"]
         for name in names:
             with self.subTest(name=name):
                 documents = fixture()

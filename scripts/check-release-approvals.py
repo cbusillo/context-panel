@@ -41,7 +41,7 @@ def may_select_release_environment(name: str) -> bool:
     around simple lookups instead. No variables or live settings are read.
     """
     lookup = re.compile(r"\$\{\{\s*(?:github|inputs|vars|needs|strategy|matrix)"
-                        r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+\s*}}")
+                        r"(?:\.[A-Za-z_][A-Za-z0-9_-]*)+\s*}}")
     parts = []
     offset = 0
     for match in lookup.finditer(name):
