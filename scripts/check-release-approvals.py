@@ -30,6 +30,33 @@ CHANNELS = {
     "testflight-beta": "testflight-beta-distribution.yml",
 }
 STANDALONE_ONLY = ("submit-app-store-review.yml", "upload-app-store-screenshots.yml")
+RELEASE_ENVIRONMENTS = ("release", "release-approval", "release-channels")
+
+
+def may_select_release_environment(name: str) -> bool:
+    """Overapproximate simple interpolations without evaluating Actions code.
+
+    Each context lookup can be any string, including empty. Complex expressions
+    are opaque; use a literal unrelated name or a fixed, disjoint namespace
+    around simple lookups instead. No variables or live settings are read.
+    """
+    lookup = re.compile(r"\$\{\{\s*(?:github|inputs|vars|needs|strategy|matrix)"
+                        r"(?:\.[A-Za-z_][A-Za-z0-9_-]*)+\s*}}")
+    parts = []
+    offset = 0
+    for match in lookup.finditer(name):
+        literal = name[offset:match.start()]
+        if "${{" in literal:
+            return True
+        parts.extend((re.escape(literal), ".*"))
+        offset = match.end()
+    tail = name[offset:]
+    if "${{" in tail:
+        return True
+    parts.append(re.escape(tail))
+    pattern = "".join(parts)
+    return any(re.fullmatch(pattern, reserved, re.IGNORECASE | re.DOTALL)
+               for reserved in RELEASE_ENVIRONMENTS)
 
 
 def needs(job: dict) -> list[str]:
@@ -206,10 +233,13 @@ def check(workflows: dict[str, dict]) -> dict:
     classified = {"ship.yml", *CHANNELS.values(), *STANDALONE_ONLY}
     for filename, document in workflows.items():
         if filename not in classified:
-            for job in document.get("jobs", {}).values():
-                require(not any(name in (environment(job) or "") for name in
-                                ("release", "release-approval", "release-channels")),
-                        f"{filename}: classify workflows before selecting release environments")
+            for job_id, job in document.get("jobs", {}).items():
+                name = environment(job)
+                require(name is None or (isinstance(name, str)
+                        and not may_select_release_environment(name.strip())),
+                        f"{filename}/{job_id}: cannot rule out a release environment; "
+                        "classify release workflows, or use a literal unrelated name or "
+                        "a disjoint namespace such as preview-${{ inputs.target }}")
     reviewed_jobs = [job_id for job_id, job in ship.items()
                      if environment(job) == "release-approval"]
     return {

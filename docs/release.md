@@ -81,8 +81,23 @@ approval changes. `scripts/check-release-approvals.py` lints the parsed workflow
 graph in CI and prints an all-channel structural dry-run plus secret names,
 never values. It checks one secretless Ship gate, standalone review paths,
 success dependencies and a single secret environment. It cannot verify live
-reviewer settings or actual secret placement. Computed environment names in
-future unclassified workflows remain a recorded detection limit (#750).
+reviewer settings or actual secret placement. In unclassified workflows, it
+rejects names that could select `release`, `release-approval`, or the retired
+`release-channels`, including opaque expressions such as
+`${{ vars.CHANNEL_ENV }}`. Environment names are compared without regard to
+case, matching [GitHub's environment naming rules](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+
+Unrelated environments have two supported routes: a literal name such as
+`staging` or `release-notes`, or simple context lookups inside a fixed unrelated
+namespace, such as `preview-${{ inputs.target }}` or
+`${{ needs.prepare.outputs.target }}-preview`. Simple dotted lookups from
+`github`, `inputs`, `vars`, `needs`, `strategy`, and `matrix` are treated as any
+string, including empty; the fixed parts must rule out all three reserved
+names. Complex expressions (functions, operators, bracket lookups) are opaque
+and refused; rewrite unrelated selection using the supported namespace route.
+An actual release workflow must join the classified approval graph instead.
+The checker never reads variable values or evaluates GitHub Actions code, and
+the one-approval contract and protected-main trust boundary are unchanged.
 
 ## One-time environment role move (owner only)
 
