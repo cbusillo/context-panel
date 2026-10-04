@@ -21,6 +21,9 @@ import WidgetKit
 // cannot draw, EX_SOFTWARE when rendering fails, EX_CANTCREAT when writing fails.
 
 private let canvas = CGSize(width: 1_024, height: 768)
+private let interactive = CommandLine.arguments.contains("--interactive")
+private let windowsLayout = CommandLine.arguments.contains("windows")
+private var presentationWindow: NSWindow?
 
 private let unsupportedPresentationStatus: Int32 = 3
 
@@ -35,6 +38,8 @@ private let accountPresentationSizes: [String: CGSize] = [
     "watch-rectangular": CGSize(width: 184, height: 74),
     "watch-circular": CGSize(width: 76, height: 76),
     "tv-board": CGSize(width: 1_920, height: 1_080),
+    "settings-display-normal": CGSize(width: 720, height: 700),
+    "settings-display-minimum": CGSize(width: 720, height: 600),
 ]
 
 // Pixels per point. 1 by default; review screenshots use 2 to match a Retina display.
@@ -51,7 +56,7 @@ private func fail(_ message: String, status: Int32 = EX_USAGE) -> Never {
 }
 
 private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryRoute, output: URL, scenario: Bool, deadlines: Bool, accountPresentation: String?, sixAccounts: Bool) {
-    let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario", "--scale"]
+    let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario", "--scale", "--layout", "--interactive"]
     var values: [String: String] = [:]
     var index = 0
     while index < arguments.count {
@@ -63,6 +68,8 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
         index += 2
     }
     let deadlines = values["--presentation"] == "reset-deadlines"
+    if let layout = values["--layout"], !["accounts", "windows"].contains(layout) { fail("unsupported layout") }
+    if let interactive = values["--interactive"], interactive != "yes" { fail("--interactive requires yes") }
     let accountPresentation = accountPresentationSizes.keys.contains(values["--presentation"] ?? "") ? values["--presentation"] : nil
     let sixAccounts = values["--scenario"] == "six-accounts"
     let presentationValue = deadlines || accountPresentation != nil ? "widget" : values["--presentation"] ?? ""
@@ -114,6 +121,27 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         let snapshot = accountFixture(now: now)
         let overview = snapshot.accountOverview(now: now)
         switch accountPresentation {
+        case "settings-display-normal", "settings-display-minimum":
+            var preferences = WidgetDisplayPreferences.defaultPreferences
+            preferences.usesAccountRows = !windowsLayout
+            let family: SettingsWidgetPreviewFamily = switch route.family.widgetFamily {
+            case .systemSmall: .small
+            case .systemLarge: .large
+            default: .medium
+            }
+            view = AnyView(VStack(spacing: 0) {
+                Picker(AccountTerms.settings, selection: .constant(AccountTerms.display)) {
+                    ForEach([AccountTerms.accounts, AccountTerms.updates, AccountTerms.alerts, AccountTerms.display], id: \.self) {
+                        Text($0).tag($0)
+                    }
+                }.pickerStyle(.segmented).padding(16)
+                Form {
+                    WidgetDisplaySettingsSections(snapshot: snapshot, preferences: preferences,
+                        initialFamily: family, presentationDate: now,
+                        providerLabel: { Text($0.shortName) },
+                        onLayoutChange: { _ in }, onVisibilityChange: { _, _ in }, onMove: { _, _ in })
+                }.formStyle(.grouped)
+            })
         case "account-overview":
             view = AnyView(AccountDashboardPanel(overview: overview, now: now, openAccount: { _ in }, openDeadlines: {}).padding(24))
         case "account-deadlines":
@@ -182,7 +210,8 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         return Color(.sRGB, red: value.red, green: value.green, blue: value.blue, opacity: token.opacity(dark: dark))
     }
     let content = view
-        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .frame(width: size.width, height: interactive ? nil : size.height, alignment: .topLeading)
+        .frame(maxHeight: interactive ? .infinity : nil, alignment: .topLeading)
         .foregroundStyle(tokenColor(.primary, dark: isDark))
         .background(accountPresentation?.hasPrefix("watch") == true ? tokenColor(.watchSurface, dark: true)
             : accountPresentation == "tv-board" ? tokenColor(.surface, dark: true)
@@ -195,6 +224,20 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     let hostingView = NSHostingView(rootView: content)
     hostingView.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
     hostingView.frame = NSRect(origin: .zero, size: size)
+    if interactive {
+        NSApp.setActivationPolicy(.regular)
+        let window = NSWindow(contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Settings preview — synthetic data"
+        window.contentMinSize = CGSize(width: 720, height: 600)
+        window.contentView = hostingView
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        presentationWindow = window
+        print("native-window=\(window.windowNumber) content=\(Int(size.width))x\(Int(size.height)) synthetic-only")
+        fflush(stdout)
+    }
     hostingView.layoutSubtreeIfNeeded()
     // pixelScale pixels per point regardless of the host display's backing scale.
     guard let bitmap = NSBitmapImageRep(
@@ -278,5 +321,7 @@ do {
 } catch {
     fail("the PNG could not be written", status: EX_CANTCREAT)
 }
-let size = renderSize(route: route, scenario: scenario, deadlines: deadlines)
+let size = accountPresentation.flatMap { accountPresentationSizes[$0] } ?? renderSize(route: route, scenario: scenario, deadlines: deadlines)
 print("rendered \(route.id) \(Int(size.width))x\(Int(size.height)) \(png.count) bytes")
+fflush(stdout)
+if interactive { NSApp.run() }

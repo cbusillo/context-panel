@@ -368,6 +368,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         now: Date = Date()
     ) -> PromptCacheWidgetState? {
         let accounts = accountStore.load(now: now).document.accounts
+        return promptCacheWidgetState(configuration: accounts, bookmarkStore: bookmarkStore)
+    }
+
+    public static func promptCacheWidgetState(
+        configuration accounts: [LocalProviderAccountConfiguration],
+        bookmarkStore: SecureFileBookmarkStore
+    ) -> PromptCacheWidgetState? {
         let usagePaths = accounts.compactMap { account -> String? in
             guard account.isEnabled, account.connectorKind == .codexRateLimits else { return nil }
             return promptCacheTelemetryDirectoryPath(for: account)

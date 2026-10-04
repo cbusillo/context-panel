@@ -186,7 +186,7 @@ struct AccountGlanceWidget: View {
                 ForEach(picks, id: \.provider) { pick in
                     let card = mediumCard(pick.provider, account: pick.account,
                                           total: totals.first { $0.provider == pick.provider }, overview: overview)
-                    Link(destination: pick.account.map { links.account(pick.provider, id: $0.id) } ?? links.overview) { card }
+                    CPWNavigationLink(destination: pick.account.map { links.account(pick.provider, id: $0.id) } ?? links.overview) { card }
                         .buttonStyle(.plain)
                 }
             }
@@ -280,7 +280,7 @@ struct AccountGlanceWidget: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(total.accessibilityText(now: now))
             ForEach(members) { account in
-                Link(destination: links.account(account.metadata.provider, id: account.id)) {
+                CPWNavigationLink(destination: links.account(account.metadata.provider, id: account.id)) {
                     largeRow(account, overview: overview)
                 }
                 .buttonStyle(.plain)
@@ -363,7 +363,7 @@ struct AccountGlanceWidget: View {
         let lapsing = overview.runningShort(now: now).lazy.compactMap { overview.bankedBeforeRunOut($0.account, now: now) }.first
         if let deadline = lapsing ?? overview.nextDeadline {
             let others = overview.deadlines.filter { $0.state == .available }.count - 1
-            Link(destination: links.deadlines) {
+            CPWNavigationLink(destination: links.deadlines) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     BankedDiamond(palette: palette, size: 6.5).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
                     // Lead with the expiry so a long account name cannot hide its time.
