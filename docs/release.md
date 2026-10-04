@@ -99,6 +99,40 @@ An actual release workflow must join the classified approval graph instead.
 The checker never reads variable values or evaluates GitHub Actions code, and
 the one-approval contract and protected-main trust boundary are unchanged.
 
+## Reusable-workflow coverage
+
+The report's `reusable_workflow_coverage` lists job-level calls outside the
+classified release graph, including local calls and remote calls pinned to a
+commit, tag or branch. These calls remain supported. Any listed call sets
+`complete: false` and prints a coverage warning (an annotation in GitHub Actions);
+exit success still means the
+classified graph passed, not that every called job has an approval gate.
+Step-level actions are not reusable-workflow calls. Local workflow documents
+still receive the environment-name check above, but their unclassified call
+dependencies are not qualified. Remote jobs and nested calls are never fetched
+or executed by this linter. The report contains call references, not inputs,
+secret mappings or secret values.
+
+GitHub's [reusable-workflow documentation](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow)
+distinguishes explicitly passed or inherited secrets from environment secrets:
+a called job can declare its own environment and use that environment's
+secrets. The [caller context persists](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#github-context),
+and a calling job cannot declare an environment. Therefore, omitting
+`secrets: inherit` does not prove a remote call cannot reach an environment
+store. A main-branch caller of an accessible remote workflow whose job selects
+`release` is a potential unreviewed secret-store path. This is an inference from
+documented semantics, not a live credential-access result; no external workflow
+was run to qualify this assessment. Actual exposure also depends on Actions
+access policy and the selected callee's jobs.
+
+For an unrelated reusable call, inspect the exact callee and any nested calls
+during protected-main source review; prefer an immutable commit reference and
+check environment selection, secret use and approval dependencies. A call can
+remain accepted with incomplete coverage; it is not an approval proof. New
+release behavior must join the classified graph and its model-review route.
+A blanket ban, exception allowlist or new blocking approval policy needs a
+separate Director decision. The approved one-approval graph remains unchanged.
+
 ## One-time environment role move (owner only)
 
 Wait until the active 1.0.69 Ship run and all standalone release jobs finish,

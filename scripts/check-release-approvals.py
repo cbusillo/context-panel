@@ -5,16 +5,18 @@
 # ///
 """Lint the release approval graph and print a secretless all-channel plan.
 
-This checks workflow configuration, not live GitHub environment settings.
+This checks the classified local graph, not live settings or remote callees.
 """
 from __future__ import annotations
 
 import argparse
 from collections.abc import Iterator
 import json
+import os
 from pathlib import Path
 import re
 import shlex
+import sys
 
 SHIP_CALLER = "github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository)"
 STANDALONE_APPROVAL = "${{ !(" + SHIP_CALLER + ") }}"
@@ -231,9 +233,14 @@ def check(workflows: dict[str, dict]) -> dict:
     all_names = set().union(*(secret_names(workflows[filename]) for filename in
                              ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY)))
     classified = {"ship.yml", *CHANNELS.values(), *STANDALONE_ONLY}
+    unclassified_calls = []
     for filename, document in workflows.items():
         if filename not in classified:
             for job_id, job in document.get("jobs", {}).items():
+                if "uses" in job:
+                    unclassified_calls.append({
+                        "workflow": filename, "job": job_id, "uses": job["uses"],
+                    })
                 name = environment(job)
                 require(name is None or (isinstance(name, str)
                         and not may_select_release_environment(name.strip())),
@@ -243,7 +250,13 @@ def check(workflows: dict[str, dict]) -> dict:
     reviewed_jobs = [job_id for job_id, job in ship.items()
                      if environment(job) == "release-approval"]
     return {
-        "proof": "structural dry-run; live environment configuration is owner-confirmed",
+        "proof": "classified release graph structural dry-run; live environment configuration is owner-confirmed",
+        "reusable_workflow_coverage": {
+            "complete": not unclassified_calls,
+            "unclassified_calls": unclassified_calls,
+            "limitation": "Unclassified reusable calls are accepted but their approval dependencies "
+                          "are not checked. Remote jobs and nested calls are not fetched or executed.",
+        },
         "secret_names_by_environment": {"release": sorted(all_names), "release-approval": sorted(set().union(*(
             secret_names(workflows[filename]["jobs"]["approve"])
             for filename in ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY))))},
@@ -273,7 +286,12 @@ def main() -> int:
         documents = {path.name: yaml.safe_load(path.read_text())
                      for path in sorted([*args.workflows_root.glob("*.yml"),
                                          *args.workflows_root.glob("*.yaml")])}
-        print(json.dumps(check(documents), indent=2))
+        report = check(documents)
+        print(json.dumps(report, indent=2))
+        if not report["reusable_workflow_coverage"]["complete"]:
+            prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
+            print(prefix + "release approval coverage incomplete: inspect unclassified reusable calls "
+                  "in reusable_workflow_coverage; see docs/release.md", file=sys.stderr)
     except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as error:
         parser.exit(1, f"release approval policy: {error}\n")
     return 0
