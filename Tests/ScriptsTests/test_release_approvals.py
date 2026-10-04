@@ -52,6 +52,43 @@ def fixture() -> dict[str, Any]:
 
 
 class ReleaseApprovalTests(unittest.TestCase):
+    def test_unclassified_computed_release_selectors_fail(self) -> None:
+        names = [
+            "${{ vars.CHANNEL_ENV }}", "${{ inputs.target }}",
+            "${{ matrix.environment }}", "${{ needs.prepare.outputs.environment }}",
+            "${{ format('release-{0}', 'channels') }}",
+            "${{ format('{0}{1}', 're', 'lease') }}",
+            "${{ inputs.preview && 'preview' || 'release' }}",
+            "re${{ vars.SUFFIX }}", "${{ vars.PREFIX }}-approval",
+            "${{ vars.A }}${{ vars.B }}", "Release", " RELEASE-APPROVAL ",
+            "${{ vars.TARGET || '}}preview' }}",
+            "preview-${{ vars.TARGET || '}}' }}",
+        ]
+        for name in names:
+            for object_form in (False, True):
+                with self.subTest(name=name, object_form=object_form):
+                    documents = fixture()
+                    documents["rogue.yml"] = {"jobs": {"publish": {
+                        "environment": {"name": name, "url": "https://example.com"}
+                        if object_form else name,
+                    }}}
+                    with self.assertRaisesRegex(ValueError, "cannot rule out a release environment"):
+                        policy.check(documents)
+
+    def test_unrelated_environments_have_literal_and_computed_routes(self) -> None:
+        names = ["staging", "release-notes", "preview-${{ inputs.target }}",
+                 "preview-${{ vars.CHANNEL_ENV }}-${{ matrix.platform }}",
+                 "${{ needs.prepare.outputs.target }}-preview", "PREVIEW-${{ github.ref_name }}"]
+        for name in names:
+            with self.subTest(name=name):
+                documents = fixture()
+                documents["preview.yml"] = {"jobs": {
+                    "deploy": {"environment": {"name": name, "url": "${{ vars.URL }}"}},
+                    "build": {},
+                }}
+                plan = policy.check(documents)
+                self.assertEqual(plan["ship"]["approval_count"], 1)
+
     def test_full_ship_plan_requires_one_approval(self) -> None:
         plan = policy.check(fixture())
         self.assertEqual(plan["ship"]["approval_count"], 1)
