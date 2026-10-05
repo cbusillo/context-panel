@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 
+from Tests.ScriptsTests.fixtures.runtime_relay import RuntimeRelayFixture
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "context-panel-runtime-session.py"
@@ -475,60 +477,16 @@ class RuntimeSessionScriptTests(unittest.TestCase):
     def test_sync_uses_the_signed_host_result_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            agent = root / "agent"
-            schema_receipt = root / "cloudkit-schema-receipt.json"
-            source_commit_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(
-                source_commit_result.returncode,
-                0,
-                source_commit_result.stderr,
-            )
-            source_commit = source_commit_result.stdout.strip()
-            environment = os.environ.copy()
-            environment["CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"] = (
-                "runtime-session-schema-receipt-test-key"
-            )
-            agent.write_text(
-                "#!/bin/sh\n"
-                "cat <<'JSON'\n"
-                '{"healthy":true,"sessionAction":"published",'
-                '"uploadedReceiptCount":2,"downloadedReceiptCount":3,'
-                '"deletedRemoteReceiptCount":1,"messages":[]}\n'
-                "JSON\n"
-            )
-            agent.chmod(0o755)
-            issued = subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "scripts/cloudkit-schema-receipt.py"),
-                    "issue",
-                    "--source-commit",
-                    source_commit,
-                    "--output",
-                    str(schema_receipt),
-                ],
-                cwd=ROOT,
-                env=environment,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            fixture = RuntimeRelayFixture(root)
+            fixture.write_agent(payload={
+                "healthy": True, "sessionAction": "published", "messages": [],
+                "uploadedReceiptCount": 2, "downloadedReceiptCount": 3,
+                "deletedRemoteReceiptCount": 1,
+            })
+            issued = fixture.issue_receipt()
             self.assertEqual(issued.returncode, 0, issued.stderr)
 
-            completed = self.run_script(
-                "sync",
-                "--agent",
-                str(agent),
-                "--cloudkit-schema-receipt",
-                str(schema_receipt),
-                environment=environment,
-            )
+            completed = fixture.sync()
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
             payload = json.loads(completed.stdout)

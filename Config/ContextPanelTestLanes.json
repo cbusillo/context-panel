@@ -90,7 +90,8 @@
     ],
     "actual-runtime": [],
     "support-only": [
-      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift"
+      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift",
+      "Tests/ScriptsTests/fixtures/runtime_relay.py"
     ]
   }
 }
