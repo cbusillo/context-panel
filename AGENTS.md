@@ -1,5 +1,13 @@
 # Context Panel Agent Notes
 
+## Direction and Instruction Authority
+
+Read the Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
+before this file. This repository has no DIRECTION.md of its own; the overall
+file governs work selection, stop boundaries, and retired guidance.
+AGENTS.md is the only agent-instruction file; use nested AGENTS.md files when
+path-specific instructions are needed.
+
 ## Product Shape
 
 Context Panel is a native macOS app plus WidgetKit extension for tracking AI
@@ -394,6 +402,17 @@ someone makes an intended change.
 ## Repo Workflow
 
 - Default branch: `main`.
-- Work on focused branches and open pull requests.
+- Use the shared [executing loop](https://github.com/cbusillo/codex-skills/blob/main/skills/references/executing-loop.md)
+  and its owning skills. Read the issue and every comment, recheck ownership,
+  and run `gh-plan.py claim` before creating the linked task worktree.
+- Work on focused branches and open pull requests. Commit and push through the
+  configured bot helpers. GitHub issues hold durable plans and Current Status.
+- This repository does not use the Launchplane merge train. Land authorized
+  changes with a normal merge commit after current-head CI and required checks.
+  Apply [reviews by another model](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md)
+  to execution guidance and other changes it covers: account for findings with
+  evidence; reviewer approval is not a merge or completion gate.
+- Merging a PR does not publish a release. Use [the release procedure](docs/release.md)
+  for separately authorized release work and preserve its implemented gates.
 - Keep `.github/github.json` current when docs, validation gates,
   important workflows, or repo ownership assumptions change.
