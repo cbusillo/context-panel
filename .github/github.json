@@ -22,7 +22,8 @@
     "codexSessionQuota": "docs/provider-usage-access.md#per-account-codex-session-quota",
     "currentCodexHomes": "docs/provider-usage-access.md#current-codex-homes-and-openai-recovery",
     "agentAccountSnapshot": "docs/provider-usage-access.md#agent-readable-account-snapshot",
-    "repoSettings": "docs/repo-settings.md"
+    "repoSettings": "docs/repo-settings.md",
+    "sharedAccountIdentity": "docs/shared-account-identity.md"
   },
   "qualityGate": {
     "build": {
@@ -31,10 +32,10 @@
     "test": {
       "default": "swift test",
       "lanesManifest": "Config/ContextPanelTestLanes.json",
-      "lanesValidate": "python3 scripts/context-panel-test-lanes.py validate",
-      "fastPython": "python3 scripts/context-panel-test-lanes.py run --lane fast-local-python",
-      "routinePython": "python3 scripts/context-panel-test-lanes.py run --lane routine-ci-python",
-      "routineSwift": "python3 scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test"
+      "lanesValidate": "uv run --no-project python scripts/context-panel-test-lanes.py validate",
+      "fastPython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane fast-local-python",
+      "routinePython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
+      "routineSwift": "uv run --no-project python scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test"
     },
     "inspection": {
       "ide": "PyCharm",
@@ -52,12 +53,11 @@
     "validate": {
       "default": "scripts/commit-gate.sh",
       "releaseApprovalPolicy": "uv run scripts/check-release-approvals.py (classified-graph structural dry-run: one secretless Ship approval; standalone gates; one release secret store; live review-metadata check; owner role move and RELEASE_APPROVALS_CONFIGURED=true required); unclassified environment selectors must prove disjointness from reserved release names, with literal and fixed-namespace lookup routes; unclassified reusable calls remain accepted and report incomplete coverage (docs/release.md)",
-      "ciChangeScope": "python3 scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
+      "ciChangeScope": "uv run --no-project python scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
       "companionUploadFixtureTools": "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR=<dir> scripts/upload-app-store-connect-companion-app.sh --export-only <other arguments> (test-only seam for fixture xcodebuild and codesign; refused for uploads)",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
-      "sharedAccountIdentityContract": "docs/shared-account-identity.md (provider primary keys, credential-qualified history, Mac receiving, scoped migration/removal and live qualification gates)",
       "cloudKitSchemaReceiptGate": "scripts/require-cloudkit-schema-receipt.sh (called by every live release entrypoint; local live runs use scripts/with-cloudkit-schema-receipt.sh -- <command>)",
-      "cloudKitProductionSchemaReceipt": "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=\"$(security find-generic-password -a \"$USER\" -s com.shinycomputers.contextpanel.cloudkit-schema-receipt -w)\" scripts/validate-cloudkit-companion-schema.sh --live --environment production --source-commit \"$(git rev-parse HEAD)\" --receipt-output .build/cloudkit-production-schema-receipt.json",
+      "cloudKitProductionSchemaReceipt": "scripts/with-cloudkit-schema-receipt.sh -- <live-release-command> (validates the Production receipt or issues a fresh exact-source receipt; standalone issuance and runtime-evidence relay: docs/release.md#cloudkit-production-schema-gate)",
       "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
       "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos",
@@ -79,26 +79,26 @@
       "appStoreReviewValidationPreflight": "scripts/submit-app-store-review.py --platform <platform> --version <version> --build-number <build-number> --validation-report <final-report.json> --validation-train release --release-evidence-report <release-evidence.json> --release-evidence-mode enforce --release-evidence-comparison <comparison.json> --release-evidence-expected-build-manifest <ExpectedBuildManifest-platform.json> --release-evidence-selected-rc-ledger <approved-rc-lineage.json> --release-evidence-shadow-evidence <shadow-evidence.json> [--release-evidence-historical-policy-archive <policy-archive.json>] --validate-report-only",
       "signedValidationRuntimeEvidence": "scripts/context-panel-validation.py sync-runtime-evidence --version <version> --build-number <build-number> --cloudkit-schema-receipt <cloudkit-production-schema-receipt.json>",
       "signedValidationAutomationAdvance": "scripts/context-panel-validation.py advance-automation --version <version> --build-number <build-number> --cloudkit-schema-receipt <cloudkit-production-schema-receipt.json> [--surface-comparison <comparison.json> --current-manifest <current-surface-manifest.json> --requirements <visual-review-requirements.json> --capture-config <private-capture-config.json> --artifact-root <absolute-private-artifact-root> --capture-output <absolute-shared-view-capture-receipt.json>]",
-      "signedValidationAutomationTests": "python3 -m unittest Tests/ScriptsTests/test_validation_automation.py Tests/ScriptsTests/test_validation_operator_flow.py",
-      "signedValidationCoordinatorTests": "python3 -m unittest Tests/ScriptsTests/test_validation_coordinator.py Tests/ScriptsTests/test_validation_automation.py Tests/ScriptsTests/test_runtime_receipt_ingestion.py Tests/ScriptsTests/test_validation_operator_flow.py Tests/ScriptsTests/test_visual_approvals.py Tests/ScriptsTests/test_release_workflows.py",
-      "signedValidationSharedViewEvidenceTests": "python3 -m unittest Tests/ScriptsTests/test_shared_view_evidence.py",
-      "signedValidationSharedViewCaptureTests": "python3 -m unittest Tests/ScriptsTests/test_shared_view_capture.py Tests/ScriptsTests/test_shared_view_capture_workflow.py",
-      "signedValidationOperatorFlowTests": "python3 -m unittest Tests/ScriptsTests/test_validation_operator_flow.py",
-      "signedValidationVisualApprovalTests": "python3 -m unittest Tests/ScriptsTests/test_visual_approvals.py Tests/ScriptsTests/test_validation_operator_flow.py",
-      "signedValidationGalleryTests": "swift test --filter 'ValidationGallery|ValidationFixtures|validationGallery|validationFixture' && python3 -m unittest Tests/ScriptsTests/test_validation_gallery_target_graph.py",
+      "signedValidationAutomationTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_automation.py Tests/ScriptsTests/test_validation_operator_flow.py",
+      "signedValidationCoordinatorTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_coordinator.py Tests/ScriptsTests/test_validation_automation.py Tests/ScriptsTests/test_runtime_receipt_ingestion.py Tests/ScriptsTests/test_validation_operator_flow.py Tests/ScriptsTests/test_visual_approvals.py Tests/ScriptsTests/test_release_workflows.py",
+      "signedValidationSharedViewEvidenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_shared_view_evidence.py",
+      "signedValidationSharedViewCaptureTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_shared_view_capture.py Tests/ScriptsTests/test_shared_view_capture_workflow.py",
+      "signedValidationOperatorFlowTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_operator_flow.py",
+      "signedValidationVisualApprovalTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_visual_approvals.py Tests/ScriptsTests/test_validation_operator_flow.py",
+      "signedValidationGalleryTests": "swift test --filter 'ValidationGallery|ValidationFixtures|validationGallery|validationFixture' && uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_gallery_target_graph.py",
       "signedValidationReplayInventoryCheck": "scripts/context-panel-replay-inventory.py check --json",
-      "physicalDefectCorpusCheck": "python3 scripts/context-panel-defect-corpus.py check --json",
+      "physicalDefectCorpusCheck": "uv run --no-project python scripts/context-panel-defect-corpus.py check --json",
       "signedValidationReplayInventorySeal": "scripts/context-panel-replay-inventory.py seal --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
       "signedValidationReplayInventoryVerify": "scripts/context-panel-replay-inventory.py verify --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
-      "signedValidationTrainReplayCheck": "python3 scripts/context-panel-signed-train-replay.py check --json",
-      "signedValidationTrainReplayVerify": "python3 scripts/context-panel-signed-train-replay.py verify --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
-      "signedValidationReplayInventoryTests": "python3 -m unittest Tests/ScriptsTests/test_replay_inventory.py",
-      "physicalDefectCorpusTests": "python3 -m unittest Tests/ScriptsTests/test_physical_defect_corpus.py",
+      "signedValidationTrainReplayCheck": "uv run --no-project python scripts/context-panel-signed-train-replay.py check --json",
+      "signedValidationTrainReplayVerify": "uv run --no-project python scripts/context-panel-signed-train-replay.py verify --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
+      "signedValidationReplayInventoryTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_replay_inventory.py",
+      "physicalDefectCorpusTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_physical_defect_corpus.py",
       "runtimeReceiptSession": "scripts/context-panel-runtime-session.py status",
-      "runtimeReceiptTests": "swift test --filter 'ContextPanelCoreTests.runtime|ContextPanelCoreTests.snapshotRefreshEvidence' && uv run python -m unittest Tests.ScriptsTests.test_runtime_receipts Tests.ScriptsTests.test_runtime_session",
+      "runtimeReceiptTests": "swift test --filter 'ContextPanelCoreTests.runtime|ContextPanelCoreTests.snapshotRefreshEvidence' && uv run --no-project python -m unittest Tests.ScriptsTests.test_runtime_receipts Tests.ScriptsTests.test_runtime_session",
       "surfaceFingerprintContract": "scripts/context-panel-surface-manifest.py validate",
       "surfaceEvidenceComparison": "scripts/context-panel-surface-manifest.py compare --previous <previous-source-manifest.json> --current <current-source-manifest.json> --train <beta|rc|release> --previous-expected-build-manifest <previous-platform.json>... --current-expected-build-manifest <current-platform.json>...",
-      "surfaceFingerprintTests": "python3 -m unittest Tests/ScriptsTests/test_surface_manifest.py",
+      "surfaceFingerprintTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_surface_manifest.py",
       "releaseEvidenceBetaShadowGate": "scripts/context-panel-release-gate.py shadow --train beta --comparison <comparison.json> --validation-report <final-report.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --output <release-evidence.json> --lineage-output <release-evidence-lineage.json>",
       "releaseEvidenceRCShadowGate": "scripts/context-panel-release-gate.py shadow --train rc --comparison <comparison.json> --validation-report <final-report.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --output <release-evidence.json> --lineage-output <release-evidence-lineage.json>",
       "releaseEvidenceReleaseShadowGate": "scripts/context-panel-release-gate.py shadow --train release --comparison <comparison.json> --validation-report <final-report.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --selected-rc-ledger <approved-rc-lineage.json> --output <release-evidence.json> --lineage-output <release-evidence-lineage.json>",
@@ -110,7 +110,7 @@
       "releaseEvidenceEnforcedReportValidation": "scripts/validate-release-evidence-report.py --report <release-evidence.json> --validation-report <final-report.json> --comparison <comparison.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --shadow-evidence <shadow-evidence.json> --version <version> --build-number <build-number> --train <beta|rc> --enforce",
       "releaseEvidenceReleaseReportValidation": "scripts/validate-release-evidence-report.py --report <release-evidence.json> --validation-report <final-report.json> --comparison <comparison.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --selected-rc-ledger <approved-rc-lineage.json> --shadow-evidence <shadow-evidence.json> --version <version> --build-number <build-number> --train release --enforce",
       "appStoreReviewReleaseEvidenceDefault": "enforce",
-      "releaseEvidenceTests": "python3 -m unittest Tests/ScriptsTests/test_release_evidence_gate.py Tests/ScriptsTests/test_submit_app_store_review.py Tests/ScriptsTests/test_release_workflows.py",
+      "releaseEvidenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_release_evidence_gate.py Tests/ScriptsTests/test_submit_app_store_review.py Tests/ScriptsTests/test_release_workflows.py",
       "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration|retired|settingsAccounts)\""
     },
     "docsRequiredWhen": [
@@ -132,40 +132,12 @@
     "App Store Connect Companion Build Upload",
     "Shared-View Capture Evidence",
     "TestFlight Beta Distribution",
-    "Submit App Store Review"
+    "Submit App Store Review",
+    "Upload App Store Screenshots"
   ],
-  "branchProtection": {
-    "ruleset": {
-      "name": "Protect main",
-      "target": "defaultBranch",
-      "enforcement": "active"
-    },
-    "pullRequestsRequired": true,
-    "requiredStatusChecks": {
-      "strict": true,
-      "contexts": ["swift", "Analyze Swift"]
-    },
-    "codeScanning": {
-      "tool": "CodeQL",
-      "alertsThreshold": "errors",
-      "securityAlertsThreshold": "high_or_higher"
-    },
-    "codeQuality": {
-      "severity": "errors"
-    },
-    "blocksForcePushes": true,
-    "blocksDeletion": true
-  },
   "qaLabels": [],
   "deployLabels": [],
   "healthUrls": [],
-  "runnerPolicy": {
-    "pullRequestMacOS": "same-repo: self-hosted macOS ARM64 context-panel; fork: macos-26",
-    "routineMacOS": ["self-hosted", "macOS", "ARM64", "context-panel"],
-    "releaseMacOS": "macos-26",
-    "releaseXcodeMajor": "26",
-    "notes": "Use GitHub-hosted macos-26 for fork pull_request validation so untrusted PR code does not run on the persistent self-hosted machine. Use the local self-hosted runner for trusted same-repo pull requests, push/manual routine validation, scheduled CodeQL, and workflow_dispatch events. Namespace persistent mutable build caches by physical checkout path. Keep release/upload jobs on explicit macos-26 until App Store Connect accepts the newer Xcode train."
-  },
   "githubSignals": {
     "postMerge": {
       "waitForActions": true,
@@ -193,7 +165,20 @@
       "validation gates change",
       "important workflows change",
       "repo relationship changes",
-      "ownership boundaries change"
+      "ownership boundaries change",
+      "default-branch rulesets or required status checks change",
+      "merge or release routing changes",
+      "catalog metadata schema or overall direction changes"
     ]
+  },
+  "githubSettings": {
+    "expected": {
+      "deleteBranchOnMerge": true
+    }
+  },
+  "prWorkflow": {
+    "mergeMethod": "merge",
+    "mergeAuthorization": "Use the task authorization under the overall direction; green CI alone does not authorize a merge. This repository uses normal GitHub PR merges, not the Launchplane merge train.",
+    "watchSkill": "babysit-pr"
   }
 }
