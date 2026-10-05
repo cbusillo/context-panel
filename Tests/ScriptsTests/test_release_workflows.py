@@ -1979,11 +1979,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         assert submit_step is not None
         script = textwrap.dedent(submit_step.group("body"))
 
+        trigger_modes = {}
+        for trigger in ("workflow_dispatch", "workflow_call"):
+            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
+            mode = indented_block(inputs, "release_evidence_mode", 6)
+            default = re.search(r"^        default: (\S+)$", mode, re.MULTILINE)
+            trigger_modes[f"default-{trigger}"] = default.group(1) if default else ""
+
         matrix = (
             ("dry-run", True, False, False, "202608080418", ""),
             ("prepare-only", False, False, True, "", ""),
             ("cancel-only", False, True, False, "", "1.0.53"),
             ("live", False, False, False, "202608080418", ""),
+            ("default-workflow_dispatch", False, False, False, "202608080418", ""),
+            ("default-workflow_call", False, False, False, "202608080418", ""),
         )
         for label, dry_run, cancel_only, prepare_only, build_number, removal in matrix:
             with self.subTest(mode=label), tempfile.TemporaryDirectory() as directory:
@@ -2033,7 +2042,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                         "INPUT_PREPARE_ONLY": str(prepare_only).lower(),
                         "INPUT_VALIDATION_REPORT_BASE64": "present",
                         "INPUT_VALIDATION_TRAIN": "release",
-                        "INPUT_RELEASE_EVIDENCE_MODE": "shadow",
+                        "INPUT_RELEASE_EVIDENCE_MODE": trigger_modes.get(label, "shadow"),
                         "INPUT_RELEASE_EVIDENCE_REPORT_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64": "present",
@@ -2057,6 +2066,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("--validation-report", arguments)
                 self.assertIn("--release-evidence-report", arguments)
                 self.assertIn("--release-evidence-historical-policy-archive", arguments)
+                forwarded_mode = arguments[arguments.index("--release-evidence-mode") + 1]
+                self.assertEqual(forwarded_mode, "enforce" if label in trigger_modes else "shadow")
 
     def test_release_evidence_entrypoints_execute_directly(self) -> None:
         for relative_path in (
