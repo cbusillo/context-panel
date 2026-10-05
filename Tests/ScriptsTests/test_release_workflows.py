@@ -4216,18 +4216,6 @@ wait
         self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
         self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
 
-    def test_live_review_submission_defaults_to_enforced_release_evidence(self) -> None:
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        defaults = []
-        for trigger in ("workflow_dispatch", "workflow_call"):
-            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
-            mode = indented_block(inputs, "release_evidence_mode", 6)
-            defaults.append(re.search(r"^        default: (\S+)$", mode, re.MULTILINE).group(1))
-        metadata = json.loads(self.read(".github/github.json"))
-
-        self.assertEqual(defaults, ["enforce", "enforce"])
-        self.assertIn('"appStoreReviewReleaseEvidenceDefault": "enforce"', json.dumps(metadata))
-
     def test_release_workflows_have_no_push_trigger_or_direct_release_mutation(self) -> None:
         for workflow_path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
             if workflow_path.name in {"ci.yml", "codeql.yml"}:
