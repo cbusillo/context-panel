@@ -8,7 +8,6 @@ import WidgetKit
 @main
 struct ContextPanelRefreshAgent {
     static func main() async {
-        var lastWidgetTimelineReloadAt: Date?
         let arguments = ProcessInfo.processInfo.arguments
         let utilityArguments = Array(arguments.dropFirst())
         let recognizedUtilityArguments = utilityArguments.filter {
@@ -49,7 +48,11 @@ struct ContextPanelRefreshAgent {
 
         let runner = SnapshotRefreshRunner(service: .appDefault(
             companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
-            renewsStaleBookmarks: false
+            renewsStaleBookmarks: false,
+            snapshotDidChange: {
+                WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
+                notifyContextPanelWidgetSnapshotUpdated()
+            }
         ))
         let warningService = LimitWarningNotificationService.appDefault()
         let diagnosticsStore = RefreshDiagnosticsStateStore(
@@ -80,12 +83,7 @@ struct ContextPanelRefreshAgent {
                     observedAt: Date()
                 )
                 _ = await runtimeReceiptRelay.synchronize()
-                reloadContextPanelWidgetTimeline(
-                    force: decision.wasRefreshed,
-                    lastReloadAt: &lastWidgetTimelineReloadAt
-                )
                 if decision.wasRefreshed {
-                    notifyContextPanelWidgetSnapshotUpdated()
                     await warningService.notifyIfNeeded(decision: decision)
                 }
             } catch {
@@ -126,12 +124,7 @@ struct ContextPanelRefreshAgent {
                     observedAt: Date()
                 )
                 _ = await runtimeReceiptRelay.synchronize()
-                reloadContextPanelWidgetTimeline(
-                    force: decision.wasRefreshed,
-                    lastReloadAt: &lastWidgetTimelineReloadAt
-                )
                 if decision.wasRefreshed {
-                    notifyContextPanelWidgetSnapshotUpdated()
                     await warningService.notifyIfNeeded(decision: decision)
                 }
             } catch {
@@ -275,20 +268,6 @@ struct ContextPanelRefreshAgent {
             data.append(contentsOf: buffer.prefix(count))
         }
         throw GoogleAntigravityStatusLineBridgeError.oversizedInput
-    }
-
-    private static func reloadContextPanelWidgetTimeline(
-        force: Bool,
-        lastReloadAt: inout Date?,
-        now: Date = Date()
-    ) {
-        if !force,
-           let lastReloadAt,
-           now.timeIntervalSince(lastReloadAt) < SnapshotFreshness.widgetTimelineInterval {
-            return
-        }
-        lastReloadAt = now
-        WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
     }
 
     private static func notifyContextPanelWidgetSnapshotUpdated() {
