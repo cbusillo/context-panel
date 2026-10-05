@@ -113,7 +113,10 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 import_roots.add("context_panel_validation" if node.level else (node.module or "").split(".")[0])
         self.assertFalse(
-            import_roots & {"context_panel_validation", "subprocess", "socket", "urllib", "http"},
+            import_roots & {
+                "context_panel_validation", "ctypes", "subprocess", "multiprocessing", "pty",
+                "socket", "ssl", "urllib", "urllib3", "http", "httpx", "requests",
+            },
             "shared-view planner must not import live operator or network/process dependencies",
         )
 
