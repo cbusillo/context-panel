@@ -42,7 +42,7 @@ gate. Releases are separate from merging and follow [the release procedure](docs
 The accepted [Horizon design](docs/design-direction.md) makes the account the
 unit on every surface. Account rows show remaining capacity, observed burn,
 when an account runs out, and how much it has to spare at its reset. The older
-Windows widget layout remains available in Display settings.
+limit-based layout remains available as the **Windows** option in Display settings.
 
 Clicking the widget should open the native app. The app is the place for account
 setup, provider-specific status, refresh history, raw limit details, charts over
@@ -158,6 +158,6 @@ session is running.
 The probes exercise shared `ContextPanelCore` connectors from the shell.
 They do not prove signed app or refresh-agent behavior: sandbox access, TCC,
 security-scoped bookmarks, app groups, and login-item environments differ.
-Validate those reads through the canonical signed runtime as [AGENTS.md](AGENTS.md#validation)
-requires. `SnapshotStoreProbe` additionally writes and reloads the local JSON
+Validate those reads through the canonical installed runtime as
+[AGENTS.md](AGENTS.md#validation) requires. `SnapshotStoreProbe` additionally writes and reloads the local JSON
 cache shape used by the app and widget.
