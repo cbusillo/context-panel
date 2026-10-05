@@ -1983,8 +1983,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         for trigger in ("workflow_dispatch", "workflow_call"):
             inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
             mode = indented_block(inputs, "release_evidence_mode", 6)
-            default = re.search(r"^        default: (\S+)$", mode, re.MULTILINE)
-            trigger_modes[f"default-{trigger}"] = default.group(1) if default else ""
+            default = re.search(r"^ {8}default: (\S+)$", mode, re.MULTILINE)
+            trigger_modes[f"default-{trigger}"] = shlex.split(default.group(1))[0] if default else ""
 
         matrix = (
             ("dry-run", True, False, False, "202608080418", ""),
