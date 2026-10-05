@@ -9,7 +9,6 @@ import sys
 import tempfile
 import unittest
 
-
 from Tests.ScriptsTests.fixtures.runtime_relay import RuntimeRelayFixture
 
 

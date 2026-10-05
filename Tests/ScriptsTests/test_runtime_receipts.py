@@ -44,7 +44,20 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("runtime receipt relay blocked", result.stderr)
+        self.assertIn("receipt is unavailable or invalid", result.stderr)
         self.assertFalse(self.fixture.marker_path.exists())
+
+    def test_runtime_receipt_sync_rejects_unavailable_source_identity(self):
+        for script in ("#!/bin/sh\nexit 8\n", "#!/bin/sh\nprintf 'invalid commit\\n'\n"):
+            with self.subTest(script=script):
+                (self.fixture.root / "tools/git").write_text(script)
+
+                result = self.fixture.sync()
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("repository source commit is unavailable", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertFalse(self.fixture.marker_path.exists())
 
     def test_runtime_receipt_sync_relays_after_schema_receipt_verification(self):
         result = self.fixture.sync()
@@ -61,6 +74,7 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
 
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("runtime receipt host synchronization returned", result.stderr)
+                self.assertEqual(result.stdout, "")
                 self.assertTrue(self.fixture.marker_path.exists())
 
     def test_runtime_receipt_sync_rejects_invalid_transfer_counts(self):
@@ -79,6 +93,7 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
 
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("unsupported result", result.stderr)
+                    self.assertEqual(result.stdout, "")
 
     def test_runtime_receipt_sync_preserves_agent_failures(self):
         for healthy, exit_code in ((False, 0), (True, 3)):

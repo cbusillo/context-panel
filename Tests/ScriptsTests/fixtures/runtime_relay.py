@@ -14,7 +14,7 @@ SCHEMA_RECEIPT_KEY = "runtime-receipt-test-key-32-bytes-minimum"
 
 
 class RuntimeRelayFixture:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path) -> None:
         self.root = root
         self.receipt_path = root / "schema-receipt.json"
         self.marker_path = root / "agent-ran"
@@ -41,7 +41,8 @@ class RuntimeRelayFixture:
             "--cktool-schema", str(REPO_ROOT / "CloudKit/companion-sync.schema.ckdb"),
         )
 
-    def write_agent(self, *, payload: object = None, raw_output: str | None = None, exit_code: int = 0):
+    def write_agent(self, *, payload: object = None, raw_output: str | None = None, exit_code: int = 0) -> None:
+        self.marker_path.unlink(missing_ok=True)
         if payload is None:
             payload = {
                 "healthy": True, "sessionAction": "unchanged", "messages": [],
