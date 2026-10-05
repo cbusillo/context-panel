@@ -241,7 +241,7 @@ struct AccountGlanceWidget: View {
         .accessibilityLabel([account.map { $0.glanceAccessibilityText(now: now, isNext: true) }
                                 ?? provider.accountDisplayName + ", " + AccountTerms.noEligibleAccount,
                              total.map { $0.accessibilityText(now: now) }].compactMap { $0 }.joined(separator: ". "))
-        .accessibilityHint(account == nil ? "Opens Context Panel" : "Opens this account")
+        .cpwNavigationHint(account == nil ? "Opens Context Panel" : "Opens this account")
     }
 
     // MARK: Large
@@ -336,7 +336,7 @@ struct AccountGlanceWidget: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: next))
-        .accessibilityHint("Opens this account")
+        .cpwNavigationHint("Opens this account")
     }
 
     /// Under the name: "next" or "use last", then the 5-hour window's room and refill for current

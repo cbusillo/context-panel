@@ -122,3 +122,20 @@ import Testing
     #expect(preview.accountBurnRates == widget.accountBurnRates)
     #expect(preview.lastReadingAt == savedAt)
 }
+
+@Test func settingsWidgetPreviewKeepsTheReadingDateWhenARefreshFails() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let old = now.addingTimeInterval(-86_400)
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let limit = UsageLimit(provider: .anthropic, accountID: "saved", accountName: "Saved account",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 40, limit: 100,
+        resetsAt: now.addingTimeInterval(86_400), lastUpdatedAt: old, confidence: .observed)
+    let failedReport = StoredProviderReport(provider: .anthropic, accountID: "saved", accountName: "Saved account",
+        generatedAt: now, status: .failure, errorMessage: "Refresh failed")
+    try store.save(StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: [limit]), reports: [failedReport]))
+    let service = SnapshotRefreshService(accountStore: accountStore, stores: SnapshotRefreshStores(primary: store))
+    #expect(service.savedWidgetPreviewSnapshot(now: now).lastReadingAt == old)
+}

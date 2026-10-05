@@ -47,6 +47,21 @@ struct CPWNavigationLink<Content: View>: View {
     }
 }
 
+private struct CPWNavigationHint: ViewModifier {
+    let hint: String
+    @Environment(\.cpwNavigationEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content.accessibilityHint(enabled ? hint : "")
+    }
+}
+
+extension View {
+    func cpwNavigationHint(_ hint: String) -> some View {
+        modifier(CPWNavigationHint(hint: hint))
+    }
+}
+
 public extension EnvironmentValues {
     var cpwThemeVariant: CPWThemeVariant {
         get { self[CPWThemeVariantKey.self] }
@@ -978,7 +993,7 @@ private struct CPWResetCreditHeaderToken: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(accessibilityText)
-            .accessibilityHint(linkConfiguration.accessibilityHint)
+            .cpwNavigationHint(linkConfiguration.accessibilityHint)
         } else {
             styledToken
                 .accessibilityElement(children: .ignore)
@@ -1213,7 +1228,7 @@ private struct CPWPromptCacheInlineStat: View {
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Opens cache stats settings in Context Panel")
+            .cpwNavigationHint("Opens cache stats settings in Context Panel")
         case .stale:
             let content = stalePillContent
             promptCachePill(

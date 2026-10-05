@@ -77,7 +77,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     /// Provider reading dates, excluding synthetic timestamps for missing saved data.
     public var lastReadingAt: Date? {
-        (limits.compactMap(\.lastUpdatedAt) + reports.map(\.generatedAt)).max()
+        (limits.compactMap(\.lastUpdatedAt) + reports.filter { $0.status.isCompanionObservationStatus }.map(\.generatedAt)).max()
     }
 
     public var providerAccessAlerts: [ProviderAccessAlert] {
