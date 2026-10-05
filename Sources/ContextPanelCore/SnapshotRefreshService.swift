@@ -528,6 +528,7 @@ public struct SnapshotRefreshService: Sendable {
     private let promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)?
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
     private let connectorFactory: (@Sendable (AccountConfigurationDocument) -> [any ProviderConnector])?
+    private let snapshotDidChange: @Sendable () -> Void
 
     public init(
         accountStore: AccountConfigurationStore,
@@ -539,6 +540,7 @@ public struct SnapshotRefreshService: Sendable {
         connectorFactory: (@Sendable (AccountConfigurationDocument) -> [any ProviderConnector])? = nil,
         refreshDiagnosticsStore: RefreshDiagnosticsStateStore? = nil,
         promptCacheTelemetryMirror: (@Sendable (SecureFileBookmarkStore?, [URL]) -> Void)? = nil,
+        snapshotDidChange: @escaping @Sendable () -> Void = {},
         promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
             PromptCacheTelemetryReader.mirroredObservations(now: now)
         }
@@ -553,11 +555,13 @@ public struct SnapshotRefreshService: Sendable {
         self.refreshDiagnosticsStore = refreshDiagnosticsStore
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
+        self.snapshotDidChange = snapshotDidChange
     }
 
     public static func appDefault(
         companionRemoteStore: CompanionRemoteSyncStore? = nil,
-        renewsStaleBookmarks: Bool = true
+        renewsStaleBookmarks: Bool = true,
+        snapshotDidChange: @escaping @Sendable () -> Void = {}
     ) -> SnapshotRefreshService {
         SnapshotRefreshService(
             accountStore: AccountConfigurationStore(
@@ -573,7 +577,8 @@ public struct SnapshotRefreshService: Sendable {
             companionSyncPublisher: .appDefault(remoteStore: companionRemoteStore),
             refreshDiagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
-            )
+            ),
+            snapshotDidChange: snapshotDidChange
         )
     }
 
@@ -737,6 +742,7 @@ public struct SnapshotRefreshService: Sendable {
                 // Preserve the original observation times; removal is not a quota reading.
                 try stores.primary.save(pruned)
                 mirrorSnapshotToFallbackStores(pruned)
+                snapshotDidChange()
                 previousStoredSnapshot = pruned
             }
         }
@@ -788,6 +794,7 @@ public struct SnapshotRefreshService: Sendable {
         savedAt: Date = Date(),
         preservesUnreportedAccounts: Bool = false
     ) async throws -> SnapshotRefreshOutcome {
+        let previousSnapshot = stores.primary.loadCurrent().snapshot
         try stores.primary.saveMerged(
             refreshResult: refreshResult,
             savedAt: savedAt,
@@ -796,6 +803,8 @@ public struct SnapshotRefreshService: Sendable {
         let storedResult = stores.primary.loadCurrent()
         if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
+            // Local widget reads must not wait for companion network work.
+            if storedSnapshot != previousSnapshot { snapshotDidChange() }
             let companionResult: CompanionSyncSaveResult? = if let companionSyncPublisher {
                 await companionSyncPublisher.publishAll(
                     storedSnapshot: storedSnapshot,
@@ -842,6 +851,7 @@ public struct SnapshotRefreshService: Sendable {
         savedAt: Date = Date(),
         preservesUnreportedAccounts: Bool = false
     ) throws -> SnapshotRefreshOutcome {
+        let previousSnapshot = stores.primary.loadCurrent().snapshot
         try stores.primary.saveMerged(
             refreshResult: refreshResult,
             savedAt: savedAt,
@@ -850,6 +860,7 @@ public struct SnapshotRefreshService: Sendable {
         let storedResult = stores.primary.loadCurrent()
         if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
+            if storedSnapshot != previousSnapshot { snapshotDidChange() }
             let companionResult = companionSyncPublisher?.publish(
                 storedSnapshot: storedSnapshot,
                 publishedAt: savedAt,
