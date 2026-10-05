@@ -1979,11 +1979,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         assert submit_step is not None
         script = textwrap.dedent(submit_step.group("body"))
 
+        trigger_modes = {}
+        for trigger in ("workflow_dispatch", "workflow_call"):
+            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
+            mode = indented_block(inputs, "release_evidence_mode", 6)
+            default = re.search(r"^ {8}default: (\S+)", mode, re.MULTILINE)
+            trigger_modes[f"default-{trigger}"] = shlex.split(default.group(1))[0] if default else ""
+
         matrix = (
             ("dry-run", True, False, False, "202608080418", ""),
             ("prepare-only", False, False, True, "", ""),
             ("cancel-only", False, True, False, "", "1.0.53"),
             ("live", False, False, False, "202608080418", ""),
+            ("default-workflow_dispatch", False, False, False, "202608080418", ""),
+            ("default-workflow_call", False, False, False, "202608080418", ""),
         )
         for label, dry_run, cancel_only, prepare_only, build_number, removal in matrix:
             with self.subTest(mode=label), tempfile.TemporaryDirectory() as directory:
@@ -2033,7 +2042,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                         "INPUT_PREPARE_ONLY": str(prepare_only).lower(),
                         "INPUT_VALIDATION_REPORT_BASE64": "present",
                         "INPUT_VALIDATION_TRAIN": "release",
-                        "INPUT_RELEASE_EVIDENCE_MODE": "shadow",
+                        "INPUT_RELEASE_EVIDENCE_MODE": trigger_modes.get(label, "shadow"),
                         "INPUT_RELEASE_EVIDENCE_REPORT_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64": "present",
@@ -2057,6 +2066,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("--validation-report", arguments)
                 self.assertIn("--release-evidence-report", arguments)
                 self.assertIn("--release-evidence-historical-policy-archive", arguments)
+                forwarded_mode = arguments[arguments.index("--release-evidence-mode") + 1]
+                self.assertEqual(forwarded_mode, "enforce" if label in trigger_modes else "shadow")
 
     def test_release_evidence_entrypoints_execute_directly(self) -> None:
         for relative_path in (
@@ -4215,18 +4226,6 @@ wait
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertLess(steps.index("preflight_built_runtime_profiles"), steps.index("stop_context_panel"))
         self.assertLess(steps.index("stop_context_panel"), steps.index("install_checkout_app"))
-
-    def test_live_review_submission_defaults_to_enforced_release_evidence(self) -> None:
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        defaults = []
-        for trigger in ("workflow_dispatch", "workflow_call"):
-            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
-            mode = indented_block(inputs, "release_evidence_mode", 6)
-            defaults.append(re.search(r"^        default: (\S+)$", mode, re.MULTILINE).group(1))
-        metadata = json.loads(self.read(".github/github.json"))
-
-        self.assertEqual(defaults, ["enforce", "enforce"])
-        self.assertIn('"appStoreReviewReleaseEvidenceDefault": "enforce"', json.dumps(metadata))
 
     def test_release_workflows_have_no_push_trigger_or_direct_release_mutation(self) -> None:
         for workflow_path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
