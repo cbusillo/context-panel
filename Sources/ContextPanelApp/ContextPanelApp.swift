@@ -188,7 +188,6 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.model.loadSnapshot(reloadWidgetTimelines: false)
-                reloadContextPanelWidgetTimeline()
             }
         }
     }
@@ -5680,7 +5679,8 @@ final class ContextPanelAppModel: ObservableObject {
         fixedPresentationDate: Date? = nil
     ) {
         let resolvedRefreshService = refreshService ?? .appDefault(
-            companionRemoteStore: CompanionCloudKitSyncStoreFactory.make()
+            companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
+            snapshotDidChange: { reloadContextPanelWidgetTimeline() }
         )
         self.refreshService = resolvedRefreshService
         refreshRunner = SnapshotRefreshRunner(service: resolvedRefreshService)
@@ -5899,13 +5899,13 @@ final class ContextPanelAppModel: ObservableObject {
             let decision = try await refreshRunner.refresh()
             recordRefreshFinished(runID: runID, decision: decision, finishedAt: Date())
             if case .skippedAlreadyRunning = decision {
-                loadSnapshot()
+                loadSnapshot(reloadWidgetTimelines: false)
                 storeStatus = .stale
                 errorMessage = "Another refresh is still running. Try again in a moment."
                 return
             }
             await limitWarningNotificationService.notifyIfNeeded(decision: decision)
-            loadSnapshot()
+            loadSnapshot(reloadWidgetTimelines: false)
         } catch {
             recordRefreshFailed(runID: runID, finishedAt: Date(), error: error)
             storeStatus = .failure

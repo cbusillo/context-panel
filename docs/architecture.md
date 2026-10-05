@@ -192,6 +192,14 @@ and the refresh agent own connector refreshes through the same
 `SnapshotRefreshService` in `ContextPanelCore`; account setup, diagnostics, and
 future migration from JSON to a richer store stay in the app.
 
+The app and refresh agent request a widget timeline reload immediately after
+the refresh service writes a changed local snapshot and its widget mirrors,
+before companion publishing or warning delivery. Rewriting an identical stored
+snapshot does not request a reload. Observation and save timestamps count as
+changes because they affect freshness and reset guidance. The widget's fallback
+timeline interval is five minutes, matching the minimum background refresh
+cadence; macOS schedules the actual rendering after a reload request.
+
 A healthy account configuration with no enabled accounts is authoritative. If
 provider state was previously stored, the refresh service writes and publishes
 an empty snapshot rather than treating the refresh as a no-op. That clears stale
