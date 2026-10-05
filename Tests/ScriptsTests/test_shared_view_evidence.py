@@ -153,7 +153,7 @@ class SharedViewEvidenceTests(unittest.TestCase):
         self.matrix = load_shared_view_matrix(DEFAULT_MATRIX_PATH, self.surface_policy)
 
     def test_planning_uses_supplied_inputs_without_live_io(self) -> None:
-        comparison = comparison_for({"watchos.app": ["shared-view"]})
+        comparison = comparison_for({surface: ["shared-view"] for surface in self.matrix.surface_order})
         with contextlib.ExitStack() as guards:
             for target in (
                 "builtins.open", "pathlib.Path.open", "os.open", "os.system", "os.popen",
