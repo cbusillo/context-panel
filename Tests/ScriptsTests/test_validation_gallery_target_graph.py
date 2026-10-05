@@ -41,7 +41,6 @@ TV_TOP_SHELF_SOURCE = (
 )
 SHARED_VIEW_EVIDENCE_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "shared_view_evidence.py"
 VALIDATION_CLI_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "cli.py"
-VALIDATION_ENTRY_POINT = REPO_ROOT / "scripts" / "context-panel-validation.py"
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
@@ -98,19 +97,14 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         )
 
     def test_shared_view_planner_has_no_live_storage_or_publication_paths(self):
+        # Retain the existing privacy/security scans under the AGENTS.md exception.
+        # Import order and view-call spelling are not privacy boundaries.
         planner = SHARED_VIEW_EVIDENCE_SOURCE.read_text()
         cli = VALIDATION_CLI_SOURCE.read_text()
-        entry_point = VALIDATION_ENTRY_POINT.read_text()
-        planner_imports = re.findall(r"^(?:from|import)\s+([^\s.]+)", planner, flags=re.MULTILINE)
         plan_start = cli.index("def run_plan_shared_view_evidence")
         plan_end = cli.index("\ndef emit_session_state", plan_start)
         plan_function = cli[plan_start:plan_end]
 
-        self.assertEqual(
-            planner_imports,
-            ["__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "re", "tempfile", "typing", "context_panel_comparison_schema"],
-        )
-        self.assertIn("from context_panel_validation.cli import main", entry_point)
         for forbidden in (
             "CloudKit",
             "WidgetKit",
@@ -233,32 +227,15 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn("showsValidationGalleryEntry", tv_app)
         self.assertNotIn("TVValidationGalleryEntryLabel", tv_app)
 
-    def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
+    def test_watch_gallery_has_no_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()
-        watch_app = WATCH_APP_SOURCE.read_text()
         watch_gallery = WATCH_GALLERY_SOURCE.read_text()
         watch_widget = WATCH_WIDGET_SOURCE.read_text()
         watch_target = self.yaml_target_block(project, "ContextPanelWatch")
         watch_widget_target = self.yaml_target_block(project, "ContextPanelWatchWidgetExtension")
 
-        self.assertIn("ContextPanelValidationFixturesWatch", watch_target)
-        self.assertIn("ValidationGalleryFixtureAdapter.swift", watch_target)
-        self.assertIn("WatchValidationFixtureAdapter.swift", watch_target)
-        self.assertIn("ContextPanelWatchWidget.swift", watch_target)
         self.assertNotIn("CONTEXT_PANEL_WATCH_WIDGET_EXTENSION", watch_target)
-        self.assertIn("WatchUsageContent(", watch_app)
-        self.assertIn("ContextPanelWatchWidgetView(", watch_gallery)
-        self.assertIn("family: family.widgetFamily", watch_gallery)
-        self.assertIn("presentationDate: context.presentationDate", watch_gallery)
-        self.assertIn("now: presentationDate", watch_app)
-        self.assertIn("WatchValidationSampleContainer", watch_gallery)
-        self.assertIn("ForEach(ContextPanelWatchComplicationFamily.allCases)", watch_gallery)
-        self.assertIn("#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION", watch_widget)
         self.assertIn("CONTEXT_PANEL_WATCH_WIDGET_EXTENSION", watch_widget_target)
-        self.assertIn(
-            ".supportedFamilies(ContextPanelWatchWidgetView.supportedFamilies)",
-            watch_widget,
-        )
 
         guarded_regions = re.findall(
             r"#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION\n(.*?)#endif",
@@ -293,34 +270,18 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, watch_gallery)
 
-    def test_tv_gallery_reuses_shipping_views_without_publication_paths(self):
+    def test_tv_gallery_has_no_publication_paths(self):
         project = (REPO_ROOT / "project.yml").read_text()
-        tv_app = TV_APP_SOURCE.read_text()
         tv_gallery = TV_GALLERY_SOURCE.read_text()
         tv_preview = TV_PREVIEW_SOURCE.read_text()
         top_shelf = TV_TOP_SHELF_SOURCE.read_text()
         tv_target = self.yaml_target_block(project, "ContextPanelTV")
         top_shelf_target = self.yaml_target_block(project, "ContextPanelTVTopShelfExtension")
 
-        self.assertIn("ContextPanelValidationFixturesTV", tv_target)
-        self.assertIn("ValidationGalleryFixtureAdapter.swift", tv_target)
-        self.assertIn("TVValidationFixtureAdapter.swift", tv_target)
-        self.assertIn("ContextPanelTVTopShelfProvider.swift", tv_target)
         self.assertNotIn("CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION", tv_target)
         self.assertIn("CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION", top_shelf_target)
         self.assertNotIn("ContextPanelValidation", top_shelf_target)
 
-        self.assertIn("TVRunwayContent(", tv_app)
-        self.assertIn("TVRunwayContent(", tv_gallery)
-        self.assertIn("TVProviderDetailView(", tv_gallery)
-        self.assertIn("TVTopShelfRenderer()", tv_gallery)
-        self.assertIn(".imageData(", tv_gallery)
-        self.assertIn("presentationDate: context.presentationDate", tv_gallery)
-        self.assertIn("SAMPLE DATA", tv_gallery)
-        self.assertIn("READ ONLY", tv_gallery)
-        self.assertIn("detailActionMode: .readOnly", tv_gallery)
-        self.assertIn(".accessibilityElement(children: .contain)", tv_gallery)
-        self.assertNotIn(".disabled(true)", tv_gallery)
         self.assertNotIn("@AppStorage", tv_gallery)
 
         for forbidden in (
@@ -369,7 +330,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             tv_preview,
             r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
         )
-        self.assertIn("Sample OpenAI Personal", tv_preview)
 
     @staticmethod
     def swift_array_case_values(source: str, label: str) -> tuple[str, ...]:
