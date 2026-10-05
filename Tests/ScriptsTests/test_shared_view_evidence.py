@@ -152,6 +152,19 @@ class SharedViewEvidenceTests(unittest.TestCase):
         self.surface_policy = load_surface_policy(DEFAULT_SURFACE_POLICY_PATH)
         self.matrix = load_shared_view_matrix(DEFAULT_MATRIX_PATH, self.surface_policy)
 
+    def test_planning_uses_supplied_inputs_without_live_io(self) -> None:
+        comparison = comparison_for({surface: ["shared-view"] for surface in sorted(self.matrix.surface_order)})
+        with contextlib.ExitStack() as guards:
+            for target in (
+                "builtins.open", "pathlib.Path.open", "os.open", "os.system", "os.popen",
+                "subprocess.Popen", "socket.socket", "socket.create_connection",
+            ):
+                guards.enter_context(mock.patch(target, side_effect=AssertionError(f"planner attempted {target}")))
+            payload = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+
+        self.assertTrue(payload["requirements"])
+        self.assertEqual(payload["currentManifestID"], comparison["currentManifestId"])
+
     def test_matrix_covers_exactly_the_shared_view_surfaces_in_policy_order(self) -> None:
         policy_shared = tuple(
             surface.id
