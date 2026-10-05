@@ -9,32 +9,40 @@ The product goal is a small, native Mac utility that can answer the everyday
 question before you prompt: which accounts and models are still available,
 which limits are close, and when each allowance resets.
 
-## Current Status
+## Direction and Contributions
 
-This repository now includes the native macOS app, WidgetKit extension,
-background refresh agent, companion targets, shared provider/usage-limit domain
-modules, CI, release workflows, and repository workflow metadata. Active work is
-focused on provider connectors, account setup, widget/app polish, release
-validation, and production-quality diagnostics.
+The Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
+governs priorities and stop boundaries. This repository has no DIRECTION.md of
+its own. [AGENTS.md](AGENTS.md) is the only agent-instruction file and owns the
+repository's execution and validation guidance. Durable work is tracked in
+GitHub issues.
 
-## Product Direction
+Contributions use focused branches and pull requests. Authorized changes land
+with a normal merge commit after green CI and required checks; this repository
+does not use the Launchplane merge train. Reviews by another model follow the
+[shared review reference](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md):
+findings are weighed against evidence, rather than reviewer approval being a
+gate. Releases are separate from merging and follow [the release procedure](docs/release.md).
+
+## Product Experience
 
 - Native macOS first, with WidgetKit as the primary glanceable surface.
 - A companion app for account setup, provider connection health, and deeper
   usage detail.
 - Multiple logins per provider, because friends, work accounts, personal
   accounts, and team accounts all need to coexist.
-- Provider-neutral usage state for OpenAI, Anthropic, Google, and later services.
+- Provider-neutral usage state for OpenAI, Anthropic, and Google.
 - Local-first handling of account credentials and usage snapshots.
 - Beautiful compact charts and state widgets that emphasize remaining capacity,
   reset time, and trend instead of billing-dashboard noise.
 - Small enough to share with friends without setup becoming a project.
 
-## Planned Experience
+## App and Widget
 
-The widget should be useful at a glance: provider/account rows, remaining usage,
-reset timing, and compact visual indicators such as rings, bars, sparklines, or
-small multiples when they make the state easier to read.
+The accepted [Horizon design](docs/design-direction.md) makes the account the
+unit on every surface. Account rows show remaining capacity, observed burn,
+when an account runs out, and how much it has to spare at its reset. The older
+Windows widget layout remains available in Display settings.
 
 Clicking the widget should open the native app. The app is the place for account
 setup, provider-specific status, refresh history, raw limit details, charts over
@@ -75,33 +83,30 @@ xcodebuild \
   build
 ```
 
-To build a quick launchable macOS app bundle from the SwiftPM app shell:
+Build outputs are intermediate artifacts. App, widget, login-item, provider,
+sandbox, and storage testing use only `/Applications/Context Panel.app`.
+For a Development runtime, use the in-place install gate:
 
 ```sh
-scripts/package-macos-app.sh --output dist --identity auto
-open "dist/Context Panel.app"
+scripts/context-panel-runtime-baseline.sh install --launch
 ```
 
-When a Developer ID Application identity is available in Keychain, the script
-uses it through `codesign`; otherwise it falls back to ad-hoc signing. This is
-the interim friend-installable path for the app shell only; use the Xcode build
-when testing the widget extension.
-
-To build the native release artifact locally, including the widget extension:
+If the installed app is signed Production, TestFlight, or App Store, preserve it
+and use the read-only check instead:
 
 ```sh
-scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity -
+scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
-This command produces an ad-hoc validation artifact. Developer ID packaging
-requires the app, widget, and refresh-agent provisioning profiles from the same
-certificate set; see `docs/release.md` for the signed and notarized command.
+Follow [AGENTS.md's runtime requirements](AGENTS.md#validation) before judging
+behavior or reporting readiness, including active process, widget registration,
+refresh-agent, URL-handler, fingerprint, and real WidgetKit cache evidence.
+Signed companion validation also requires the companion cache preflight.
 
-GitHub Actions also has a `Release` workflow. It runs only from `main`, either
-dispatched by hand or called by `Ship`; creating a tag does not start it.
-Without Apple signing secrets it produces an ad-hoc signed validation artifact;
-with Developer ID and notarization secrets it produces the friend-installable
-release artifact. See `docs/release.md` for the full release path.
+Packaging and distribution use [the release procedure](docs/release.md), including
+version/build inputs, signing, CloudKit schema receipts, and release gates.
+The `Release` workflow runs from `main` through manual dispatch or `Ship`;
+creating a tag does not start it, and merging a PR does not publish a release.
 
 ## Local Provider Probes
 
@@ -150,7 +155,9 @@ Historical AGY 1.1.1 compatibility was verified against a non-interactive
 publishes the documented quota payload even though no separate interactive AGY
 session is running.
 
-The probes call the same `ContextPanelCore` connectors the app will use, so
-passing probe output is also a smoke test for the production connector runtime.
-`SnapshotStoreProbe` additionally writes and reloads the local JSON cache shape
-that the app and widget will consume.
+The probes exercise shared `ContextPanelCore` connectors from the shell.
+They do not prove signed app or refresh-agent behavior: sandbox access, TCC,
+security-scoped bookmarks, app groups, and login-item environments differ.
+Validate those reads through the canonical signed runtime as [AGENTS.md](AGENTS.md#validation)
+requires. `SnapshotStoreProbe` additionally writes and reloads the local JSON
+cache shape used by the app and widget.

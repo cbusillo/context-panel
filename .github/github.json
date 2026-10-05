@@ -3,6 +3,7 @@
   "projectType": "native-macos-app",
   "docs": {
     "agentNotes": "AGENTS.md",
+    "overallDirection": "https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md",
     "index": "docs/README.md",
     "productGoals": "docs/product-goals.md",
     "architecture": "docs/architecture.md",
