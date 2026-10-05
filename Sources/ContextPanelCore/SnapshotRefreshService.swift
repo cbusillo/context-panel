@@ -600,6 +600,45 @@ public struct SnapshotRefreshService: Sendable {
         stores.primary.loadCurrent()
     }
 
+    /// Projects only saved inputs through the widget's presentation contract.
+    /// No connector, credential read, refresh, sync or configuration migration runs here.
+    public func savedWidgetPreviewSnapshot(
+        now: Date,
+        forecastSettings: FastModeForecastSettings = .defaultSettings,
+        stalenessPolicy: SnapshotStoreStalenessPolicy? = nil
+    ) -> WidgetSnapshot {
+        let policy = stalenessPolicy ?? SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        let document = (try? Data(contentsOf: accountStore.configurationURL)).flatMap {
+            try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
+        }
+        let cache = MacSharedAccountCache(cacheURL: accountStore.configurationURL
+            .deletingLastPathComponent().appending(path: MacSharedAccountCache.filename))
+        let cacheState = bookmarkStore.flatMap {
+            WidgetSnapshot.promptCacheWidgetState(configuration: document?.accounts ?? [], bookmarkStore: $0)
+        }
+        var selectedStore = stores.primary
+        var result = selectedStore.loadCurrent(policy: policy, now: now)
+        if result.snapshot == nil || result.status == .failure {
+            for mirror in stores.mirrors {
+                let fallback = mirror.loadCurrent(policy: policy, now: now)
+                if fallback.snapshot != nil {
+                    selectedStore = mirror
+                    result = fallback
+                    break
+                }
+            }
+        }
+        let historyStart = min(now, result.snapshot?.snapshot.generatedAt ?? now).addingTimeInterval(-24 * 3_600)
+        return WidgetSnapshot.fromStore(
+            result, now: now,
+            history: selectedStore.loadHistory(query: SnapshotStoreQuery(since: historyStart)),
+            fastModeForecastSettings: forecastSettings,
+            promptCacheWidgetState: cacheState, stalenessPolicy: policy,
+            configuration: document?.accounts, sharedDocument: cache.load(now: now),
+            publisherID: document?.publisherID, accountIntentDocument: document
+        )
+    }
+
     public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
         let sources = promptCacheTelemetrySourceDirectories(now: now)
         if let promptCacheTelemetryMirror {

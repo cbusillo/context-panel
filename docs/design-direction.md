@@ -36,6 +36,10 @@ so every surface draws the same picture at a different size.
   grouped by provider. Account rows fold out to every window and banked reset.
 - **Widgets** default to account rows. The older limit-based layout remains a
   Display setting named Windows.
+- **Settings → Display** shows a read-only preview of the chosen layout, using
+  the shared widget view and saved data. Small, Medium and Large preview sizes
+  are local choices; they do not configure the placed widget. The form scrolls
+  to preserve access to the Windows visibility and ordering controls.
 
 Where the sections below disagree with Horizon for the account layout, Horizon
 wins. They still govern the Windows widget layout, Watch complications, Apple

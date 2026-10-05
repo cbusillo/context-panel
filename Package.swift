@@ -74,7 +74,7 @@ let package = Package(
         ),
         .target(
             name: "ContextPanelSettingsUI",
-            dependencies: ["ContextPanelCore"]
+            dependencies: ["ContextPanelCore", "ContextPanelWidgetUI"]
         ),
         .target(
             name: "ContextPanelCompanionSupport",
@@ -98,6 +98,7 @@ let package = Package(
                 "ContextPanelCore",
                 "ContextPanelCloudKitSync",
                 "ContextPanelSettingsUI",
+                "ContextPanelWidgetUI",
                 "ContextPanelValidationGalleryUI",
             ]
         ),

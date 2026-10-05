@@ -73,6 +73,7 @@ targets:
       - path: Sources/ContextPanelSettingsUI
     dependencies:
       - target: ContextPanelCore
+      - target: ContextPanelWidgetUI
     settings:
       base:
         PRODUCT_NAME: ContextPanelSettingsUI

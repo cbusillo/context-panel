@@ -75,6 +75,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         UsageSnapshot(generatedAt: generatedAt, limits: limits)
     }
 
+    /// Provider reading dates, excluding synthetic timestamps for missing saved data.
+    public var lastReadingAt: Date? {
+        (limits.compactMap(\.lastUpdatedAt) + reports.filter { $0.status.isCompanionObservationStatus }.map(\.generatedAt)).max()
+    }
+
     public var providerAccessAlerts: [ProviderAccessAlert] {
         reports.providerAccessAlerts
     }
@@ -368,6 +373,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         now: Date = Date()
     ) -> PromptCacheWidgetState? {
         let accounts = accountStore.load(now: now).document.accounts
+        return promptCacheWidgetState(configuration: accounts, bookmarkStore: bookmarkStore)
+    }
+
+    public static func promptCacheWidgetState(
+        configuration accounts: [LocalProviderAccountConfiguration],
+        bookmarkStore: SecureFileBookmarkStore
+    ) -> PromptCacheWidgetState? {
         let usagePaths = accounts.compactMap { account -> String? in
             guard account.isEnabled, account.connectorKind == .codexRateLimits else { return nil }
             return promptCacheTelemetryDirectoryPath(for: account)
