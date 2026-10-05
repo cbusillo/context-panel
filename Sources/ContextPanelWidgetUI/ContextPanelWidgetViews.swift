@@ -24,6 +24,44 @@ private struct CPWPresentationDateKey: EnvironmentKey {
     static let defaultValue = Date()
 }
 
+private struct CPWNavigationEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var cpwNavigationEnabled: Bool {
+        get { self[CPWNavigationEnabledKey.self] }
+        set { self[CPWNavigationEnabledKey.self] = newValue }
+    }
+}
+
+/// Preview content keeps the same spoken labels without exposing a link action.
+struct CPWNavigationLink<Content: View>: View {
+    let destination: URL
+    @ViewBuilder var content: () -> Content
+    @Environment(\.cpwNavigationEnabled) private var enabled
+
+    var body: some View {
+        if enabled { Link(destination: destination, label: content) }
+        else { content() }
+    }
+}
+
+private struct CPWNavigationHint: ViewModifier {
+    let hint: String
+    @Environment(\.cpwNavigationEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content.accessibilityHint(enabled ? hint : "")
+    }
+}
+
+extension View {
+    func cpwNavigationHint(_ hint: String) -> some View {
+        modifier(CPWNavigationHint(hint: hint))
+    }
+}
+
 public extension EnvironmentValues {
     var cpwThemeVariant: CPWThemeVariant {
         get { self[CPWThemeVariantKey.self] }
@@ -93,6 +131,7 @@ public struct ContextPanelWidgetContentView: View {
     let showsResetCreditSurfaces: Bool
     let resetCreditMaximumAge: TimeInterval
     let presentationDate: Date
+    let allowsNavigation: Bool
 
     public init(
         family: WidgetFamily,
@@ -101,7 +140,8 @@ public struct ContextPanelWidgetContentView: View {
         links: ContextPanelWidgetLinks,
         showsResetCreditSurfaces: Bool = false,
         resetCreditMaximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge,
-        presentationDate: Date = Date()
+        presentationDate: Date = Date(),
+        allowsNavigation: Bool = true
     ) {
         self.family = family
         self.snapshot = snapshot
@@ -110,12 +150,14 @@ public struct ContextPanelWidgetContentView: View {
         self.showsResetCreditSurfaces = showsResetCreditSurfaces
         self.resetCreditMaximumAge = resetCreditMaximumAge
         self.presentationDate = presentationDate
+        self.allowsNavigation = allowsNavigation
     }
 
     public var body: some View {
         content
             .environment(\.cpwPresentationDate, presentationDate)
-            .widgetURL(widgetDestination)
+            .widgetURL(allowsNavigation ? widgetDestination : nil)
+            .environment(\.cpwNavigationEnabled, allowsNavigation)
     }
 
     private var widgetDestination: URL? {
@@ -840,9 +882,9 @@ private struct CPWResetDeadlineFooter: View {
     var body: some View {
         switch interaction {
         case .native:
-            Link(destination: guidance.widgetDeepLinkURL) { content }.buttonStyle(.plain)
+            CPWNavigationLink(destination: guidance.widgetDeepLinkURL) { content }.buttonStyle(.plain)
         case let .destination(destination, _):
-            Link(destination: destination) { content }.buttonStyle(.plain)
+            CPWNavigationLink(destination: destination) { content }.buttonStyle(.plain)
         case .none:
             content
         }
@@ -946,12 +988,12 @@ private struct CPWResetCreditHeaderToken: View {
     @ViewBuilder
     var body: some View {
         if let linkConfiguration {
-            Link(destination: linkConfiguration.destination) {
+            CPWNavigationLink(destination: linkConfiguration.destination) {
                 styledToken
             }
             .buttonStyle(.plain)
             .accessibilityLabel(accessibilityText)
-            .accessibilityHint(linkConfiguration.accessibilityHint)
+            .cpwNavigationHint(linkConfiguration.accessibilityHint)
         } else {
             styledToken
                 .accessibilityElement(children: .ignore)
@@ -1176,7 +1218,7 @@ private struct CPWPromptCacheInlineStat: View {
             }
         case .needsAuthorization:
             let content = needsAuthorizationPillContent
-            Link(destination: cacheStatsSettingsURL) {
+            CPWNavigationLink(destination: cacheStatsSettingsURL) {
                 promptCachePill(
                     text: content.text,
                     systemImage: content.systemImage,
@@ -1186,7 +1228,7 @@ private struct CPWPromptCacheInlineStat: View {
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Opens cache stats settings in Context Panel")
+            .cpwNavigationHint("Opens cache stats settings in Context Panel")
         case .stale:
             let content = stalePillContent
             promptCachePill(

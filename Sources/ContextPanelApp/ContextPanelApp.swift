@@ -1,6 +1,7 @@
 import ContextPanelCore
 import ContextPanelCloudKitSync
 import ContextPanelSettingsUI
+import ContextPanelWidgetUI
 import ContextPanelValidationGalleryUI
 import AppKit
 import CloudKit
@@ -454,6 +455,8 @@ struct SettingsPane: View {
     @State private var nameInputError: String?
     @State private var showsAddAccount = false
     @State private var pendingRemovalID: String?
+    @State private var widgetPreviewSnapshot: WidgetSnapshot?
+    @State private var widgetPreviewTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -869,38 +872,19 @@ struct SettingsPane: View {
 
             }
             if tab == .display {
-            Section("Widget layout") {
-                Picker("Layout", selection: Binding(get: { model.widgetPreferences.usesAccountRows }, set: { model.setAccountWidgetLayout($0) })) {
-                    Text("Accounts").tag(true)
-                    Text("Windows").tag(false)
-                }
-                Text("Accounts uses every quota window to show the tightest capacity. Window selections below apply to Windows layout.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Widget Main Limits") {
-                Text("Choose which main limits appear in the widget and drag rows to set their priority.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(CPTheme.secondaryText)
-
-                List {
-                    WidgetMainLimitSettingsRows(
-                        preferences: model.widgetPreferences,
-                        colors: ContextPanelSettingsControlColors(
-                            primaryText: CPTheme.primaryText,
-                            secondaryText: CPTheme.secondaryText,
-                            tertiaryText: CPTheme.tertiaryText
-                        ),
-                        providerLabel: { provider in
-                            ProviderBadge(provider: provider)
-                        },
-                        onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
-                        onMove: model.moveWidgetMainLimits(from:to:)
-                    )
-                }
-                .listStyle(.inset)
-                .frame(height: widgetMainLimitListHeight)
-            }
-
+                WidgetDisplaySettingsSections(
+                    snapshot: widgetPreviewSnapshot,
+                    preferences: model.widgetPreferences,
+                    colors: ContextPanelSettingsControlColors(
+                        primaryText: CPTheme.primaryText,
+                        secondaryText: CPTheme.secondaryText,
+                        tertiaryText: CPTheme.tertiaryText
+                    ),
+                    providerLabel: { ProviderBadge(provider: $0) },
+                    onLayoutChange: model.setAccountWidgetLayout,
+                    onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
+                    onMove: model.moveWidgetMainLimits(from:to:)
+                )
             }
         }
         .formStyle(.grouped)
@@ -924,10 +908,24 @@ struct SettingsPane: View {
         .onChange(of: focusedName) { previous, current in
             if previous != current, let previous { commitName(previous) }
         }
-        .onDisappear { for field in Array(nameDrafts.keys) { commitName(field) } }
+        .onDisappear {
+            widgetPreviewTask?.cancel()
+            for field in Array(nameDrafts.keys) { commitName(field) }
+        }
         .onAppear {
             model.load()
             consumeNavigationRequest(clearWhenEmpty: true)
+        }
+        .task(id: tab) {
+            guard tab == .display else { return }
+            while !Task.isCancelled {
+                reloadWidgetPreview()
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
+            }
+        }
+        .onReceive(appModel.$storedSnapshot) { _ in
+            if tab == .display { reloadWidgetPreview() }
         }
         .onChange(of: navigation.request?.id) { _, _ in
             consumeNavigationRequest()
@@ -990,12 +988,14 @@ struct SettingsPane: View {
         if nameInputError == nil { appModel.loadSnapshot(reloadWidgetTimelines: false) }
     }
 
-    private var widgetMainLimitListHeight: CGFloat {
-        let rowHeight: CGFloat = 36
-        let verticalInset: CGFloat = 16
-        let minimumVisibleRows: CGFloat = 4
-        let rowCount = CGFloat(model.widgetPreferences.mainLimits.count)
-        return max(rowHeight * minimumVisibleRows, rowHeight * rowCount) + verticalInset
+    private func reloadWidgetPreview() {
+        guard tab == .display else { return }
+        widgetPreviewTask?.cancel()
+        widgetPreviewTask = Task {
+            let snapshot = await appModel.savedWidgetPreviewSnapshot()
+            guard !Task.isCancelled, tab == .display else { return }
+            widgetPreviewSnapshot = snapshot
+        }
     }
 
     private func consumeNavigationRequest(clearWhenEmpty: Bool = false) {
@@ -5838,6 +5838,14 @@ final class ContextPanelAppModel: ObservableObject {
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
             metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
             accountBurnRates: accountBurnRates)
+    }
+
+    func savedWidgetPreviewSnapshot(now: Date = Date()) async -> WidgetSnapshot {
+        let service = refreshService
+        let settings = fastModeForecastSettings
+        return await Task.detached(priority: .utility) {
+            service.savedWidgetPreviewSnapshot(now: now, forecastSettings: settings)
+        }.value
     }
 
     func rawAccountID(for safeID: String) -> String? {
