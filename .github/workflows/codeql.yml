@@ -129,9 +129,12 @@ jobs:
   cleanup-trusted-codeql:
     name: Clean Trusted CodeQL Temp
     needs: analyze
+    # Run after success or failure, but let cancellation release the concurrency
+    # slot without waiting for a cleanup runner (#778). Cancelled databases are
+    # removed by the bounded stale-directory sweep in the next trusted analysis.
     if: >-
-      always() && (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      ${{ !cancelled() && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: [self-hosted, macOS, ARM64, context-panel]
     steps:
       - name: Clean trusted CodeQL database path
