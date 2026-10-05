@@ -35,7 +35,8 @@ so every surface draws the same picture at a different size.
 - **The Mac app** has a fixed sidebar with Overview, Deadlines, and accounts
   grouped by provider. Account rows fold out to every window and banked reset.
 - **Widgets** default to account rows. The older limit-based layout remains a
-  Display setting named Windows.
+  Display setting named Windows. Keep account percentages fully visible at
+  every size; account names truncate when space is tight.
 - **Settings → Display** shows a read-only preview of the chosen layout, using
   the shared widget view and saved data. Small, Medium and Large preview sizes
   are local choices; they do not configure the placed widget. The form scrolls

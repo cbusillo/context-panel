@@ -316,7 +316,8 @@ struct AccountGlanceWidget: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(weekPercent(horizon, account: account)).font(.system(size: 11.5, weight: .bold)).monospacedDigit()
                 .foregroundStyle(horizon.isCurrent ? palette.primary : palette.secondary)
-                .lineLimit(1).frame(width: 30, alignment: .trailing)
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 30, alignment: .trailing)
             horizonView(account, horizon, in: overview).frame(width: 50, height: 13)
             VStack(alignment: .trailing, spacing: 0) {
                 Text(AccountTerms.outcomeShort(account, horizon, now: now))
