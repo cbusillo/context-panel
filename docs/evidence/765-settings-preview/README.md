@@ -12,12 +12,12 @@ Retina NSHostingView renders at those content sizes. Both are shared native
 presentation evidence, not screenshots of a newly installed Context Panel app,
 signed actual-runtime receipts or WidgetKit placement qualification.
 
-| Presentation | Normal | Minimum |
-| --- | --- | --- |
-| Accounts, Small | [Light](accounts-small-normal-light.png) | [Light](accounts-small-minimum-light.png) |
-| Accounts, Medium | [Light](accounts-medium-normal-light.png), [Dark](accounts-medium-normal-dark.png) | [Light](accounts-medium-minimum-light.png) |
-| Accounts, Large | [Light](accounts-large-normal-light.png) | [Light](accounts-large-minimum-light.png), [Dark](accounts-large-minimum-dark.png) |
-| Windows | [Medium, light](windows-medium-normal-light.png) | [Large, light](windows-large-minimum-light.png) |
+| Presentation     | Normal                                                                             | Minimum                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Accounts, Small  | [Light](accounts-small-normal-light.png)                                           | [Light](accounts-small-minimum-light.png)                                          |
+| Accounts, Medium | [Light](accounts-medium-normal-light.png), [Dark](accounts-medium-normal-dark.png) | [Light](accounts-medium-minimum-light.png)                                         |
+| Accounts, Large  | [Light](accounts-large-normal-light.png)                                           | [Light](accounts-large-minimum-light.png), [Dark](accounts-large-minimum-dark.png) |
+| Windows          | [Medium, light](windows-medium-normal-light.png)                                   | [Large, light](windows-large-minimum-light.png)                                    |
 
 Native window captures: [normal, Large](native-normal-large-light.png),
 [normal, Small](native-normal-small-light.png),
