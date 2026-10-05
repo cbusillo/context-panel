@@ -50,7 +50,10 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
     def test_runtime_receipt_sync_rejects_unavailable_source_identity(self):
         for script in ("#!/bin/sh\nexit 8\n", "#!/bin/sh\nprintf 'invalid commit\\n'\n"):
             with self.subTest(script=script):
-                (self.fixture.root / "tools/git").write_text(script)
+                git = self.fixture.tools / "git"
+                git.write_text(script)
+                git.chmod(0o755)
+                self.fixture.environment["PATH"] = str(self.fixture.tools) + ":" + self.fixture.environment["PATH"]
 
                 result = self.fixture.sync()
 
@@ -79,7 +82,7 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
 
     def test_runtime_receipt_sync_rejects_invalid_transfer_counts(self):
         for field in ("uploadedReceiptCount", "downloadedReceiptCount", "deletedRemoteReceiptCount"):
-            for count in (True, -1, "1"):
+            for count in (True, -1, "1", 1.5):
                 with self.subTest(field=field, count=count):
                     payload = {
                         "healthy": True, "sessionAction": "published", "messages": [],
@@ -95,8 +98,25 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
                     self.assertIn("unsupported result", result.stderr)
                     self.assertEqual(result.stdout, "")
 
+    def test_runtime_receipt_sync_rejects_invalid_status_or_messages(self):
+        for field, value in (("healthy", "true"), ("sessionAction", "unknown"), ("messages", "error"), ("messages", [1])):
+            with self.subTest(field=field, value=value):
+                payload = {
+                    "healthy": True, "sessionAction": "published", "messages": [],
+                    "uploadedReceiptCount": 0, "downloadedReceiptCount": 0,
+                    "deletedRemoteReceiptCount": 0,
+                }
+                payload[field] = value
+                self.fixture.write_agent(payload=payload)
+
+                result = self.fixture.sync()
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unsupported result", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_runtime_receipt_sync_preserves_agent_failures(self):
-        for healthy, exit_code in ((False, 0), (True, 3)):
+        for healthy, exit_code in ((False, 0), (True, 3), (False, 3)):
             with self.subTest(healthy=healthy, exit_code=exit_code):
                 payload = {
                     "healthy": healthy, "sessionAction": "failed", "messages": [],
