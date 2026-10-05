@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 import re
 import subprocess
@@ -105,6 +106,17 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         plan_end = cli.index("\ndef emit_session_state", plan_start)
         plan_function = cli[plan_start:plan_end]
 
+        import_roots = set()
+        for node in ast.walk(ast.parse(planner)):
+            if isinstance(node, ast.Import):
+                import_roots.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                import_roots.add("context_panel_validation" if node.level else (node.module or "").split(".")[0])
+        self.assertFalse(
+            import_roots & {"context_panel_validation", "subprocess", "socket", "urllib", "http"},
+            "shared-view planner must not import live operator or network/process dependencies",
+        )
+
         for forbidden in (
             "CloudKit",
             "WidgetKit",
@@ -121,8 +133,9 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, planner)
             self.assertNotIn(forbidden, plan_function)
-        self.assertNotIn("SessionStateStore", plan_function)
-        self.assertNotIn("RuntimeEvidenceStore", plan_function)
+        for forbidden in ("SessionStateStore", "RuntimeEvidenceStore"):
+            self.assertNotIn(forbidden, planner)
+            self.assertNotIn(forbidden, plan_function)
 
     def run_gallery_isolation_check(
         self,
