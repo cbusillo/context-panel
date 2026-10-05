@@ -42,6 +42,7 @@ import Testing
             history: store.loadHistory(), stalenessPolicy: policy, configuration: configurations,
             publisherID: document.publisherID, accountIntentDocument: document)
         #expect(preview == widget)
+        #expect(preview.lastReadingAt == now)
         let overview = preview.accountOverview(now: date, widgetsOnly: true)
         #expect(overview.accounts.count == 2)
         #expect(overview.accounts.allSatisfy { $0.metadata.label != "Hidden" })
@@ -75,7 +76,49 @@ import Testing
     try mirror.save(StoredUsageSnapshot(savedAt: old, snapshot: UsageSnapshot(generatedAt: old, limits: [limit])))
     let preview = service.savedWidgetPreviewSnapshot(now: now, stalenessPolicy: policy)
     #expect(preview.generatedAt == old)
+    #expect(preview.lastReadingAt == old)
     #expect(preview.state == .stale)
     #expect(preview.accountOverview(now: now).accounts.first?.isReliable == false)
     #expect(preview.limits.first?.used == limit.used)
+}
+
+@Test func settingsWidgetPreviewDoesNotInventAReadingDateForUnreadableSavedData() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let service = SnapshotRefreshService(accountStore: accountStore, stores: SnapshotRefreshStores(primary: store))
+    #expect(service.savedWidgetPreviewSnapshot(now: now).lastReadingAt == nil)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("unreadable snapshot".utf8).write(to: store.currentSnapshotURL)
+    for date in [now, now.addingTimeInterval(60)] {
+        let preview = service.savedWidgetPreviewSnapshot(now: date)
+        #expect(preview.state == .failure)
+        #expect(preview.lastReadingAt == nil)
+    }
+}
+
+@Test func settingsWidgetPreviewPreservesObservedPaceForAnOldSavedReading() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let savedAt = now.addingTimeInterval(-48 * 3_600)
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    for (hoursAgo, used) in [(2.0, 10), (1.0, 20), (0.0, 30)] {
+        let date = savedAt.addingTimeInterval(-hoursAgo * 3_600)
+        let limit = UsageLimit(provider: .openAI, accountID: "saved", accountName: "Saved account",
+            label: "Weekly", windowLabel: "Weekly", unit: .percent, used: used, limit: 100,
+            resetsAt: now.addingTimeInterval(86_400), lastUpdatedAt: date, confidence: .observed)
+        try store.save(StoredUsageSnapshot(savedAt: date, snapshot: UsageSnapshot(generatedAt: date, limits: [limit])))
+    }
+    let service = SnapshotRefreshService(accountStore: accountStore, stores: SnapshotRefreshStores(primary: store))
+    let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+    let preview = service.savedWidgetPreviewSnapshot(now: now, stalenessPolicy: policy)
+    let widget = WidgetSnapshot.fromStore(store.loadCurrent(policy: policy, now: now), now: now,
+        history: store.loadHistory(), stalenessPolicy: policy)
+    #expect(preview.accountBurnRates?.isEmpty == false)
+    #expect(preview.accountBurnRates == widget.accountBurnRates)
+    #expect(preview.lastReadingAt == savedAt)
 }

@@ -456,6 +456,7 @@ struct SettingsPane: View {
     @State private var showsAddAccount = false
     @State private var pendingRemovalID: String?
     @State private var widgetPreviewSnapshot: WidgetSnapshot?
+    @State private var widgetPreviewTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -907,19 +908,23 @@ struct SettingsPane: View {
         .onChange(of: focusedName) { previous, current in
             if previous != current, let previous { commitName(previous) }
         }
-        .onDisappear { for field in Array(nameDrafts.keys) { commitName(field) } }
+        .onDisappear {
+            widgetPreviewTask?.cancel()
+            for field in Array(nameDrafts.keys) { commitName(field) }
+        }
         .onAppear {
             model.load()
-            reloadWidgetPreview()
             consumeNavigationRequest(clearWhenEmpty: true)
         }
-        .onChange(of: tab) { _, current in
-            if current == .display { reloadWidgetPreview() }
+        .task(id: tab) {
+            guard tab == .display else { return }
+            while !Task.isCancelled {
+                reloadWidgetPreview()
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
+            }
         }
         .onReceive(appModel.$storedSnapshot) { _ in
-            if tab == .display { reloadWidgetPreview() }
-        }
-        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             if tab == .display { reloadWidgetPreview() }
         }
         .onChange(of: navigation.request?.id) { _, _ in
@@ -984,7 +989,13 @@ struct SettingsPane: View {
     }
 
     private func reloadWidgetPreview() {
-        widgetPreviewSnapshot = appModel.savedWidgetPreviewSnapshot()
+        guard tab == .display else { return }
+        widgetPreviewTask?.cancel()
+        widgetPreviewTask = Task {
+            let snapshot = await appModel.savedWidgetPreviewSnapshot()
+            guard !Task.isCancelled, tab == .display else { return }
+            widgetPreviewSnapshot = snapshot
+        }
     }
 
     private func consumeNavigationRequest(clearWhenEmpty: Bool = false) {
@@ -5829,8 +5840,12 @@ final class ContextPanelAppModel: ObservableObject {
             accountBurnRates: accountBurnRates)
     }
 
-    func savedWidgetPreviewSnapshot(now: Date = Date()) -> WidgetSnapshot {
-        refreshService.savedWidgetPreviewSnapshot(now: now, forecastSettings: fastModeForecastSettings)
+    func savedWidgetPreviewSnapshot(now: Date = Date()) async -> WidgetSnapshot {
+        let service = refreshService
+        let settings = fastModeForecastSettings
+        return await Task.detached(priority: .utility) {
+            service.savedWidgetPreviewSnapshot(now: now, forecastSettings: settings)
+        }.value
     }
 
     func rawAccountID(for safeID: String) -> String? {

@@ -75,6 +75,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         UsageSnapshot(generatedAt: generatedAt, limits: limits)
     }
 
+    /// Provider reading dates, excluding synthetic timestamps for missing saved data.
+    public var lastReadingAt: Date? {
+        (limits.compactMap(\.lastUpdatedAt) + reports.map(\.generatedAt)).max()
+    }
+
     public var providerAccessAlerts: [ProviderAccessAlert] {
         reports.providerAccessAlerts
     }

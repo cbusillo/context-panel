@@ -63,5 +63,6 @@ agent and URL handler all resolve under `/Applications/Context Panel.app` and
 companion cache preflight passes. The runtime baseline against this newer task
 source retains the released-build fingerprint mismatch; it is not a passing
 current-source receipt. No Development install, reset, release or deployment
-was performed. Owner visual approval and installed exact-build qualification
-remain pending before any installed-app readiness claim.
+was performed. [Chris approved these captures](https://github.com/cbusillo/context-panel/issues/765#issuecomment-5986488123).
+Installed exact-build qualification remains separate before any installed-app
+readiness claim.

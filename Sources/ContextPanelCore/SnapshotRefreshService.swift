@@ -628,9 +628,11 @@ public struct SnapshotRefreshService: Sendable {
                 }
             }
         }
+        let historyStart = min(now, result.snapshot?.snapshot.generatedAt ?? now).addingTimeInterval(-24 * 3_600)
         return WidgetSnapshot.fromStore(
             result, now: now,
-            history: selectedStore.loadHistory(), fastModeForecastSettings: forecastSettings,
+            history: selectedStore.loadHistory(query: SnapshotStoreQuery(since: historyStart)),
+            fastModeForecastSettings: forecastSettings,
             promptCacheWidgetState: cacheState, stalenessPolicy: policy,
             configuration: document?.accounts, sharedDocument: cache.load(now: now),
             publisherID: document?.publisherID, accountIntentDocument: document

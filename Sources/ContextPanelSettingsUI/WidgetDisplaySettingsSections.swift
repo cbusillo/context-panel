@@ -58,8 +58,8 @@ public struct WidgetDisplaySettingsSections<ProviderLabel: View>: View {
                         .frame(maxWidth: .infinity)
                 }
                 .padding(.vertical, 8)
-                if snapshot.state != .setupNeeded {
-                    Text("Last updated \(snapshot.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                if let lastReadingAt = snapshot.lastReadingAt {
+                    Text("Last updated \(lastReadingAt.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
