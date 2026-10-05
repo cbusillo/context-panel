@@ -14,6 +14,12 @@ Expected GitHub settings:
 - Dependabot: enabled for Swift Package Manager and GitHub Actions.
 - CodeQL: enabled for Swift on pull requests, pushes to `main`, weekly schedule,
   and manual dispatch.
+  Superseded PR analyses cancel without waiting for trusted temp cleanup to
+  acquire a runner. Cleanup runs after success or failure unless the workflow
+  was cancelled. The next trusted analysis sweeps direct child directories older
+  than two hours under `/tmp/context-panel-codeql`; fork analyses do not use or
+  clean that root. Required analysis evidence and the #699 sandbox workaround
+  are unchanged.
 - Default branch rulesets, all active:
   - `Protect main`: the rules below, with merge commits as the only merge
     method.
