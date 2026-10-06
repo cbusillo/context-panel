@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
@@ -1640,10 +1640,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     asset=[zip_path], title="Fixture release", notes_file=Path(directory) / "unused",
                     validate_only=False,
                 )
-                with (
-                    patch.object(publisher, "parse_args", return_value=args),
-                    patch.object(publisher, "require_cloudkit_schema_receipt") as receipt,
-                    patch.object(publisher, "GitHubCLIClient") as client,
+                receipt = Mock()
+                client = Mock()
+                with patch.dict(
+                    publisher.__dict__,
+                    parse_args=Mock(return_value=args),
+                    require_cloudkit_schema_receipt=receipt,
+                    GitHubCLIClient=client,
                 ):
                     self.assertEqual(publisher.main(), 1)
                     receipt.assert_called_once_with(identity.source_commit)
@@ -1666,7 +1669,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             )
             signed = subprocess.run(
                 ["/bin/bash", "-c", script], cwd=REPO_ROOT, env=env,
-                text=True, capture_output=True, check=False,
+                text=True, capture_output=True,
             )
             self.assertEqual(signed.returncode, 0, signed.stderr)
             metadata = json.loads(metadata_path.read_text())
@@ -1674,7 +1677,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             metadata_path.write_text(json.dumps(metadata))
             refused = subprocess.run(
                 ["/bin/bash", "-c", script], cwd=REPO_ROOT, env=env,
-                text=True, capture_output=True, check=False,
+                text=True, capture_output=True,
             )
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("ad-hoc builds are available only as workflow artifacts", refused.stderr)
@@ -1692,7 +1695,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 result = subprocess.run(
                     ["/bin/bash", "-c", script],
                     env={"INPUT_CREATE_GITHUB_RELEASE": publish, "INPUT_NOTARIZE": notarize},
-                    text=True, capture_output=True, check=False,
+                    text=True, capture_output=True,
                 )
                 self.assertEqual(result.returncode, expected, result.stderr)
 

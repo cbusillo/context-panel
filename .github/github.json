@@ -180,7 +180,6 @@
   },
   "prWorkflow": {
     "mergeMethod": "merge",
-    "mergeAuthorization": "Follow the Director's overall DIRECTION.md and Launchplane's active merge-train policy; task-specific Supervisor handoffs govern routing.",
     "watchSkill": "babysit-pr"
   }
 }
