@@ -39,7 +39,15 @@ public struct WidgetDisplaySettingsSections<ProviderLabel: View>: View {
 
     public var body: some View {
         Section("Widget layout") {
-            Picker("Layout", selection: Binding(get: { preferences.usesAccountRows }, set: onLayoutChange)) {
+            // Avoid Swift 6.3.3's isolated callback reabstraction crash.
+            Picker("Layout", selection: Binding(
+                get: { preferences.usesAccountRows },
+                set: { usesAccountRows in
+                    MainActor.assumeIsolated {
+                        onLayoutChange(usesAccountRows)
+                    }
+                }
+            )) {
                 Text("Accounts").tag(true)
                 Text("Windows").tag(false)
             }
