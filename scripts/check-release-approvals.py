@@ -252,6 +252,7 @@ def check(workflows: dict[str, dict]) -> dict:
                      if environment(job) == "release-approval"]
     return {
         "proof": "classified release graph structural dry-run; live environment configuration is owner-confirmed",
+        "secret_inventory_scope": "names referenced by jobs using each environment, not actual storage locations",
         "reusable_workflow_coverage": {
             "complete": not unclassified_calls,
             "unclassified_calls": unclassified_calls,

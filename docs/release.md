@@ -56,8 +56,8 @@ reusable workflows; selecting `environment: release` in the called job supplies
 that environment's secrets, not the caller's repository secrets. Existing
 repository entries can therefore stay in their current store without copying or
 moving values. The reviewed gate consumes no secrets, and channel calls still
-require successful approved validation. See GitHub's
-[secret forwarding rules](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#passing-secrets-to-nested-workflows).
+require successful approved validation. The environment and inheritance semantics
+are covered in [Reusable-workflow coverage](#reusable-workflow-coverage).
 
 Dispatch release workflows from `main`. Before any environment job, the
 secretless trust guard verifies the protected ref, checked-out commit, main
@@ -108,7 +108,12 @@ names. Complex expressions (functions, operators, bracket lookups) are opaque
 and refused; rewrite unrelated selection using the supported namespace route.
 An actual release workflow must join the classified approval graph instead.
 The checker never reads variable values or evaluates GitHub Actions code, and
-the one-approval contract and protected-main trust boundary are unchanged.
+the classified workflows' one-approval contract and protected-main checks remain
+unchanged. Repository secrets themselves have no environment branch restriction:
+a different same-repository branch workflow can reference them without entering
+`release` or its approval path. This existing repository-scope exposure is not
+changed by forwarding; the Ship checks govern this release path, not every
+possible consumer of a repository secret.
 
 ## Reusable-workflow coverage
 
@@ -170,9 +175,8 @@ The one-approval contract applies after the role move is complete.
    them. If a needed name exists in neither store, use its original private
    source yourself:
    **Environment secrets → Add environment secret** in `release`, enter its name
-   and value, and click **Add secret** once. Then remove the old copy after
-   confirming this destination name. This exception needs one entry, never two
-   maintained copies. If its original source is unavailable, report the name on
+   and value, and click **Add secret** once. Maintain one entry for each
+   credential. If its original source is unavailable, report the name on
    #747 before removing any reviewer or activating; do not rotate it. The agent
    never reads, copies or re-enters a value. Skip this entry entirely when the
    existing `release` inventory is complete.
