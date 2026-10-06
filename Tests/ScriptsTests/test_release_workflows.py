@@ -1,4 +1,5 @@
 import base64
+from contextlib import ExitStack
 import errno
 import hashlib
 import importlib.util
@@ -539,31 +540,32 @@ read -r fixture_input <"$FAKE_XCODEBUILD_BLOCKED"
         environment["TMPDIR"] = str(checkout_root / ".runner-temp")
         Path(environment["RUNNER_TEMP"]).mkdir()
 
-        marker_fd = os.open(marker, os.O_RDWR | os.O_NONBLOCK)
-        blocked_fd = os.open(blocked, os.O_RDWR)
-        process = subprocess.Popen(
-            ["/bin/bash", str(validator_path), "--configuration", "Release", "ios"],
-            cwd=checkout_root,
-            env=environment,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(marker_fd, selectors.EVENT_READ)
-                self.assertTrue(selector.select(timeout=5), "fake xcodebuild did not start")
-            self.assertEqual(os.read(marker_fd, 1024), b"started\n")
-            process.terminate()
-            stdout, _ = process.communicate(timeout=15)
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=5)
-            if process.stdout is not None and not process.stdout.closed:
-                process.stdout.close()
-            os.close(marker_fd)
-            os.close(blocked_fd)
+        with ExitStack() as resources:
+            marker_fd = os.open(marker, os.O_RDWR | os.O_NONBLOCK)
+            resources.callback(os.close, marker_fd)
+            blocked_fd = os.open(blocked, os.O_RDWR)
+            resources.callback(os.close, blocked_fd)
+            process = subprocess.Popen(
+                ["/bin/bash", str(validator_path), "--configuration", "Release", "ios"],
+                cwd=checkout_root,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(marker_fd, selectors.EVENT_READ)
+                    self.assertTrue(selector.select(timeout=5), "fake xcodebuild did not start")
+                self.assertEqual(os.read(marker_fd, 1024), b"started\n")
+                process.terminate()
+                stdout, _ = process.communicate(timeout=15)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+                if process.stdout is not None and not process.stdout.closed:
+                    process.stdout.close()
 
         return subprocess.CompletedProcess(
             process.args,

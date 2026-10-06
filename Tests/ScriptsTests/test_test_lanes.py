@@ -396,6 +396,26 @@ class TestLaneTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0][0], module.sys.executable)
             self.assertIn("unittest", run.call_args.args[0])
 
+    def test_missing_parallel_runner_preserves_report_and_continues(self) -> None:
+        payload = self.manifest()
+        paths = ["Tests/ScriptsTests/test_routine.py", "Tests/ScriptsTests/test_fast.py"]
+        payload["workersByFile"] = {paths[0]: 2}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.dict(module.__dict__, {
+                "files_for_lane": mock.Mock(return_value=paths),
+                "source_commit": lambda: "fixture",
+                "append_summary": mock.Mock(),
+            }),
+            mock.patch.object(subprocess, "run", side_effect=[FileNotFoundError(), subprocess.CompletedProcess([], 0)]),
+        ):
+            report_path = Path(directory) / "report.json"
+            self.assertNotEqual(module.run_python_lane(payload, "routine-ci-python", report_path), 0)
+            report = json.loads(report_path.read_text())
+            self.assertNotEqual(report["exitCode"], 0)
+            self.assertNotEqual(report["results"][0]["exitCode"], 0)
+            self.assertEqual(report["results"][1]["exitCode"], 0)
+
     def test_report_contains_only_relative_test_paths(self):
         report = {
             "schemaVersion": 1,

@@ -340,16 +340,16 @@ def append_summary(report: dict[str, Any]) -> None:
     lines = [
         f"### Test lane: `{report['lane']}`",
         "",
-        "| Result | Duration | Test file |",
-        "| --- | ---: | --- |",
+        "| Result | Duration | Workers | Test file |",
+        "| --- | ---: | ---: | --- |",
     ]
     if report["results"]:
         for result in report["results"]:
             status = "passed" if result["exitCode"] == 0 else "failed"
-            lines.append(f"| {status} | {result['durationMs']} ms | `{result['path']}` |")
+            lines.append(f"| {status} | {result['durationMs']} ms | {result.get('workers', 1)} | `{result['path']}` |")
     else:
         status = "passed" if report["exitCode"] == 0 else "failed"
-        lines.append(f"| {status} | {report['durationMs']} ms | lane command |")
+        lines.append(f"| {status} | {report['durationMs']} ms | — | lane command |")
     lines.extend(
         [
             "",
@@ -402,15 +402,17 @@ def run_python_lane(
             # uv owns the test-only dependencies, including release-test imports.
             command = [
                 "uv", "run", "--no-project", "--python", sys.executable,
-                "--with", "pytest-xdist", "--with", "cryptography",
+                "--with", "pytest==9.1.1", "--with", "pytest-xdist==3.8.0",
+                "--with", "cryptography==50.0.2",
                 "python", "-m", "pytest", "-n", str(workers), path,
             ]
-        completed = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            env=environment,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command, cwd=REPO_ROOT, env=environment, check=False,
+            )
+        except FileNotFoundError:
+            print(f"test runner not found: {command[0]}; run with --serial to use unittest", file=sys.stderr)
+            completed = subprocess.CompletedProcess(command, 127)
         duration_ms = round((time.monotonic() - file_started) * 1000)
         results.append({
             "path": path, "durationMs": duration_ms,
