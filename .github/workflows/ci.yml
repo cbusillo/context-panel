@@ -63,11 +63,15 @@ jobs:
             -configuration Release \
             -derivedDataPath .build/xcode-derived-ci-release \
             -destination 'platform=macOS' \
-            ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO LSREGISTER_MODE=NO \
             build
-          lipo -verify_arch arm64 x86_64 \
-            '.build/xcode-derived-ci-release/Build/Products/Release/Context Panel.app/Contents/MacOS/Context Panel'
+          app='.build/xcode-derived-ci-release/Build/Products/Release/Context Panel.app'
+          for bundle in "$app" "$app"/Contents/PlugIns/*.appex "$app"/Contents/Library/LoginItems/*.app; do
+            executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")
+            for arch in arm64 x86_64; do
+              xcrun lipo -verify_arch "$arch" "$bundle/Contents/MacOS/$executable"
+            done
+          done
 
   swift:
     needs: [swift-tests, macos-release]
