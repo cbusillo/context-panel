@@ -164,7 +164,8 @@ def check(workflows: dict[str, dict]) -> dict:
     guard_check(ship, "ship.yml")
     approval_check(ship, "ship.yml")
     intent = ship["validate"]
-    require(environment(intent) == "release", "Ship preflight must use the sole release secret store")
+    require(environment(intent) == "release",
+            "Ship preflight must use the sole release secret environment")
     require(not intent.get("if") and not intent.get("continue-on-error"),
             "Ship preflight cannot be optional or tolerate failure")
     require(needs(intent) == ["approve"], "Ship preflight must follow approved intent")
@@ -210,7 +211,7 @@ def check(workflows: dict[str, dict]) -> dict:
             if job_id not in ("guard", "approve"):
                 count += 1
                 require(environment(job) == "release",
-                        f"{filename}/{job_id}: channel must use the sole release secret store")
+                        f"{filename}/{job_id}: channel must use the sole release secret environment")
                 require(needs(job) == ["guard", "approve"]
                         and re.sub(r"\s+", " ", job.get("if", "")).strip() == CHANNEL_READY
                         and not job.get("continue-on-error"),
@@ -227,7 +228,7 @@ def check(workflows: dict[str, dict]) -> dict:
         for job_id, job in standalone_jobs.items():
             if job_id not in ("guard", "approve"):
                 require(environment(job) == "release",
-                        f"{filename}/{job_id}: standalone secrets require the sole release store")
+                        f"{filename}/{job_id}: standalone secrets require the sole release secret environment")
                 require(needs(job) == ["guard", "approve"] and not job.get("if")
                         and not job.get("continue-on-error"),
                         f"{filename}/{job_id}: standalone secrets require successful review")

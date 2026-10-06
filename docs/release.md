@@ -169,7 +169,8 @@ the new gate and confirm the secret inventory, leave `release` reviewed, and set
 the new variable to continue releasing with extra approvals during the transition.
 The one-approval contract applies after the role move is complete.
 
-1. In **Settings → Environments → release**, inspect secret **names only**.
+1. Inspect secret **names only** in **Settings → Environments → release** and
+   **Settings → Secrets and variables → Actions → Repository secrets**.
    Confirm the enabled channels' names from the checker exist here or as
    repository secrets. Keep existing repository entries in place; Ship inherits
    them. If a needed name exists in neither store, use its original private
@@ -178,8 +179,8 @@ The one-approval contract applies after the role move is complete.
    and value, and click **Add secret** once. Maintain one entry for each
    credential. If its original source is unavailable, report the name on
    #747 before removing any reviewer or activating; do not rotate it. The agent
-   never reads, copies or re-enters a value. Skip this entry entirely when the
-   existing `release` inventory is complete.
+   never reads, copies or re-enters a value. Skip this entry entirely when
+   each enabled-channel name exists in `release` or as a repository secret.
 2. In **Settings → Environments → New environment**, enter `release-approval`
    and click **Configure environment**. Enable **Required reviewers**, select
    `cbusillo`, and save protection rules. Keep self-review allowed for the solo
