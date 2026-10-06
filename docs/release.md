@@ -361,11 +361,11 @@ starting an intentional replacement build.
 Draft lookup uses paginated GraphQL through `gh api`, then REST-by-ID;
 REST release listing can omit drafts for the built-in Actions token even with
 `contents: write`. Multiple releases for the same tag or disagreement with
-GraphQL's release-by-tag lookup fail closed. No additional
-credential is needed. A job rerun rebuilds the package; it does not reuse the
+GraphQL's release-by-tag lookup fail closed. No additional credential is needed.
+A job rerun rebuilds the package; it does not reuse the
 previously uploaded workflow artifact and retains the original source, including
-any publisher defect. Preserve the exact zip and sealed metadata when diagnosing a
-stranded draft. After source repair lands, a separately authorized release
+any publisher defect. Preserve the exact zip and sealed metadata when diagnosing
+a stranded draft. After source repair lands, a separately authorized release
 session chooses recovery using the retained bytes or an intentional replacement.
 
 Required local command parity:
