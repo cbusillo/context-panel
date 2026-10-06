@@ -69,7 +69,7 @@ jobs:
           for bundle in "$app" "$app"/Contents/PlugIns/*.appex "$app"/Contents/Library/LoginItems/*.app; do
             executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")
             for arch in arm64 x86_64; do
-              xcrun lipo -verify_arch "$arch" "$bundle/Contents/MacOS/$executable"
+              xcrun lipo "$bundle/Contents/MacOS/$executable" -verify_arch "$arch"
             done
           done
 
