@@ -10,7 +10,7 @@ Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
 version:
 
-- GitHub Release zip artifact, signed and notarized by default
+- GitHub Release zip artifact, signed and notarized
 - App Store Connect build upload, signed with Mac App Store profiles
 - TestFlight beta distribution for the uploaded build
 
@@ -280,7 +280,8 @@ Use `Ship` for normal releases. It accepts:
 - `version`: marketing/release version, for example `1.0.18`.
 - `build_number`: optional App Store build number; blank uses a UTC timestamp.
 - `github_release`: publish the GitHub release channel.
-- `notarize_github_release`: notarize the GitHub zip; default is true.
+- `notarize_github_release`: notarize the GitHub zip; defaults to true. With
+  `github_release=true`, selecting false is refused before channel builds.
 - `app_store_channel`: `upload`, `export-only`, or `skip`.
 - `companion_app_store_channel`: `upload`, `export-only`, or `skip`.
 - `companion_platform`: `ios`, `visionos`, or `tvos`.
@@ -321,15 +322,20 @@ Manual dispatch accepts:
   version.
 - `build_number`: optional CFBundleVersion; blank derives one.
 - `create_github_release`: whether to create or update a GitHub Release.
-- `notarize`: whether to run Apple notarization when secrets are configured;
-  default is true for friend-installable GitHub releases.
+- `notarize`: whether to run Apple notarization; defaults to true and must
+  complete before a GitHub Release can be published.
 - `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
   receipt, required when `create_github_release` is true.
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
 workflow artifact. Before upload, it seals the metadata with the tag, exact
 source commit, version, build number, and SHA-256 plus byte size of the zip.
-When `create_github_release` is true, publication uses a draft-first transaction:
+When `create_github_release` is true, the publisher first requires a resolved
+signing identity other than ad-hoc (`-`) and completed notarization in the
+sealed metadata. Opt-out inputs cannot override this check. The workflow checks
+eligibility after artifact upload, before the CloudKit receipt gate; the live
+publisher repeats the check before any GitHub write. Publication then uses a
+draft-first transaction:
 
 1. An existing tag must resolve to the exact build commit. A missing tag is
    created for that commit with the draft release.
@@ -364,8 +370,29 @@ their entitlements, verifies the signature, and writes
 
 ### CI Signing And Notarization Secrets
 
-Without signing secrets, CI produces an ad-hoc signed artifact for validation.
-Use that to prove the release path, not as a friend-installable build.
+For validation without signing secrets, dispatch **Release** with
+`create_github_release=false` and `notarize=false`. It builds and uploads the
+zip and sealed metadata to the workflow run, without publishing a GitHub
+Release. Ship's GitHub channel always requests publication and therefore
+requires signing and completed notarization. Ship rejects
+`notarize_github_release=false` when its GitHub channel is selected, before
+starting any channel. Standalone Release rejects the same publication intent
+before building; artifact metadata remains the final publication authority.
+
+The publication check can also run locally without secrets, a CloudKit receipt,
+or GitHub access:
+
+```sh
+uv run --no-project python scripts/publish-github-release.py \
+  --validate-only --tag <tag> --source-commit <full-sha> \
+  --version <version> --build-number <build> \
+  --title "Context Panel" --notes-file /dev/null \
+  --metadata <sealed-metadata.json> --asset <release.zip>
+```
+
+This checks package metadata and sealed artifact identity; it does not perform
+signing or Apple notarization. The release-approval gate applies to validation
+runs as before.
 
 To produce a signed build, configure:
 
@@ -2052,8 +2079,9 @@ scripts/package-macos-app.sh --identity -
 
 ## Current Constraints
 
-- CI can publish an ad-hoc signed artifact without Apple secrets; that artifact
-  is not friend-installable release quality.
+- CI can upload an ad-hoc validation artifact to its workflow run. The
+  [GitHub publication gate](#ci-signing-and-notarization-secrets) refuses it as
+  a GitHub Release.
 - Friend-installable CI releases require Developer ID signing secrets and
   notarization secrets.
 - The older `scripts/package-macos-app.sh` bundle contains the SwiftPM preview

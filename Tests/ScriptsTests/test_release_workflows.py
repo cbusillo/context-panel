@@ -15,8 +15,9 @@ import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest.mock import Mock, patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
@@ -246,8 +247,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 {
                     "version": version,
                     "buildNumber": build_number,
-                    "signingIdentity": "-",
-                    "notarized": False,
+                    "signingIdentity": FIXTURE_SIGNING_FINGERPRINT,
+                    "notarized": True,
                 }
             )
             + "\n"
@@ -1354,14 +1355,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         version = ["--version", "9.9.9", "--build-number", "202601010000"]
         # A missing profile stops the upload scripts before any build, on every machine.
         missing_profile = ["--app-profile", str(directory / "missing.provisionprofile")]
+        github_release = [
+            "python3", "scripts/publish-github-release.py", "--repository", "example/example",
+            "--tag", "v9.9.9", "--source-commit", self.RECEIPT_COMMIT, *version,
+            "--title", "t", "--notes-file", str(notes), "--metadata", str(notes), "--asset", str(notes),
+        ]
         return {
             "github release": (
-                [
-                    "python3", "scripts/publish-github-release.py", "--repository", "example/example",
-                    "--tag", "v9.9.9", "--source-commit", self.RECEIPT_COMMIT, *version,
-                    "--title", "t", "--notes-file", str(notes), "--metadata", str(notes), "--asset", str(notes),
-                ],
-                None,
+                github_release,
+                [*github_release, "--validate-only"],
             ),
             "mac upload": (
                 ["scripts/upload-app-store-connect-macos-app.sh", *version],
@@ -1614,6 +1616,89 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 },
             )
 
+    def test_github_release_refuses_unsafe_builds_before_any_github_write(self) -> None:
+        cases = [
+            {"signingIdentity": "-", "notarized": False},
+            {"signingIdentity": "-", "notarized": True},
+            {"signingIdentity": "", "notarized": True},
+            {"signingIdentity": None, "notarized": True},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": False},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": "true"},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": 1},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": None},
+        ]
+        for fields in cases:
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                publisher, identity, zip_path, metadata_path = self.github_release_fixture(Path(directory))
+                metadata = json.loads(metadata_path.read_text())
+                metadata.update(fields)
+                metadata_path.write_text(json.dumps(metadata))
+                args = SimpleNamespace(
+                    repository="example/example", tag=identity.tag,
+                    source_commit=identity.source_commit, version=identity.version,
+                    build_number=identity.build_number, metadata=metadata_path,
+                    asset=[zip_path], title="Fixture release", notes_file=Path(directory) / "unused",
+                    validate_only=False,
+                )
+                receipt = Mock()
+                client = Mock()
+                with patch.dict(
+                    publisher.__dict__,
+                    parse_args=Mock(return_value=args),
+                    require_cloudkit_schema_receipt=receipt,
+                    GitHubCLIClient=client,
+                ):
+                    self.assertEqual(publisher.main(), 1)
+                    receipt.assert_called_once_with(identity.source_commit)
+                    client.assert_not_called()
+                # The refused public release still leaves its workflow artifacts available.
+                self.assertTrue(zip_path.is_file())
+                self.assertTrue(metadata_path.is_file())
+
+    def test_github_release_workflow_preflight_accepts_signed_and_refuses_validation_artifacts(self) -> None:
+        workflow = self.read(".github/workflows/release.yml")
+        step = workflow.split("      - name: Validate GitHub Release Artifact\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        script, = workflow_run_blocks(step)
+        with tempfile.TemporaryDirectory() as directory:
+            _, identity, zip_path, metadata_path = self.github_release_fixture(Path(directory))
+            env = self.release_environment(
+                TAG=identity.tag, GITHUB_SHA=identity.source_commit,
+                VERSION=identity.version, BUILD_NUMBER=identity.build_number,
+                ZIP_PATH=str(zip_path), METADATA_PATH=str(metadata_path),
+            )
+            signed = subprocess.run(
+                ["/bin/bash", "-c", script], cwd=REPO_ROOT, env=env,
+                text=True, capture_output=True,
+            )
+            self.assertEqual(signed.returncode, 0, signed.stderr)
+            metadata = json.loads(metadata_path.read_text())
+            metadata.update(signingIdentity="-", notarized=False)
+            metadata_path.write_text(json.dumps(metadata))
+            refused = subprocess.run(
+                ["/bin/bash", "-c", script], cwd=REPO_ROOT, env=env,
+                text=True, capture_output=True,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("ad-hoc builds are available only as workflow artifacts", refused.stderr)
+            self.assertEqual(zip_path.read_bytes(), b"signed release zip")
+
+    def test_release_workflow_rejects_unnotarized_publication_intent(self) -> None:
+        workflow = self.read(".github/workflows/release.yml")
+        step = workflow.split("      - name: Validate Release Configuration\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        script, = workflow_run_blocks(step)
+        for publish, notarize, expected in (
+            ("true", "false", 1), ("true", "true", 0), ("false", "false", 0),
+        ):
+            with self.subTest(publish=publish, notarize=notarize):
+                result = subprocess.run(
+                    ["/bin/bash", "-c", script],
+                    env={"INPUT_CREATE_GITHUB_RELEASE": publish, "INPUT_NOTARIZE": notarize},
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+
     def test_github_release_publication_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             publisher, identity, _, _ = self.github_release_fixture(Path(directory))
@@ -1855,7 +1940,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 "INPUT_VERSION": "9.9.9",
                 "INPUT_BUILD_NUMBER": "202601010000",
                 "INPUT_GITHUB_RELEASE": "false",
-                "INPUT_NOTARIZE_GITHUB_RELEASE": "false",
+                "INPUT_NOTARIZE_GITHUB_RELEASE": "true",
                 "INPUT_APP_STORE_CHANNEL": "skip",
                 "INPUT_COMPANION_APP_STORE_CHANNEL": "skip",
                 "INPUT_COMPANION_PLATFORM": "ios",
@@ -1883,6 +1968,25 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     @staticmethod
     def guard_platform(call: list[str]) -> str:
         return call[call.index("--platform") + 1]
+
+    def test_ship_refuses_unnotarized_github_intent_before_any_channel_preflight(self) -> None:
+        result, calls, output = self.run_ship_validate_inputs(
+            INPUT_GITHUB_RELEASE="true", INPUT_NOTARIZE_GITHUB_RELEASE="false",
+            INPUT_APP_STORE_CHANNEL="upload", INPUT_TESTFLIGHT_BETA="true",
+            INPUT_TESTFLIGHT_BETA_SOURCE="macos",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GitHub Releases require notarization", result.stdout)
+        self.assertEqual(calls, [])
+        self.assertEqual(output, "")
+        accepted, calls, output = self.run_ship_validate_inputs(
+            INPUT_GITHUB_RELEASE="true", INPUT_NOTARIZE_GITHUB_RELEASE="true",
+            INPUT_APP_STORE_CHANNEL="upload", INPUT_TESTFLIGHT_BETA="true",
+            INPUT_TESTFLIGHT_BETA_SOURCE="macos",
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stdout)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(output)
 
     def test_ship_preflights_every_companion_platform_the_workflow_offers(self) -> None:
         workflow = self.read(".github/workflows/ship.yml")
