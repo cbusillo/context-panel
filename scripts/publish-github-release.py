@@ -184,7 +184,7 @@ class GitHubCLIClient:
                     raise ValueError("invalid release page")
                 for node in nodes:
                     if not isinstance(node, dict):
-                        raise ValueError("invalid release node")
+                        raise TypeError("invalid release node")
                     if node.get("tagName") == tag:
                         matches.append(node)
         except (ValueError, KeyError, TypeError) as error:

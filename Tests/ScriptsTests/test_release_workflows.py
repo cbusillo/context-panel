@@ -1968,10 +1968,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         ]}}}}]
         with (
             patch.object(client, "_api_json", side_effect=[None, {"tag_name": "v1.2.4"}]),
-            patch.object(client, "_run", return_value=subprocess.CompletedProcess([], 0, json.dumps(pages), "")),
+            patch.object(
+                client, "_run",
+                return_value=subprocess.CompletedProcess([], 0, json.dumps(pages), ""),
+            ),
+            self.assertRaisesRegex(publisher.PublicationError, "different release tag"),
         ):
-            with self.assertRaisesRegex(publisher.PublicationError, "different release tag"):
-                client.get_release("v1.2.3")
+            client.get_release("v1.2.3")
 
     def test_github_release_rejects_tagless_published_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
