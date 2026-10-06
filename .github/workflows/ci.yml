@@ -63,7 +63,7 @@ jobs:
             -configuration Release \
             -derivedDataPath .build/xcode-derived-ci-release \
             -destination 'platform=macOS' \
-            CODE_SIGNING_ALLOWED=NO LSREGISTER_MODE=NO \
+            CODE_SIGNING_ALLOWED=NO \
             build
           app='.build/xcode-derived-ci-release/Build/Products/Release/Context Panel.app'
           for bundle in "$app" "$app"/Contents/PlugIns/*.appex "$app"/Contents/Library/LoginItems/*.app; do
