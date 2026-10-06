@@ -18,7 +18,7 @@ name: Ship
         default: true
         type: boolean
       notarize_github_release:
-        description: Notarize the GitHub Release artifact.
+        description: Notarize the GitHub Release artifact; publication requires this.
         required: true
         default: true
         type: boolean

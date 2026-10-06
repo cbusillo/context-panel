@@ -340,6 +340,23 @@ def build_release_identity(
         raise PublicationError("release asset names must be unique")
 
     metadata = json.loads(metadata_path.read_text())
+    if not isinstance(metadata, dict):
+        raise PublicationError("release metadata must be a JSON object")
+    signing_identity = metadata.get("signingIdentity")
+    if (
+        not isinstance(signing_identity, str)
+        or not signing_identity.strip()
+        or signing_identity.strip() == "-"
+    ):
+        raise PublicationError(
+            "GitHub Releases require Developer ID signing; "
+            "ad-hoc builds are available only as workflow artifacts"
+        )
+    if metadata.get("notarized") is not True:
+        raise PublicationError(
+            "GitHub Releases require completed notarization; "
+            "validation builds are available only as workflow artifacts"
+        )
     sealed = metadata.get("releaseIdentity")
     if not isinstance(sealed, dict):
         raise PublicationError("release metadata is not sealed")
@@ -535,6 +552,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--notes-file", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--asset", action="append", type=Path, required=True)
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Check publication eligibility without GitHub access or a CloudKit receipt.",
+    )
     return parser.parse_args()
 
 
@@ -549,10 +571,11 @@ def require_cloudkit_schema_receipt(source_commit: str | None = None) -> None:
 
 def main() -> int:
     args = parse_args()
-    if not args.repository:
+    if not args.validate_only and not args.repository:
         print("GitHub repository is required", file=sys.stderr)
         return 2
-    require_cloudkit_schema_receipt(args.source_commit)
+    if not args.validate_only:
+        require_cloudkit_schema_receipt(args.source_commit)
     try:
         identity = build_release_identity(
             tag=args.tag,
@@ -562,6 +585,9 @@ def main() -> int:
             metadata_path=args.metadata,
             asset_paths=args.asset,
         )
+        if args.validate_only:
+            print(f"GitHub Release artifact eligible: {identity.tag}")
+            return 0
         result = publish_release(
             GitHubCLIClient(args.repository),
             identity,
