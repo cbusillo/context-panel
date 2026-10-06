@@ -1940,7 +1940,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 "INPUT_VERSION": "9.9.9",
                 "INPUT_BUILD_NUMBER": "202601010000",
                 "INPUT_GITHUB_RELEASE": "false",
-                "INPUT_NOTARIZE_GITHUB_RELEASE": "false",
+                "INPUT_NOTARIZE_GITHUB_RELEASE": "true",
                 "INPUT_APP_STORE_CHANNEL": "skip",
                 "INPUT_COMPANION_APP_STORE_CHANNEL": "skip",
                 "INPUT_COMPANION_PLATFORM": "ios",
