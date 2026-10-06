@@ -32,8 +32,9 @@ A configured `Ship` run requires **one approval**: the secretless `Approve
 Release Intent` job uses `release-approval`, with Chris as required reviewer.
 After that job succeeds, `Validate Release Intent` preflights App Store versions
 and resolves the build number using the `release` environment. All signing,
-notarization, upload, CloudKit-receipt, and TestFlight secrets live only in
-`release` in GitHub. That environment has no reviewer or wait timer and accepts
+notarization, upload, CloudKit-receipt, and TestFlight jobs use `release` as
+their only secret environment, alongside inherited repository secrets. Keep each
+credential in one store. That environment has no reviewer or wait timer and accepts
 only the protected `main` branch. The gate environment contains no secrets.
 
 The four reusable channels identify Ship through `github.workflow_ref`,
@@ -48,6 +49,15 @@ that gate, including reusable calls. Channel jobs explicitly reject failed or
 cancelled guards and failed standalone approvals; the skipped-gate path is
 limited to the exact Ship caller. Ship's TestFlight join also requires successful
 validation and the selected upload before distributing a build.
+
+Ship passes repository secrets to each same-commit local channel workflow with
+`secrets: inherit`. GitHub does not automatically forward repository secrets to
+reusable workflows; selecting `environment: release` in the called job supplies
+that environment's secrets, not the caller's repository secrets. Existing
+repository entries can therefore stay in their current store without copying or
+moving values. The reviewed gate consumes no secrets, and channel calls still
+require successful approved validation. See GitHub's
+[secret forwarding rules](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#passing-secrets-to-nested-workflows).
 
 Dispatch release workflows from `main`. Before any environment job, the
 secretless trust guard verifies the protected ref, checked-out commit, main
@@ -80,7 +90,8 @@ approval dependencies in the checker, and obtain the model review required for
 approval changes. `scripts/check-release-approvals.py` lints the parsed workflow
 graph in CI and prints an all-channel structural dry-run plus secret names,
 never values. It checks one secretless Ship gate, standalone review paths,
-success dependencies and a single secret environment. It cannot verify live
+success dependencies, repository-secret inheritance on all four local channel
+calls, and a single secret environment. It cannot verify live
 reviewer settings or actual secret placement. In unclassified workflows, it
 rejects names that could select `release`, `release-approval`, or the retired
 `release-channels`, including opaque expressions such as
@@ -154,8 +165,10 @@ the new variable to continue releasing with extra approvals during the transitio
 The one-approval contract applies after the role move is complete.
 
 1. In **Settings → Environments → release**, inspect secret **names only**.
-   Confirm the enabled channels' names from the checker are already here. If a
-   needed name exists only elsewhere, use its original private source yourself:
+   Confirm the enabled channels' names from the checker exist here or as
+   repository secrets. Keep existing repository entries in place; Ship inherits
+   them. If a needed name exists in neither store, use its original private
+   source yourself:
    **Environment secrets → Add environment secret** in `release`, enter its name
    and value, and click **Add secret** once. Then remove the old copy after
    confirming this destination name. This exception needs one entry, never two

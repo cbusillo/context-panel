@@ -39,7 +39,7 @@ def fixture() -> dict[str, Any]:
     documents = {"ship.yml": {"jobs": ship}}
     for channel, filename in policy.CHANNELS.items():
         ship[channel] = {"uses": f"./.github/workflows/{filename}", "needs": "validate",
-                         "permissions": {"contents": "read", "actions": "read"}}
+                         "permissions": {"contents": "read", "actions": "read"}, "secrets": "inherit"}
         documents[filename] = {
             "on": {"workflow_dispatch": {}, "workflow_call": {}},
             "jobs": {"guard": guard(), "approve": dict(approval, **{"if": policy.STANDALONE_APPROVAL}),
@@ -91,7 +91,7 @@ class ReleaseApprovalTests(unittest.TestCase):
             for secrets in (None, "inherit", {"token": "${{ secrets.TEST_TOKEN }}"}):
                 with self.subTest(target=target, secrets=secrets):
                     documents = fixture()
-                    call = {"uses": target}
+                    call: dict[str, Any] = {"uses": target}
                     if secrets is not None:
                         call["secrets"] = secrets
                     documents["extra.yml"] = {"jobs": {"external": call, "ordinary": {
@@ -160,6 +160,19 @@ class ReleaseApprovalTests(unittest.TestCase):
                             for path in plan["standalone"].values()))
         self.assertEqual(plan["secret_names_by_environment"]["release-approval"], [])
 
+    def test_each_channel_requires_repository_secret_forwarding(self) -> None:
+        for channel in policy.CHANNELS:
+            for forwarding in (None, {}, {"SIGNING_KEY": "${{ secrets.SIGNING_KEY }}"}):
+                with self.subTest(channel=channel, forwarding=forwarding):
+                    documents = fixture()
+                    call = documents["ship.yml"]["jobs"][channel]
+                    if forwarding is None:
+                        call.pop("secrets")
+                    else:
+                        call["secrets"] = forwarding
+                    with self.assertRaises(ValueError):
+                        policy.check(documents)
+
     def test_approval_bypasses_and_extra_prompts_fail(self) -> None:
         mutations = [
             lambda d: d["ship.yml"]["jobs"]["github-release"]["permissions"].pop("actions"),
@@ -179,7 +192,6 @@ class ReleaseApprovalTests(unittest.TestCase):
             lambda d: d["ship.yml"]["jobs"]["validate"].update(**{"if": "${{ false }}"}),
             lambda d: d["ship.yml"]["jobs"]["validate"].update(needs="guard"),
             lambda d: d["ship.yml"]["jobs"]["approve"].update(env={"KEY": "${{ secrets.KEY }}"}),
-            lambda d: d["ship.yml"]["jobs"]["github-release"].update(secrets="inherit"),
             lambda d: d["release.yml"]["jobs"]["approve"].update(**{"if": "${{ inputs.skip_approval }}"}),
             lambda d: d["release.yml"]["jobs"]["channel"].update(**{"if": "${{ always() }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][2].update(**{"if": "${{ false }}"}),

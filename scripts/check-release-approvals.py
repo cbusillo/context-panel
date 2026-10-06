@@ -175,7 +175,8 @@ def check(workflows: dict[str, dict]) -> dict:
                 f"Ship/{job_id}: only guarded preflight may reference secrets")
         if "uses" in job:
             require(job_id in CHANNELS, f"unclassified Ship channel: {job_id}")
-            require("secrets" not in job, f"Ship/{job_id}: channels must use environment secrets directly")
+            require(job.get("secrets") == "inherit",
+                    f"Ship/{job_id}: channel must inherit repository secrets")
     for channel, filename in CHANNELS.items():
         call = ship[channel]
         require(call.get("uses") == f"./.github/workflows/{filename}",
@@ -263,7 +264,8 @@ def check(workflows: dict[str, dict]) -> dict:
         "activation": "RELEASE_APPROVALS_CONFIGURED=true only after owner moves reviewer role",
         "fallback": "Unset/false activation refuses new release workflows before any environment job",
         "ship": {"reviewed_jobs": reviewed_jobs, "approval_count": len(reviewed_jobs),
-                 "secret_environment": "release", "channels": list(CHANNELS)},
+                 "secret_environment": "release", "channels": list(CHANNELS),
+                 "repository_secrets": "inherited by same-commit local channels"},
         "standalone": {
             filename: {"reviewed_jobs": [job_id for job_id, job in workflows[filename]["jobs"].items()
                                         if environment(job) == "release-approval"],

@@ -169,6 +169,7 @@ jobs:
     needs: validate
     if: ${{ inputs.github_release }}
     uses: ./.github/workflows/release.yml
+    secrets: inherit
     permissions:
       contents: write
       actions: read
@@ -184,6 +185,7 @@ jobs:
     needs: validate
     if: ${{ inputs.app_store_channel != 'skip' }}
     uses: ./.github/workflows/app-store-connect-upload.yml
+    secrets: inherit
     permissions:
       contents: read
       actions: read
@@ -198,6 +200,7 @@ jobs:
     needs: validate
     if: ${{ inputs.companion_app_store_channel != 'skip' }}
     uses: ./.github/workflows/app-store-connect-companion-upload.yml
+    secrets: inherit
     permissions:
       contents: read
       actions: read
@@ -227,6 +230,7 @@ jobs:
         )
       }}
     uses: ./.github/workflows/testflight-beta-distribution.yml
+    secrets: inherit
     permissions:
       contents: read
       actions: read
