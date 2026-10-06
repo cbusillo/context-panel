@@ -220,6 +220,14 @@ def validate_manifest(
             "Python test files must run in a safe python-unittest lane or carry a manual justification: "
             + ", ".join(never_run)
         )
+    workers_by_file = payload.get("workersByFile", {})
+    if not isinstance(workers_by_file, dict):
+        raise TestLaneError("workersByFile must be an object")
+    for path, workers in workers_by_file.items():
+        if path not in routinely_run:
+            raise TestLaneError(f"parallel workers require a safe Python test file: {path}")
+        if type(workers) is not int or workers < 1:
+            raise TestLaneError(f"parallel worker count must be a positive integer: {path}")
     return normalized
 
 
@@ -368,7 +376,9 @@ def base_report(lane_name: str, files: list[str], started_at: datetime) -> dict[
     }
 
 
-def run_python_lane(payload: dict[str, Any], lane_name: str, report_path: Path) -> int:
+def run_python_lane(
+    payload: dict[str, Any], lane_name: str, report_path: Path, *, serial: bool = False
+) -> int:
     lane = payload["lanes"].get(lane_name)
     if lane is None or lane.get("runner") != "python-unittest":
         raise TestLaneError(f"test lane does not use the Python unittest runner: {lane_name}")
@@ -385,14 +395,27 @@ def run_python_lane(payload: dict[str, Any], lane_name: str, report_path: Path) 
     for path in files:
         print(f"\n=== {path} ===", flush=True)
         file_started = time.monotonic()
+        workers = 1 if serial else payload.get("workersByFile", {}).get(path, 1)
+        command = [sys.executable, "-m", "unittest", path]
+        if workers > 1:
+            # pytest supports unittest cases; xdist supplies process isolation.
+            # uv owns the test-only dependencies, including release-test imports.
+            command = [
+                "uv", "run", "--no-project", "--python", sys.executable,
+                "--with", "pytest-xdist", "--with", "cryptography",
+                "python", "-m", "pytest", "-n", str(workers), path,
+            ]
         completed = subprocess.run(
-            [sys.executable, "-m", "unittest", path],
+            command,
             cwd=REPO_ROOT,
             env=environment,
             check=False,
         )
         duration_ms = round((time.monotonic() - file_started) * 1000)
-        results.append({"path": path, "durationMs": duration_ms, "exitCode": completed.returncode})
+        results.append({
+            "path": path, "durationMs": duration_ms,
+            "exitCode": completed.returncode, "workers": workers,
+        })
         if completed.returncode != 0:
             exit_code = completed.returncode
 
@@ -459,6 +482,7 @@ def parse_args() -> argparse.Namespace:
     run_parser = subparsers.add_parser("run", help="Run a manifest-backed Python test lane.")
     run_parser.add_argument("--lane", required=True)
     run_parser.add_argument("--report", type=Path)
+    run_parser.add_argument("--serial", action="store_true", help="Run every file through unittest without workers.")
 
     command_parser = subparsers.add_parser("time-command", help="Time a safe external test command.")
     command_parser.add_argument("--lane", required=True)
@@ -487,6 +511,7 @@ def main() -> int:
                 payload,
                 arguments.lane,
                 arguments.report or default_report_path(arguments.lane),
+                serial=arguments.serial,
             )
         command = arguments.command
         if command and command[0] == "--":

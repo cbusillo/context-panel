@@ -29,6 +29,42 @@ SIBLING_COMMIT = "87c2db78a3e680d742ac663fcd3cf7c773bfe380"
 
 
 class PhysicalDefectCorpusTests(unittest.TestCase):
+    git_objects: dict[tuple[Path, tuple[str, ...]], bytes]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.git_objects = {}
+
+    def setUp(self) -> None:
+        # Reuse only immutable object reads. Repository configuration and
+        # transport tests deliberately exercise the uncached reader.
+        if self._testMethodName in {
+            "test_scrubbed_lazy_fetch_is_enforced",
+            "test_compilation_is_independent_of_head_and_ambient_git_config",
+        }:
+            return
+        reader = corpus_module._git_bytes
+
+        def read_objects(arguments: list[str]) -> bytes:
+            key = (corpus_module.REPO_ROOT, tuple(arguments))
+            revisions = [
+                argument for argument in arguments[1:]
+                if not argument.startswith("-") and argument != "blob"
+            ]
+            immutable = arguments[0] in {"show", "cat-file", "diff-tree", "merge-base"} and bool(revisions) and all(
+                corpus_module.SHA_PATTERN.fullmatch(argument.split(":")[0].split("^")[0])
+                for argument in revisions
+            )
+            if not immutable:
+                return reader(arguments)
+            if key not in self.git_objects:
+                self.git_objects[key] = reader(arguments)
+            return self.git_objects[key]
+
+        patcher = mock.patch.object(corpus_module, "_git_bytes", new=read_objects)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def source(self) -> dict:
         return json.loads(CORPUS_PATH.read_text())
 
@@ -79,8 +115,8 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
         payload = compile_corpus(CORPUS_PATH, SURFACE_POLICY_PATH)
         positives = [case for case in payload["cases"] if case["caseKind"] == "positive"]
         negatives = [case for case in payload["cases"] if case["caseKind"] == "negative-near-miss"]
-        self.assertEqual(len(positives), 4)
-        self.assertEqual(len(negatives), 4)
+        self.assertEqual(len(positives), len(self.source()["incidents"]))
+        self.assertEqual(len(negatives), len(self.source()["incidents"]))
         for case in payload["cases"]:
             self.assertNotIn("patch", case["change"])
             self.assertTrue(case["change"]["paths"])
@@ -167,7 +203,7 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
         )
 
     def test_compilation_is_independent_of_head_and_ambient_git_config(self):
-        baseline = compile_corpus(CORPUS_PATH, SURFACE_POLICY_PATH)
+        baseline = json.loads(COMPILED_PATH.read_text())
         with tempfile.TemporaryDirectory() as directory:
             clone = Path(directory) / "repository.git"
             subprocess.run(

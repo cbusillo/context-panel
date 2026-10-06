@@ -5,13 +5,13 @@ import importlib.util
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -367,6 +367,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
             check=False,
         )
 
+    @staticmethod
+    def companion_path_fixture_script(fake_xcodebuild: Path) -> str:
+        script = (REPO_ROOT / "scripts/validate-companion-builds.sh").read_text()
+        script = script.replace("/usr/bin/xcodebuild", f'"{fake_xcodebuild}"')
+        # Path/cleanup fixtures wait for build events; the separate watchdog
+        # fixture below supplies its own clock and stall/exit protocol.
+        script = script.replace("/bin/sleep", "fixture_sleep")
+        return (
+            'fixture_sleep() { wait "${active_xcodebuild_pid:-}" 2>/dev/null || true; }\n'
+            + script
+        )
+
     def run_companion_cache_fixture(
         self,
         checkout_root: Path,
@@ -394,10 +406,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         fake_xcodegen.write_text("#!/bin/bash\nexit 0\n")
         fake_xcodegen.chmod(0o755)
 
-        fixture_script = self.read("scripts/validate-companion-builds.sh")
-        fixture_script = fixture_script.replace(
-            "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
-        )
+        fixture_script = self.companion_path_fixture_script(fake_xcodebuild)
         fixture_path = scripts_path / "validate-companion-builds.sh"
         fixture_path.write_text(fixture_script)
         fixture_path.chmod(0o755)
@@ -486,6 +495,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         bin_path = checkout_root / ".test-bin"
         bin_path.mkdir()
         marker = checkout_root / "xcodebuild-started"
+        blocked = checkout_root / "xcodebuild-blocked"
+        os.mkfifo(marker)
+        os.mkfifo(blocked)
 
         fake_xcodebuild = bin_path / "xcodebuild"
         fake_xcodebuild.write_text(
@@ -500,9 +512,9 @@ while [[ $# -gt 0 ]]; do
   fi
 done
 mkdir -p "$derived_data/Build/Products/Release-iphoneos/Context Panel.app"
-touch "$FAKE_XCODEBUILD_MARKER"
 trap 'exit 143' TERM
-sleep 30
+printf 'started\n' >"$FAKE_XCODEBUILD_MARKER"
+read -r fixture_input <"$FAKE_XCODEBUILD_BLOCKED"
 """
         )
         fake_xcodebuild.chmod(0o755)
@@ -510,9 +522,7 @@ sleep 30
         fake_xcodegen.write_text("#!/bin/bash\nexit 0\n")
         fake_xcodegen.chmod(0o755)
 
-        validator = self.read("scripts/validate-companion-builds.sh").replace(
-            "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
-        )
+        validator = self.companion_path_fixture_script(fake_xcodebuild)
         validator_path = scripts_path / "validate-companion-builds.sh"
         validator_path.write_text(validator)
         validator_path.chmod(0o755)
@@ -523,11 +533,14 @@ sleep 30
         environment = os.environ.copy()
         environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(artifact_cache_root)
         environment["FAKE_XCODEBUILD_MARKER"] = str(marker)
+        environment["FAKE_XCODEBUILD_BLOCKED"] = str(blocked)
         environment["PATH"] = f"{bin_path}:{environment.get('PATH', '')}"
         environment["RUNNER_TEMP"] = str(checkout_root / ".runner-temp")
         environment["TMPDIR"] = str(checkout_root / ".runner-temp")
         Path(environment["RUNNER_TEMP"]).mkdir()
 
+        marker_fd = os.open(marker, os.O_RDWR | os.O_NONBLOCK)
+        blocked_fd = os.open(blocked, os.O_RDWR)
         process = subprocess.Popen(
             ["/bin/bash", str(validator_path), "--configuration", "Release", "ios"],
             cwd=checkout_root,
@@ -537,13 +550,10 @@ sleep 30
             stderr=subprocess.STDOUT,
         )
         try:
-            for _ in range(100):
-                if marker.exists():
-                    break
-                if process.poll() is not None:
-                    break
-                time.sleep(0.05)
-            self.assertTrue(marker.exists(), "fake xcodebuild did not start")
+            with selectors.DefaultSelector() as selector:
+                selector.register(marker_fd, selectors.EVENT_READ)
+                self.assertTrue(selector.select(timeout=5), "fake xcodebuild did not start")
+            self.assertEqual(os.read(marker_fd, 1024), b"started\n")
             process.terminate()
             stdout, _ = process.communicate(timeout=15)
         finally:
@@ -552,6 +562,8 @@ sleep 30
                 process.wait(timeout=5)
             if process.stdout is not None and not process.stdout.closed:
                 process.stdout.close()
+            os.close(marker_fd)
+            os.close(blocked_fd)
 
         return subprocess.CompletedProcess(
             process.args,
@@ -796,7 +808,7 @@ sleep 30
           fixture-app
         """
         return subprocess.run(
-            ["bash", "-lc", command],
+            ["/bin/bash", "-c", command],
             cwd=REPO_ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -821,7 +833,7 @@ sleep 30
             widget_timeline_cache_is_current_for_build "{root}" "{reference}"
             """
             return subprocess.run(
-                ["bash", "-lc", command],
+                ["/bin/bash", "-c", command],
                 cwd=REPO_ROOT,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -970,7 +982,7 @@ signed_entitlement_value plist_scalar_value section ok note fail "
             exit "$status"
             """
             return subprocess.run(
-                ["bash", "-lc", command],
+                ["/bin/bash", "-c", command],
                 cwd=REPO_ROOT,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -2108,7 +2120,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             widget_timeline_cache_is_current_for_build "{root}" "{root / 'missing-fingerprint.txt'}"
             """
             result = subprocess.run(
-                ["bash", "-lc", command],
+                ["/bin/bash", "-c", command],
                 cwd=REPO_ROOT,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -4178,7 +4190,7 @@ wait
         [[ "$failures" -gt "0" ]]
         """
         result = subprocess.run(
-            ["bash", "-lc", command],
+            ["/bin/bash", "-c", command],
             cwd=REPO_ROOT,
             text=True,
             stdout=subprocess.PIPE,
