@@ -1906,11 +1906,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 return subprocess.CompletedProcess(arguments, 0, "[[]]", "")
             if arguments == ["api", f"repos/{repository}/releases/{release_id}"]:
                 return subprocess.CompletedProcess(arguments, 0, json.dumps(draft), "")
-            if arguments == [
-                "release", "view", "v1.2.3", "--repo", repository, "--json", "databaseId"
-            ]:
+            if arguments[:2] == ["api", "graphql"]:
                 return subprocess.CompletedProcess(
-                    arguments, 0, json.dumps({"databaseId": release_id}), ""
+                    arguments, 0, json.dumps([
+                        {"data": {"repository": {"releases": {"nodes": []}}}},
+                        {"data": {"repository": {"releases": {"nodes": [
+                            {"databaseId": release_id, "tagName": draft["tag_name"]}
+                        ]}}}},
+                    ]), ""
                 )
             raise AssertionError(f"unexpected GitHub operation: {arguments}")
 
@@ -1923,12 +1926,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "context_panel_publish_github_release_lookup_errors",
             "scripts/publish-github-release.py",
         )
+        def page(nodes: list[dict[str, object]]) -> dict[str, object]:
+            return {"data": {"repository": {"releases": {"nodes": nodes}}}}
+
         responses = [
-            (1, "", "release not found", None),
+            (0, json.dumps([page([])]), "", None),
             (1, "", "HTTP 403: Resource not accessible", "HTTP 403"),
-            (0, "not JSON", "", "invalid JSON"),
-            (0, '{"databaseId": true}', "", "invalid release ID"),
-            (0, '{"databaseId": 0}', "", "invalid release ID"),
+            (0, "not JSON", "", "invalid release data"),
+            (0, json.dumps([{"data": {"repository": None}}]), "", "invalid release data"),
+            (0, json.dumps([page([{"databaseId": True, "tagName": "v1.2.3"}])]), "", "invalid release ID"),
+            (0, json.dumps([page([{"databaseId": 0, "tagName": "v1.2.3"}])]), "", "invalid release ID"),
+            (0, json.dumps([
+                page([{"databaseId": 1, "tagName": "v1.2.3"}]),
+                page([{"databaseId": 2, "tagName": "v1.2.3"}]),
+            ]), "", "multiple GitHub Releases"),
         ]
         for code, stdout, stderr, error in responses:
             with self.subTest(stdout=stdout, stderr=stderr):
@@ -1945,6 +1956,22 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     else:
                         with self.assertRaisesRegex(publisher.PublicationError, error):
                             client.get_release("v1.2.3")
+
+    def test_github_release_draft_lookup_refuses_different_tag(self) -> None:
+        publisher = load_script_module(
+            "context_panel_publish_github_release_lookup_tag",
+            "scripts/publish-github-release.py",
+        )
+        client = publisher.GitHubCLIClient("cbusillo/context-panel")
+        pages = [{"data": {"repository": {"releases": {"nodes": [
+            {"databaseId": 1, "tagName": "v1.2.3"}
+        ]}}}}]
+        with (
+            patch.object(client, "_api_json", side_effect=[None, {"tag_name": "v1.2.4"}]),
+            patch.object(client, "_run", return_value=subprocess.CompletedProcess([], 0, json.dumps(pages), "")),
+        ):
+            with self.assertRaisesRegex(publisher.PublicationError, "different release tag"):
+                client.get_release("v1.2.3")
 
     def test_github_release_rejects_tagless_published_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

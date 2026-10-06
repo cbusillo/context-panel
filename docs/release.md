@@ -338,7 +338,7 @@ publisher repeats the check before any GitHub write. Publication then uses a
 draft-first transaction:
 
 1. An existing tag must resolve to the exact build commit. A missing tag is
-   created for that commit with the draft release.
+   created for that commit when the draft is published.
 2. The draft release notes receive a machine-readable identity record covering
    the zip and sealed metadata asset names, sizes, and SHA-256 digests.
 3. Existing same-name assets are downloaded and compared byte-for-byte. Matching
@@ -358,13 +358,14 @@ notarization can produce different bytes on a fresh rebuild; if a retry reports
 draft identity drift, inspect the retained draft and delete it explicitly before
 starting an intentional replacement build.
 
-Draft lookup uses `gh release view` to resolve the release ID, then REST-by-ID;
+Draft lookup uses paginated GraphQL through `gh api`, then REST-by-ID;
 REST release listing can omit drafts for the built-in Actions token even with
-`contents: write`. This uses the CLI's GraphQL draft lookup without another
-credential. A job rerun rebuilds the package; it does not reuse the previously
-uploaded workflow artifact and retains the original source, including any
+`contents: write`. Multiple releases for the same tag fail closed. No additional
+credential is needed. A job rerun rebuilds the package; it does not reuse the
+previously uploaded workflow artifact and retains the original source, including any
 publisher defect. Preserve the exact zip and sealed metadata when diagnosing a
-stranded draft; source repair alone does not publish or authorize replacing it.
+stranded draft. After source repair lands, a separately authorized release
+session chooses recovery using the retained bytes or an intentional replacement.
 
 Required local command parity:
 

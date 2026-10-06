@@ -157,19 +157,43 @@ class GitHubCLIClient:
         if published is not None:
             return published
         # Actions tokens can create drafts that REST release listing omits.
-        # The CLI resolves their ID through GraphQL, then reads them by ID.
-        result = self._run(
-            ["release", "view", tag, "--repo", self.repository, "--json", "databaseId"]
-        )
+        # Use the CLI's GraphQL pagination to retain duplicate-draft detection.
+        owner, name = self.repository.split("/", 1)
+        query = """query($owner: String!, $name: String!, $endCursor: String) {
+          repository(owner: $owner, name: $name) {
+            releases(first: 100, after: $endCursor) {
+              nodes { databaseId tagName }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }"""
+        result = self._run([
+            "api", "graphql", "--paginate", "--slurp",
+            "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"name={name}",
+        ])
         if result.returncode != 0:
-            if result.stderr.strip() == "release not found":
-                return None
             raise PublicationError(result.stderr.strip() or "draft lookup failed")
         try:
-            value = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise PublicationError("draft lookup returned invalid JSON") from error
-        release_id = value.get("databaseId") if isinstance(value, dict) else None
+            pages = json.loads(result.stdout)
+            if not isinstance(pages, list) or not pages:
+                raise ValueError("missing release pages")
+            matches = []
+            for page in pages:
+                nodes = page["data"]["repository"]["releases"]["nodes"]
+                if page.get("errors") or not isinstance(nodes, list):
+                    raise ValueError("invalid release page")
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        raise ValueError("invalid release node")
+                    if node.get("tagName") == tag:
+                        matches.append(node)
+        except (ValueError, KeyError, TypeError) as error:
+            raise PublicationError("draft lookup returned invalid release data") from error
+        if len(matches) > 1:
+            raise PublicationError(f"multiple GitHub Releases use tag name {tag}")
+        if not matches:
+            return None
+        release_id = matches[0].get("databaseId")
         if type(release_id) is not int or release_id <= 0:
             raise PublicationError("draft lookup returned an invalid release ID")
         release = self._api_json(f"repos/{self.repository}/releases/{release_id}")
