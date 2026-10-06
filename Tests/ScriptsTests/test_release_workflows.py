@@ -1907,18 +1907,22 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             if arguments == ["api", f"repos/{repository}/releases/{release_id}"]:
                 return subprocess.CompletedProcess(arguments, 0, json.dumps(draft), "")
             if arguments[:2] == ["api", "graphql"]:
+                pages = [
+                    {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": []}}}},
+                    {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": [
+                        {"databaseId": release_id, "tagName": draft["tag_name"]}
+                    ]}}}},
+                ]
+                if "--paginate" not in arguments:
+                    pages = pages[:1]
+                stdout = json.dumps(pages) if "--slurp" in arguments else "\n".join(json.dumps(page) for page in pages)
                 return subprocess.CompletedProcess(
-                    arguments, 0, json.dumps([
-                        {"data": {"repository": {"releases": {"nodes": []}}}},
-                        {"data": {"repository": {"releases": {"nodes": [
-                            {"databaseId": release_id, "tagName": draft["tag_name"]}
-                        ]}}}},
-                    ]), ""
+                    arguments, 0, stdout, ""
                 )
             raise AssertionError(f"unexpected GitHub operation: {arguments}")
 
         client = publisher.GitHubCLIClient(repository)
-        with patch.object(client, "_run", side_effect=run):
+        with patch.dict(client.__dict__, {"_run": Mock(side_effect=run)}):
             self.assertEqual(client.get_release("v1.2.3"), draft)
 
     def test_github_release_draft_lookup_missing_and_errors(self) -> None:
@@ -1926,30 +1930,32 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "context_panel_publish_github_release_lookup_errors",
             "scripts/publish-github-release.py",
         )
-        def page(nodes: list[dict[str, object]]) -> dict[str, object]:
-            return {"data": {"repository": {"releases": {"nodes": nodes}}}}
+        def page(nodes: list[dict[str, object]], selected_id: object = None) -> dict[str, object]:
+            selected = {"databaseId": selected_id} if selected_id is not None else None
+            return {"data": {"repository": {"release": selected, "releases": {"nodes": nodes}}}}
 
         responses = [
             (0, json.dumps([page([])]), "", None),
             (1, "", "HTTP 403: Resource not accessible", "HTTP 403"),
             (0, "not JSON", "", "invalid release data"),
             (0, json.dumps([{"data": {"repository": None}}]), "", "invalid release data"),
-            (0, json.dumps([page([{"databaseId": True, "tagName": "v1.2.3"}])]), "", "invalid release ID"),
-            (0, json.dumps([page([{"databaseId": 0, "tagName": "v1.2.3"}])]), "", "invalid release ID"),
+            (0, json.dumps([page([{"databaseId": True, "tagName": "v1.2.3"}], True)]), "", "invalid release ID"),
+            (0, json.dumps([page([{"databaseId": 0, "tagName": "v1.2.3"}], 0)]), "", "invalid release ID"),
             (0, json.dumps([
                 page([{"databaseId": 1, "tagName": "v1.2.3"}]),
                 page([{"databaseId": 2, "tagName": "v1.2.3"}]),
             ]), "", "multiple GitHub Releases"),
+            (0, json.dumps([page([], 1)]), "", "listing disagree"),
+            (0, json.dumps([page([{"databaseId": 1, "tagName": "v1.2.3"}], 2)]), "", "listing disagree"),
         ]
         for code, stdout, stderr, error in responses:
             with self.subTest(stdout=stdout, stderr=stderr):
                 client = publisher.GitHubCLIClient("cbusillo/context-panel")
                 with (
-                    patch.object(client, "_api_json", return_value=None),
-                    patch.object(
-                        client, "_run",
-                        return_value=subprocess.CompletedProcess([], code, stdout, stderr),
-                    ),
+                    patch.dict(client.__dict__, {
+                        "_api_json": Mock(return_value=None),
+                        "_run": Mock(return_value=subprocess.CompletedProcess([], code, stdout, stderr)),
+                    }),
                 ):
                     if error is None:
                         self.assertIsNone(client.get_release("v1.2.3"))
@@ -1963,15 +1969,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "scripts/publish-github-release.py",
         )
         client = publisher.GitHubCLIClient("cbusillo/context-panel")
-        pages = [{"data": {"repository": {"releases": {"nodes": [
+        pages = [{"data": {"repository": {"release": {"databaseId": 1}, "releases": {"nodes": [
             {"databaseId": 1, "tagName": "v1.2.3"}
         ]}}}}]
         with (
-            patch.object(client, "_api_json", side_effect=[None, {"tag_name": "v1.2.4"}]),
-            patch.object(
-                client, "_run",
-                return_value=subprocess.CompletedProcess([], 0, json.dumps(pages), ""),
-            ),
+            patch.dict(client.__dict__, {
+                "_api_json": Mock(side_effect=[None, {"tag_name": "v1.2.4"}]),
+                "_run": Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(pages), "")),
+            }),
             self.assertRaisesRegex(publisher.PublicationError, "different release tag"),
         ):
             client.get_release("v1.2.3")

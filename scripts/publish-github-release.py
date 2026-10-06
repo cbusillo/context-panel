@@ -158,9 +158,12 @@ class GitHubCLIClient:
             return published
         # Actions tokens can create drafts that REST release listing omits.
         # Use the CLI's GraphQL pagination to retain duplicate-draft detection.
-        owner, name = self.repository.split("/", 1)
-        query = """query($owner: String!, $name: String!, $endCursor: String) {
+        owner, separator, name = self.repository.partition("/")
+        if not owner or not separator or not name:
+            raise PublicationError("GitHub repository must use owner/name")
+        query = """query($owner: String!, $name: String!, $tag: String!, $endCursor: String) {
           repository(owner: $owner, name: $name) {
+            release(tagName: $tag) { databaseId }
             releases(first: 100, after: $endCursor) {
               nodes { databaseId tagName }
               pageInfo { hasNextPage endCursor }
@@ -170,6 +173,7 @@ class GitHubCLIClient:
         result = self._run([
             "api", "graphql", "--paginate", "--slurp",
             "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"name={name}",
+            "-f", f"tag={tag}",
         ])
         if result.returncode != 0:
             raise PublicationError(result.stderr.strip() or "draft lookup failed")
@@ -178,8 +182,12 @@ class GitHubCLIClient:
             if not isinstance(pages, list) or not pages:
                 raise ValueError("missing release pages")
             matches = []
+            selected_ids = []
             for page in pages:
-                nodes = page["data"]["repository"]["releases"]["nodes"]
+                repository = page["data"]["repository"]
+                selected = repository["release"]
+                selected_ids.append(selected["databaseId"] if selected is not None else None)
+                nodes = repository["releases"]["nodes"]
                 if page.get("errors") or not isinstance(nodes, list):
                     raise ValueError("invalid release page")
                 for node in nodes:
@@ -191,9 +199,11 @@ class GitHubCLIClient:
             raise PublicationError("draft lookup returned invalid release data") from error
         if len(matches) > 1:
             raise PublicationError(f"multiple GitHub Releases use tag name {tag}")
+        release_id = matches[0].get("databaseId") if matches else None
+        if any(selected_id != release_id for selected_id in selected_ids):
+            raise PublicationError("draft lookup by tag and release listing disagree")
         if not matches:
             return None
-        release_id = matches[0].get("databaseId")
         if type(release_id) is not int or release_id <= 0:
             raise PublicationError("draft lookup returned an invalid release ID")
         release = self._api_json(f"repos/{self.repository}/releases/{release_id}")
