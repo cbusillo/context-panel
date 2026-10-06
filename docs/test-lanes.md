@@ -60,8 +60,19 @@ python3 scripts/context-panel-test-lanes.py run --lane fast-local-python
 Run the complementary routine CI Python lane with per-file timing:
 
 ```sh
-python3 scripts/context-panel-test-lanes.py run --lane routine-ci-python
+uv run --no-project --with cryptography python scripts/context-panel-test-lanes.py run --lane routine-ci-python
 ```
+
+Files configured in the manifest's `workersByFile` run their existing unittest
+cases through pytest-xdist in separate worker processes. The lane helper uses
+`uv` to provide pytest-xdist and the release tests' cryptography dependency;
+CI already installs uv before running the lanes. The tested dependency versions
+are pinned in the lane helper; update that recipe when upgrading the runner.
+Other files remain serial. A missing runner fails that file, preserves its
+report and continues later files.
+Only independent, hermetic fixture tests belong in this configuration. Reports
+record elapsed wall time and worker count for each file, including worker startup.
+For debugging, add `--serial` to run every file with the standard unittest runner.
 
 List the files in a safe lane:
 

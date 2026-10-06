@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 from typing import Any
 import unittest
@@ -338,6 +339,82 @@ class TestLaneTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 7)
         self.assertEqual(report["exitCode"], 7)
+
+    def test_parallel_settings_reject_unexecuted_files_and_invalid_counts(self) -> None:
+        for path, workers in (
+            ("Tests/CoreTests/FirstTests.swift", 2),
+            ("Tests/missing.py", 2),
+            ("Tests/ScriptsTests/test_routine.py", 0),
+            ("Tests/ScriptsTests/test_routine.py", True),
+            ("Tests/ScriptsTests/test_routine.py", "2"),
+        ):
+            with self.subTest(path=path, workers=workers):
+                payload = self.manifest()
+                payload["workersByFile"] = {path: workers}
+                with self.assertRaises(module.TestLaneError):
+                    self.validate(payload)
+
+    def test_parallel_failure_is_reported_and_later_files_still_run(self) -> None:
+        payload = self.manifest()
+        paths = ["Tests/ScriptsTests/test_routine.py", "Tests/ScriptsTests/test_fast.py"]
+        payload["workersByFile"] = {paths[0]: 2}
+        completed = [
+            subprocess.CompletedProcess([], 1),
+            subprocess.CompletedProcess([], 0),
+        ]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.dict(module.__dict__, {
+                "files_for_lane": mock.Mock(return_value=paths),
+                "source_commit": lambda: "fixture",
+                "append_summary": mock.Mock(),
+            }),
+            mock.patch.object(subprocess, "run", side_effect=completed) as run,
+        ):
+            report_path = Path(directory) / "report.json"
+            self.assertEqual(module.run_python_lane(payload, "routine-ci-python", report_path), 1)
+            report = json.loads(report_path.read_text())
+            self.assertEqual([result["exitCode"] for result in report["results"]], [1, 0])
+            self.assertEqual([result["workers"] for result in report["results"]], [2, 1])
+            self.assertIn("pytest", run.call_args_list[0].args[0])
+            self.assertIn("unittest", run.call_args_list[1].args[0])
+
+    def test_serial_override_runs_configured_parallel_file_without_uv(self) -> None:
+        payload = self.manifest()
+        path = "Tests/ScriptsTests/test_routine.py"
+        payload["workersByFile"] = {path: 2}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.dict(module.__dict__, {
+                "files_for_lane": mock.Mock(return_value=[path]),
+                "source_commit": lambda: "fixture",
+                "append_summary": mock.Mock(),
+            }),
+            mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run,
+        ):
+            module.run_python_lane(payload, "routine-ci-python", Path(directory) / "report.json", serial=True)
+            self.assertEqual(run.call_args.args[0][0], module.sys.executable)
+            self.assertIn("unittest", run.call_args.args[0])
+
+    def test_missing_parallel_runner_preserves_report_and_continues(self) -> None:
+        payload = self.manifest()
+        paths = ["Tests/ScriptsTests/test_routine.py", "Tests/ScriptsTests/test_fast.py"]
+        payload["workersByFile"] = {paths[0]: 2}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.dict(module.__dict__, {
+                "files_for_lane": mock.Mock(return_value=paths),
+                "source_commit": lambda: "fixture",
+                "append_summary": mock.Mock(),
+            }),
+            mock.patch.object(subprocess, "run", side_effect=[FileNotFoundError(), subprocess.CompletedProcess([], 0)]),
+        ):
+            report_path = Path(directory) / "report.json"
+            self.assertNotEqual(module.run_python_lane(payload, "routine-ci-python", report_path), 0)
+            report = json.loads(report_path.read_text())
+            self.assertNotEqual(report["exitCode"], 0)
+            self.assertNotEqual(report["results"][0]["exitCode"], 0)
+            self.assertEqual(report["results"][1]["exitCode"], 0)
 
     def test_report_contains_only_relative_test_paths(self):
         report = {

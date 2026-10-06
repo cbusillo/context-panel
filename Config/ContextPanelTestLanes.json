@@ -1,5 +1,9 @@
 {
   "schemaVersion": 1,
+  "workersByFile": {
+    "Tests/ScriptsTests/test_release_workflows.py": 6,
+    "Tests/ScriptsTests/test_companion_upload_script.py": 6
+  },
   "auditStart": {
     "sourceCommit": "172cae46e192bf3c203d5a8ce62e7def99eb49e3",
     "recordedAt": "2026-08-12"

@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -64,8 +66,40 @@ def v2_artifact_contract(seed: bytes, architectures: list[str] | None = None) ->
 
 
 class SurfaceManifestTests(unittest.TestCase):
+    baseline_fixture: dict[str, Any]
+    project_payloads: dict[tuple[str, bytes, bytes], dict[str, Any]]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        # Generate the unchanged input once; each test owns its mutable copy.
+        cls.baseline_fixture = cls().manifest(REPO_ROOT)
+        cls.project_payloads = {}
+
     def setUp(self):
-        self.baseline = self.manifest(REPO_ROOT)
+        self.baseline = copy.deepcopy(self.baseline_fixture)
+        reader = core_module.load_project_payload
+
+        def read_project(root: Path, policy: dict[str, Any]) -> dict[str, Any]:
+            configuration = policy.get("project")
+            if not isinstance(configuration, dict) or not all(
+                isinstance(configuration.get(field), str) and configuration[field]
+                for field in ("path", "reader")
+            ):
+                return reader(root, policy)
+            project = root / configuration["path"]
+            script = root / configuration["reader"]
+            # Run the real parser for every distinct input, including mutations.
+            # Its JSON contains the basename and bytes digest, never the root.
+            if not project.is_file() or not script.is_file():
+                return reader(root, policy)
+            key = (project.name, project.read_bytes(), script.read_bytes())
+            if key not in self.project_payloads:
+                self.project_payloads[key] = reader(root, policy)
+            return copy.deepcopy(self.project_payloads[key])
+
+        patcher = mock.patch.object(core_module, "load_project_payload", new=read_project)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def copy_fixture(self, destination: Path) -> Path:
         for filename in ("project.yml", "Package.swift"):
