@@ -121,36 +121,6 @@ class GitHubCLIClient:
             )
         return value
 
-    def _api_pages(self, endpoint: str) -> list[dict[str, object]]:
-        result = self._run(["api", "--paginate", "--slurp", endpoint])
-        if result.returncode != 0:
-            raise PublicationError(
-                result.stderr.strip() or f"GitHub API failed: {endpoint}"
-            )
-        try:
-            pages = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise PublicationError(
-                f"GitHub API returned invalid paginated JSON: {endpoint}"
-            ) from error
-        if not isinstance(pages, list):
-            raise PublicationError(
-                f"GitHub API returned unexpected paginated data: {endpoint}"
-            )
-        values: list[dict[str, object]] = []
-        for page in pages:
-            if not isinstance(page, list):
-                raise PublicationError(
-                    f"GitHub API returned a malformed page: {endpoint}"
-                )
-            for value in page:
-                if not isinstance(value, dict):
-                    raise PublicationError(
-                        f"GitHub API returned a malformed release: {endpoint}"
-                    )
-                values.append(value)
-        return values
-
     def resolve_tag(self, tag: str) -> str | None:
         reference = self._api_json(
             f"repos/{self.repository}/git/ref/tags/{quote(tag, safe='')}",
@@ -186,16 +156,26 @@ class GitHubCLIClient:
         )
         if published is not None:
             return published
-        matches = [
-            release
-            for release in self._api_pages(
-                f"repos/{self.repository}/releases?per_page=100"
-            )
-            if release.get("tag_name") == tag
-        ]
-        if len(matches) > 1:
-            raise PublicationError(f"multiple GitHub Releases use tag name {tag}")
-        return matches[0] if matches else None
+        # Actions tokens can create drafts that REST release listing omits.
+        # The CLI resolves their ID through GraphQL, then reads them by ID.
+        result = self._run(
+            ["release", "view", tag, "--repo", self.repository, "--json", "databaseId"]
+        )
+        if result.returncode != 0:
+            if result.stderr.strip() == "release not found":
+                return None
+            raise PublicationError(result.stderr.strip() or "draft lookup failed")
+        try:
+            value = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise PublicationError("draft lookup returned invalid JSON") from error
+        release_id = value.get("databaseId") if isinstance(value, dict) else None
+        if type(release_id) is not int or release_id <= 0:
+            raise PublicationError("draft lookup returned an invalid release ID")
+        release = self._api_json(f"repos/{self.repository}/releases/{release_id}")
+        if release is None or release.get("tag_name") != tag:
+            raise PublicationError("draft lookup returned a different release tag")
+        return release
 
     def create_draft(
         self,

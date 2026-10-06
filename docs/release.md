@@ -358,6 +358,14 @@ notarization can produce different bytes on a fresh rebuild; if a retry reports
 draft identity drift, inspect the retained draft and delete it explicitly before
 starting an intentional replacement build.
 
+Draft lookup uses `gh release view` to resolve the release ID, then REST-by-ID;
+REST release listing can omit drafts for the built-in Actions token even with
+`contents: write`. This uses the CLI's GraphQL draft lookup without another
+credential. A job rerun rebuilds the package; it does not reuse the previously
+uploaded workflow artifact and retains the original source, including any
+publisher defect. Preserve the exact zip and sealed metadata when diagnosing a
+stranded draft; source repair alone does not publish or authorize replacing it.
+
 Required local command parity:
 
 ```sh

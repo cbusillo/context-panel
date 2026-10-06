@@ -1881,7 +1881,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIs(client.release["draft"], False)
             self.assertEqual(client.publish_count, 1)
 
-    def test_github_release_draft_lookup_falls_back_to_release_listing(self) -> None:
+    def test_github_release_draft_lookup_uses_cli_when_rest_omits_drafts(self) -> None:
         publisher = load_script_module(
             "context_panel_publish_github_release_draft_lookup",
             "scripts/publish-github-release.py",
@@ -1894,15 +1894,57 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "assets": [],
         }
 
-        class DraftLookupClient(publisher.GitHubCLIClient):
-            def _api_json(self, endpoint: str, *, allow_not_found: bool = False) -> None:
-                return None
+        repository = "cbusillo/context-panel"
+        release_id = 123
 
-            def _api_pages(self, endpoint: str) -> list[dict[str, object]]:
-                return [draft]
+        def run(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            if arguments == ["api", f"repos/{repository}/releases/tags/v1.2.3"]:
+                return subprocess.CompletedProcess(arguments, 1, "", "HTTP 404")
+            if arguments == [
+                "api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"
+            ]:
+                return subprocess.CompletedProcess(arguments, 0, "[[]]", "")
+            if arguments == ["api", f"repos/{repository}/releases/{release_id}"]:
+                return subprocess.CompletedProcess(arguments, 0, json.dumps(draft), "")
+            if arguments == [
+                "release", "view", "v1.2.3", "--repo", repository, "--json", "databaseId"
+            ]:
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps({"databaseId": release_id}), ""
+                )
+            raise AssertionError(f"unexpected GitHub operation: {arguments}")
 
-        client = DraftLookupClient("cbusillo/context-panel")
-        self.assertEqual(client.get_release("v1.2.3"), draft)
+        client = publisher.GitHubCLIClient(repository)
+        with patch.object(client, "_run", side_effect=run):
+            self.assertEqual(client.get_release("v1.2.3"), draft)
+
+    def test_github_release_draft_lookup_missing_and_errors(self) -> None:
+        publisher = load_script_module(
+            "context_panel_publish_github_release_lookup_errors",
+            "scripts/publish-github-release.py",
+        )
+        responses = [
+            (1, "", "release not found", None),
+            (1, "", "HTTP 403: Resource not accessible", "HTTP 403"),
+            (0, "not JSON", "", "invalid JSON"),
+            (0, '{"databaseId": true}', "", "invalid release ID"),
+            (0, '{"databaseId": 0}', "", "invalid release ID"),
+        ]
+        for code, stdout, stderr, error in responses:
+            with self.subTest(stdout=stdout, stderr=stderr):
+                client = publisher.GitHubCLIClient("cbusillo/context-panel")
+                with (
+                    patch.object(client, "_api_json", return_value=None),
+                    patch.object(
+                        client, "_run",
+                        return_value=subprocess.CompletedProcess([], code, stdout, stderr),
+                    ),
+                ):
+                    if error is None:
+                        self.assertIsNone(client.get_release("v1.2.3"))
+                    else:
+                        with self.assertRaisesRegex(publisher.PublicationError, error):
+                            client.get_release("v1.2.3")
 
     def test_github_release_rejects_tagless_published_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
