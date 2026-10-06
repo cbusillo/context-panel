@@ -280,7 +280,8 @@ Use `Ship` for normal releases. It accepts:
 - `version`: marketing/release version, for example `1.0.18`.
 - `build_number`: optional App Store build number; blank uses a UTC timestamp.
 - `github_release`: publish the GitHub release channel.
-- `notarize_github_release`: notarize the GitHub zip; default is true.
+- `notarize_github_release`: notarize the GitHub zip; defaults to true. With
+  `github_release=true`, selecting false is refused before channel builds.
 - `app_store_channel`: `upload`, `export-only`, or `skip`.
 - `companion_app_store_channel`: `upload`, `export-only`, or `skip`.
 - `companion_platform`: `ios`, `visionos`, or `tvos`.
@@ -373,8 +374,10 @@ For validation without signing secrets, dispatch **Release** with
 `create_github_release=false` and `notarize=false`. It builds and uploads the
 zip and sealed metadata to the workflow run, without publishing a GitHub
 Release. Ship's GitHub channel always requests publication and therefore
-requires signing and completed notarization even if
-`notarize_github_release=false` is selected.
+requires signing and completed notarization. Ship rejects
+`notarize_github_release=false` when its GitHub channel is selected, before
+starting any channel. Standalone Release rejects the same publication intent
+before building; artifact metadata remains the final publication authority.
 
 The publication check can also run locally without secrets, a CloudKit receipt,
 or GitHub access:

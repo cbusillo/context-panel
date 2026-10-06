@@ -15,6 +15,10 @@ if [[ "${INPUT_VERSION}" == "1.0" ]]; then
   exit 1
 fi
 github_release_selected="${INPUT_GITHUB_RELEASE}"
+if [[ "${github_release_selected}" == "true" && "${INPUT_NOTARIZE_GITHUB_RELEASE}" != "true" ]]; then
+  echo "GitHub Releases require notarization; use Release with create_github_release=false and notarize=false for validation artifacts" >&2
+  exit 1
+fi
 app_store_channel="${INPUT_APP_STORE_CHANNEL}"
 companion_app_store_channel="${INPUT_COMPANION_APP_STORE_CHANNEL}"
 testflight_beta_selected="${INPUT_TESTFLIGHT_BETA}"

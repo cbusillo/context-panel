@@ -171,10 +171,15 @@ jobs:
         shell: bash
         env:
           INPUT_CREATE_GITHUB_RELEASE: ${{ inputs.create_github_release }}
+          INPUT_NOTARIZE: ${{ inputs.notarize }}
         run: |
           set -euo pipefail
           publish_requested="${INPUT_CREATE_GITHUB_RELEASE}"
           if [[ "${publish_requested}" == "true" ]]; then
+            if [[ "${INPUT_NOTARIZE}" != "true" ]]; then
+              echo "GitHub Releases require notarization; set create_github_release=false and notarize=false for validation artifacts" >&2
+              exit 1
+            fi
             echo "Release publication requested."
           fi
 
