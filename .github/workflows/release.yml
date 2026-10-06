@@ -18,7 +18,7 @@ name: Release
         default: true
         type: boolean
       notarize:
-        description: Notarize when Apple signing secrets are configured.
+        description: Notarize the artifact; required for GitHub Release publication.
         required: false
         default: true
         type: boolean
@@ -42,7 +42,7 @@ name: Release
         default: true
         type: boolean
       notarize:
-        description: Notarize when Apple signing secrets are configured.
+        description: Notarize the artifact; required for GitHub Release publication.
         required: true
         default: true
         type: boolean
@@ -381,6 +381,26 @@ jobs:
             ${{ steps.package.outputs.metadata_path }}
           if-no-files-found: error
 
+      - name: Validate GitHub Release Artifact
+        if: ${{ inputs.create_github_release }}
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+          METADATA_PATH: ${{ steps.package.outputs.metadata_path }}
+        run: |
+          python3 scripts/publish-github-release.py \
+            --validate-only \
+            --tag "${TAG}" \
+            --source-commit "${GITHUB_SHA}" \
+            --version "${VERSION}" \
+            --build-number "${BUILD_NUMBER}" \
+            --title "Context Panel ${VERSION}" \
+            --notes-file /dev/null \
+            --metadata "${METADATA_PATH}" \
+            --asset "${ZIP_PATH}"
+
       - name: Verify Production CloudKit Schema Receipt
         if: ${{ inputs.create_github_release }}
         shell: bash
@@ -416,23 +436,7 @@ jobs:
           {
             echo "Context Panel ${VERSION}"
             echo
-            metadata_values="$(python3 - "${METADATA_PATH}" <<'PY'
-          import json
-          import sys
-
-          metadata = json.load(open(sys.argv[1], encoding="utf-8"))
-          notarized = "true" if metadata.get("notarized") is True else "false"
-          print(f"{notarized}\t{metadata.get('signingIdentity', '-')}")
-          PY
-            )"
-            IFS=$'\t' read -r notarized signing_identity <<<"${metadata_values}"
-            if [[ "${notarized}" == "true" ]]; then
-              echo "This build is signed and notarized."
-            elif [[ "${signing_identity}" != "-" ]]; then
-              echo "This build is signed but was not notarized by this workflow run."
-            else
-              echo "This build is ad-hoc signed for CI validation. Configure Apple signing and notarization secrets before using it as a friend-installable release."
-            fi
+            echo "This build is signed and notarized."
           } >"${notes}"
 
           python3 scripts/publish-github-release.py \

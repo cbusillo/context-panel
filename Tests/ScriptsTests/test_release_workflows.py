@@ -15,8 +15,9 @@ import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
@@ -246,8 +247,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 {
                     "version": version,
                     "buildNumber": build_number,
-                    "signingIdentity": "-",
-                    "notarized": False,
+                    "signingIdentity": FIXTURE_SIGNING_FINGERPRINT,
+                    "notarized": True,
                 }
             )
             + "\n"
@@ -1613,6 +1614,70 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     ],
                 },
             )
+
+    def test_github_release_refuses_unsafe_builds_before_any_github_write(self) -> None:
+        cases = [
+            {"signingIdentity": "-", "notarized": False},
+            {"signingIdentity": "-", "notarized": True},
+            {"signingIdentity": "", "notarized": True},
+            {"signingIdentity": None, "notarized": True},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": False},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": "true"},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": 1},
+            {"signingIdentity": FIXTURE_SIGNING_FINGERPRINT, "notarized": None},
+        ]
+        for fields in cases:
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                publisher, identity, zip_path, metadata_path = self.github_release_fixture(Path(directory))
+                metadata = json.loads(metadata_path.read_text())
+                metadata.update(fields)
+                metadata_path.write_text(json.dumps(metadata))
+                args = SimpleNamespace(
+                    repository="example/example", tag=identity.tag,
+                    source_commit=identity.source_commit, version=identity.version,
+                    build_number=identity.build_number, metadata=metadata_path,
+                    asset=[zip_path], title="Fixture release", notes_file=Path(directory) / "unused",
+                    validate_only=False,
+                )
+                with (
+                    patch.object(publisher, "parse_args", return_value=args),
+                    patch.object(publisher, "require_cloudkit_schema_receipt") as receipt,
+                    patch.object(publisher, "GitHubCLIClient") as client,
+                ):
+                    self.assertEqual(publisher.main(), 1)
+                    receipt.assert_called_once_with(identity.source_commit)
+                    client.assert_not_called()
+                # The refused public release still leaves its workflow artifacts available.
+                self.assertTrue(zip_path.is_file())
+                self.assertTrue(metadata_path.is_file())
+
+    def test_github_release_workflow_preflight_accepts_signed_and_refuses_validation_artifacts(self) -> None:
+        workflow = self.read(".github/workflows/release.yml")
+        step = workflow.split("      - name: Validate GitHub Release Artifact\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        script, = workflow_run_blocks(step)
+        with tempfile.TemporaryDirectory() as directory:
+            _, identity, zip_path, metadata_path = self.github_release_fixture(Path(directory))
+            env = self.release_environment(
+                TAG=identity.tag, GITHUB_SHA=identity.source_commit,
+                VERSION=identity.version, BUILD_NUMBER=identity.build_number,
+                ZIP_PATH=str(zip_path), METADATA_PATH=str(metadata_path),
+            )
+            signed = subprocess.run(
+                ["/bin/bash", "-c", script], cwd=REPO_ROOT, env=env,
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(signed.returncode, 0, signed.stderr)
+            metadata = json.loads(metadata_path.read_text())
+            metadata.update(signingIdentity="-", notarized=False)
+            metadata_path.write_text(json.dumps(metadata))
+            refused = subprocess.run(
+                ["/bin/bash", "-c", script], cwd=REPO_ROOT, env=env,
+                text=True, capture_output=True, check=False,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("ad-hoc builds are available only as workflow artifacts", refused.stderr)
+            self.assertEqual(zip_path.read_bytes(), b"signed release zip")
 
     def test_github_release_publication_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
