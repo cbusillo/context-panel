@@ -21,7 +21,71 @@ env:
   CI_TIME_BUDGET_MINUTES: "15"
 
 jobs:
+  macos-release:
+    # Use Ship's hosted runner/toolchain and universal optimized configuration.
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify change scope
+        id: scope
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
+
+      - name: Select Xcode
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Validate Release Xcode
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: scripts/validate-release-xcode.sh --required-major 26
+
+      - name: Install XcodeGen
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Build universal macOS Release
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          xcodegen generate --spec project.yml
+          xcodebuild \
+            -project ContextPanel.xcodeproj \
+            -scheme ContextPanel \
+            -configuration Release \
+            -derivedDataPath .build/xcode-derived-ci-release \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          app='.build/xcode-derived-ci-release/Build/Products/Release/Context Panel.app'
+          for bundle in "$app" "$app"/Contents/PlugIns/*.appex "$app"/Contents/Library/LoginItems/*.app; do
+            executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")
+            for arch in arm64 x86_64; do
+              xcrun lipo "$bundle/Contents/MacOS/$executable" -verify_arch "$arch"
+            done
+          done
+
   swift:
+    needs: [swift-tests, macos-release]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require product tests and release compilation
+        env:
+          TEST_RESULT: ${{ needs.swift-tests.result }}
+          RELEASE_RESULT: ${{ needs.macos-release.result }}
+        run: |
+          [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' ]]
+
+  swift-tests:
     runs-on: >-
       ${{ fromJSON(github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name != github.repository &&

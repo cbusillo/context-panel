@@ -28,7 +28,8 @@
   },
   "qualityGate": {
     "build": {
-      "default": "swift build"
+      "default": "swift build",
+      "macOSReleaseCI": ".github/workflows/ci.yml macos-release (Ship hosted runner and Xcode guard; optimized universal native app build; required swift check joins release compilation and product tests)"
     },
     "test": {
       "default": "swift test",
@@ -55,7 +56,7 @@
     "validate": {
       "default": "scripts/commit-gate.sh",
       "releaseApprovalPolicy": "uv run scripts/check-release-approvals.py (classified-graph structural dry-run: one secretless Ship approval; standalone gates; same-commit local channels inherit repository secrets; one release secret environment; live review-metadata check; owner role move and RELEASE_APPROVALS_CONFIGURED=true required); unclassified environment selectors must prove disjointness from reserved release names, with literal and fixed-namespace lookup routes; unclassified reusable calls remain accepted and report incomplete coverage (docs/release.md)",
-      "ciChangeScope": "uv run --no-project python scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
+      "ciChangeScope": "uv run --no-project python scripts/ci-change-scope.py --base <base-sha> (pull requests only; skips swift build, swift test, universal macOS Release compilation, and the companion builds when every changed path is documentation or validation tooling; unknown paths run everything; pushes to main and CodeQL always run in full)",
       "companionUploadFixtureTools": "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR=<dir> scripts/upload-app-store-connect-companion-app.sh --export-only <other arguments> (test-only seam for fixture xcodebuild and codesign; refused for uploads)",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
       "cloudKitSchemaReceiptGate": "scripts/require-cloudkit-schema-receipt.sh (called by every live release entrypoint; local live runs use scripts/with-cloudkit-schema-receipt.sh -- <command>)",
