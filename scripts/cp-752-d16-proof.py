@@ -14,7 +14,6 @@ target = os.environ["PROOF_TARGET"]
 stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 tag = f"publisher-proof-{stamp}-{os.environ['GITHUB_RUN_ID']}-{uuid.uuid4().hex[:8]}"
 title = f"TEST ONLY - NEVER PUBLISH - {tag}"
-client = publisher["GitHubCLIClient"](repo)
 identity = publisher["ReleaseIdentity"](tag, target, "publisher-proof", os.environ["GITHUB_RUN_ID"], ())
 notes = publisher["render_notes"](title, identity)
 
@@ -36,13 +35,47 @@ def retained():
     r = api(f"repos/{repo}/releases/405252613")
     return {k: r[k] for k in ("id", "tag_name", "draft", "target_commitish", "body", "assets", "published_at")}
 
+class StopBeforePublication(Exception):
+    pass
+
+class ProofClient(publisher["GitHubCLIClient"]):
+    creates = 0
+
+    def _run(self, arguments, **kwargs):
+        result = super()._run(arguments, **kwargs)
+        if arguments[:2] == ["api", "graphql"]:
+            if result.returncode == 0:
+                value = json.loads(result.stdout)
+                pages = value if isinstance(value, list) else [value]
+                emit("publisher_graphql", selected=[p["data"]["repository"]["release"] for p in pages], matching_list_nodes=[n for p in pages for n in p["data"]["repository"].get("releases", {}).get("nodes", []) if n["tagName"] == tag])
+        elif arguments[:1] == ["api"] and len(arguments) == 2:
+            value = json.loads(result.stdout) if result.returncode == 0 else None
+            emit("publisher_rest", endpoint=arguments[1], code=result.returncode, release_id=value.get("id") if value else None)
+        return result
+
+    def create_draft(self, *args, **kwargs):
+        self.creates += 1
+        return super().create_draft(*args, **kwargs)
+
+    def publish_draft(self, requested_tag):
+        assert requested_tag == tag
+        emit("publication_intercepted", creates=self.creates)
+        raise StopBeforePublication()
+
+client = ProofClient(repo)
 before = retained()
 release_id = None
 emit("start", tag=tag, source=os.environ["GITHUB_SHA"], target=target, token="Actions contents:write")
 try:
-    assert client.resolve_tag(tag) is None
-    assert by_tag() is None
-    client.create_draft(tag, target, title, notes, tag_exists=False)
+    for attempt in ("create", "adopt"):
+        try:
+            publisher["publish_release"](client, identity, title=title, notes=title)
+            raise AssertionError("unexpected publication")
+        except StopBeforePublication:
+            emit("publisher_transaction", attempt=attempt, result="verified draft; publication intercepted", creates=client.creates)
+        except publisher["PublicationError"] as error:
+            emit("publisher_lookup_error", attempt=attempt, message=str(error))
+            break
     selected = by_tag()
     assert selected and selected["tagName"] == tag and selected["isDraft"] is True
     release_id = selected["databaseId"]
@@ -50,13 +83,10 @@ try:
     query = "query($tag:String!,$endCursor:String){repository(owner:\"cbusillo\",name:\"context-panel\"){release(tagName:$tag){databaseId} releases(first:100,after:$endCursor){nodes{databaseId tagName} pageInfo{hasNextPage endCursor}}}}"
     pages = api("graphql", "--paginate", "--slurp", "-f", f"query={query}", "-f", f"tag={tag}")
     emit("graphql_lookup", selected=[p["data"]["repository"]["release"] for p in pages], matching_list_nodes=[n for p in pages for n in p["data"]["repository"]["releases"]["nodes"] if n["tagName"] == tag], page_count=len(pages))
-    try:
-        draft = client.get_release(tag)
-        emit("publisher_lookup", release_id=draft["id"] if draft else None)
-    except publisher["PublicationError"] as error:
-        emit("publisher_lookup_error", message=str(error))
 finally:
-    if release_id is not None:
+    selected = by_tag()
+    if selected is not None:
+        release_id = selected["databaseId"]
         draft = api(f"repos/{repo}/releases/{release_id}")
         assert release_id != before["id"] and draft["id"] == release_id
         assert draft["draft"] is True and draft["tag_name"] == tag
