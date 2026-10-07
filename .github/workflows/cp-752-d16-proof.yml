@@ -1,0 +1,18 @@
+name: CP-752-D16 draft API proof
+on:
+  push:
+    branches: [work/cp-752-d16-draft-proof]
+    paths: [.github/workflows/cp-752-d16-proof.yml, scripts/cp-752-d16-proof.py, scripts/publish-github-release.py]
+permissions:
+  contents: write
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Bounded draft discovery proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROOF_TARGET: d2cd7ac675a7598b4a6848c59295885b0e024edb
+        run: python3 scripts/cp-752-d16-proof.py
