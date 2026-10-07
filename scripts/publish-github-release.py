@@ -156,8 +156,8 @@ class GitHubCLIClient:
         )
         if published is not None:
             return published
-        # Actions tokens can create drafts that REST release listing omits.
-        # Use the CLI's GraphQL pagination to retain duplicate-draft detection.
+        # Actions tokens can look up a draft by tag while release lists omit it.
+        # Use GraphQL's direct lookup; listing is an additional conflict check.
         owner, separator, name = self.repository.partition("/")
         if not owner or not separator or not name:
             raise PublicationError("GitHub repository must use owner/name")
@@ -199,10 +199,12 @@ class GitHubCLIClient:
             raise PublicationError("draft lookup returned invalid release data") from error
         if len(matches) > 1:
             raise PublicationError(f"multiple GitHub Releases use tag name {tag}")
-        release_id = matches[0].get("databaseId") if matches else None
+        release_id = selected_ids[0]
         if any(selected_id != release_id for selected_id in selected_ids):
+            raise PublicationError("draft lookup by tag changed during pagination")
+        if matches and matches[0].get("databaseId") != release_id:
             raise PublicationError("draft lookup by tag and release listing disagree")
-        if not matches:
+        if release_id is None:
             return None
         if type(release_id) is not int or release_id <= 0:
             raise PublicationError("draft lookup returned an invalid release ID")

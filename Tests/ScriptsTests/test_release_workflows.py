@@ -1896,14 +1896,11 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         repository = "cbusillo/context-panel"
         release_id = 123
+        listing = "omitted"
 
         def run(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             if arguments == ["api", f"repos/{repository}/releases/tags/v1.2.3"]:
                 return subprocess.CompletedProcess(arguments, 1, "", "HTTP 404")
-            if arguments == [
-                "api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"
-            ]:
-                return subprocess.CompletedProcess(arguments, 0, "[[]]", "")
             if arguments == ["api", f"repos/{repository}/releases/{release_id}"]:
                 return subprocess.CompletedProcess(arguments, 0, json.dumps(draft), "")
             if arguments[:2] == ["api", "graphql"]:
@@ -1911,8 +1908,12 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": []}}}},
                     {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": [
                         {"databaseId": release_id, "tagName": draft["tag_name"]}
-                    ]}}}},
+                    ] if listing != "omitted" else []}}}},
                 ]
+                if listing == "duplicate":
+                    pages[1]["data"]["repository"]["releases"]["nodes"].append(
+                        {"databaseId": release_id + 1, "tagName": draft["tag_name"]}
+                    )
                 if "--paginate" not in arguments:
                     pages = pages[:1]
                 stdout = json.dumps(pages) if "--slurp" in arguments else "\n".join(json.dumps(page) for page in pages)
@@ -1922,8 +1923,18 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             raise AssertionError(f"unexpected GitHub operation: {arguments}")
 
         client = publisher.GitHubCLIClient(repository)
-        with patch.dict(client.__dict__, {"_run": Mock(side_effect=run)}):
-            self.assertEqual(client.get_release("v1.2.3"), draft)
+        # The real Actions token finds the draft by tag even when GraphQL's
+        # release list omits it. A visible later-page match is also valid.
+        for listing in ("omitted", "later", "duplicate"):
+            with (
+                self.subTest(listing=listing),
+                patch.dict(client.__dict__, {"_run": Mock(side_effect=run)}),
+            ):
+                if listing == "duplicate":
+                    with self.assertRaisesRegex(publisher.PublicationError, "multiple GitHub Releases"):
+                        client.get_release("v1.2.3")
+                else:
+                    self.assertEqual(client.get_release("v1.2.3"), draft)
 
     def test_github_release_draft_lookup_missing_and_errors(self) -> None:
         publisher = load_script_module(
@@ -1945,7 +1956,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 page([{"databaseId": 1, "tagName": "v1.2.3"}]),
                 page([{"databaseId": 2, "tagName": "v1.2.3"}]),
             ]), "", "multiple GitHub Releases"),
-            (0, json.dumps([page([], 1)]), "", "listing disagree"),
+            (0, json.dumps([page([], 1), page([], 2)]), "", "changed during pagination"),
+            (0, json.dumps([page([{"databaseId": 1, "tagName": "v1.2.3"}])]), "", "listing disagree"),
             (0, json.dumps([page([{"databaseId": 1, "tagName": "v1.2.3"}], 2)]), "", "listing disagree"),
         ]
         for code, stdout, stderr, error in responses:

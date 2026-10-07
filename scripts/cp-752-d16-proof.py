@@ -1,6 +1,7 @@
 """Disposable CP-752-D16 Actions-token experiment; removed before handoff."""
 import datetime
 import json
+import hashlib
 import os
 import runpy
 import subprocess
@@ -35,6 +36,19 @@ def retained():
     r = api(f"repos/{repo}/releases/405252613")
     return {k: r[k] for k in ("id", "tag_name", "draft", "target_commitish", "body", "assets", "published_at")}
 
+def published_digest():
+    pages = api("--paginate", "--slurp", f"repos/{repo}/releases?per_page=100")
+    records = []
+    for page in pages:
+        for release in page:
+            if release["draft"] is False:
+                records.append({
+                    **{key: release[key] for key in ("id", "tag_name", "target_commitish", "name", "body", "published_at", "immutable")},
+                    "assets": [{key: asset.get(key) for key in ("id", "name", "size", "digest", "state")} for asset in release["assets"]],
+                })
+    digest = hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
+    return len(records), digest
+
 class StopBeforePublication(Exception):
     pass
 
@@ -64,6 +78,7 @@ class ProofClient(publisher["GitHubCLIClient"]):
 
 client = ProofClient(repo)
 before = retained()
+published_before = published_digest()
 release_id = None
 emit("start", tag=tag, source=os.environ["GITHUB_SHA"], target=target, token="Actions contents:write")
 try:
@@ -75,7 +90,8 @@ try:
             emit("publisher_transaction", attempt=attempt, result="verified draft; publication intercepted", creates=client.creates)
         except publisher["PublicationError"] as error:
             emit("publisher_lookup_error", attempt=attempt, message=str(error))
-            break
+            raise
+    assert client.creates == 1
     selected = by_tag()
     assert selected and selected["tagName"] == tag and selected["isDraft"] is True
     release_id = selected["databaseId"]
@@ -96,7 +112,9 @@ finally:
         api("--method", "DELETE", f"repos/{repo}/releases/{release_id}")
         assert api(f"repos/{repo}/releases/{release_id}", absent=True) is None
         assert by_tag() is None
+        assert client.get_release(tag) is None
         emit("deleted_and_absent", release_id=release_id)
     assert client.resolve_tag(tag) is None
     assert retained() == before
-    emit("preserved", retained_release=before["id"], test_git_tag="absent")
+    assert published_digest() == published_before
+    emit("preserved", retained_release=before["id"], test_git_tag="absent", published_count=published_before[0], published_sha256=published_before[1])
