@@ -767,7 +767,7 @@ class CompanionUploadArchiveTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("export-only mode did not emit a local IPA", result.stdout)
 
-    def test_each_ios_archive_defect_is_refused_before_export(self):
+    def test_a_full_ios_archive_defect_batch_is_refused_before_export(self):
         def case(message, mutate):
             archive = ios_archive()
             mutate(archive["bundles"], archive)

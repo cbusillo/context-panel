@@ -3062,6 +3062,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             skipped = self.run_commit_gate_cache_fixture(
                 temp_path / "skipped", artifact_cache_root, arguments=("--skip-swift",)
             )
+            serial = self.run_commit_gate_cache_fixture(
+                temp_path / "serial", artifact_cache_root, arguments=("--serial-python",)
+            )
             unknown = self.run_commit_gate_cache_fixture(
                 temp_path / "unknown", artifact_cache_root, arguments=("--skip-swfit",)
             )
@@ -3079,6 +3082,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         python_validation = [line for line in commands(full, "python3") if " swift " not in line]
         self.assertTrue(python_validation)
         self.assertEqual(commands(skipped, "python3"), python_validation)
+
+        self.assertEqual(serial.returncode, 0, serial.stdout)
+        self.assertTrue(any(line.startswith("swift build") for line in commands(serial, "swift")))
+        self.assertTrue(any(" swift test" in line for line in commands(serial, "python3")))
+        self.assertEqual(
+            [line for line in commands(serial, "python3") if " swift " not in line],
+            [
+                line + " --serial" if " run --lane fast-local-python" in line else line
+                for line in python_validation
+            ],
+        )
 
         # A misspelled flag must not silently run, or silently skip, anything.
         self.assertEqual(unknown.returncode, 64, unknown.stdout)

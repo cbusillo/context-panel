@@ -5,9 +5,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 swiftpm_scratch_path="${CONTEXT_PANEL_SWIFTPM_SCRATCH_PATH:-}"
 run_swift=true
+python_lane_args=(--lane fast-local-python)
 
 usage() {
-	echo "usage: scripts/commit-gate.sh [--skip-swift]" >&2
+	echo "usage: scripts/commit-gate.sh [--skip-swift] [--serial-python]" >&2
 }
 
 while (($# > 0)); do
@@ -15,6 +16,7 @@ while (($# > 0)); do
 	# For pull requests whose changed paths cannot affect the Swift package;
 	# scripts/ci-change-scope.py makes that decision in CI.
 	--skip-swift) run_swift=false ;;
+	--serial-python) python_lane_args+=(--serial) ;;
 	*)
 		usage
 		exit 64
@@ -65,7 +67,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 	python3 scripts/context-panel-test-lanes.py validate
 PYTHONDONTWRITEBYTECODE=1 \
 	python3 scripts/context-panel-test-lanes.py run \
-		--lane fast-local-python
+		"${python_lane_args[@]}"
 
 if [[ "$run_swift" != "true" ]]; then
 	echo "commit gate: skipping swift build and swift test (--skip-swift)"
