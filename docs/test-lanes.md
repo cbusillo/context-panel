@@ -51,7 +51,8 @@ Validate complete ownership:
 python3 scripts/context-panel-test-lanes.py validate
 ```
 
-Run the focused local Python lane with per-file timing:
+Run the focused local Python lane with per-file timing (`uv` is required for
+files configured with parallel workers):
 
 ```sh
 python3 scripts/context-panel-test-lanes.py run --lane fast-local-python
@@ -72,7 +73,11 @@ Other files remain serial. A missing runner fails that file, preserves its
 report and continues later files.
 Only independent, hermetic fixture tests belong in this configuration. Reports
 record elapsed wall time and worker count for each file, including worker startup.
-For debugging, add `--serial` to run every file with the standard unittest runner.
+For debugging or a machine without the parallel dependencies, add `--serial`
+to run every file with the standard unittest runner. The commit gate forwards
+that option with `scripts/commit-gate.sh --serial-python`; it still runs every
+focused Python file and the Swift build/tests. Combine with `--skip-swift` only
+when the changed paths cannot affect Swift.
 
 List the files in a safe lane:
 

@@ -613,67 +613,6 @@ class CompanionUploadArchiveTests(unittest.TestCase):
                 self.assertEqual(result.archive_run.expected_build_arguments, [])
                 self.assertFalse(result.archive_run.ipa_exported)
 
-    # Schedule the largest defect batch before short archive checks so parallel
-    # workers can finish other cases while its independent fixtures run.
-    def test_each_ios_archive_defect_is_refused_before_export(self):
-        def case(message, mutate):
-            archive = ios_archive()
-            mutate(archive["bundles"], archive)
-            return archive, message
-
-        def drop(*names):
-            return lambda bundles, _: [bundles.pop(name) for name in names]
-
-        def entitlement(name, key, value):
-            return lambda bundles, _: bundles[name]["entitlements"].__setitem__(key, value)
-
-        def without_entitlement(name, key):
-            return lambda bundles, _: bundles[name]["entitlements"].pop(key)
-
-        def info(name, key, value):
-            return lambda bundles, _: bundles[name]["info"].__setitem__(key, value)
-
-        def field(name, key, value):
-            return lambda bundles, _: bundles[name].__setitem__(key, value)
-
-        services = ICLOUD_SERVICES
-        cases = [
-            case("companion archive is missing the embedded widget extension", drop(COMPANION_WIDGET)),
-            case("companion widget signed entitlements are not a valid property list", field(COMPANION_WIDGET, "entitlements", None)),
-            case("companion widget signed entitlements do not contain com.apple.security.application-groups", entitlement(COMPANION_WIDGET, APPLICATION_GROUPS, [])),
-            case("companion widget signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(COMPANION_WIDGET, ICLOUD_CONTAINERS, ["iCloud.com.example.other"])),
-            case("companion widget signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(COMPANION_WIDGET, services, [])),
-            case("companion widget signed entitlements unexpectedly contain com.apple.developer.icloud-services value: CloudDocuments", entitlement(COMPANION_WIDGET, services, ["CloudKit", "CloudDocuments"])),
-            case("companion widget signed entitlements have com.apple.developer.icloud-container-environment value 'Development', expected 'Production'", entitlement(COMPANION_WIDGET, ICLOUD_ENVIRONMENT, "Development")),
-            case("companion widget signed entitlements unexpectedly contain: com.apple.developer.ubiquity-container-identifiers", entitlement(COMPANION_WIDGET, UBIQUITY_CONTAINERS, [CONTAINER])),
-            case("companion widget signed entitlements unexpectedly contain: aps-environment", entitlement(COMPANION_WIDGET, APS_ENVIRONMENT, "production")),
-            case("iOS archive is missing the embedded Watch app", drop(WATCH_APP, WATCH_WIDGET)),
-            case("iOS archive is missing the embedded Watch complication extension", drop(WATCH_WIDGET)),
-            case("iOS companion app marketing version is '1.0', expected '9.9.9'", info(APP, "CFBundleShortVersionString", "1.0")),
-            case("companion Watch app marketing version is '1.0', expected '9.9.9'", info(WATCH_APP, "CFBundleShortVersionString", "1.0")),
-            case("companion Watch widget build number is '1', expected '999'", info(WATCH_WIDGET, "CFBundleVersion", "1")),
-            case("iOS companion app has CFBundleIdentifier value", info(APP, "CFBundleIdentifier", "com.example.other")),
-            case("companion Watch app has CFBundleIdentifier value", info(WATCH_APP, "CFBundleIdentifier", "com.example.other")),
-            case("companion Watch widget has CFBundleIdentifier value", info(WATCH_WIDGET, "CFBundleIdentifier", "com.example.other")),
-            case("companion Watch app has WKApplication value 'false', expected 'true'", info(WATCH_APP, "WKApplication", False)),
-            case("companion Watch app has WKCompanionAppBundleIdentifier value", info(WATCH_APP, "WKCompanionAppBundleIdentifier", "com.example.other")),
-            case("companion Watch widget has NSExtension:NSExtensionPointIdentifier value", info(WATCH_WIDGET, "NSExtension", {"NSExtensionPointIdentifier": "com.example.other"})),
-            case("companion Watch widget code signature verification failed", field(WATCH_WIDGET, "signature_valid", False)),
-            case("companion Watch app code signature verification failed", field(WATCH_APP, "signature_valid", False)),
-            case("iOS companion app code signature verification failed", field(APP, "signature_valid", False)),
-            case("companion Watch app signed entitlements do not contain com.apple.security.application-groups", entitlement(WATCH_APP, APPLICATION_GROUPS, [])),
-            case("companion Watch app signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(WATCH_APP, ICLOUD_CONTAINERS, [])),
-            case("companion Watch app signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(WATCH_APP, services, [])),
-            case("companion Watch app signed entitlements have com.apple.developer.icloud-container-environment value 'Development'", entitlement(WATCH_APP, ICLOUD_ENVIRONMENT, "Development")),
-            case("companion Watch widget signed entitlements do not contain com.apple.security.application-groups", entitlement(WATCH_WIDGET, APPLICATION_GROUPS, [])),
-            case("companion Watch widget signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(WATCH_WIDGET, ICLOUD_CONTAINERS, [])),
-            case("companion Watch widget signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(WATCH_WIDGET, services, [])),
-            case("companion Watch widget signed entitlements have com.apple.developer.icloud-container-environment value ''", without_entitlement(WATCH_WIDGET, ICLOUD_ENVIRONMENT)),
-            case("companion Watch app archive dSYM does not cover every executable UUID", lambda _, archive: archive["dsyms"].pop("Watch.dSYM")),
-            case("bundle executable has no DWARF UUIDs", field(WATCH_WIDGET, "uuids", [])),
-        ]  # fmt: skip
-        self.assert_each_refused("ios", ios_profiles, cases)
-
     def test_a_valid_ios_archive_is_archived_with_every_profile_then_exported(self):
         result, export_options, _ = run_preflight("ios", ios_profiles(), archive=ios_archive())
         run = result.archive_run
@@ -827,6 +766,65 @@ class CompanionUploadArchiveTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("export-only mode did not emit a local IPA", result.stdout)
+
+    def test_a_full_ios_archive_defect_batch_is_refused_before_export(self):
+        def case(message, mutate):
+            archive = ios_archive()
+            mutate(archive["bundles"], archive)
+            return archive, message
+
+        def drop(*names):
+            return lambda bundles, _: [bundles.pop(name) for name in names]
+
+        def entitlement(name, key, value):
+            return lambda bundles, _: bundles[name]["entitlements"].__setitem__(key, value)
+
+        def without_entitlement(name, key):
+            return lambda bundles, _: bundles[name]["entitlements"].pop(key)
+
+        def info(name, key, value):
+            return lambda bundles, _: bundles[name]["info"].__setitem__(key, value)
+
+        def field(name, key, value):
+            return lambda bundles, _: bundles[name].__setitem__(key, value)
+
+        services = ICLOUD_SERVICES
+        cases = [
+            case("companion archive is missing the embedded widget extension", drop(COMPANION_WIDGET)),
+            case("companion widget signed entitlements are not a valid property list", field(COMPANION_WIDGET, "entitlements", None)),
+            case("companion widget signed entitlements do not contain com.apple.security.application-groups", entitlement(COMPANION_WIDGET, APPLICATION_GROUPS, [])),
+            case("companion widget signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(COMPANION_WIDGET, ICLOUD_CONTAINERS, ["iCloud.com.example.other"])),
+            case("companion widget signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(COMPANION_WIDGET, services, [])),
+            case("companion widget signed entitlements unexpectedly contain com.apple.developer.icloud-services value: CloudDocuments", entitlement(COMPANION_WIDGET, services, ["CloudKit", "CloudDocuments"])),
+            case("companion widget signed entitlements have com.apple.developer.icloud-container-environment value 'Development', expected 'Production'", entitlement(COMPANION_WIDGET, ICLOUD_ENVIRONMENT, "Development")),
+            case("companion widget signed entitlements unexpectedly contain: com.apple.developer.ubiquity-container-identifiers", entitlement(COMPANION_WIDGET, UBIQUITY_CONTAINERS, [CONTAINER])),
+            case("companion widget signed entitlements unexpectedly contain: aps-environment", entitlement(COMPANION_WIDGET, APS_ENVIRONMENT, "production")),
+            case("iOS archive is missing the embedded Watch app", drop(WATCH_APP, WATCH_WIDGET)),
+            case("iOS archive is missing the embedded Watch complication extension", drop(WATCH_WIDGET)),
+            case("iOS companion app marketing version is '1.0', expected '9.9.9'", info(APP, "CFBundleShortVersionString", "1.0")),
+            case("companion Watch app marketing version is '1.0', expected '9.9.9'", info(WATCH_APP, "CFBundleShortVersionString", "1.0")),
+            case("companion Watch widget build number is '1', expected '999'", info(WATCH_WIDGET, "CFBundleVersion", "1")),
+            case("iOS companion app has CFBundleIdentifier value", info(APP, "CFBundleIdentifier", "com.example.other")),
+            case("companion Watch app has CFBundleIdentifier value", info(WATCH_APP, "CFBundleIdentifier", "com.example.other")),
+            case("companion Watch widget has CFBundleIdentifier value", info(WATCH_WIDGET, "CFBundleIdentifier", "com.example.other")),
+            case("companion Watch app has WKApplication value 'false', expected 'true'", info(WATCH_APP, "WKApplication", False)),
+            case("companion Watch app has WKCompanionAppBundleIdentifier value", info(WATCH_APP, "WKCompanionAppBundleIdentifier", "com.example.other")),
+            case("companion Watch widget has NSExtension:NSExtensionPointIdentifier value", info(WATCH_WIDGET, "NSExtension", {"NSExtensionPointIdentifier": "com.example.other"})),
+            case("companion Watch widget code signature verification failed", field(WATCH_WIDGET, "signature_valid", False)),
+            case("companion Watch app code signature verification failed", field(WATCH_APP, "signature_valid", False)),
+            case("iOS companion app code signature verification failed", field(APP, "signature_valid", False)),
+            case("companion Watch app signed entitlements do not contain com.apple.security.application-groups", entitlement(WATCH_APP, APPLICATION_GROUPS, [])),
+            case("companion Watch app signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(WATCH_APP, ICLOUD_CONTAINERS, [])),
+            case("companion Watch app signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(WATCH_APP, services, [])),
+            case("companion Watch app signed entitlements have com.apple.developer.icloud-container-environment value 'Development'", entitlement(WATCH_APP, ICLOUD_ENVIRONMENT, "Development")),
+            case("companion Watch widget signed entitlements do not contain com.apple.security.application-groups", entitlement(WATCH_WIDGET, APPLICATION_GROUPS, [])),
+            case("companion Watch widget signed entitlements do not contain com.apple.developer.icloud-container-identifiers", entitlement(WATCH_WIDGET, ICLOUD_CONTAINERS, [])),
+            case("companion Watch widget signed entitlements do not contain com.apple.developer.icloud-services value: CloudKit", entitlement(WATCH_WIDGET, services, [])),
+            case("companion Watch widget signed entitlements have com.apple.developer.icloud-container-environment value ''", without_entitlement(WATCH_WIDGET, ICLOUD_ENVIRONMENT)),
+            case("companion Watch app archive dSYM does not cover every executable UUID", lambda _, archive: archive["dsyms"].pop("Watch.dSYM")),
+            case("bundle executable has no DWARF UUIDs", field(WATCH_WIDGET, "uuids", [])),
+        ]  # fmt: skip
+        self.assert_each_refused("ios", ios_profiles, cases)
 
     def test_each_tvos_archive_defect_is_refused_before_export(self):
         def case(message, mutate):
