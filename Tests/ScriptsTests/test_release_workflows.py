@@ -1904,16 +1904,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             if arguments == ["api", f"repos/{repository}/releases/{release_id}"]:
                 return subprocess.CompletedProcess(arguments, 0, json.dumps(draft), "")
             if arguments[:2] == ["api", "graphql"]:
+                later_nodes: list[dict[str, object]] = []
+                if listing != "omitted":
+                    later_nodes.append({"databaseId": release_id, "tagName": draft["tag_name"]})
+                if listing == "duplicate":
+                    later_nodes.append({"databaseId": release_id + 1, "tagName": draft["tag_name"]})
                 pages = [
                     {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": []}}}},
-                    {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": [
-                        {"databaseId": release_id, "tagName": draft["tag_name"]}
-                    ] if listing != "omitted" else []}}}},
+                    {"data": {"repository": {"release": {"databaseId": release_id}, "releases": {"nodes": later_nodes}}}},
                 ]
-                if listing == "duplicate":
-                    pages[1]["data"]["repository"]["releases"]["nodes"].append(
-                        {"databaseId": release_id + 1, "tagName": draft["tag_name"]}
-                    )
                 if "--paginate" not in arguments:
                     pages = pages[:1]
                 stdout = json.dumps(pages) if "--slurp" in arguments else "\n".join(json.dumps(page) for page in pages)
