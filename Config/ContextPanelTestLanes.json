@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
   "workersByFile": {
+    "Tests/ScriptsTests/test_physical_defect_corpus.py": 2,
+    "Tests/ScriptsTests/test_surface_manifest.py": 2,
     "Tests/ScriptsTests/test_release_workflows.py": 6,
     "Tests/ScriptsTests/test_companion_upload_script.py": 6
   },
