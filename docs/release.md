@@ -358,10 +358,12 @@ notarization can produce different bytes on a fresh rebuild; if a retry reports
 draft identity drift, inspect the retained draft and delete it explicitly before
 starting an intentional replacement build.
 
-Draft lookup uses paginated GraphQL through `gh api`, then REST-by-ID;
-REST release listing can omit drafts for the built-in Actions token even with
-`contents: write`. Multiple releases for the same tag or disagreement with
-GraphQL's release-by-tag lookup fail closed. No additional credential is needed.
+Draft lookup uses GraphQL's release-by-tag lookup through `gh api`, then
+REST-by-ID. Both REST and GraphQL release lists can omit drafts for the built-in
+Actions token even with `contents: write`; an absent list entry does not mean
+the directly selected draft is missing. Pagination still checks for multiple
+visible releases for the same tag, conflicting IDs, or a changing direct
+selection, which fail closed. No additional credential is needed.
 A job rerun rebuilds the package; it does not reuse the
 previously uploaded workflow artifact and retains the original source, including
 any publisher defect. Preserve the exact zip and sealed metadata when diagnosing
