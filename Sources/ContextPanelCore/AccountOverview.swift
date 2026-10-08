@@ -147,7 +147,7 @@ public struct AccountOverview: Equatable, Sendable {
         rankedAt = now
         let presented = snapshot.presented(at: now)
         let entries = metadata ?? Self.inferredMetadata(snapshot: snapshot, reports: reports)
-        accounts = entries.filter { !widgetsOnly || $0.showInWidgets }.map { entry in
+        let allAccounts = entries.map { entry in
             let limits = entry.sourceConfigured ? presented.limits.filter {
                 $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             } : []
@@ -220,11 +220,17 @@ public struct AccountOverview: Equatable, Sendable {
                     .map { ConnectorRedactor.safeErrorDescription($0) } : nil
             var account = Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
                                   bankedState: bankedState, observedAt: observed, providerPlan: plan)
-            account.resetAssessment = ResetAssessment(account: account, now: now)
-            // OpenAI and Claude accounts follow the #791 reset rule; other providers keep the older guidance.
-            account.bankedAdvice = account.resetAssessment.map { BankedAdvice(title: $0.title, detail: $0.detail) }
-                ?? report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
-                    .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
+            account.bankedAdvice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
+                .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
+            return account
+        }
+        let assessments = ResetAssessment.assessments(for: allAccounts, now: now)
+        accounts = allAccounts.filter { !widgetsOnly || $0.metadata.showInWidgets }.map { row in
+            var account = row
+            account.resetAssessment = assessments[account.id]
+            if let assessment = account.resetAssessment {
+                account.bankedAdvice = BankedAdvice(title: assessment.title, detail: assessment.detail)
+            }
             return account
         }
         deadlines = accounts.flatMap { account -> [Deadline] in
