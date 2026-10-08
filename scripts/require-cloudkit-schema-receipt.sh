@@ -48,11 +48,22 @@ else
 	exit 1
 fi
 
+binding_args=()
+if [[ -n "${CONTEXT_PANEL_CLOUDKIT_PUBLICATION_REQUEST_PATH:-}" ]]; then
+	publication_digest="$(python3 - "$CONTEXT_PANEL_CLOUDKIT_PUBLICATION_REQUEST_PATH" <<'PYTHON'
+import hashlib, json, sys
+request = json.load(open(sys.argv[1]))
+print(hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+PYTHON
+)"
+	binding_args=(--publication-request-digest "$publication_digest")
+fi
+
 if ! python3 "$repo_root/scripts/cloudkit-schema-receipt.py" verify \
 	"${receipt_args[@]}" \
 	--environment production \
 	--container-id iCloud.com.shinycomputers.contextpanel \
-	--source-commit "$source_commit"; then
+	--source-commit "$source_commit" "${binding_args[@]}"; then
 	echo "refusing live release mutation: the Production CloudKit schema receipt is not valid for $source_commit" >&2
 	exit 1
 fi

@@ -18,6 +18,8 @@ build_number="${CURRENT_PROJECT_VERSION:-}"
 marketing_version="${MARKETING_VERSION:-}"
 destination="upload"
 upload="true"
+archive_only="false"
+skip_archive="false"
 
 usage() {
 	cat <<'USAGE'
@@ -40,6 +42,8 @@ Options:
   --api-key-id ID                      App Store Connect API key ID.
   --api-issuer-id ID                   App Store Connect API issuer ID.
   --team-id ID                         Apple Developer Team ID.
+  --archive-only                       Build/verify without exporting or uploading.
+  --skip-archive                       Export/upload the existing verified archive.
   --export-only                        Export a local pkg instead of uploading.
   -h, --help                           Show this help.
 
@@ -102,6 +106,14 @@ while [[ $# -gt 0 ]]; do
 		team_id="${2:?--team-id requires a value}"
 		shift 2
 		;;
+	--archive-only)
+		archive_only="true"
+		shift
+		;;
+	--skip-archive)
+		skip_archive="true"
+		shift
+		;;
 	--export-only)
 		upload="false"
 		destination="export"
@@ -119,8 +131,13 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+if [[ "$archive_only" == "true" && "$skip_archive" == "true" ]]; then
+	echo "--archive-only and --skip-archive cannot be combined" >&2
+	exit 2
+fi
+
 # Uploading is a live App Store Connect mutation; export-only is not.
-if [[ "$upload" == "true" ]]; then
+if [[ "$upload" == "true" && "$archive_only" != "true" ]]; then
 	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
 fi
 
@@ -377,9 +394,18 @@ if [[ -n "$marketing_version" ]]; then
 	archive_args+=(MARKETING_VERSION="$marketing_version")
 fi
 
-rm -rf "$archive_path" "$derived_data_path" "$export_path"
-run_xcodebuild "${archive_args[@]}" archive
+if [[ "$skip_archive" != "true" ]]; then
+	rm -rf "$archive_path" "$derived_data_path" "$export_path"
+	run_xcodebuild "${archive_args[@]}" archive
+fi
 verify_archived_build_fingerprint
+if [[ "$skip_archive" == "true" ]]; then
+	archive_app="$archive_path/Products/Applications/Context Panel.app"
+	if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$archive_app/Contents/Info.plist")" != "$marketing_version" || "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$archive_app/Contents/Info.plist")" != "$build_number" ]]; then
+		echo "existing archive version/build does not match upload intent" >&2
+		exit 1
+	fi
+fi
 scripts/context-panel-write-expected-build.sh \
 	--archive "$archive_path" \
 	--layout macos \
@@ -389,6 +415,14 @@ scripts/context-panel-write-expected-build.sh \
 	--profile "macos.app=$app_profile" \
 	--profile "macos.widget=$widget_profile" \
 	--profile "macos.refresh-agent=$refresh_agent_profile"
+
+if [[ "$archive_only" == "true" ]]; then
+	echo "Archive verified; no export or upload performed."
+	exit 0
+fi
+if [[ "$upload" == "true" ]]; then
+	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
+fi
 
 run_xcodebuild \
 	-exportArchive \

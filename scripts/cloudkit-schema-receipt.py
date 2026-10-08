@@ -105,6 +105,7 @@ def issue_receipt(
     ttl_seconds: int,
     key: bytes,
     now: datetime | None = None,
+    publication_request_digest: str | None = None,
 ) -> dict[str, object]:
     if environment != PRODUCTION_ENVIRONMENT:
         raise ReceiptError("schema receipts may be issued only for production")
@@ -127,6 +128,10 @@ def issue_receipt(
         "validatedAt": format_timestamp(validated_at),
         "expiresAt": format_timestamp(validated_at + timedelta(seconds=ttl_seconds)),
     }
+    if publication_request_digest is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", publication_request_digest):
+            raise ReceiptError("invalid publication request digest")
+        receipt["publicationRequestDigest"] = publication_request_digest
     receipt["seal"] = seal_payload(receipt, key)
     return receipt
 
@@ -141,6 +146,7 @@ def verify_receipt(
     source_commit: str,
     key: bytes,
     now: datetime | None = None,
+    publication_request_digest: str | None = None,
 ) -> None:
     if environment != PRODUCTION_ENVIRONMENT:
         raise ReceiptError("schema receipts may be verified only for production")
@@ -148,7 +154,12 @@ def verify_receipt(
         raise ReceiptError(
             "schema receipts may be verified only for the Context Panel container"
         )
-    if set(receipt) != RECEIPT_KEYS:
+    expected_keys = RECEIPT_KEYS | ({"publicationRequestDigest"} if "publicationRequestDigest" in receipt else set())
+    if publication_request_digest is not None and receipt.get("publicationRequestDigest") != publication_request_digest:
+        raise ReceiptError("receipt publication request does not match")
+    if "publicationRequestDigest" in receipt and not re.fullmatch(r"[0-9a-f]{64}", str(receipt["publicationRequestDigest"])):
+        raise ReceiptError("receipt publication request is invalid")
+    if set(receipt) != expected_keys:
         raise ReceiptError("receipt fields do not match schema version 1")
     if receipt.get("schemaVersion") != SCHEMA_VERSION or receipt.get("kind") != KIND:
         raise ReceiptError("receipt schema identity is invalid")
@@ -242,6 +253,7 @@ def add_contract_arguments(parser: argparse.ArgumentParser) -> None:
         default=Path("CloudKit/companion-sync.schema.ckdb"),
     )
     parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--publication-request-digest")
 
 
 def parse_args() -> argparse.Namespace:
@@ -272,6 +284,7 @@ def main() -> int:
                 source_commit=args.source_commit,
                 ttl_seconds=args.ttl_seconds,
                 key=key,
+                publication_request_digest=args.publication_request_digest,
             )
             write_receipt(args.output, receipt)
             print(f"CloudKit Production schema receipt issued: {args.output}")
@@ -291,6 +304,7 @@ def main() -> int:
                 cktool_schema_path=args.cktool_schema,
                 source_commit=args.source_commit,
                 key=key,
+                publication_request_digest=args.publication_request_digest,
             )
             print("CloudKit Production schema receipt OK")
     except ReceiptError as error:

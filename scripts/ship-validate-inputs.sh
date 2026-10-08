@@ -53,15 +53,6 @@ if [[ "${testflight_beta_selected}" == "true" ]]; then
     ;;
   esac
 fi
-if [[ "${github_release_selected}" == "true" || \
-  "${app_store_channel}" == "upload" || \
-  "${companion_app_store_channel}" == "upload" || \
-  "${testflight_beta_selected}" == "true" ]]; then
-  if [[ -z "${INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64}" ]]; then
-    echo "live publication, upload, and TestFlight channels require a Production CloudKit schema receipt" >&2
-    exit 1
-  fi
-fi
 preflight_app_store_version() {
   local platform="$1"
   if [[ -z "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" || -z "${APP_STORE_CONNECT_KEY_ID:-}" || -z "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then

@@ -119,7 +119,7 @@ name: Submit App Store Review
         required: false
         type: string
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
   workflow_dispatch:
@@ -252,7 +252,7 @@ name: Submit App Store Review
         required: false
         type: string
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
 
@@ -315,6 +315,10 @@ jobs:
     needs: [guard, approve]
     runs-on: macos-26
     environment: release
+
+    permissions:
+      contents: read
+      actions: read
 
     steps:
       - name: Checkout
@@ -415,20 +419,13 @@ jobs:
           decode_optional_json "${INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64}" \
             .build/release-evidence-policy-archive.json
 
-      - name: Verify Production CloudKit Schema Receipt
+      - name: Check Production CloudKit at Publication
         if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}
-        shell: bash
-        env:
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
-            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
-        run: |
-          python3 scripts/cloudkit-schema-receipt.py verify \
-            --receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64 \
-            --environment production \
-            --container-id iCloud.com.shinycomputers.contextpanel \
-            --source-commit "${GITHUB_SHA}"
+        uses: ./.github/actions/cloudkit-publication-check
+        with:
+          channel: review
+          receipt: ${{ inputs.cloudkit_schema_receipt_base64 }}
+          receipt-key: ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
 
       - name: Submit Review
         shell: bash

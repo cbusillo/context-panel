@@ -23,7 +23,7 @@ name: App Store Connect Companion Build Upload
         default: true
         type: boolean
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
     outputs:
@@ -58,7 +58,7 @@ name: App Store Connect Companion Build Upload
         default: true
         type: boolean
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
 
@@ -130,6 +130,10 @@ jobs:
     outputs:
       build_number: ${{ steps.build.outputs.build_number }}
       app_store_platform: ${{ steps.platform.outputs.app_store_platform }}
+
+    permissions:
+      contents: read
+      actions: read
 
     steps:
       - name: Checkout
@@ -289,22 +293,7 @@ jobs:
                 > .build/provisioning-appstore/ContextPanelWatchWidgetExtension.provisionprofile
           fi
 
-      - name: Verify Production CloudKit Schema Receipt
-        if: ${{ inputs.upload }}
-        shell: bash
-        env:
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
-            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
-        run: |
-          python3 scripts/cloudkit-schema-receipt.py verify \
-            --receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64 \
-            --environment production \
-            --container-id iCloud.com.shinycomputers.contextpanel \
-            --source-commit "${GITHUB_SHA}"
-
-      - name: Archive and Upload
+      - name: Archive Before Schema Check
         shell: bash
         env:
           CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
@@ -331,7 +320,44 @@ jobs:
           if [[ "${INPUT_UPLOAD}" != "true" ]]; then
             args+=(--export-only)
           fi
-          scripts/upload-app-store-connect-companion-app.sh "${args[@]}"
+          scripts/upload-app-store-connect-companion-app.sh --archive-only "${args[@]}"
+
+      - name: Check Production CloudKit at Publication
+        if: ${{ inputs.upload }}
+        uses: ./.github/actions/cloudkit-publication-check
+        with:
+          channel: companion
+          receipt: ${{ inputs.cloudkit_schema_receipt_base64 }}
+          receipt-key: ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+
+      - name: Upload Verified Archive
+        shell: bash
+        env:
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
+            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_UPLOAD: ${{ inputs.upload }}
+          PLATFORM: ${{ steps.platform.outputs.platform }}
+          APP_STORE_PLATFORM: ${{ steps.platform.outputs.app_store_platform }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+            ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          args=(
+            --platform "${PLATFORM}"
+            --version "${INPUT_VERSION}"
+            --build-number "${BUILD_NUMBER}"
+          )
+          if [[ "${INPUT_UPLOAD}" != "true" ]]; then
+            args+=(--export-only)
+          fi
+          scripts/upload-app-store-connect-companion-app.sh --skip-archive "${args[@]}"
           {
             echo "### App Store Connect Companion Build Upload"
             echo

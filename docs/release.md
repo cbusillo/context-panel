@@ -293,8 +293,9 @@ Use `Ship` for normal releases. It accepts:
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
   names; internal groups are included by default.
 - `include_internal_testflight_groups`: include internal TestFlight beta groups.
-- `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
-  receipt. `Ship` forwards it to every selected channel, and each publication,
+- `cloudkit_schema_receipt_base64`: optional legacy Production schema evidence
+  (option C). Leave empty for the [Mac publication-time check](cloudkit-publication-check.md).
+  When supplied, `Ship` forwards it to every selected channel, and each publication,
   upload, or TestFlight step refuses without it (see "CloudKit Production Schema
   Gate").
 
@@ -325,7 +326,7 @@ Manual dispatch accepts:
 - `notarize`: whether to run Apple notarization; defaults to true and must
   complete before a GitHub Release can be published.
 - `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
-  receipt, required when `create_github_release` is true.
+  receipt for the legacy option C. Leave empty for the Mac publication-time check.
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
 workflow artifact. Before upload, it seals the metadata with the tag, exact
@@ -736,6 +737,13 @@ companion widget rendering all work.
 
 ### CloudKit Production Schema Gate
 
+Normal hosted publication uses the [Mac publication-time check](cloudkit-publication-check.md)
+(Q43 option B). Leave the receipt input empty: approval and building precede
+its single live schema check. The manual receipt instructions below remain the
+option C compatibility route and the direct operator-command route. Activation
+of the Mac checker needs Chris's separate authorization; the source PR does not
+use credentials or qualify a live release.
+
 The companion TestFlight and App Store builds use the Production CloudKit
 environment for `iCloud.com.shinycomputers.contextpanel`. Private database
 records still depend on the container's Production schema, so a production-
@@ -856,12 +864,13 @@ scripts/validate-cloudkit-companion-schema.sh \
 
 The receipt contains only its schema identity, Production environment, fixed
 container identifier, checked-in JSON/ckdb contract digest, exact source commit,
-validation and expiry times, and an HMAC-SHA256 seal. It contains no CloudKit
+validation and expiry times, an optional publication-request digest, and an
+HMAC-SHA256 seal. It contains no CloudKit
 management token, HMAC key, record name, account identifier, or live object ID.
 It expires after six hours by default and cannot be reused for another commit or
 changed schema contract.
 
-Encode the receipt as one line for the
+For option C, encode the receipt as one line for the
 `cloudkit_schema_receipt_base64` workflow input:
 
 ```sh
@@ -874,8 +883,8 @@ receipt only for upload mode; export-only remains non-mutating. TestFlight
 distribution verifies it unless `dry_run` is enabled. App Store Review verifies
 it for every live prepare, build-attachment, or submission operation; dry runs
 and cancel-only operations remain available without a receipt. The `Ship`
-workflow requires and forwards the same input whenever any publication, upload,
-or TestFlight channel is selected.
+workflow forwards a supplied legacy input. With an empty input, every live
+channel requests its own publication-time check.
 
 `scripts/upload-app-store-connect-companion-app.sh` has one test-only input,
 `CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR`. It replaces `xcodebuild`, `codesign`,
@@ -889,7 +898,9 @@ The release entrypoints enforce this themselves, not only the workflows.
 upload mode, `distribute-testflight-beta.py` without `--dry-run`, and
 `submit-app-store-review.py` outside dry-run, cancel-only, and
 validate-report-only all call `scripts/require-cloudkit-schema-receipt.sh`
-before doing anything else and refuse without a valid receipt for the commit.
+before live mutation and refuse without a valid receipt for the commit. Upload
+helpers also verify immediately before export/upload; archive-only makes no
+upload and skip-archive still validates the existing archive.
 That holds on an operator machine too, and there is no override flag.
 
 For a live run from an operator machine, wrap the command:

@@ -22,6 +22,8 @@ build_number="${CURRENT_PROJECT_VERSION:-}"
 marketing_version="${MARKETING_VERSION:-}"
 destination="upload"
 upload="true"
+archive_only="false"
+skip_archive="false"
 
 usage() {
 	cat <<'USAGE'
@@ -47,6 +49,8 @@ Options:
   --api-key-id ID                      App Store Connect API key ID.
   --api-issuer-id ID                   App Store Connect API issuer ID.
   --team-id ID                         Apple Developer Team ID.
+  --archive-only                       Build/verify without exporting or uploading.
+  --skip-archive                       Export/upload the existing verified archive.
   --export-only                        Export a local IPA instead of uploading.
   -h, --help                           Show this help.
 
@@ -121,6 +125,14 @@ while [[ $# -gt 0 ]]; do
 		team_id="${2:?--team-id requires a value}"
 		shift 2
 		;;
+	--archive-only)
+		archive_only="true"
+		shift
+		;;
+	--skip-archive)
+		skip_archive="true"
+		shift
+		;;
 	--export-only)
 		upload="false"
 		destination="export"
@@ -155,8 +167,13 @@ if [[ -n "${CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR:-}" ]]; then
 	xcrun_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/xcrun"
 fi
 
+if [[ "$archive_only" == "true" && "$skip_archive" == "true" ]]; then
+	echo "--archive-only and --skip-archive cannot be combined" >&2
+	exit 2
+fi
+
 # Uploading is a live App Store Connect mutation; export-only is not.
-if [[ "$upload" == "true" ]]; then
+if [[ "$upload" == "true" && "$archive_only" != "true" ]]; then
 	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
 fi
 
@@ -1226,8 +1243,10 @@ if [[ -n "$marketing_version" ]]; then
 	archive_args+=(MARKETING_VERSION="$marketing_version")
 fi
 
-rm -rf "$archive_path" "$derived_data_path" "$export_path"
-run_xcodebuild "${archive_args[@]}" archive
+if [[ "$skip_archive" != "true" ]]; then
+	rm -rf "$archive_path" "$derived_data_path" "$export_path"
+	run_xcodebuild "${archive_args[@]}" archive
+fi
 if [[ "$platform" == "tvos" ]]; then
 	assert_tvos_archive_ready
 else
@@ -1260,6 +1279,14 @@ tvos)
 	;;
 esac
 scripts/context-panel-write-expected-build.sh "${expected_build_args[@]}"
+
+if [[ "$archive_only" == "true" ]]; then
+	echo "Archive verified; no export or upload performed."
+	exit 0
+fi
+if [[ "$upload" == "true" ]]; then
+	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
+fi
 
 run_xcodebuild \
 	-exportArchive \
