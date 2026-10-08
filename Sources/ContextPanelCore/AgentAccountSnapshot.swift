@@ -13,6 +13,21 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public let providers: [ProviderDisplay]
     /// The sentence every surface leads with, and which accounts run out before their reset.
     public let headline: Headline
+    /// Use next per provider (#791): the full ranked list with need, weight and reason. `answers.useNext` is its first entry.
+    public let ranking: [UseNextRanking]
+    /// One plain line per reset that is clearly worth applying now, soonest expiry first.
+    public let resetPrompts: [ResetPrompt]
+    /// For example `multipleUseLast:openai`; while it stands, ranking ignores use-last on that provider.
+    public let configurationErrors: [String]
+    /// Provider-wide refills seen in the loaded reading history.
+    public let providerRefills: [ProviderRefillEvent]
+
+    public struct ResetPrompt: Encodable, Sendable {
+        public let provider: Provider
+        public let accountID: String
+        public let line: String
+        public let expiresAt: Date?
+    }
 
     public struct Headline: Encodable, Sendable {
         public let lead: String
@@ -107,9 +122,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let display: Display?
         public let sharedAccountIdentity: SharedProviderAccountIdentity?
         public let accountIdentityStatus: ProviderAccountIdentityStatus
+        /// The reset value and reasoning shown in the account detail view; null without banked resets.
+        public var resetAssessment: ResetAssessment? = nil
 
         enum CodingKeys: String, CodingKey {
-            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, primaryAccountID, accountIdentityStatus
+            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, primaryAccountID, accountIdentityStatus, resetAssessment
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -131,6 +148,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encodeIfPresent(sharedAccountIdentity?.bound(toLocalAccountID: nil).bound(toUserScope: nil), forKey: .sharedAccountIdentity)
             try container.encodeIfPresent(sharedAccountIdentity?.accountID, forKey: .primaryAccountID)
             try container.encode(accountIdentityStatus, forKey: .accountIdentityStatus)
+            try container.encode(resetAssessment, forKey: .resetAssessment)
         }
     }
 
@@ -259,7 +277,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         stored: StoredUsageSnapshot,
         history: [StoredUsageSnapshot],
         now: Date,
-        sharedDocument: CompanionSyncDocument? = nil
+        sharedDocument: CompanionSyncDocument? = nil,
+        receipts: [LaunchReceipt] = []
     ) {
         readAt = now
         savedAt = stored.savedAt
@@ -275,10 +294,35 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             ?? AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
                 metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
                 accountBurnRates: rates)
-        let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
-        answers = Answers(closestAccountID: overview.closest?.id, useNext: Provider.allCases.compactMap { provider in
-            overview.useNext(provider: provider).map { Recommendation(provider: provider, accountID: $0.id) }
+        let readings = history + [stored]
+        // History rows resolve to the IDs this snapshot publishes, through the same key shared presentation uses.
+        let reports = Dictionary(readings.flatMap(\.reports).map { ($0.provider.rawValue + ":" + $0.accountID, $0) },
+                                 uniquingKeysWith: { older, newer in newer.sharedAccountIdentity == nil ? older : newer })
+        let configured = configuration.accounts
+        let publisherID = configuration.publisherID
+        let shared = canonical != nil
+        let resolve: ProviderRefillDetector.AccountResolver = { limit in
+            AccountDisplayMetadata.safeID(limit.provider, shared ? MacSharedAccountPresentation.accountKey(limit: limit,
+                report: reports[limit.provider.rawValue + ":" + limit.accountID], configuration: configured,
+                publisherID: publisherID) : limit.accountID)
+        }
+        let evidence = UseNextEvidence(receipts: receipts, readingTimes: readings.map(\.savedAt),
+                                       unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve))
+        ranking = Provider.allCases.filter { provider in overview.accounts.contains { $0.metadata.provider == provider } }
+            .map { overview.useNextRanking(provider: $0, evidence: evidence) }
+        let nextIDs = Set(ranking.compactMap(\.useNextAccountID))
+        answers = Answers(closestAccountID: overview.closest?.id, useNext: ranking.compactMap { provider in
+            provider.useNextAccountID.map { Recommendation(provider: provider.provider, accountID: $0) }
         })
+        let assessments = Dictionary(overview.accounts.compactMap { account in account.resetAssessment.map { (account.id, $0) } },
+                                     uniquingKeysWith: { first, _ in first })
+        resetPrompts = assessments.values.filter(\.recommended)
+            .sorted { ($0.expiresAt ?? .distantFuture, $0.accountID) < ($1.expiresAt ?? .distantFuture, $1.accountID) }
+            .compactMap { assessment in assessment.prompt.map {
+                ResetPrompt(provider: assessment.provider, accountID: assessment.accountID, line: $0, expiresAt: assessment.expiresAt)
+            } }
+        configurationErrors = overview.configurationErrors
+        providerRefills = ProviderRefillDetector.events(readings: readings, resolve: resolve)
         providers = overview.providerTotals(now: now).map { ProviderDisplay(total: $0, now: now) }
         headline = Headline(overview: overview, now: now)
         deadlines = overview.deadlines.map {
@@ -306,7 +350,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     bankedResets: BankedResets(state: account.bankedState, summary: account.bankedResets),
                     display: Display(account: account, isNext: nextIDs.contains(account.id), now: now),
                     sharedAccountIdentity: report?.sharedAccountIdentity,
-                    accountIdentityStatus: report?.accountIdentityStatus ?? .unverified)
+                    accountIdentityStatus: report?.accountIdentityStatus ?? .unverified,
+                    resetAssessment: assessments[account.id])
             }
             return
         }
@@ -355,7 +400,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 bankedResets: BankedResets(state: shared?.bankedState ?? resetState, summary: summary),
                 display: shared.map { Display(account: $0, isNext: nextIDs.contains($0.id), now: now) },
                 sharedAccountIdentity: row.report?.sharedAccountIdentity,
-                accountIdentityStatus: row.report?.accountIdentityStatus ?? .unverified
+                accountIdentityStatus: row.report?.accountIdentityStatus ?? .unverified,
+                resetAssessment: shared.flatMap { assessments[$0.id] }
             )
         }
     }
@@ -388,7 +434,8 @@ public extension AgentAccountSnapshot {
             let history = JSONSnapshotStore(rootDirectory: snapshotDirectory).loadHistory(
                 query: SnapshotStoreQuery(since: min(now, stored.snapshot.generatedAt).addingTimeInterval(-24 * 3_600), limit: 2_000)
             )
-            return Self(configuration: configuration, stored: stored, history: history, now: now, sharedDocument: shared)
+            return Self(configuration: configuration, stored: stored, history: history, now: now, sharedDocument: shared,
+                        receipts: LaunchReceiptStore.load(rootDirectory: rootDirectory, now: now))
         } catch let error as AgentAccountSnapshotReadError {
             throw error
         } catch {

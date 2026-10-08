@@ -515,6 +515,11 @@ struct SettingsPane: View {
                             .fixedSize()
                             Spacer(minLength: 0)
                         }
+                        if let notice = model.useLastNotice, notice.accountID == account.id {
+                            Text(notice.text)
+                                .font(.system(size: 11))
+                                .foregroundStyle(CPTheme.tertiaryText)
+                        }
                         HStack(spacing: 10) {
                             if account.connectorKind == .codexRateLimits {
                                 Button(model.hasSavedAuthorization(account) ? AccountTerms.changeCodexHome : AccountTerms.connectCodexHome) {
@@ -1394,6 +1399,8 @@ private extension CompanionSyncDiagnosticsOutcome {
 @MainActor
 final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
+    /// Shown under the account whose Use last mark was just moved to it.
+    @Published private(set) var useLastNotice: (accountID: String, text: String)?
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
     @Published private(set) var isRemovingAccount = false
@@ -2208,8 +2215,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         saveAccounts()
     }
     func setUseLast(_ accountID: String, useLast: Bool) {
-        guard !isRemovingAccount, let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
-        accounts[index].useLast = useLast
+        guard !isRemovingAccount, accounts.contains(where: { $0.id == accountID }) else { return }
+        let notice = accounts.setUseLast(accountID, useLast)
+        useLastNotice = notice.map { (accountID, $0) }
         saveAccounts()
     }
     func setAccountWidgetLayout(_ accountRows: Bool) {

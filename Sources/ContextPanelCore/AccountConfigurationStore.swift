@@ -650,3 +650,21 @@ public extension LocalProviderAccountConfiguration {
         AccountConfigurationStore.defaultDocument(now: .distantPast).accounts.contains { $0.id == id }
     }
 }
+
+public extension Array where Element == LocalProviderAccountConfiguration {
+    /// At most one use-last account per provider (#791): marking one moves the mark from the provider's other
+    /// accounts. Returns the notice the panel shows when a mark moved.
+    @discardableResult
+    mutating func setUseLast(_ accountID: String, _ useLast: Bool) -> String? {
+        guard let index = firstIndex(where: { $0.id == accountID }) else { return nil }
+        var previous: [String] = []
+        if useLast {
+            for other in indices where other != index && self[other].provider == self[index].provider && self[other].useLast == true {
+                previous.append(self[other].displayName)
+                self[other].useLast = false
+            }
+        }
+        self[index].useLast = useLast
+        return previous.isEmpty ? nil : "Use last moved from \(previous.joined(separator: ", ")) to \(self[index].displayName)"
+    }
+}
