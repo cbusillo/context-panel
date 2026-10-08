@@ -122,6 +122,21 @@ public struct AccountOverview: Equatable, Sendable {
         self.rankedAt = rankedAt
     }
 
+    /// Present shared-provider advice under the local report IDs used by provider diagnostics.
+    public func bankedAdviceByLocalAccountID(provider: Provider, stored: StoredUsageSnapshot,
+        configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> [String: BankedAdvice] {
+        Dictionary(stored.reports.filter { $0.provider == provider }.compactMap { report in
+            let rawID = AccountDisplayMetadata.safeID(provider, report.accountID)
+            let sharedKey = stored.snapshot.limits.first { $0.provider == provider && $0.accountID == report.accountID }
+                .map { MacSharedAccountPresentation.accountKey(limit: $0, report: report,
+                    configuration: configuration, publisherID: publisherID) } ?? report.sharedAccountIdentity?.accountID
+            let sharedID = sharedKey.map { AccountDisplayMetadata.safeID(provider, $0) }
+            let account = accounts.first { $0.metadata.provider == provider && $0.id == sharedID }
+                ?? accounts.first { $0.metadata.provider == provider && $0.id == rawID }
+            return account?.bankedAdvice.map { (report.accountID, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.
     public func filtered(to provider: Provider) -> AccountOverview {
         AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },
@@ -147,7 +162,7 @@ public struct AccountOverview: Equatable, Sendable {
         rankedAt = now
         let presented = snapshot.presented(at: now)
         let entries = metadata ?? Self.inferredMetadata(snapshot: snapshot, reports: reports)
-        accounts = entries.filter { !widgetsOnly || $0.showInWidgets }.map { entry in
+        let allAccounts = entries.map { entry in
             let limits = entry.sourceConfigured ? presented.limits.filter {
                 $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             } : []
@@ -220,11 +235,17 @@ public struct AccountOverview: Equatable, Sendable {
                     .map { ConnectorRedactor.safeErrorDescription($0) } : nil
             var account = Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
                                   bankedState: bankedState, observedAt: observed, providerPlan: plan)
-            account.resetAssessment = ResetAssessment(account: account, now: now)
-            // OpenAI and Claude accounts follow the #791 reset rule; other providers keep the older guidance.
-            account.bankedAdvice = account.resetAssessment.map { BankedAdvice(title: $0.title, detail: $0.detail) }
-                ?? report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
-                    .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
+            account.bankedAdvice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
+                .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
+            return account
+        }
+        let assessments = ResetAssessment.assessments(for: allAccounts, now: now)
+        accounts = allAccounts.filter { !widgetsOnly || $0.metadata.showInWidgets }.map { row in
+            var account = row
+            account.resetAssessment = assessments[account.id]
+            if let assessment = account.resetAssessment {
+                account.bankedAdvice = BankedAdvice(title: assessment.title, detail: assessment.detail)
+            }
             return account
         }
         deadlines = accounts.flatMap { account -> [Deadline] in

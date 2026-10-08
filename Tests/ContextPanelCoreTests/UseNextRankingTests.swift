@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ContextPanelCore
+@testable import ContextPanelSettingsUI
 
 // Acceptance scenarios from #791: the revised spec with Chris's final amendments.
 
@@ -15,6 +16,10 @@ private struct Fixture {
     var resetHours: Double? = 100
     var burn: Double? = nil
     var useLast = false
+    var isEnabled = true
+    var showInWidgets = true
+    var sourceConfigured = true
+    var readState: AccountCapacityState? = nil
     var fiveHourUsed: Int? = nil
     var fiveHourResetHours: Double = 3
     var fiveHourBurn: Double? = nil
@@ -67,12 +72,13 @@ private struct Fixture {
     }
 }
 
-private func overview(_ fixtures: [Fixture], now: Date = rankNow) -> AccountOverview {
+private func overview(_ fixtures: [Fixture], now: Date = rankNow, widgetsOnly: Bool = false) -> AccountOverview {
     AccountOverview(snapshot: UsageSnapshot(generatedAt: now, limits: fixtures.flatMap { $0.limits(now: now) }),
         reports: fixtures.map { $0.report(now: now) },
         metadata: fixtures.map { AccountDisplayMetadata(id: $0.id, configurationID: $0.id, provider: $0.provider,
-                                                        label: $0.name, useLast: $0.useLast) },
-        now: now, accountBurnRates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: now)) }))
+                                                        label: $0.name, isEnabled: $0.isEnabled, showInWidgets: $0.showInWidgets,
+                                                        useLast: $0.useLast, sourceConfigured: $0.sourceConfigured, readState: $0.readState) },
+        now: now, widgetsOnly: widgetsOnly, accountBurnRates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: now)) }))
 }
 
 private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, evidence: UseNextEvidence = UseNextEvidence(),
@@ -472,10 +478,219 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     let openAI = try #require(snapshot.ranking.first { $0.provider == .openAI })
     #expect(snapshot.answers.useNext.first?.accountID == openAI.useNextAccountID)
     #expect(openAI.entries.first?.pendingLaunches == 1)
-    #expect(snapshot.resetPrompts.map(\.accountID) == [b.id])
+    #expect(snapshot.resetPrompts.isEmpty)
     #expect(snapshot.configurationErrors.isEmpty)
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     let json = try #require(try JSONSerialization.jsonObject(with: encoder.encode(snapshot)) as? [String: Any])
     #expect(json["ranking"] is [Any] && json["resetPrompts"] is [Any] && json["providerRefills"] is [Any])
+}
+
+// #794: an empty account alone is not a reason to apply a provider's reset.
+@Test(arguments: [Provider.openAI, .anthropic])
+func resetWaitsForEveryProviderAccountIncludingUseLast(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let personal = Fixture(name: "personal", provider: provider, weeklyUsed: 99, useLast: true)
+    let result = overview([empty, personal])
+    let assessment = try #require(result.accounts.first { $0.id == empty.id }?.resetAssessment)
+    #expect(assessment.trigger == .notNeeded)
+    #expect(assessment.prompt == nil)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func emptyProviderPromptsForOneSoonestExpiringWorthwhileReset(_ provider: Provider) throws {
+    let later = Fixture(name: "later", provider: provider, weeklyUsed: 100, bankedExpiryHours: [300])
+    let soon = Fixture(name: "soon", provider: provider, weeklyUsed: 100, useLast: true, bankedExpiryHours: [200, 400])
+    let noReset = Fixture(name: "no-reset", provider: provider, weeklyUsed: 100)
+    let otherProvider = Fixture(name: "other", provider: provider == .openAI ? .anthropic : .openAI)
+    for fixtures in [[later, soon, noReset, otherProvider], [soon, later, noReset, otherProvider]] {
+        let result = overview(fixtures)
+        let prompts = result.accounts.compactMap(\.resetAssessment).filter(\.recommended)
+        #expect(prompts.map(\.accountID) == [soon.id])
+        #expect(prompts.first?.trigger == .outOfQuota)
+        #expect(prompts.first?.expiresAt == rankNow.addingTimeInterval(200 * hour))
+        #expect(result.accounts.first { $0.id == soon.id }?.bankedAdvice?.title == prompts.first?.title)
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func expiringResetStillPromptsWhileAnotherAccountHasQuota(_ provider: Provider) throws {
+    let expiryBoundary = ResetAssessment.expiringWithin / hour
+    for hoursLeft in [expiryBoundary - 4, expiryBoundary, expiryBoundary + 0.01] {
+        let expiring = Fixture(name: "expiring", provider: provider, weeklyUsed: 60, bankedExpiryHours: [hoursLeft])
+        let usable = Fixture(name: "usable", provider: provider, weeklyUsed: 0)
+        let result = overview([expiring, usable])
+        let assessment = try #require(result.accounts.first { $0.id == expiring.id }?.resetAssessment)
+        #expect(assessment.trigger == (hoursLeft <= expiryBoundary ? .expiring : .notNeeded))
+        #expect(assessment.recommended == (hoursLeft <= expiryBoundary))
+    }
+    // The expiry prompt also remains when the expiring account itself is empty.
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [20])
+    let usable = Fixture(name: "usable", provider: provider, weeklyUsed: 0)
+    let assessment = try #require(overview([empty, usable]).accounts.first?.resetAssessment)
+    #expect(assessment.trigger == .expiring && assessment.recommended)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func hiddenAccountQuotaStillHoldsWidgetResetPrompt(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let hidden = Fixture(name: "hidden", provider: provider, weeklyUsed: 50, useLast: true, showInWidgets: false)
+    let result = overview([empty, hidden], widgetsOnly: true)
+    #expect(result.accounts.map(\.id) == [empty.id])
+    #expect(result.accounts.first?.resetAssessment?.prompt == nil)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func disabledAndUnconfiguredAccountsDoNotHoldResetPrompt(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let disabled = Fixture(name: "disabled", provider: provider, isEnabled: false)
+    let unconfigured = Fixture(name: "unconfigured", provider: provider, sourceConfigured: false)
+    let assessment = try #require(overview([empty, disabled, unconfigured]).accounts.first?.resetAssessment)
+    #expect(assessment.trigger == .outOfQuota && assessment.recommended)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func unknownOrStaleQuotaDoesNotProveProviderEmpty(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let unknown = Fixture(name: "unknown", provider: provider, weeklyUsed: nil)
+    let stale = Fixture(name: "stale", provider: provider, weeklyUsed: 100, observedAgo: 3_600)
+    for sibling in [unknown, stale] {
+        let assessment = try #require(overview([empty, sibling]).accounts.first?.resetAssessment)
+        #expect(assessment.trigger == .notNeeded && assessment.prompt == nil)
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func soonestResetThatIsNotWorthApplyingDoesNotHideWorthwhileReset(_ provider: Provider) throws {
+    let lowValue = Fixture(name: "low-value", provider: provider, weeklyUsed: 100, resetHours: 1, bankedExpiryHours: [100])
+    let worthwhile = Fixture(name: "worthwhile", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let assessments = overview([lowValue, worthwhile]).accounts.compactMap(\.resetAssessment)
+    #expect(assessments.filter(\.recommended).map(\.accountID) == [worthwhile.id])
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func agentSnapshotAndPanelShareProviderResetPrompts(_ provider: Provider) throws {
+    let first = Fixture(name: "first", provider: provider, weeklyUsed: 100, bankedExpiryHours: [300])
+    let second = Fixture(name: "second", provider: provider, weeklyUsed: 100, useLast: true, bankedExpiryHours: [200])
+    for secondUsed in [100, 99] {
+        var sibling = second
+        sibling.weeklyUsed = secondUsed
+        let fixtures = [first, sibling]
+        let configuration = AccountConfigurationDocument(updatedAt: rankNow, accounts: fixtures.map {
+            LocalProviderAccountConfiguration(id: $0.name, provider: provider,
+                connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage, displayName: $0.name,
+                authPath: "/not/read/\($0.name)", useLast: $0.useLast)
+        })
+        let stored = StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+            reports: fixtures.map { $0.report(now: rankNow) })
+        let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow)
+        let panel = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+            metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: rankNow), now: rankNow)
+        let panelPrompts = panel.accounts.compactMap(\.resetAssessment).filter(\.recommended)
+        #expect(snapshot.resetPrompts.map(\.accountID) == panelPrompts.map(\.accountID))
+        #expect(snapshot.resetPrompts.map(\.line) == panelPrompts.compactMap(\.prompt))
+        #expect(snapshot.resetPrompts.map(\.accountID) == (secondUsed == 100 ? [second.id] : []))
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func disconnectedAccountCannotHoldProviderResetPrompt(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let disconnected = Fixture(name: "disconnected", provider: provider, readState: .notConnected)
+    let result = overview([empty, disconnected])
+    #expect(result.accounts.first { $0.id == disconnected.id }?.state == .notConnected)
+    let assessment = try #require(result.accounts.first { $0.id == empty.id }?.resetAssessment)
+    #expect(assessment.trigger == .outOfQuota && assessment.recommended)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func failedReadCannotProveProviderEmpty(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let failed = Fixture(name: "failed", provider: provider, weeklyUsed: 100, readState: .unavailable)
+    let assessment = try #require(overview([empty, failed]).accounts.first?.resetAssessment)
+    #expect(assessment.trigger == .notNeeded && !assessment.recommended)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func emptyProviderWithTwoExpiringResetsStillOffersOne(_ provider: Provider) throws {
+    let soon = Fixture(name: "soon", provider: provider, weeklyUsed: 100, bankedExpiryHours: [6])
+    let later = Fixture(name: "later", provider: provider, weeklyUsed: 100, bankedExpiryHours: [12])
+    let result = overview([later, soon])
+    #expect(result.accounts.compactMap(\.resetAssessment).filter(\.recommended).map(\.accountID) == [soon.id])
+    let held = try #require(result.accounts.first { $0.id == later.id }?.resetAssessment)
+    #expect(held.prompt == nil && held.value != nil)
+    #expect(held.detail.contains(soon.name))
+    #expect(result.accounts.first { $0.id == later.id }?.bankedAdvice?.title == held.title)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
+    let known = Fixture(name: "known", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let unknown = Fixture(name: "unknown", provider: provider, weeklyUsed: 100, bankedExpiryHours: [10], bankedCountOnly: true)
+    for fixtures in [[unknown, known], [known, unknown]] {
+        let assessments = overview(fixtures).accounts.compactMap(\.resetAssessment)
+        #expect(assessments.first { $0.accountID == unknown.id }?.expiresAt == nil)
+        #expect(assessments.filter(\.recommended).map(\.accountID) == [known.id])
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+@MainActor func resetDeadlineDetailsUseCompleteProviderAdvice(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let personal = Fixture(name: "personal", provider: provider, weeklyUsed: 50, useLast: true)
+    let later = Fixture(name: "later", provider: provider, weeklyUsed: 100, bankedExpiryHours: [300])
+    for fixtures in [[empty, personal], [empty, later]] {
+        let panel = overview(fixtures)
+        let stored = StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+            reports: fixtures.map { $0.report(now: rankNow) })
+        let adviceByAccountID = panel.bankedAdviceByLocalAccountID(provider: provider, stored: stored,
+            configuration: [], publisherID: nil)
+        for fixture in fixtures {
+            let report = fixture.report(now: rankNow)
+            let deadlines = BankedResetDeadlinesView(reports: [report], limits: fixture.limits(now: rankNow),
+                presentationDate: rankNow, adviceByAccountID: adviceByAccountID)
+            let expected = panel.accounts.first { $0.id == fixture.id }?.bankedAdvice
+            #expect(deadlines.advice(for: report, now: rankNow)?.title == expected?.title)
+            #expect(deadlines.advice(for: report, now: rankNow)?.detail == expected?.detail)
+        }
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+@MainActor func sharedResetAdviceSurvivesUnverifiedIDsAndMatchesAgentSnapshot(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    for personalUsed in [50, 100] {
+        let personal = Fixture(name: "personal", provider: provider, weeklyUsed: personalUsed, useLast: true,
+            showInWidgets: false)
+        let fixtures = [empty, personal]
+        let configuration = AccountConfigurationDocument(updatedAt: rankNow, accounts: fixtures.map {
+            LocalProviderAccountConfiguration(id: $0.name, provider: provider,
+                connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage, displayName: $0.name,
+                authPath: "/not/read/\($0.name)", showInWidgets: $0.showInWidgets, useLast: $0.useLast)
+        }, publisherID: "test-publisher")
+        let stored = StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+            reports: fixtures.map { $0.report(now: rankNow) })
+        let remote = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: [])), publishedAt: rankNow)
+        let shared = MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
+            publisherID: configuration.publisherID, remote: remote, accountIntentDocument: configuration, now: rankNow)
+        let panel = shared.accountOverview(now: rankNow, maximumAge: SnapshotFreshness.appMaximumAge)
+        let selected = try #require(panel.accounts.first { $0.metadata.label == empty.name })
+        #expect(selected.id != empty.id) // This fixture exercises the companion identity mapping.
+        let advice = panel.bankedAdviceByLocalAccountID(provider: provider, stored: stored, configuration: configuration.accounts,
+            publisherID: configuration.publisherID)
+        #expect(advice[empty.name] == selected.bankedAdvice)
+        #expect(advice[empty.name] != nil)
+        let deadlines = BankedResetDeadlinesView(reports: [empty.report(now: rankNow)], limits: empty.limits(now: rankNow),
+            presentationDate: rankNow, adviceByAccountID: advice)
+        #expect(deadlines.advice(for: empty.report(now: rankNow), now: rankNow)?.title == selected.bankedAdvice?.title)
+        let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow,
+            sharedDocument: remote)
+        let prompts = panel.accounts.compactMap(\.resetAssessment).filter(\.recommended)
+        #expect(snapshot.resetPrompts.map(\.accountID) == prompts.map(\.accountID))
+        #expect(snapshot.resetPrompts.count == (personalUsed == 100 ? 1 : 0))
+    }
 }

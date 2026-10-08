@@ -17,15 +17,17 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public let expiresAt: Date?
     /// Net usable points gained by applying now; nil when it can't be judged.
     public let value: Double?
-    public let recommended: Bool
+    public private(set) var recommended: Bool
     public let unrecognizedKind: Bool
     public let eligibilityNote: String?
-    public let detail: String
+    public private(set) var detail: String
 
     /// The one plain line shown when applying is clearly worth it; nothing otherwise.
     public var prompt: String? { recommended ? "Apply \(label)'s reset now" : nil }
+    private var waitingForEarlierReset = false
     public var title: String {
-        recommended ? "Apply reset now" : trigger == .notNeeded ? "Hold" : "Not worth applying now"
+        if waitingForEarlierReset { return "Hold" }
+        return recommended ? "Apply reset now" : trigger == .notNeeded ? "Hold" : "Not worth applying now"
     }
 
     enum CodingKeys: String, CodingKey {
@@ -55,7 +57,41 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     /// OpenAI refused resets at 16% used and accepted them at 32%.
     static let openAIAcceptedUsed: Double = 32
 
-    public init?(account: AccountOverview.Account, now: Date) {
+    /// Judge the complete provider before choosing one out-of-quota reset, soonest expiry first.
+    public static func assessments(for accounts: [AccountOverview.Account], now: Date) -> [String: Self] {
+        let emptyProviders = Set(Provider.allCases.filter { provider in
+            let members = accounts.filter {
+                $0.metadata.provider == provider && $0.metadata.isEnabled && $0.metadata.sourceConfigured
+                    && $0.state != .notConnected
+            }
+            return !members.isEmpty && members.allSatisfy { account in
+                guard [.available, .closeToLimit, .limited].contains(account.state),
+                      let main = account.mainWindow, main.assumption == nil, main.confidence != .unknown,
+                      let fraction = main.remainingFraction else { return false }
+                return fraction <= 0
+            }
+        })
+        var assessments = Dictionary(accounts.compactMap { account in
+            Self(account: account, providerOutOfQuota: emptyProviders.contains(account.metadata.provider), now: now)
+                .map { (account.id, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+        var selectedByProvider: [Provider: Self] = [:]
+        for assessment in assessments.values.filter({ $0.trigger == .outOfQuota && $0.recommended })
+            .sorted(by: { ($0.expiresAt ?? .distantFuture, $0.accountID) < ($1.expiresAt ?? .distantFuture, $1.accountID) }) {
+            if let selected = selectedByProvider[assessment.provider] {
+                var held = assessment
+                held.recommended = false
+                held.waitingForEarlierReset = true
+                held.detail += " Apply \(selected.label)'s reset first."
+                assessments[held.accountID] = held
+            } else {
+                selectedByProvider[assessment.provider] = assessment
+            }
+        }
+        return assessments
+    }
+
+    private init?(account: AccountOverview.Account, providerOutOfQuota: Bool, now: Date) {
         guard [.openAI, .anthropic].contains(account.metadata.provider),
               let banked = account.bankedResets, banked.availableCount > 0, account.bankedState == .available,
               [.available, .closeToLimit, .limited].contains(account.state),
@@ -65,14 +101,14 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let expiries = banked.knownExpiries.isEmpty ? banked.earliestKnownExpiry.map { [$0] } ?? [] : banked.knownExpiries
         let soonest = expiries.filter { $0 > now }.min()
         let unrecognized = provider == .anthropic && banked.unrecognizedKindCount > 0
-        let trigger: Trigger = left <= 0 ? .outOfQuota
+        let trigger: Trigger = providerOutOfQuota && left <= 0 ? .outOfQuota
             : soonest.map { $0.timeIntervalSince(now) <= Self.expiringWithin } == true ? .expiring : .notNeeded
 
         let value: Double?
         let reasoning: String
         if trigger == .notNeeded {
             value = nil
-            reasoning = "Apply a reset only when the account is out of quota or the reset is about to expire."
+            reasoning = "Apply a reset only when every account of the provider is out of quota or the reset is about to expire."
         } else if unrecognized {
             value = nil
             reasoning = "One of its resets isn't a full weekly refill, so Context Panel doesn't value it. Check it in Claude before applying."
