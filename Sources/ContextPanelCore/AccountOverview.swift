@@ -122,6 +122,21 @@ public struct AccountOverview: Equatable, Sendable {
         self.rankedAt = rankedAt
     }
 
+    /// Present shared-provider advice under the local report IDs used by provider diagnostics.
+    public func bankedAdviceByLocalAccountID(provider: Provider, stored: StoredUsageSnapshot,
+        configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> [String: BankedAdvice] {
+        Dictionary(stored.reports.filter { $0.provider == provider }.compactMap { report in
+            let rawID = AccountDisplayMetadata.safeID(provider, report.accountID)
+            let sharedKey = stored.snapshot.limits.first { $0.provider == provider && $0.accountID == report.accountID }
+                .map { MacSharedAccountPresentation.accountKey(limit: $0, report: report,
+                    configuration: configuration, publisherID: publisherID) } ?? report.sharedAccountIdentity?.accountID
+            let sharedID = sharedKey.map { AccountDisplayMetadata.safeID(provider, $0) }
+            let account = accounts.first { $0.metadata.provider == provider && $0.id == sharedID }
+                ?? accounts.first { $0.metadata.provider == provider && $0.id == rawID }
+            return account?.bankedAdvice.map { (report.accountID, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.
     public func filtered(to provider: Provider) -> AccountOverview {
         AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },

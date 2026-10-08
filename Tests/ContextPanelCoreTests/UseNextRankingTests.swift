@@ -653,3 +653,40 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
         }
     }
 }
+
+@Test(arguments: [Provider.openAI, .anthropic])
+@MainActor func sharedResetAdviceSurvivesUnverifiedIDsAndMatchesAgentSnapshot(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    for personalUsed in [50, 100] {
+        let personal = Fixture(name: "personal", provider: provider, weeklyUsed: personalUsed, useLast: true,
+            showInWidgets: false)
+        let fixtures = [empty, personal]
+        let configuration = AccountConfigurationDocument(updatedAt: rankNow, accounts: fixtures.map {
+            LocalProviderAccountConfiguration(id: $0.name, provider: provider,
+                connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage, displayName: $0.name,
+                authPath: "/not/read/\($0.name)", showInWidgets: $0.showInWidgets, useLast: $0.useLast)
+        }, publisherID: "test-publisher")
+        let stored = StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+            reports: fixtures.map { $0.report(now: rankNow) })
+        let remote = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: [])), publishedAt: rankNow)
+        let shared = MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
+            publisherID: configuration.publisherID, remote: remote, accountIntentDocument: configuration, now: rankNow)
+        let panel = shared.accountOverview(now: rankNow, maximumAge: SnapshotFreshness.appMaximumAge)
+        let selected = try #require(panel.accounts.first { $0.metadata.label == empty.name })
+        #expect(selected.id != empty.id) // This fixture exercises the companion identity mapping.
+        let advice = panel.bankedAdviceByLocalAccountID(provider: provider, stored: stored, configuration: configuration.accounts,
+            publisherID: configuration.publisherID)
+        #expect(advice[empty.name] == selected.bankedAdvice)
+        #expect(advice[empty.name] != nil)
+        let deadlines = BankedResetDeadlinesView(reports: [empty.report(now: rankNow)], limits: empty.limits(now: rankNow),
+            presentationDate: rankNow, adviceByAccountID: advice)
+        #expect(deadlines.advice(for: empty.report(now: rankNow), now: rankNow)?.title == selected.bankedAdvice?.title)
+        let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow,
+            sharedDocument: remote)
+        let prompts = panel.accounts.compactMap(\.resetAssessment).filter(\.recommended)
+        #expect(snapshot.resetPrompts.map(\.accountID) == prompts.map(\.accountID))
+        #expect(snapshot.resetPrompts.count == (personalUsed == 100 ? 1 : 0))
+    }
+}

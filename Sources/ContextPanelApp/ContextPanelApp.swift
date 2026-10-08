@@ -4103,10 +4103,7 @@ struct ProviderDashboard: View {
                                 summaries: summaries,
                                 reports: model.storedSnapshot?.reports ?? [],
                                 now: now,
-                                adviceByAccountID: Dictionary(model.accountOverview(at: now).accounts.compactMap { account in
-                                    guard let id = model.rawAccountID(for: account.id), let advice = account.bankedAdvice else { return nil }
-                                    return (id, advice)
-                                }, uniquingKeysWith: { first, _ in first })
+                                adviceByAccountID: model.bankedAdviceByLocalAccountID(provider: .openAI, at: now)
                             )
                         } else {
                             ProviderAccountLimitsSection(summaries: summaries)
@@ -5853,6 +5850,13 @@ final class ContextPanelAppModel: ObservableObject {
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
             metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
             accountBurnRates: accountBurnRates)
+    }
+
+    func bankedAdviceByLocalAccountID(provider: Provider, at now: Date) -> [String: AccountOverview.BankedAdvice] {
+        guard let stored = storedSnapshot else { return [:] }
+        let configuration = fixedPresentationDate == nil ? refreshService.loadConfiguredAccounts(now: now).document : nil
+        return accountOverview(at: now).bankedAdviceByLocalAccountID(provider: provider, stored: stored,
+            configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)
     }
 
     func savedWidgetPreviewSnapshot(now: Date = Date()) async -> WidgetSnapshot {
