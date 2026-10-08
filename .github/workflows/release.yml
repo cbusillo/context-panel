@@ -23,7 +23,7 @@ name: Release
         default: true
         type: boolean
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
   workflow_dispatch:
@@ -47,7 +47,7 @@ name: Release
         default: true
         type: boolean
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
 
@@ -120,6 +120,7 @@ jobs:
     environment: release
     permissions:
       contents: write
+      actions: read
 
     steps:
       - name: Checkout
@@ -406,20 +407,13 @@ jobs:
             --metadata "${METADATA_PATH}" \
             --asset "${ZIP_PATH}"
 
-      - name: Verify Production CloudKit Schema Receipt
+      - name: Check Production CloudKit at Publication
         if: ${{ inputs.create_github_release }}
-        shell: bash
-        env:
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
-            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
-        run: |
-          python3 scripts/cloudkit-schema-receipt.py verify \
-            --receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64 \
-            --environment production \
-            --container-id iCloud.com.shinycomputers.contextpanel \
-            --source-commit "${GITHUB_SHA}"
+        uses: ./.github/actions/cloudkit-publication-check
+        with:
+          channel: github
+          receipt: ${{ inputs.cloudkit_schema_receipt_base64 }}
+          receipt-key: ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
 
       - name: Publish GitHub Release
         if: ${{ inputs.create_github_release }}

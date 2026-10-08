@@ -1,0 +1,28 @@
+name: CloudKit Schema Result
+"on":
+  workflow_dispatch:
+    inputs:
+      receipt_base64:
+        description: Sealed publication-time result from the operator Mac.
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  result:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Accept sealed result
+        id: result
+        env:
+          INPUT_RECEIPT_BASE64: ${{ inputs.receipt_base64 }}
+        run: python3 scripts/cloudkit-publication-relay.py accept
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.result.outputs.artifact }}
+          path: .build/cloudkit-publication-receipt.json
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error

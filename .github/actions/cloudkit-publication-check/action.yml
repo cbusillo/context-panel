@@ -1,0 +1,46 @@
+name: Publication-time CloudKit schema check
+description: Request a Mac-side check and receive only its sealed result.
+inputs:
+  channel:
+    required: true
+    description: Publication boundary identifier.
+  receipt:
+    required: false
+    default: ''
+    description: Optional legacy operator receipt for option C.
+  receipt-key:
+    required: true
+    description: Existing receipt authentication key; never a CloudKit management token.
+runs:
+  using: composite
+  steps:
+    - name: Prepare publication request
+      id: request
+      if: ${{ inputs.receipt == '' }}
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+        CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: ${{ inputs.receipt-key }}
+      run: python3 scripts/cloudkit-publication-relay.py request --channel "$CHANNEL"
+    - name: Send request to Mac checker
+      if: ${{ inputs.receipt == '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.request.outputs.artifact }}
+        path: .build/cloudkit-publication-request.json
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+    - name: Receive publication-time result
+      if: ${{ inputs.receipt == '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: ${{ inputs.receipt-key }}
+      run: python3 scripts/cloudkit-publication-relay.py wait
+    - name: Verify schema evidence
+      shell: bash
+      env:
+        CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: ${{ inputs.receipt }}
+        CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: ${{ inputs.receipt-key }}
+      run: scripts/require-cloudkit-schema-receipt.sh
