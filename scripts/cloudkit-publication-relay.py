@@ -47,6 +47,10 @@ class RelayError(RuntimeError):
     pass
 
 
+class CheckerPreparationError(RelayError):
+    """No live check started; a later operator pass can recover."""
+
+
 class GitHubReadError(RelayError):
     def __init__(self, *, retryable, status=None, retry_after=15):
         super().__init__("GitHub relay read failed")
@@ -281,6 +285,7 @@ def verify_result(
 def wait_for_result(
     request, github, *, timeout=1200, clock=time.monotonic, sleep=time.sleep
 ):
+    key = receipts.require_key()
     deadline = clock() + timeout
     name = RESULT_PREFIX + digest(request)
     while clock() < deadline:
@@ -297,7 +302,7 @@ def wait_for_result(
                     continue
                 try:
                     receipt = github.download(artifact)
-                    verify_result(receipt, request)
+                    verify_result(receipt, request, key=key)
                 except GitHubReadError as error:
                     if error.status in {404, 410}:
                         continue
@@ -330,18 +335,30 @@ def check_on_mac(request, github, *, schema_check=None, before_export=None):
     comparison = github.api(f"compare/{request['sourceCommit']}...main")
     if comparison.get("status") not in {"ahead", "identical"}:
         raise RelayError("release commit is not in current protected main")
-    if before_export is not None:
-        before_export()
     if schema_check is None:
-        receipt = live_check(request)
+        receipt = live_check(request, before_export=before_export)
     else:
+        if before_export is not None:
+            before_export()
         receipt = schema_check(request)
     # Cancellation/re-run during the export never produces a relayed result.
     trusted_run(request, github.api(f"actions/runs/{request['runID']}"), jobs["jobs"])
     github.respond(receipt)
 
 
-def live_check(request):
+def source_bytes(request, path):
+    try:
+        return subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{request['sourceCommit']}:{path}"],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        ).stdout
+    except subprocess.SubprocessError as error:
+        raise CheckerPreparationError("release Git objects unavailable") from error
+
+
+def live_check(request, *, before_export=None):
     # Use only fixed local executable code, never scripts supplied by an artifact.
     for name in (
         "validate-cloudkit-companion-schema.sh",
@@ -349,39 +366,17 @@ def live_check(request):
         "cloudkit-publication-relay.py",
     ):
         path = ROOT / "scripts" / name
-        checked = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(ROOT),
-                "show",
-                f"{request['sourceCommit']}:scripts/{name}",
-            ],
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        if checked.stdout != path.read_bytes():
-            raise RelayError(
+        if source_bytes(request, f"scripts/{name}") != path.read_bytes():
+            raise CheckerPreparationError(
                 "update the Mac checker to the release's reviewed gate code"
             )
     with tempfile.TemporaryDirectory(prefix="context-panel-schema-") as directory:
         scratch = Path(directory)
         for name in ("companion-sync.schema.json", "companion-sync.schema.ckdb"):
-            result = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(ROOT),
-                    "show",
-                    f"{request['sourceCommit']}:CloudKit/{name}",
-                ],
-                check=True,
-                capture_output=True,
-                timeout=30,
-            )
-            (scratch / name).write_bytes(result.stdout)
+            (scratch / name).write_bytes(source_bytes(request, f"CloudKit/{name}"))
         output = scratch / "receipt.json"
+        if before_export is not None:
+            before_export()
         subprocess.run(
             [
                 str(ROOT / "scripts/validate-cloudkit-companion-schema.sh"),
@@ -467,8 +462,11 @@ def serve_requests(github, state_path):
             ) as error:
                 failed = True
                 if request_digest is not None and not (
-                    isinstance(error, GitHubReadError)
-                    and error.retryable
+                    (
+                        isinstance(error, CheckerPreparationError)
+                        or isinstance(error, GitHubReadError)
+                        and error.retryable
+                    )
                     and request_digest not in served
                 ):
                     served[request_digest] = {"at": time.time(), "outcome": "failed"}
@@ -499,6 +497,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "request":
+            receipts.require_key()
             request = request_from_environment(args.channel)
             receipts.write_receipt(args.request, request)
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:

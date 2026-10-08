@@ -1122,7 +1122,8 @@ Use inputs:
 - `platform`: `ios`, `visionos`, or `tvos`.
 - `upload`: `true` to upload, `false` for export-only.
 - `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
-  receipt, required when `upload` is `true`.
+  receipt for legacy option C. Leave empty for the Mac publication-time check
+  when `upload` is `true`; export-only does not request a check.
 
 Upload mode may not emit a local IPA because Xcode can upload the signed archive
 directly. Export-only mode must emit a local IPA. In either mode, retain the

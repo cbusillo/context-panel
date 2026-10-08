@@ -20,6 +20,7 @@ runs:
       shell: bash
       env:
         CHANNEL: ${{ inputs.channel }}
+        CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: ${{ inputs.receipt-key }}
       run: python3 scripts/cloudkit-publication-relay.py request --channel "$CHANNEL"
     - name: Send request to Mac checker
       if: ${{ inputs.receipt == '' }}

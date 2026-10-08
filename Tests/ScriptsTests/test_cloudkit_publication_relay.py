@@ -245,7 +245,10 @@ class RelayTests(unittest.TestCase):
         def sleep(seconds):
             elapsed[0] += seconds
 
-        with self.assertRaisesRegex(relay.RelayError, "unavailable"):
+        with (
+            patch.object(relay.receipts, "require_key", return_value=KEY),
+            self.assertRaisesRegex(relay.RelayError, "unavailable"),
+        ):
             relay.wait_for_result(
                 self.request, github, timeout=30, clock=lambda: elapsed[0], sleep=sleep
             )
@@ -535,6 +538,96 @@ class RelayTests(unittest.TestCase):
         self.assertTrue(raised.exception.retryable)
         self.assertEqual(raised.exception.retry_after, server_wait)
         self.assertNotIn(KEY.decode(), str(raised.exception))
+
+    def test_stale_checker_recovers_same_request_before_any_export(self):
+        github = self.github()
+        github.pending_requests.return_value = [
+            {
+                "id": 1,
+                "name": relay.REQUEST_PREFIX + relay.digest(self.request),
+                "workflow_run": {"id": self.request["runID"]},
+            }
+        ]
+        github.download.return_value = self.request
+        stale = [True]
+        exports = []
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "served.json"
+
+            def run(args, **_kwargs):
+                if args[0] == "git":
+                    name = args[-1].split(":", 1)[1]
+                    return subprocess.CompletedProcess(
+                        args,
+                        0,
+                        b"older validator" if stale[0] else (ROOT / name).read_bytes(),
+                        b"",
+                    )
+                self.assertEqual(
+                    json.loads(state.read_text())[relay.digest(self.request)][
+                        "outcome"
+                    ],
+                    "checking",
+                )
+                exports.append(args)
+                output = Path(args[args.index("--receipt-output") + 1])
+                output.write_text(json.dumps(self.receipt(now=datetime.now(UTC))))
+                return subprocess.CompletedProcess(args, 0)
+
+            with (
+                patch.object(relay.subprocess, "run", side_effect=run),
+                patch.object(relay.receipts, "require_key", return_value=KEY),
+            ):
+                self.assertEqual(relay.serve_requests(github, state), 1)
+                self.assertEqual(json.loads(state.read_text()), {})
+                self.assertEqual(exports, [])
+                github.respond.assert_not_called()
+                stale[0] = False
+                self.assertEqual(relay.serve_requests(github, state), 0)
+                self.assertEqual(relay.serve_requests(github, state), 0)
+                self.assertEqual(len(exports), 1)
+                github.respond.assert_called_once()
+
+    def test_missing_verification_key_refuses_before_request_artifact(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=""),
+            patch.object(relay, "request_from_environment") as request,
+        ):
+            path = Path(directory) / "request.json"
+            self.assertEqual(relay.main(["request", "--request", str(path)]), 1)
+            request.assert_not_called()
+            self.assertFalse(path.exists())
+
+    def test_ambiguous_response_dispatch_never_repeats_the_write_or_export(self):
+        github = self.github()
+        github.pending_requests.return_value = [
+            {
+                "id": 1,
+                "name": relay.REQUEST_PREFIX + relay.digest(self.request),
+                "workflow_run": {"id": self.request["runID"]},
+            }
+        ]
+        github.download.return_value = self.request
+        github.respond.side_effect = relay.GitHubReadError(retryable=True)
+
+        def check(request, *, before_export):
+            before_export()
+            return self.receipt(request=request)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(relay, "live_check", side_effect=check) as live,
+        ):
+            state = Path(directory) / "served.json"
+            self.assertEqual(relay.serve_requests(github, state), 1)
+            self.assertEqual(relay.serve_requests(github, state), 0)
+            live.assert_called_once()
+            github.respond.assert_called_once()
+            self.assertEqual(
+                json.loads(state.read_text())[relay.digest(self.request)]["outcome"],
+                "failed",
+            )
 
     def test_archive_transport_cannot_extract_paths_or_accept_multiple_files(self):
         stream = io.BytesIO()

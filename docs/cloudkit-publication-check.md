@@ -96,6 +96,8 @@ day. Use this one operator checkout for the scheduled checker.
 A failed or interrupted export/dispatch remains blocked and is not exported again.
 Retryable GitHub reads that fail before any export leave the request unrecorded;
 a later pass can recover without repeating a live check.
+Missing Git objects or outdated local gate code also leave it unrecorded;
+update the matching reviewed operator checkout and repeat the pass.
 Diagnose it, then use a new dispatch or authorized rerun, which generates a new
 nonce. Successful trust/approval jobs from an earlier attempt of the *same run*
 can support a partial rerun; a newer failed/pending guard overrides them. The
@@ -105,6 +107,9 @@ confirmed dispatch, retry that response workflow through its normal route;
 do not erase state or re-seal old evidence. Hosted waits tolerate transient
 read failures and ignore unauthenticated results until their deadline; canceled
 runs and authentication refusals still stop.
+The result dispatch itself is never blindly retried: a timeout may mean GitHub
+accepted it. Check the result workflow first. If no confirmed response can be
+recovered, a new publication attempt makes a new request and check.
 
 ## Failure and recovery
 
