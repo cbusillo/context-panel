@@ -890,8 +890,8 @@ channel requests its own publication-time check.
 Both upload helpers have one test-only input,
 `CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR`. The Mac helper replaces `xcodebuild`;
 the companion helper also replaces `codesign` and `xcrun`, so archive checks can
-be tested without building. Never set it in a workflow or an operator shell. Each helper refuses to
-start an upload while it is set, and an export made with it prints a warning
+be tested without building. Never set it in a workflow or an operator shell.
+Each helper refuses to start an upload while it is set, and an export prints a warning
 that the result is not a release artifact.
 
 Run the Mac archive/resume fixtures with

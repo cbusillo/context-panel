@@ -134,6 +134,10 @@ printf '%s\n' "$@" >>"$FIXTURE_ROOT/expected-build.log"
         self.assertIn(f"CURRENT_PROJECT_VERSION={BUILD}", self.calls()[0])
         self.assertFalse(self.export.exists())
         self.assertTrue((self.root / "expected-build.log").exists())
+        recorded = (self.root / "expected-build.log").read_text().splitlines()
+        for flag, value in (("--archive", str(self.archive)), ("--version", VERSION), ("--build-number", BUILD)):
+            self.assertIn(flag, recorded)
+            self.assertEqual(recorded[recorded.index(flag) + 1], value)
         self.assertEqual(plistlib.loads(self.options.read_bytes())["destination"], "export")
 
     def test_resume_exports_existing_archive_without_rebuilding(self):
