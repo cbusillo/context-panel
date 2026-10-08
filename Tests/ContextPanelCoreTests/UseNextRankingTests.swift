@@ -315,6 +315,9 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     }
     #expect(ProviderRefillDetector.events(readings: mixed).first?.accountIDs.count == 2)
 
+    // Two logins that publish as one account are one account, not a provider-wide refill.
+    #expect(ProviderRefillDetector.events(readings: readings, resolve: { _ in "openai-0" }).isEmpty)
+
     // Burn across the refill counts only real use: 5 points an hour before, 4 an hour after.
     let rates = MainLimitBurnRateEstimator.observedBurnRates(current: readings[3].snapshot, history: readings, now: rankNow,
                                                              minimumObservation: 0, minimumUsableIntervals: 1)

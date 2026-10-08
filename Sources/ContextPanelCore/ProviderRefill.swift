@@ -45,9 +45,11 @@ public enum ProviderRefillDetector {
                     == bankedCount(provider: provider, accountID: accountID, reading: current) else { continue }
             refilled.append(resolve(new))
         }
-        guard refilled.count >= 2 else { return nil }
+        // Two logins on one account resolve to one published ID and count once.
+        let accounts = Set(refilled).sorted()
+        guard accounts.count >= 2 else { return nil }
         return ProviderRefillEvent(provider: provider, detectedAt: current.savedAt, previousReadingAt: previous.savedAt,
-                                   accountIDs: refilled.sorted())
+                                   accountIDs: accounts)
     }
 
     static func mainLimits(provider: Provider, reading: StoredUsageSnapshot) -> [String: UsageLimit] {
