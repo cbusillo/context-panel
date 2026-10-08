@@ -894,8 +894,8 @@ be tested without building. Never set it in a workflow or an operator shell.
 Each helper refuses to start an upload while it is set, and an export prints a warning
 that the result is not a release artifact.
 
-Run the Mac archive/resume fixtures with
-`uv run --no-project python -m unittest Tests.ScriptsTests.test_macos_upload_script`.
+The Mac archive/resume fixture command is
+`qualityGate.validate.macOSUploadFixtureTests` in [.github/github.json](../.github/github.json).
 They use fake profiles and credentials in isolated storage, with fake profile
 decoding, project generation, fingerprint generation and expected-build collection.
 They exercise `--export-only` with `--archive-only` or `--skip-archive`, including

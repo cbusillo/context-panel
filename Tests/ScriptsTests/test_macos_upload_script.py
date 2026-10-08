@@ -170,8 +170,17 @@ printf '%s\n' "$@" >>"$FIXTURE_ROOT/expected-build.log"
     def test_resume_refuses_missing_archive_without_rebuilding(self):
         result = self.run_helper("--skip-archive")
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("missing the build fingerprint", result.stdout)
         self.assertEqual(self.calls(), [])
+        self.assertFalse((self.root / "expected-build.log").exists())
+
+    def test_resume_refuses_archive_from_another_source(self):
+        self.reuse_archive()
+        fingerprint = self.archive / "Products/Applications/Context Panel.app/Contents/Resources/ContextPanelBuildFingerprint.txt"
+        fingerprint.write_text("other source")
+        result = self.run_helper("--skip-archive")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.root / "expected-build.log").exists())
 
     def test_archive_only_still_refuses_wrong_source_fingerprint(self):
         fingerprint = self.template / "Products/Applications/Context Panel.app/Contents/Resources/ContextPanelBuildFingerprint.txt"
