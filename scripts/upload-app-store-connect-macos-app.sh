@@ -131,6 +131,18 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+# Match the companion helper's local-export fixture seam. Live upload must
+# refuse fixture tools before any receipt, credential, profile or Xcode work.
+xcodebuild_tool=/usr/bin/xcodebuild
+if [[ -n "${CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR:-}" ]]; then
+	if [[ "$upload" == "true" ]]; then
+		echo "CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR cannot be used for an upload" >&2
+		exit 2
+	fi
+	echo "WARNING: using fixture Xcode tools from $CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR; this export is not a release artifact" >&2
+	xcodebuild_tool="$CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR/xcodebuild"
+fi
+
 if [[ "$archive_only" == "true" && "$skip_archive" == "true" ]]; then
 	echo "--archive-only and --skip-archive cannot be combined" >&2
 	exit 2
@@ -252,7 +264,7 @@ xcodebuild_system_path() {
 }
 
 run_xcodebuild() {
-	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
+	PATH="$(xcodebuild_system_path)" "$xcodebuild_tool" "$@"
 }
 
 verify_archived_build_fingerprint() {
@@ -438,5 +450,10 @@ run_xcodebuild \
 if [[ "$upload" == "true" ]]; then
 	echo "Uploaded ContextPanel to App Store Connect."
 else
+	pkg_path="$(find "$export_path" -maxdepth 1 -type f -name '*.pkg' -print -quit)"
+	if [[ -z "$pkg_path" ]]; then
+		echo "export did not produce a pkg" >&2
+		exit 1
+	fi
 	find "$export_path" -maxdepth 1 -type f -name '*.pkg' -print
 fi
