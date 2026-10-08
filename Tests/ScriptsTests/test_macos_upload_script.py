@@ -130,6 +130,8 @@ printf '%s\n' "$@" >>"$FIXTURE_ROOT/expected-build.log"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(len(self.calls()), 1)
         self.assertEqual(self.calls()[0][-1], "archive")
+        self.assertIn(f"MARKETING_VERSION={VERSION}", self.calls()[0])
+        self.assertIn(f"CURRENT_PROJECT_VERSION={BUILD}", self.calls()[0])
         self.assertFalse(self.export.exists())
         self.assertTrue((self.root / "expected-build.log").exists())
         self.assertEqual(plistlib.loads(self.options.read_bytes())["destination"], "export")
