@@ -1247,37 +1247,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 check=False,
             )
 
-    def test_mutating_workflow_steps_supply_the_schema_receipt_and_key(self) -> None:
-        # The entrypoints refuse without these; this only checks the workflows hand them over.
-        mutation_steps = {
-            "release.yml": "Publish GitHub Release",
-            "app-store-connect-upload.yml": "Archive and Upload",
-            "app-store-connect-companion-upload.yml": "Archive and Upload",
-            "testflight-beta-distribution.yml": "Distribute Beta",
-            "submit-app-store-review.yml": "Submit Review",
-        }
-        for workflow_name, step_name in mutation_steps.items():
-            with self.subTest(workflow=workflow_name):
-                workflow = self.read(f".github/workflows/{workflow_name}")
-                step = workflow[workflow.index(f"      - name: {step_name}\n") :]
-                step = step.split("\n      - name:", 1)[0]
-                environment = re.sub(r"\s+", " ", step.split("\n        run:", 1)[0])
-
-                self.assertIn(
-                    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >- "
-                    "${{ inputs.cloudkit_schema_receipt_base64 }}",
-                    environment,
-                )
-                self.assertIn(
-                    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >- "
-                    "${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}",
-                    environment,
-                )
-                self.assertNotIn(
-                    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY",
-                    workflow_job(workflow, "guard"),
-                )
-
     RECEIPT_KEY = "fixture-cloudkit-schema-receipt-key-0123456789"
     RECEIPT_COMMIT = "a" * 40
 
@@ -2148,13 +2117,16 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(len(guard_calls), 1)
         self.assertEqual(output, "")
 
+    def test_ship_accepts_approval_without_a_predispatch_schema_receipt(self) -> None:
+        result, calls, output = self.run_ship_validate_inputs(
+            INPUT_GITHUB_RELEASE="true", INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64="")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(calls, [])
+        self.assertIn("build_number=", output)
+
     def test_ship_refuses_live_channels_without_required_inputs(self) -> None:
         cases = {
             "no channel": {},
-            "no schema receipt": {
-                "INPUT_GITHUB_RELEASE": "true",
-                "INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64": "",
-            },
             "no App Store Connect credentials": {
                 "INPUT_APP_STORE_CHANNEL": "upload",
                 "APP_STORE_CONNECT_API_KEY_P8_BASE64": "",

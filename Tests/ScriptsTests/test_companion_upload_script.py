@@ -277,6 +277,11 @@ def install_archive_fixture(root: Path, working_directory: Path, archive: dict, 
             (stack / layer / "Contents.json").write_text("{}")
             (image_set / "Contents.json").write_text(json.dumps({"images": [{"filename": "layer.png"}]}))
             (image_set / "layer.png").touch()
+    if archive.get("stale_export"):
+        (root / "export").mkdir()
+        (root / "export" / "Stale.ipa").touch()
+    if archive.get("reuse_archive"):
+        shutil.copytree(template, root / "fixture.xcarchive")
     if archive.get("stale_outputs"):
         # Left over from an earlier run at the same paths.
         (root / "export").mkdir()
@@ -344,6 +349,7 @@ def run_preflight(
     already_installed: tuple[str, ...] = (),
     archive: dict | None = None,
     extra_path: str | None = None,
+    extra_args: tuple[str, ...] = (),
 ):
     """Returns the script result, the ExportOptions it wrote, and the installed profile names.
 
@@ -411,7 +417,7 @@ def run_preflight(
             working_directory = root / "checkout"
             install_archive_fixture(root, working_directory, archive, environment)
         result = subprocess.run(
-            ["/bin/bash", str(SCRIPT), *arguments],
+            ["/bin/bash", str(SCRIPT), *arguments, *extra_args],
             cwd=working_directory,
             env=environment,
             text=True,
@@ -682,6 +688,37 @@ class CompanionUploadArchiveTests(unittest.TestCase):
         self.assertEqual(receipt["watch_widget_dsym"], "dSYMs/WatchWidget.dSYM")
         self.assertRegex(receipt["watch_app_executable_sha256"], r"^[0-9a-f]{64}$")
         self.assertNotEqual(receipt["watch_app_executable_sha256"], receipt["companion_executable_sha256"])
+
+    def test_archive_only_builds_and_checks_without_exporting(self):
+        result, _, _ = run_preflight("ios", ios_profiles(), archive=ios_archive(),
+                                     extra_args=("--archive-only",))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(result.archive_run.xcodebuild_calls), 1)
+        self.assertFalse(result.archive_run.exported)
+        self.assertTrue(result.archive_run.receipt)
+
+    def test_skip_archive_exports_the_same_verified_archive_without_rebuilding(self):
+        result, _, _ = run_preflight("ios", ios_profiles(),
+                                     archive={**ios_archive(), "reuse_archive": True},
+                                     extra_args=("--skip-archive",))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(result.archive_run.xcodebuild_calls), 1)
+        self.assertTrue(result.archive_run.exported)
+        self.assertEqual(result.archive_run.ipa_names, ["Context Panel.ipa"])
+
+    def test_skip_archive_cannot_accept_stale_export_when_tool_emits_no_ipa(self):
+        result, _, _ = run_preflight("ios", ios_profiles(),
+            archive={**ios_archive(), "reuse_archive": True, "no_ipa": True, "stale_export": True},
+            extra_args=("--skip-archive",))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.archive_run.ipa_names, [])
+
+    def test_skip_archive_refuses_missing_archive_without_rebuilding(self):
+        result, _, _ = run_preflight("ios", ios_profiles(), archive=ios_archive(),
+                                     extra_args=("--skip-archive",))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.archive_run.xcodebuild_calls, [])
+        self.assertFalse(result.archive_run.exported)
 
     def test_a_valid_tvos_archive_uses_the_tv_profiles_and_writes_no_watch_receipt(self):
         result, _, _ = run_preflight("tvos", tvos_profiles(), archive=tvos_archive())

@@ -11,6 +11,7 @@ live="false"
 receipt_output=""
 receipt_ttl_seconds="21600"
 source_commit=""
+publication_request_digest=""
 
 usage() {
 	cat <<'USAGE'
@@ -29,6 +30,7 @@ Options:
   --receipt-output PATH Write a sealed short-lived receipt after successful live validation.
   --receipt-ttl-seconds N
                        Receipt validity in seconds. Default: 21600 (6 hours)
+  --publication-request-digest HEX Bind the result to one publication request.
   --source-commit SHA  Full source commit bound to the receipt. Default: GITHUB_SHA or HEAD
   -h, --help           Show this help.
 
@@ -69,6 +71,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--receipt-ttl-seconds)
 		receipt_ttl_seconds="${2:?--receipt-ttl-seconds requires a value}"
+		shift 2
+		;;
+	--publication-request-digest)
+		publication_request_digest="${2:?--publication-request-digest requires a value}"
 		shift 2
 		;;
 	--source-commit)
@@ -577,14 +583,20 @@ if [[ -n "$receipt_output" ]]; then
 		require_command git
 		source_commit="$(git -C "$repo_root" rev-parse HEAD)"
 	fi
-	python3 "$repo_root/scripts/cloudkit-schema-receipt.py" issue \
-		--environment "$environment" \
-		--container-id "$container_id" \
-		--schema "$schema_path" \
-		--cktool-schema "$cktool_schema_path" \
-		--source-commit "$source_commit" \
-		--ttl-seconds "$receipt_ttl_seconds" \
+	receipt_command=(
+		python3 "$repo_root/scripts/cloudkit-schema-receipt.py" issue
+		--environment "$environment"
+		--container-id "$container_id"
+		--schema "$schema_path"
+		--cktool-schema "$cktool_schema_path"
+		--source-commit "$source_commit"
+		--ttl-seconds "$receipt_ttl_seconds"
 		--output "$receipt_output"
+	)
+	if [[ -n "$publication_request_digest" ]]; then
+		receipt_command+=(--publication-request-digest "$publication_request_digest")
+	fi
+	"${receipt_command[@]}"
 fi
 
 echo "CloudKit live schema contains private-only companion sync and runtime receipt contracts with required query and range indexes in $environment."

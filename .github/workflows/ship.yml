@@ -72,7 +72,7 @@ name: Ship
         default: true
         type: boolean
       cloudkit_schema_receipt_base64:
-        description: Sealed short-lived Production CloudKit schema receipt.
+        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
         required: false
         type: string
 
