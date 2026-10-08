@@ -20,8 +20,9 @@ request a check.
 The Mac's operator process reads active protected-main release requests through
 the existing automation GitHub helper. It requires completed source trust and
 owner approval jobs, the current run attempt, and a commit still in protected
-main. It reads only the two schema contracts from that commit in its local Git
-object database. It executes its own reviewed validator, never downloaded code.
+main. It reads the two schema contracts and compares three gate scripts from
+that commit in its local Git object database. It executes its own reviewed
+validator, never downloaded code.
 At most one live Production export per request must satisfy the existing schema validator;
 an export error or mismatch sends no success result.
 
@@ -43,8 +44,11 @@ publication cannot consume it and a rerun uses another attempt and nonce.
 
 GitHub uses its existing Actions authentication and receipt key. The Mac uses the
 existing automation App helper for Actions reads and result dispatch. No new
-CloudKit credential, CI secret, runner registration, network listener, access
-grant or token store is required. The result workflow has no secret environment.
+CloudKit credential, CI secret, runner registration, network listener or token
+store is required. The existing automation App must already have scoped Actions
+read/write permission; confirm that through the maintained GitHub capability
+audit before activation. A missing grant is a stop for Chris, not an agent
+workaround. The result workflow has no secret environment.
 Requests/results contain source and run metadata, contract digests, timestamps
 and seals, never token/key values, account data or live schema exports.
 
@@ -106,7 +110,7 @@ and refuses incomplete coverage. If a response workflow alone fails after a
 confirmed dispatch, retry that response workflow through its normal route;
 do not erase state or re-seal old evidence. Hosted waits tolerate transient
 read failures and ignore unauthenticated results until their deadline; canceled
-runs and authentication refusals still stop.
+runs and GitHub API authentication refusals still stop.
 The result dispatch itself is never blindly retried: a timeout may mean GitHub
 accepted it. Check the result workflow first. If no confirmed response can be
 recovered, a new publication attempt makes a new request and check.

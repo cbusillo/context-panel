@@ -389,6 +389,20 @@ class RelayTests(unittest.TestCase):
         with self.assertRaises(relay.RelayError):
             relay.trusted_run(self.request, self.run, jobs)
 
+    def test_ship_nested_skipped_guards_do_not_replace_top_level_approval(self):
+        jobs = [
+            {
+                **job,
+                "name": f"Publish GitHub Release / {job['name']}",
+                "conclusion": "skipped",
+            }
+            for job in self.jobs
+        ]
+        for inventory in (jobs + self.jobs, self.jobs + jobs):
+            relay.trusted_run(self.request, self.run, inventory)
+        with self.assertRaises(relay.RelayError):
+            relay.trusted_run(self.request, self.run, jobs)
+
     def test_final_entrypoint_requires_original_request_for_bound_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             scratch = Path(directory)
