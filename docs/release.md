@@ -887,12 +887,20 @@ and cancel-only operations remain available without a receipt. The `Ship`
 workflow forwards a supplied legacy input. With an empty input, every live
 channel requests its own publication-time check.
 
-`scripts/upload-app-store-connect-companion-app.sh` has one test-only input,
-`CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR`. It replaces `xcodebuild`, `codesign`,
-and `xcrun` with fixtures so the script's archive checks can be tested without
-building. Never set it in a workflow or an operator shell. The script refuses to
-start an upload while it is set, and an export made with it prints a warning
+Both upload helpers have one test-only input,
+`CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR`. The Mac helper replaces `xcodebuild`;
+the companion helper also replaces `codesign` and `xcrun`, so archive checks can
+be tested without building. Never set it in a workflow or an operator shell.
+Each helper refuses to start an upload while it is set, and an export prints a warning
 that the result is not a release artifact.
+
+The Mac archive/resume fixture command is
+`qualityGate.validate.macOSUploadFixtureTests` in [.github/github.json](../.github/github.json).
+They use fake profiles and credentials in isolated storage, with fake profile
+decoding, project generation, fingerprint generation and expected-build collection.
+They exercise `--export-only` with `--archive-only` or `--skip-archive`, including
+version/build and source mismatch refusals and missing fresh package output.
+They do not qualify signing, real archives, or live uploads.
 
 The release entrypoints enforce this themselves, not only the workflows.
 `publish-github-release.py`, both `upload-app-store-connect-*-app.sh` scripts in
