@@ -18,6 +18,7 @@ private struct Fixture {
     var isEnabled = true
     var showInWidgets = true
     var sourceConfigured = true
+    var readState: AccountCapacityState? = nil
     var fiveHourUsed: Int? = nil
     var fiveHourResetHours: Double = 3
     var fiveHourBurn: Double? = nil
@@ -75,7 +76,7 @@ private func overview(_ fixtures: [Fixture], now: Date = rankNow, widgetsOnly: B
         reports: fixtures.map { $0.report(now: now) },
         metadata: fixtures.map { AccountDisplayMetadata(id: $0.id, configurationID: $0.id, provider: $0.provider,
                                                         label: $0.name, isEnabled: $0.isEnabled, showInWidgets: $0.showInWidgets,
-                                                        useLast: $0.useLast, sourceConfigured: $0.sourceConfigured) },
+                                                        useLast: $0.useLast, sourceConfigured: $0.sourceConfigured, readState: $0.readState) },
         now: now, widgetsOnly: widgetsOnly, accountBurnRates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: now)) }))
 }
 
@@ -587,5 +588,46 @@ func agentSnapshotAndPanelShareProviderResetPrompts(_ provider: Provider) throws
         #expect(snapshot.resetPrompts.map(\.accountID) == panelPrompts.map(\.accountID))
         #expect(snapshot.resetPrompts.map(\.line) == panelPrompts.compactMap(\.prompt))
         #expect(snapshot.resetPrompts.map(\.accountID) == (secondUsed == 100 ? [second.id] : []))
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func disconnectedAccountCannotHoldProviderResetPrompt(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let disconnected = Fixture(name: "disconnected", provider: provider, readState: .notConnected)
+    let result = overview([empty, disconnected])
+    #expect(result.accounts.first { $0.id == disconnected.id }?.state == .notConnected)
+    let assessment = try #require(result.accounts.first { $0.id == empty.id }?.resetAssessment)
+    #expect(assessment.trigger == .outOfQuota && assessment.recommended)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func failedReadCannotProveProviderEmpty(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let failed = Fixture(name: "failed", provider: provider, weeklyUsed: 100, readState: .unavailable)
+    let assessment = try #require(overview([empty, failed]).accounts.first?.resetAssessment)
+    #expect(assessment.trigger == .notNeeded && !assessment.recommended)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func emptyProviderWithTwoExpiringResetsStillOffersOne(_ provider: Provider) throws {
+    let soon = Fixture(name: "soon", provider: provider, weeklyUsed: 100, bankedExpiryHours: [6])
+    let later = Fixture(name: "later", provider: provider, weeklyUsed: 100, bankedExpiryHours: [12])
+    let result = overview([later, soon])
+    #expect(result.accounts.compactMap(\.resetAssessment).filter(\.recommended).map(\.accountID) == [soon.id])
+    let held = try #require(result.accounts.first { $0.id == later.id }?.resetAssessment)
+    #expect(held.prompt == nil && held.value != nil)
+    #expect(held.detail.contains(soon.name))
+    #expect(result.accounts.first { $0.id == later.id }?.bankedAdvice?.title == held.title)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
+    let known = Fixture(name: "known", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let unknown = Fixture(name: "unknown", provider: provider, weeklyUsed: 100, bankedExpiryHours: [10], bankedCountOnly: true)
+    for fixtures in [[unknown, known], [known, unknown]] {
+        let assessments = overview(fixtures).accounts.compactMap(\.resetAssessment)
+        #expect(assessments.first { $0.accountID == unknown.id }?.expiresAt == nil)
+        #expect(assessments.filter(\.recommended).map(\.accountID) == [known.id])
     }
 }

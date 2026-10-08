@@ -20,7 +20,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public private(set) var recommended: Bool
     public let unrecognizedKind: Bool
     public let eligibilityNote: String?
-    public let detail: String
+    public private(set) var detail: String
 
     /// The one plain line shown when applying is clearly worth it; nothing otherwise.
     public var prompt: String? { recommended ? "Apply \(label)'s reset now" : nil }
@@ -62,6 +62,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let emptyProviders = Set(Provider.allCases.filter { provider in
             let members = accounts.filter {
                 $0.metadata.provider == provider && $0.metadata.isEnabled && $0.metadata.sourceConfigured
+                    && $0.state != .notConnected
             }
             return !members.isEmpty && members.allSatisfy { account in
                 guard [.available, .closeToLimit, .limited].contains(account.state),
@@ -74,14 +75,17 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
             Self(account: account, providerOutOfQuota: emptyProviders.contains(account.metadata.provider), now: now)
                 .map { (account.id, $0) }
         }, uniquingKeysWith: { first, _ in first })
-        var selectedProviders = Set<Provider>()
+        var selectedByProvider: [Provider: Self] = [:]
         for assessment in assessments.values.filter({ $0.trigger == .outOfQuota && $0.recommended })
             .sorted(by: { ($0.expiresAt ?? .distantFuture, $0.accountID) < ($1.expiresAt ?? .distantFuture, $1.accountID) }) {
-            if !selectedProviders.insert(assessment.provider).inserted {
+            if let selected = selectedByProvider[assessment.provider] {
                 var held = assessment
                 held.recommended = false
                 held.waitingForEarlierReset = true
+                held.detail += " Apply \(selected.label)'s reset first."
                 assessments[held.accountID] = held
+            } else {
+                selectedByProvider[assessment.provider] = assessment
             }
         }
         return assessments

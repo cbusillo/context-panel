@@ -747,11 +747,13 @@ percent of an account's main window, which is the general weekly window
   trigger (`outOfQuota`, `expiring` within 24 hours, or `notNeeded`), net value
   and reasoning, which the account detail view shows. `resetPrompts` lists one
   plain line per reset that is clearly worth applying, soonest expiry first.
-  `outOfQuota` requires every enabled, configured account of that provider to
-  have a current, observed weekly reading at 0, including the use-last account
+  `outOfQuota` requires every enabled, configured, connected account of that
+  provider to have a current, observed weekly reading at 0, including the use-last account
   and accounts hidden from widgets. Unknown or stale readings cannot prove
-  exhaustion. When all are empty, one worthwhile reset is prompted for that
-  provider, soonest known expiry first; unknown expiries follow known ones.
+  exhaustion, including a failed provider read. Disconnected accounts cannot
+  launch and do not hold the prompt. When all are empty, one worthwhile reset is
+  prompted for that provider, soonest known expiry first; unknown expiries follow
+  known ones.
   The independent 24-hour expiry prompt still applies while other accounts have
   quota. The panel and agent reader use the same assessment.
   An OpenAI reset is worth 100 × days left ÷ 7 − percent left, because it
