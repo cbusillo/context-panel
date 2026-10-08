@@ -3189,7 +3189,7 @@ struct AccountDashboard: View {
                     DisclosureGroup("Provider diagnostics, pace and history") {
                         ProviderDashboard(model: model, snapshot: model.currentSnapshot, provider: provider,
                             focusedAccountID: model.rawAccountID(for: accountID) ?? accountID,
-                            showsHorizon: false).frame(minHeight: 600)
+                            showsHorizon: false, accountOverview: overview).frame(minHeight: 600)
                     }
                 }.padding(24)
             }.background(CPTheme.background)
@@ -4008,6 +4008,7 @@ struct ProviderDashboard: View {
     let provider: Provider
     var focusedAccountID: String? = nil
     var showsHorizon = true
+    var accountOverview: AccountOverview? = nil
     var openLimit: ((String) -> Void)? = nil
     @State private var selectedLimit: MainLimitSummary?
 
@@ -4034,11 +4035,12 @@ struct ProviderDashboard: View {
     @ViewBuilder private func content(at now: Date) -> some View {
         let overallStatus = providerStatusIncludingAccessAlerts(
             provider: provider, baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts)
+        let fullOverview = accountOverview ?? model.accountOverview(at: now)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 22) {
                     if showsHorizon {
-                        let overview = model.accountOverview(at: now).filtered(to: provider)
+                        let overview = fullOverview.filtered(to: provider)
                         AccountDashboardPanel(
                             overview: overview,
                             now: now,
@@ -4103,7 +4105,7 @@ struct ProviderDashboard: View {
                                 summaries: summaries,
                                 reports: model.storedSnapshot?.reports ?? [],
                                 now: now,
-                                adviceByAccountID: model.bankedAdviceByLocalAccountID(provider: .openAI, at: now)
+                                adviceByAccountID: model.bankedAdviceByLocalAccountID(provider: .openAI, overview: fullOverview)
                             )
                         } else {
                             ProviderAccountLimitsSection(summaries: summaries)
@@ -5442,6 +5444,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var storeStatus: UsageStatus = .unknown
     @Published private(set) var historyCount: Int = 0
     @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
+    private var configuredPublisherID: String?
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
@@ -5740,8 +5743,9 @@ final class ContextPanelAppModel: ObservableObject {
     func loadSnapshot(reloadWidgetTimelines: Bool = true) {
         fastModeForecastSettings = forecastSettingsStore.load()
         widgetPreferences = widgetPreferencesStore.load()
-        let accounts = refreshService.loadConfiguredAccounts().document.accounts
-        configuredAccounts = accounts
+        let configuration = refreshService.loadConfiguredAccounts().document
+        configuredAccounts = configuration.accounts
+        configuredPublisherID = configuration.publisherID
         let refreshAttentionPolicy = refreshAttentionPolicyCache.reload()
         let result = refreshService.loadCurrent(
             policy: refreshAttentionPolicy,
@@ -5852,11 +5856,11 @@ final class ContextPanelAppModel: ObservableObject {
             accountBurnRates: accountBurnRates)
     }
 
-    func bankedAdviceByLocalAccountID(provider: Provider, at now: Date) -> [String: AccountOverview.BankedAdvice] {
+    func bankedAdviceByLocalAccountID(provider: Provider, overview: AccountOverview) -> [String: AccountOverview.BankedAdvice] {
         guard let stored = storedSnapshot else { return [:] }
-        let configuration = fixedPresentationDate == nil ? refreshService.loadConfiguredAccounts(now: now).document : nil
-        return accountOverview(at: now).bankedAdviceByLocalAccountID(provider: provider, stored: stored,
-            configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)
+        return overview.bankedAdviceByLocalAccountID(provider: provider, stored: stored,
+            configuration: fixedPresentationDate == nil ? configuredAccounts : [],
+            publisherID: fixedPresentationDate == nil ? configuredPublisherID : nil)
     }
 
     func savedWidgetPreviewSnapshot(now: Date = Date()) async -> WidgetSnapshot {

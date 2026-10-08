@@ -585,7 +585,9 @@ func agentSnapshotAndPanelShareProviderResetPrompts(_ provider: Provider) throws
             snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
             reports: fixtures.map { $0.report(now: rankNow) })
         let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow)
-        let panelPrompts = overview(fixtures).accounts.compactMap(\.resetAssessment).filter(\.recommended)
+        let panel = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+            metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: rankNow), now: rankNow)
+        let panelPrompts = panel.accounts.compactMap(\.resetAssessment).filter(\.recommended)
         #expect(snapshot.resetPrompts.map(\.accountID) == panelPrompts.map(\.accountID))
         #expect(snapshot.resetPrompts.map(\.line) == panelPrompts.compactMap(\.prompt))
         #expect(snapshot.resetPrompts.map(\.accountID) == (secondUsed == 100 ? [second.id] : []))
@@ -640,9 +642,11 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
     let later = Fixture(name: "later", provider: provider, weeklyUsed: 100, bankedExpiryHours: [300])
     for fixtures in [[empty, personal], [empty, later]] {
         let panel = overview(fixtures)
-        let adviceByAccountID = Dictionary(fixtures.compactMap { fixture in
-            panel.accounts.first { $0.id == fixture.id }?.bankedAdvice.map { (fixture.name, $0) }
-        }, uniquingKeysWith: { first, _ in first })
+        let stored = StoredUsageSnapshot(savedAt: rankNow,
+            snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+            reports: fixtures.map { $0.report(now: rankNow) })
+        let adviceByAccountID = panel.bankedAdviceByLocalAccountID(provider: provider, stored: stored,
+            configuration: [], publisherID: nil)
         for fixture in fixtures {
             let report = fixture.report(now: rankNow)
             let deadlines = BankedResetDeadlinesView(reports: [report], limits: fixture.limits(now: rankNow),
