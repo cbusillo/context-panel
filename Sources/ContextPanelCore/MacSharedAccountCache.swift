@@ -58,6 +58,15 @@ public extension CompanionSyncDocument {
 }
 
 public enum MacSharedAccountPresentation {
+    /// The account key a stored limit is presented under: its shared identity, else its companion identity.
+    public static func accountKey(limit: UsageLimit, report: StoredProviderReport?,
+                                  configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> String {
+        report?.sharedAccountIdentity?.accountID
+            ?? CompanionLimit(limit: limit, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
+                provider: limit.provider, rawID: limit.accountID, configuredID: limit.configuredAccountID,
+                configuration: configuration, publisherID: publisherID)).companionAccountID
+    }
+
     public static func make(stored: StoredUsageSnapshot, configuration: [LocalProviderAccountConfiguration],
         publisherID: String? = nil, remote: CompanionSyncDocument? = nil,
         accountIntentDocument: AccountConfigurationDocument? = nil,
@@ -79,10 +88,7 @@ public enum MacSharedAccountPresentation {
         for local in stored.selectingSharedAccountObservations().snapshot.limits {
             guard let rate = rates[local.accountID]?[local.id], rate.sampleCount > 0 else { continue }
             let report = stored.reports.first { $0.provider == local.provider && $0.accountID == local.accountID }
-            let key = report?.sharedAccountIdentity?.accountID
-                ?? CompanionLimit(limit: local, identityConfiguredAccountID: AccountDisplayMetadata.companionIdentityOverride(
-                    provider: local.provider, rawID: local.accountID, configuredID: local.configuredAccountID,
-                    configuration: configuration, publisherID: publisherID)).companionAccountID
+            let key = accountKey(limit: local, report: report, configuration: configuration, publisherID: publisherID)
             guard let chosen = snapshot.limits.first(where: { $0.provider == local.provider && $0.companionAccountID == key
                 && $0.label == local.label && $0.lastUpdatedAt == local.lastUpdatedAt && $0.used == local.used }) else { continue }
             let id = chosen.usageLimit.id
