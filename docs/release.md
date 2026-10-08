@@ -296,8 +296,9 @@ Use `Ship` for normal releases. It accepts:
 - `cloudkit_schema_receipt_base64`: optional legacy Production schema evidence
   (option C). Leave empty for the [Mac publication-time check](cloudkit-publication-check.md).
   When supplied, `Ship` forwards it to every selected channel, and each publication,
-  upload, or TestFlight step refuses without it (see "CloudKit Production Schema
-  Gate").
+  upload, or TestFlight step verifies the supplied evidence before mutation.
+  Empty inputs instead use the publication-time check; see "CloudKit Production
+  Schema Gate".
 
 For a normal release, run `Ship` from `main` with GitHub release, App Store
 Connect build upload, and TestFlight beta distribution enabled. That creates the

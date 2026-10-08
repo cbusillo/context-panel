@@ -48,9 +48,11 @@ class RelayError(RuntimeError):
 
 
 class GitHubReadError(RelayError):
-    def __init__(self, *, retryable):
+    def __init__(self, *, retryable, status=None, retry_after=15):
         super().__init__("GitHub relay read failed")
         self.retryable = retryable
+        self.status = status
+        self.retry_after = retry_after
 
 
 def digest(request: dict) -> str:
@@ -125,7 +127,23 @@ class GitHub:
                 rb"HTTP (?:500|502|503|504)|connection reset|connection refused|timed out",
                 result.stderr,
             )
-            raise GitHubReadError(retryable=bool(transient))
+            status_match = re.search(rb"HTTP ([0-9]{3})", result.stderr)
+            status = int(status_match[1]) if status_match else None
+            rate_limited = status == 429 or (
+                status == 403
+                and re.search(
+                    rb"rate limit|abuse detection", result.stderr, re.IGNORECASE
+                )
+            )
+            delay_match = re.search(
+                rb"Retry-After[: =]+([0-9]+)", result.stderr, re.IGNORECASE
+            )
+            delay = int(delay_match[1]) if delay_match else (60 if rate_limited else 15)
+            raise GitHubReadError(
+                retryable=bool(transient or rate_limited),
+                status=status,
+                retry_after=delay,
+            )
         return result.stdout if binary else json.loads(result.stdout)
 
     def api(self, path):
@@ -266,6 +284,7 @@ def wait_for_result(
     deadline = clock() + timeout
     name = RESULT_PREFIX + digest(request)
     while clock() < deadline:
+        retry_after = 15
         try:
             run = github.api(f"actions/runs/{request['runID']}")
             if (
@@ -279,7 +298,9 @@ def wait_for_result(
                 try:
                     receipt = github.download(artifact)
                     verify_result(receipt, request)
-                except GitHubReadError:
+                except GitHubReadError as error:
+                    if error.status in {404, 410}:
+                        continue
                     raise
                 except (
                     RelayError,
@@ -293,13 +314,14 @@ def wait_for_result(
         except GitHubReadError as error:
             if not error.retryable:
                 raise
-        sleep(min(15, max(0, deadline - clock())))
+            retry_after = error.retry_after
+        sleep(min(retry_after, max(0, deadline - clock())))
     raise RelayError(
         "Mac schema checker unavailable: timed out; publication remains blocked"
     )
 
 
-def check_on_mac(request, github, *, schema_check=None):
+def check_on_mac(request, github, *, schema_check=None, before_export=None):
     run = github.api(f"actions/runs/{request['runID']}")
     jobs = github.api(f"actions/runs/{request['runID']}/jobs?filter=all&per_page=100")
     if jobs.get("total_count", len(jobs["jobs"])) >= 100:
@@ -308,6 +330,8 @@ def check_on_mac(request, github, *, schema_check=None):
     comparison = github.api(f"compare/{request['sourceCommit']}...main")
     if comparison.get("status") not in {"ahead", "identical"}:
         raise RelayError("release commit is not in current protected main")
+    if before_export is not None:
+        before_export()
     if schema_check is None:
         receipt = live_check(request)
     else:
@@ -370,8 +394,6 @@ def live_check(request):
                 request["sourceCommit"],
                 "--receipt-output",
                 str(output),
-                "--receipt-ttl-seconds",
-                "21600",
                 "--publication-request-digest",
                 digest(request),
             ],
@@ -427,11 +449,13 @@ def serve_requests(github, state_path):
                     or run.get("run_attempt") != request["runAttempt"]
                 ):
                     continue
-                # Persist before export; a crash/ambiguous dispatch cannot repeat it.
-                served[request_digest] = {"at": time.time(), "outcome": "checking"}
-                receipts.write_receipt(state_path, served)
-                check_on_mac(request, github)
-                served[request_digest]["outcome"] = "dispatched"
+
+                def record_export_start(bound_digest=request_digest):
+                    served[bound_digest] = {"at": time.time(), "outcome": "checking"}
+                    receipts.write_receipt(state_path, served)
+
+                check_on_mac(request, github, before_export=record_export_start)
+                served[request_digest] = {"at": time.time(), "outcome": "dispatched"}
             except (
                 RelayError,
                 receipts.ReceiptError,
@@ -442,8 +466,12 @@ def serve_requests(github, state_path):
                 zipfile.BadZipFile,
             ) as error:
                 failed = True
-                if request_digest in served:
-                    served[request_digest]["outcome"] = "failed"
+                if request_digest is not None and not (
+                    isinstance(error, GitHubReadError)
+                    and error.retryable
+                    and request_digest not in served
+                ):
+                    served[request_digest] = {"at": time.time(), "outcome": "failed"}
                 reason = (
                     str(error)
                     if isinstance(error, RelayError)

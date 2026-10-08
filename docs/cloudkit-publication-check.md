@@ -63,7 +63,10 @@ After Chris authorizes activation:
    the wrapper refreshes those Git objects on every pass without changing
    checked-out files. No checkout of incoming request code is necessary. Keep this local validator
    current when gate code changes: the checker refuses unless its local relay,
-   validator and receipt implementation match that release commit.
+   validator and receipt implementation match that release commit. If gate code
+   has changed since a waiting release was dispatched, either use its matching
+   reviewed operator checkout or redispatch from the updated protected-main
+   source. Unrelated product commits need only the per-pass Git fetch.
 2. Use the existing credential setup described in the schema gate. If either
    credential is unavailable, stop for Chris; do not create a replacement.
 3. Run one pass from that checkout, passing the existing bot GitHub wrapper:
@@ -84,13 +87,15 @@ After Chris authorizes activation:
 
 The checker takes an OS file lock for this operator checkout. Overlapping passes
 return without exporting. Requests are recorded by digest in the ignored,
-nonsecret `.build/cloudkit-relay-served.json` before checking, with outcomes
+nonsecret `.build/cloudkit-relay-served.json` immediately before the live export, with outcomes
 `checking`, `dispatched` or `failed`. This prevents duplicate exports even after
 a crash or an ambiguous response dispatch. One refused request does not stop
 other channels or runs from receiving their checks. State is retained for one
 day. Use this one operator checkout for the scheduled checker.
 
-A failed or interrupted request remains blocked and is not exported again.
+A failed or interrupted export/dispatch remains blocked and is not exported again.
+Retryable GitHub reads that fail before any export leave the request unrecorded;
+a later pass can recover without repeating a live check.
 Diagnose it, then use a new dispatch or authorized rerun, which generates a new
 nonce. Successful trust/approval jobs from an earlier attempt of the *same run*
 can support a partial rerun; a newer failed/pending guard overrides them. The
@@ -121,7 +126,7 @@ runs and authentication refusals still stop.
   runtime; this relay has no app/device responsibilities.
 
 Artifacts expire after one day. Temporary schema exports and receipt files on the
-Mac are removed after the result dispatch. Do not retain exported live schemas in
+Mac are removed before the result dispatch. Do not retain exported live schemas in
 public artifacts or print subprocess authentication diagnostics.
 
 ## Changing the decision later

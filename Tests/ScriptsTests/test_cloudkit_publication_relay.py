@@ -276,7 +276,8 @@ class RelayTests(unittest.TestCase):
             ]
             self.assertEqual(relay.main(args), 0)
             self.assertEqual(relay.main(args), 0)
-            check.assert_called_once_with(self.request, github)
+            check.assert_called_once()
+            self.assertEqual(check.call_args.args, (self.request, github))
 
     def test_failed_request_does_not_repeat_or_starve_other_channels(self):
         other = {**self.request, "channel": "macos", "nonce": "c" * 64}
@@ -292,7 +293,7 @@ class RelayTests(unittest.TestCase):
         ]
         github.download.side_effect = lambda artifact: requests[artifact["id"]]
 
-        def check(request, _):
+        def check(request, _, **_kwargs):
             if request["channel"] == "github":
                 raise relay.receipts.ReceiptError("schema mismatch")
 
@@ -322,7 +323,7 @@ class RelayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / "served.json"
 
-            def check(*_):
+            def check(*_, **_kwargs):
                 self.assertEqual(relay.serve_requests(github, state), 0)
 
             with patch.object(relay, "check_on_mac", side_effect=check) as checked:
@@ -438,7 +439,7 @@ class RelayTests(unittest.TestCase):
                 "uname": "#!/bin/bash\necho Darwin\n",
                 "git": '#!/bin/bash\nprintf "git %s\\n" "$*" >>"$FAKE_COMMAND_LOG"\n'
                 'if [[ "$3" == status ]]; then [[ "${FAKE_DIRTY:-}" != true ]] || echo " M source.py"; exit 0; fi\n'
-                '[[ "$3 $4 $5 $6" == "fetch --no-tags origin main" ]] || exit 64\n',
+                '[[ "$3 $4 $5 $6" == "fetch --no-tags origin $FAKE_DEFAULT_BRANCH" ]] || exit 64\n',
                 "uv": '#!/bin/bash\nprintf "uv %s\\n" "$*" >>"$FAKE_COMMAND_LOG"\n',
                 "security": "#!/bin/bash\nexit 64\n",
             }
@@ -454,6 +455,9 @@ class RelayTests(unittest.TestCase):
             env.update(
                 PATH=str(scratch) + os.pathsep + env["PATH"],
                 FAKE_COMMAND_LOG=str(log),
+                FAKE_DEFAULT_BRANCH=json.loads(
+                    (ROOT / ".github/github.json").read_text()
+                )["defaultBranch"],
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=KEY.decode(),
             )
             command = [
@@ -481,6 +485,56 @@ class RelayTests(unittest.TestCase):
                 0,
             )
             self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_pre_export_read_failure_can_recover_without_duplicate_export(self):
+        github = self.github()
+        github.pending_requests.return_value = [
+            {
+                "id": 1,
+                "name": relay.REQUEST_PREFIX + relay.digest(self.request),
+                "workflow_run": {"id": self.request["runID"]},
+            }
+        ]
+        github.download.return_value = self.request
+        handler = github.api.side_effect
+        failed = [False]
+
+        def api(path):
+            if "/jobs?" in path and not failed[0]:
+                failed[0] = True
+                raise relay.GitHubReadError(retryable=True)
+            return handler(path)
+
+        github.api.side_effect = api
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(relay, "live_check", return_value=self.receipt()) as check,
+        ):
+            state = Path(directory) / "served.json"
+            self.assertEqual(relay.serve_requests(github, state), 1)
+            check.assert_not_called()
+            self.assertEqual(json.loads(state.read_text()), {})
+            self.assertEqual(relay.serve_requests(github, state), 0)
+            self.assertEqual(relay.serve_requests(github, state), 0)
+            check.assert_called_once()
+            github.respond.assert_called_once()
+
+    def test_rate_limit_read_classification_preserves_server_wait_and_redacts(self):
+        server_wait = 90
+        result = subprocess.CompletedProcess(
+            [],
+            1,
+            b"",
+            f"HTTP 403 secondary rate limit; Retry-After: {server_wait}; {KEY.decode()}".encode(),
+        )
+        with (
+            patch.object(relay.subprocess, "run", return_value=result),
+            self.assertRaises(relay.GitHubReadError) as raised,
+        ):
+            relay.GitHub().api("actions/artifacts")
+        self.assertTrue(raised.exception.retryable)
+        self.assertEqual(raised.exception.retry_after, server_wait)
+        self.assertNotIn(KEY.decode(), str(raised.exception))
 
     def test_archive_transport_cannot_extract_paths_or_accept_multiple_files(self):
         stream = io.BytesIO()
