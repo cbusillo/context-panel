@@ -154,10 +154,19 @@ def verify_receipt(
         raise ReceiptError(
             "schema receipts may be verified only for the Context Panel container"
         )
-    expected_keys = RECEIPT_KEYS | ({"publicationRequestDigest"} if "publicationRequestDigest" in receipt else set())
-    if publication_request_digest is not None and receipt.get("publicationRequestDigest") != publication_request_digest:
+    if publication_request_digest is None and "publicationRequestDigest" in receipt:
+        raise ReceiptError("bound publication receipt requires its original request")
+    expected_keys = RECEIPT_KEYS | (
+        {"publicationRequestDigest"} if "publicationRequestDigest" in receipt else set()
+    )
+    if (
+        publication_request_digest is not None
+        and receipt.get("publicationRequestDigest") != publication_request_digest
+    ):
         raise ReceiptError("receipt publication request does not match")
-    if "publicationRequestDigest" in receipt and not re.fullmatch(r"[0-9a-f]{64}", str(receipt["publicationRequestDigest"])):
+    if "publicationRequestDigest" in receipt and not re.fullmatch(
+        r"[0-9a-f]{64}", str(receipt["publicationRequestDigest"])
+    ):
         raise ReceiptError("receipt publication request is invalid")
     if set(receipt) != expected_keys:
         raise ReceiptError("receipt fields do not match schema version 1")

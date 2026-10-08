@@ -95,10 +95,10 @@ class RelayTests(unittest.TestCase):
             ]
             github.download.return_value = result
             received = relay.wait_for_result(self.request, github)
-        publish = Mock()
         relay.verify_result(received, self.request, now=self.now, key=KEY)
-        publish()
-        publish.assert_called_once()
+        self.assertEqual(
+            received["validatedAt"], relay.receipts.format_timestamp(self.now)
+        )
 
     def test_failed_schema_export_or_mismatch_never_relays_result(self):
         for error in (
@@ -166,9 +166,11 @@ class RelayTests(unittest.TestCase):
             self.assertEqual(args[0], "git")
             return subprocess.CompletedProcess(args, 0, b"older validator", b"")
 
-        with patch.object(relay.subprocess, "run", side_effect=run):
-            with self.assertRaisesRegex(relay.RelayError, "update the Mac checker"):
-                relay.live_check(self.request)
+        with (
+            patch.object(relay.subprocess, "run", side_effect=run),
+            self.assertRaisesRegex(relay.RelayError, "update the Mac checker"),
+        ):
+            relay.live_check(self.request)
 
     def test_other_request_run_attempt_channel_and_schema_cannot_publish(self):
         receipt = self.receipt()
@@ -275,6 +277,210 @@ class RelayTests(unittest.TestCase):
             self.assertEqual(relay.main(args), 0)
             self.assertEqual(relay.main(args), 0)
             check.assert_called_once_with(self.request, github)
+
+    def test_failed_request_does_not_repeat_or_starve_other_channels(self):
+        other = {**self.request, "channel": "macos", "nonce": "c" * 64}
+        github = self.github()
+        requests = [self.request, other]
+        github.pending_requests.return_value = [
+            {
+                "id": i,
+                "name": relay.REQUEST_PREFIX + relay.digest(r),
+                "workflow_run": {"id": r["runID"]},
+            }
+            for i, r in enumerate(requests)
+        ]
+        github.download.side_effect = lambda artifact: requests[artifact["id"]]
+
+        def check(request, _):
+            if request["channel"] == "github":
+                raise relay.receipts.ReceiptError("schema mismatch")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(relay, "check_on_mac", side_effect=check) as checked,
+        ):
+            state = Path(directory) / "served.json"
+            self.assertEqual(relay.serve_requests(github, state), 1)
+            self.assertEqual(relay.serve_requests(github, state), 0)
+            self.assertEqual(checked.call_count, 2)
+            self.assertEqual(
+                json.loads(state.read_text())[relay.digest(other)]["outcome"],
+                "dispatched",
+            )
+
+    def test_overlapping_pass_cannot_start_an_export(self):
+        github = self.github()
+        github.pending_requests.return_value = [
+            {
+                "id": 1,
+                "name": relay.REQUEST_PREFIX + relay.digest(self.request),
+                "workflow_run": {"id": 42},
+            }
+        ]
+        github.download.return_value = self.request
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "served.json"
+
+            def check(*_):
+                self.assertEqual(relay.serve_requests(github, state), 0)
+
+            with patch.object(relay, "check_on_mac", side_effect=check) as checked:
+                self.assertEqual(relay.serve_requests(github, state), 0)
+                checked.assert_called_once()
+
+    def test_invalid_result_and_transient_read_do_not_veto_valid_evidence(self):
+        github = self.github()
+        handler = github.api.side_effect
+        calls = [0]
+
+        def api(path):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise relay.GitHubReadError(retryable=True)
+            return handler(path)
+
+        github.api.side_effect = api
+        name = relay.RESULT_PREFIX + relay.digest(self.request)
+        github.artifacts.return_value = [
+            {"name": name, "id": 1},
+            {"name": name, "id": 2},
+        ]
+        good = self.receipt()
+        github.download.side_effect = [{**good, "seal": "wrong"}, good]
+        elapsed = [0]
+
+        def sleep(seconds):
+            elapsed[0] += seconds
+
+        with (
+            patch.object(relay.receipts, "require_key", return_value=KEY),
+            patch.object(relay.receipts, "datetime", wraps=datetime) as clock,
+        ):
+            clock.now.return_value = self.now
+            self.assertEqual(
+                relay.wait_for_result(
+                    self.request,
+                    github,
+                    timeout=30,
+                    clock=lambda: elapsed[0],
+                    sleep=sleep,
+                ),
+                good,
+            )
+        self.assertEqual(elapsed[0], 15)
+
+    def test_partial_rerun_uses_successful_prior_jobs_but_never_a_failed_new_guard(
+        self,
+    ):
+        jobs = [{**job, "run_attempt": 1} for job in self.jobs]
+        relay.trusted_run(self.request, self.run, jobs)
+        jobs.append(
+            {
+                "name": "Validate Trusted Release Source",
+                "conclusion": "failure",
+                "run_attempt": 2,
+            }
+        )
+        with self.assertRaises(relay.RelayError):
+            relay.trusted_run(self.request, self.run, jobs)
+
+    def test_final_entrypoint_requires_original_request_for_bound_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory)
+            # Issue at the caller's current clock; the verifier is a subprocess.
+            receipt = self.receipt(now=datetime.now(UTC))
+            path = scratch / "receipt.json"
+            request_path = scratch / "request.json"
+            path.write_text(json.dumps(receipt))
+            request_path.write_text(json.dumps(self.request))
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith(("CONTEXT_PANEL_", "GITHUB_", "CLOUDKIT_"))
+            }
+            env.update(
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=KEY.decode(),
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_PATH=str(path),
+            )
+            command = [
+                "/bin/bash",
+                str(ROOT / "scripts/require-cloudkit-schema-receipt.sh"),
+                "--source-commit",
+                self.request["sourceCommit"],
+            ]
+            self.assertNotEqual(
+                subprocess.run(
+                    command, env=env, capture_output=True, check=False
+                ).returncode,
+                0,
+            )
+            env["CONTEXT_PANEL_CLOUDKIT_PUBLICATION_REQUEST_PATH"] = str(request_path)
+            self.assertEqual(
+                subprocess.run(
+                    command, env=env, capture_output=True, check=False
+                ).returncode,
+                0,
+            )
+            request_path.write_text(json.dumps({**self.request, "runAttempt": 3}))
+            self.assertNotEqual(
+                subprocess.run(
+                    command, env=env, capture_output=True, check=False
+                ).returncode,
+                0,
+            )
+
+    def test_operator_wrapper_refreshes_objects_without_changing_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory)
+            log = scratch / "commands.log"
+            tools = {
+                "uname": "#!/bin/bash\necho Darwin\n",
+                "git": '#!/bin/bash\nprintf "git %s\\n" "$*" >>"$FAKE_COMMAND_LOG"\n'
+                'if [[ "$3" == status ]]; then [[ "${FAKE_DIRTY:-}" != true ]] || echo " M source.py"; exit 0; fi\n'
+                '[[ "$3 $4 $5 $6" == "fetch --no-tags origin main" ]] || exit 64\n',
+                "uv": '#!/bin/bash\nprintf "uv %s\\n" "$*" >>"$FAKE_COMMAND_LOG"\n',
+                "security": "#!/bin/bash\nexit 64\n",
+            }
+            for name, content in tools.items():
+                path = scratch / name
+                path.write_text(content)
+                path.chmod(0o755)
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if not k.startswith(("CONTEXT_PANEL_", "GITHUB_", "CLOUDKIT_"))
+            }
+            env.update(
+                PATH=str(scratch) + os.pathsep + env["PATH"],
+                FAKE_COMMAND_LOG=str(log),
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=KEY.decode(),
+            )
+            command = [
+                "/bin/bash",
+                str(ROOT / "scripts/cloudkit-schema-operator.sh"),
+                str(scratch / "bot-helper"),
+            ]
+            result = subprocess.run(command, env=env, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            commands = log.read_text().splitlines()
+            self.assertIn(
+                "fetch --no-tags origin "
+                + json.loads((ROOT / ".github/github.json").read_text())[
+                    "defaultBranch"
+                ],
+                commands[1],
+            )
+            self.assertTrue(commands[2].startswith("uv "))
+            log.unlink()
+            env["FAKE_DIRTY"] = "true"
+            self.assertNotEqual(
+                subprocess.run(
+                    command, env=env, capture_output=True, check=False
+                ).returncode,
+                0,
+            )
+            self.assertEqual(len(log.read_text().splitlines()), 1)
 
     def test_archive_transport_cannot_extract_paths_or_accept_multiple_files(self):
         stream = io.BytesIO()

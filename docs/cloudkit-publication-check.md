@@ -22,7 +22,7 @@ the existing automation GitHub helper. It requires completed source trust and
 owner approval jobs, the current run attempt, and a commit still in protected
 main. It reads only the two schema contracts from that commit in its local Git
 object database. It executes its own reviewed validator, never downloaded code.
-One live Production export per request must satisfy the existing schema validator;
+At most one live Production export per request must satisfy the existing schema validator;
 an export error or mismatch sends no success result.
 
 A successful check seals a receipt with the existing authentication key and a
@@ -60,7 +60,8 @@ After Chris authorizes activation:
 
 1. Use a clean, reviewed operator checkout containing the landed relay. Fetch
    protected `origin/main` so the release source's Git objects are present;
-   no checkout of incoming request code is necessary. Keep this local validator
+   the wrapper refreshes those Git objects on every pass without changing
+   checked-out files. No checkout of incoming request code is necessary. Keep this local validator
    current when gate code changes: the checker refuses unless its local relay,
    validator and receipt implementation match that release commit.
 2. Use the existing credential setup described in the schema gate. If either
@@ -81,13 +82,24 @@ After Chris authorizes activation:
    receipt verification. Fake tests qualify source behavior; they do not prove
    Keychain access, live schema correctness or hosted artifact transport.
 
-Successful response dispatches are recorded by request digest in an ignored,
-nonsecret `.build/cloudkit-relay-served.json` file for one day. Subsequent passes
-do not repeat that request while its result workflow is queued. Run one checker
-at a time; an ambiguous/failed dispatch is not recorded as success. A new attempt
-or dispatch has a new nonce and therefore a new check. If a response workflow
-fails after a confirmed dispatch, retry that response workflow through its normal
-route; do not erase the served state to turn a past export into a new check.
+The checker takes an OS file lock for this operator checkout. Overlapping passes
+return without exporting. Requests are recorded by digest in the ignored,
+nonsecret `.build/cloudkit-relay-served.json` before checking, with outcomes
+`checking`, `dispatched` or `failed`. This prevents duplicate exports even after
+a crash or an ambiguous response dispatch. One refused request does not stop
+other channels or runs from receiving their checks. State is retained for one
+day. Use this one operator checkout for the scheduled checker.
+
+A failed or interrupted request remains blocked and is not exported again.
+Diagnose it, then use a new dispatch or authorized rerun, which generates a new
+nonce. Successful trust/approval jobs from an earlier attempt of the *same run*
+can support a partial rerun; a newer failed/pending guard overrides them. The
+check reads the [complete job history](https://docs.github.com/en/rest/actions/workflow-jobs)
+and refuses incomplete coverage. If a response workflow alone fails after a
+confirmed dispatch, retry that response workflow through its normal route;
+do not erase state or re-seal old evidence. Hosted waits tolerate transient
+read failures and ignore unauthenticated results until their deadline; canceled
+runs and authentication refusals still stop.
 
 ## Failure and recovery
 
@@ -121,9 +133,10 @@ public artifacts or print subprocess authentication diagnostics.
 | A (new Director access decision) | Replace request/wait in the shared action with a hosted live export and receipt issuance | CI receives the management credential's broader schema authority. Chris must authorize and place it. Do not widen approval dependencies or bypass the publisher verifier. |
 
 All five workflow boundaries use the same composite action. The receipt
-issue/verify API accepts optional `publicationRequestDigest`; legacy receipts
-remain supported for C and direct local commands. Keep source/contract/seal and
-expiry checks in every option. There is no receipt-validity override.
+issue/verify API accepts optional `publicationRequestDigest`; unbound legacy receipts
+remain supported for C and direct local commands. Bound results require their original request and cannot be supplied through C
+or a direct command without it. Keep source/contract/seal and expiry checks in
+every option. There is no receipt-validity override.
 
 For A, remove the now-unused relay workflow, operator wrapper, transport helper
 and behavioral tests when their consumers are gone. Do not duplicate the schema

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -13,6 +14,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -43,6 +45,12 @@ spec.loader.exec_module(receipts)
 
 class RelayError(RuntimeError):
     pass
+
+
+class GitHubReadError(RelayError):
+    def __init__(self, *, retryable):
+        super().__init__("GitHub relay read failed")
+        self.retryable = retryable
 
 
 def digest(request: dict) -> str:
@@ -101,16 +109,23 @@ class GitHub:
         self.executable = executable
 
     def call(self, args, *, body=None, binary=False):
-        result = subprocess.run(
-            [self.executable, *args],
-            input=body,
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
+        try:
+            result = subprocess.run(
+                [self.executable, *args],
+                input=body,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise GitHubReadError(retryable=True) from error
         if result.returncode:
-            # Never relay CLI stderr; authentication diagnostics can contain secrets.
-            raise RelayError("GitHub relay operation failed")
+            # Classify without exposing CLI stderr/authentication diagnostics.
+            transient = re.search(
+                rb"HTTP (?:500|502|503|504)|connection reset|connection refused|timed out",
+                result.stderr,
+            )
+            raise GitHubReadError(retryable=bool(transient))
         return result.stdout if binary else json.loads(result.stdout)
 
     def api(self, path):
@@ -203,7 +218,22 @@ def trusted_run(request, run, jobs) -> None:
         or run.get("path") not in {f".github/workflows/{name}" for name in WORKFLOWS}
     ):
         raise RelayError("schema request is not from an active trusted release run")
-    names = {job.get("name"): job.get("conclusion") for job in jobs}
+    for name in ("Approve Release Intent", "Validate Trusted Release Source"):
+        matching = [job for job in jobs if job.get("name") == name]
+        if any(job.get("run_attempt") is None for job in matching) and any(
+            job.get("conclusion") != "success" for job in matching
+        ):
+            raise RelayError(
+                "approval/guard history cannot prove a successful latest execution"
+            )
+    latest = {}
+    for job in jobs:
+        name = job.get("name")
+        if name not in latest or job.get("run_attempt", 1) > latest[name].get(
+            "run_attempt", 1
+        ):
+            latest[name] = job
+    names = {name: job.get("conclusion") for name, job in latest.items()}
     if (
         names.get("Approve Release Intent") != "success"
         or names.get("Validate Trusted Release Source") != "success"
@@ -236,17 +266,33 @@ def wait_for_result(
     deadline = clock() + timeout
     name = RESULT_PREFIX + digest(request)
     while clock() < deadline:
-        run = github.api(f"actions/runs/{request['runID']}")
-        if (
-            run.get("status") != "in_progress"
-            or run.get("run_attempt") != request["runAttempt"]
-        ):
-            raise RelayError("release run ended or changed attempt")
-        for artifact in github.artifacts(name=name):
-            if artifact.get("name") == name and not artifact.get("expired"):
-                receipt = github.download(artifact)
-                verify_result(receipt, request)
+        try:
+            run = github.api(f"actions/runs/{request['runID']}")
+            if (
+                run.get("status") != "in_progress"
+                or run.get("run_attempt") != request["runAttempt"]
+            ):
+                raise RelayError("release run ended or changed attempt")
+            for artifact in github.artifacts(name=name):
+                if artifact.get("name") != name or artifact.get("expired"):
+                    continue
+                try:
+                    receipt = github.download(artifact)
+                    verify_result(receipt, request)
+                except GitHubReadError:
+                    raise
+                except (
+                    RelayError,
+                    receipts.ReceiptError,
+                    ValueError,
+                    KeyError,
+                    zipfile.BadZipFile,
+                ):
+                    continue
                 return receipt
+        except GitHubReadError as error:
+            if not error.retryable:
+                raise
         sleep(min(15, max(0, deadline - clock())))
     raise RelayError(
         "Mac schema checker unavailable: timed out; publication remains blocked"
@@ -255,10 +301,8 @@ def wait_for_result(
 
 def check_on_mac(request, github, *, schema_check=None):
     run = github.api(f"actions/runs/{request['runID']}")
-    jobs = github.api(
-        f"actions/runs/{request['runID']}/attempts/{request['runAttempt']}/jobs?per_page=100"
-    )
-    if len(jobs["jobs"]) >= 100:
+    jobs = github.api(f"actions/runs/{request['runID']}/jobs?filter=all&per_page=100")
+    if jobs.get("total_count", len(jobs["jobs"])) >= 100:
         raise RelayError("release job inventory incomplete")
     trusted_run(request, run, jobs["jobs"])
     comparison = github.api(f"compare/{request['sourceCommit']}...main")
@@ -346,6 +390,70 @@ def live_check(request):
         return receipt
 
 
+def serve_requests(github, state_path):
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with state_path.with_suffix(".lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+        served = json.loads(state_path.read_text()) if state_path.exists() else {}
+        served = {
+            name: entry
+            for name, entry in served.items()
+            if entry["at"] > time.time() - 86400
+        }
+        failed = False
+        for artifact in github.pending_requests():
+            if not artifact.get("name", "").startswith(REQUEST_PREFIX) or artifact.get(
+                "expired"
+            ):
+                continue
+            request_digest = None
+            try:
+                request = github.download(artifact)
+                validate_request(request)
+                request_digest = digest(request)
+                if (
+                    artifact["name"] != REQUEST_PREFIX + request_digest
+                    or artifact.get("workflow_run", {}).get("id") != request["runID"]
+                ):
+                    raise RelayError("request artifact/run binding mismatch")
+                if request_digest in served:
+                    continue
+                run = github.api(f"actions/runs/{request['runID']}")
+                if (
+                    run.get("status") != "in_progress"
+                    or run.get("run_attempt") != request["runAttempt"]
+                ):
+                    continue
+                # Persist before export; a crash/ambiguous dispatch cannot repeat it.
+                served[request_digest] = {"at": time.time(), "outcome": "checking"}
+                receipts.write_receipt(state_path, served)
+                check_on_mac(request, github)
+                served[request_digest]["outcome"] = "dispatched"
+            except (
+                RelayError,
+                receipts.ReceiptError,
+                OSError,
+                ValueError,
+                KeyError,
+                subprocess.SubprocessError,
+                zipfile.BadZipFile,
+            ) as error:
+                failed = True
+                if request_digest in served:
+                    served[request_digest]["outcome"] = "failed"
+                reason = (
+                    str(error)
+                    if isinstance(error, RelayError)
+                    else type(error).__name__
+                )
+                print(f"Mac schema request refused: {reason}", file=sys.stderr)
+            receipts.write_receipt(state_path, served)
+        return 1 if failed else 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("request", "wait", "serve-once", "accept"))
@@ -394,46 +502,7 @@ def main(argv=None):
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                 output.write(f"artifact={RESULT_PREFIX}{request_digest}\n")
         else:
-            github = GitHub(args.github_cli)
-            served = (
-                json.loads(args.served_state.read_text())
-                if args.served_state.exists()
-                else {}
-            )
-            served = {
-                name: stamp
-                for name, stamp in served.items()
-                if stamp > time.time() - 86400
-            }
-            for artifact in github.pending_requests():
-                if not artifact.get("name", "").startswith(
-                    REQUEST_PREFIX
-                ) or artifact.get("expired"):
-                    continue
-                request = github.download(artifact)
-                validate_request(request)
-                if (
-                    artifact["name"] != REQUEST_PREFIX + digest(request)
-                    or artifact.get("workflow_run", {}).get("id") != request["runID"]
-                ):
-                    raise RelayError("request artifact/run binding mismatch")
-                if digest(request) in served:
-                    continue
-                run = github.api(f"actions/runs/{request['runID']}")
-                if (
-                    run.get("status") != "in_progress"
-                    or run.get("run_attempt") != request["runAttempt"]
-                ):
-                    continue
-                if any(
-                    a.get("name") == RESULT_PREFIX + digest(request)
-                    and not a.get("expired")
-                    for a in github.artifacts(name=RESULT_PREFIX + digest(request))
-                ):
-                    continue
-                check_on_mac(request, github)
-                served[digest(request)] = time.time()
-                receipts.write_receipt(args.served_state, served)
+            return serve_requests(GitHub(args.github_cli), args.served_state)
     except (
         RelayError,
         receipts.ReceiptError,
@@ -446,7 +515,7 @@ def main(argv=None):
         # Artifact contents and subprocess diagnostics must never reach public logs.
         print(
             "CloudKit publication relay failed; publication remains blocked",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
         return 1
     return 0

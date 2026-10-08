@@ -277,6 +277,9 @@ def install_archive_fixture(root: Path, working_directory: Path, archive: dict, 
             (stack / layer / "Contents.json").write_text("{}")
             (image_set / "Contents.json").write_text(json.dumps({"images": [{"filename": "layer.png"}]}))
             (image_set / "layer.png").touch()
+    if archive.get("stale_export"):
+        (root / "export").mkdir()
+        (root / "export" / "Stale.ipa").touch()
     if archive.get("reuse_archive"):
         shutil.copytree(template, root / "fixture.xcarchive")
     if archive.get("stale_outputs"):
@@ -702,6 +705,13 @@ class CompanionUploadArchiveTests(unittest.TestCase):
         self.assertEqual(len(result.archive_run.xcodebuild_calls), 1)
         self.assertTrue(result.archive_run.exported)
         self.assertEqual(result.archive_run.ipa_names, ["Context Panel.ipa"])
+
+    def test_skip_archive_cannot_accept_stale_export_when_tool_emits_no_ipa(self):
+        result, _, _ = run_preflight("ios", ios_profiles(),
+            archive={**ios_archive(), "reuse_archive": True, "no_ipa": True, "stale_export": True},
+            extra_args=("--skip-archive",))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.archive_run.ipa_names, [])
 
     def test_skip_archive_refuses_missing_archive_without_rebuilding(self):
         result, _, _ = run_preflight("ios", ios_profiles(), archive=ios_archive(),

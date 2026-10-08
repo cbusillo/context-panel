@@ -14,6 +14,7 @@ if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   echo "Use a clean, reviewed operator checkout" >&2
   exit 1
 fi
+git -C "$repo_root" fetch --no-tags origin main
 if [[ -z "${CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY:-}" ]]; then
   CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY="$(security find-generic-password -a "$USER" -s com.shinycomputers.contextpanel.cloudkit-schema-receipt -w)"
 fi

@@ -424,6 +424,7 @@ if [[ "$upload" == "true" ]]; then
 	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
 fi
 
+rm -rf "$export_path"
 run_xcodebuild \
 	-exportArchive \
 	-archivePath "$archive_path" \
