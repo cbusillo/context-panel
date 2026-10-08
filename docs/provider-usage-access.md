@@ -626,7 +626,8 @@ setting is edited). An unsaved default configuration deliberately fails closed;
 the reader does not invent default accounts or persist them.
 
 Schema 1 has `schemaVersion`, `readAt`, `savedAt`, `accounts`, `answers`,
-`deadlines`, `providers` and `headline`. `answers.tightestAccountID` repeats
+`deadlines`, `providers`, `headline`, `ranking`, `resetPrompts`,
+`configurationErrors` and `providerRefills`. `answers.tightestAccountID` repeats
 `closestAccountID` under the word the UI uses. Each row has an opaque local ID,
 provider, typed local label (including email-like names), shared panel `state`,
 observation time, windows, and a stable opaque `configurationID` for the
@@ -664,12 +665,12 @@ zero remains distinguishable from no observation.
 Each account also exposes `showInWidgets`, `useLast`, its nullable tightest
 `remainingFraction`, and `limitingWindowID`. `answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
-account ID per provider: room is required in every window, scheduled-reset
-assumptions and saved/unknown rows are ineligible, and Use last accounts are
-skipped. Saved configuration order breaks ties. `deadlines` is a sorted list of
-known future expiry dates, safe local IDs, typed account labels, observation
-times and states. Unknown expiry dates are never invented. App, widgets and
-companions consume the same account math; widgets alone filter Show in widgets.
+account ID per provider: the first entry of that provider's `ranking` (see
+[Use next ranking](#use-next-ranking-and-launch-receipts)). `deadlines` is a
+sorted list of known future expiry dates, safe local IDs, typed account labels,
+observation times and states. Unknown expiry dates are never invented. App,
+widgets and companions consume the same account math; widgets alone filter Show
+in widgets.
 Hiding an active account does not pause collection or limit warnings. Previously
 paused accounts retain their pause and have an explicit Resume updates action.
 
@@ -704,6 +705,86 @@ issues or PRs.
 - Prioritize OpenAI ChatGPT forecasting in the UX even if the first automated
   data source is manual/local, because it directly answers the fast-mode problem.
 - Keep provider terms and account safety ahead of automation convenience.
+
+### Use next ranking and launch receipts
+
+Use next spends the capacity that would otherwise go unused, soonest first
+([#791](https://github.com/cbusillo/context-panel/issues/791)). App, widgets,
+companions and the agent snapshot share `AccountOverview.useNextRanking`; only
+the agent snapshot adds launch receipts and reading history. Numbers are points:
+percent of an account's main window, which is the general weekly window
+(Codex, Claude or Gemini), not a model-only window such as gpt-reserve.
+
+- **Deadline:** Claude's next fixed weekly refill; the end of a running OpenAI
+  clock; or now for an unstarted OpenAI clock (nothing used, and its reset reads
+  as a week after each reading).
+- **Need** = (left − burn × hours to deadline) ÷ hours, in points per hour: how
+  much faster the account must be used so nothing lapses.
+- **Exclusions,** each listed with its reason and, when known, `until`: not
+  current, main window at 0, and the 5-hour gate (fewer than 5 points left in
+  the 5-hour window, or its 5-hour burn would use the rest before it resets).
+- **Tier 1:** unstarted OpenAI clocks (one starter launch each), then accounts
+  with positive need. **Tier 2:** the use-last account above its cushion.
+  **Tier 3:** when no account has positive need, the account that lasts longest
+  first, and use-last only after the rest, while it is above its cushion.
+- **Use last:** at most one per provider. Marking a second moves the mark and
+  the panel says so; two in saved setup report `multipleUseLast:<provider>` in
+  `configurationErrors`, and ranking then ignores use-last for that provider.
+  The cushion is the Director's own measured use until the window ends (the
+  account's burn minus agent burn attributed through receipts), at least 3
+  points; an unstarted use-last clock gets its starter launch an hour after it
+  is first seen unstarted.
+- **Batches:** `launchOrder` lists the next launches by D'Hondt over the
+  weights in Tiers 1–2: starters first, then the highest weight ÷ (1 + launches
+  already given). A receipt counts as given until two later readings or 30
+  minutes have passed, so back-to-back launches spread.
+- **Stale readings:** when every reading is stale, the list is published with
+  `basedOnStaleReadings` and `readingsObservedAt`, `useNextAccountID` is null,
+  and `launchOrder` is filled only while the readings are under 30 minutes old.
+- **Resets:** each account with banked resets has a `resetAssessment` with its
+  trigger (`outOfQuota`, `expiring` within 24 hours, or `notNeeded`), net value
+  and reasoning, which the account detail view shows. `resetPrompts` lists one
+  plain line per reset that is clearly worth applying, soonest expiry first.
+  An OpenAI reset is worth 100 × days left ÷ 7 − percent left, because it
+  restarts the weekly clock and moves later refills out; a Claude reset is
+  worth what the account can still spend before its fixed refill, which never
+  moves. Claude resets are full weekly refills; a grant that clears only other
+  windows is counted in `unrecognizedKindCount` and never valued or prompted.
+  Context Panel never applies a reset.
+- **Provider-wide refills:** `providerRefills` lists times in the loaded
+  history when two or more of a provider's accounts refilled before their
+  resets with no banked reset spent. Burn already treats a moved reset time as
+  a new window, so a refill never counts as use.
+
+Each `ranking` entry has `accountID`, `tier`, `need`, `weight`, `reason`,
+`deadline`, `unstarted`, `starter`, `remaining`, `burn`, `burnEstimated`
+(provider average when the account's own burn is unmeasured), `reserve`,
+`pendingLaunches` and `notes`. Each provider also has `excluded`,
+`useNextAccountID`, `nextCapacityAt` (with nothing rankable),
+`multipleUseLast` and `launchOrder`.
+
+**Launch receipts.** A launcher writes one file per agent launch to
+`<storage root>/Launch Receipts/`, where the storage root is the directory the
+reader uses (by default the App Group `Context Panel` directory). Name each file
+`<launch time>-<random>.json` and write it atomically (write a temporary file in
+that directory, then rename it). The content is:
+
+```json
+{
+  "schemaVersion": 1,
+  "provider": "openai",
+  "accountID": "openai-0123456789abcdef",
+  "launchedAt": "2026-10-07T23:50:00Z"
+}
+```
+
+`accountID` is the opaque `id` of the snapshot row the launch used; `provider`
+is `openai`, `anthropic` or `google`. Receipts carry no session cost, prompt,
+path or credential. Context Panel only reads them and ignores files that are
+malformed, over 1 KB, or older than 24 hours; the launcher deletes its own files
+once they are a day old. A single launch uses `answers.useNext`; a batch of
+_k_ launches uses the first _k_ of `launchOrder`, and the receipts carry the
+count into the next read.
 
 ## Sources
 

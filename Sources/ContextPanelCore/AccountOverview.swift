@@ -64,6 +64,8 @@ public struct AccountOverview: Equatable, Sendable {
         public var modelLabel: String? = nil
         public var periodLabel: String? = nil
         public var status: UsageStatus = .unknown
+        /// 5-hour, weekly or daily, inferred from the provider's labels; nil when unknown.
+        public var period: MainLimitWindow? = nil
     }
 
     public struct Account: Equatable, Sendable, Identifiable {
@@ -75,6 +77,8 @@ public struct AccountOverview: Equatable, Sendable {
         public let observedAt: Date?
         public var providerPlan: String? = nil
         public var bankedAdvice: BankedAdvice? = nil
+        /// When applying a banked reset is worth it (#791); the value and reasoning for the detail view.
+        public var resetAssessment: ResetAssessment? = nil
         public var id: String { metadata.id }
         public var limitingWindow: Window? {
             guard !windows.isEmpty, windows.allSatisfy({ $0.remainingFraction != nil }) else { return nil }
@@ -85,9 +89,6 @@ public struct AccountOverview: Equatable, Sendable {
         public var isReliable: Bool {
             [.available, .closeToLimit, .limited].contains(state)
                 && limitingWindow != nil && windows.allSatisfy { $0.assumption == nil && $0.confidence != .unknown }
-        }
-        public var canUseNext: Bool {
-            isReliable && state != .limited && !metadata.useLast && windows.allSatisfy { ($0.remainingFraction ?? 0) > 0 }
         }
         public var unknownExpiryCount: Int? {
             bankedResets.map { max(0, $0.availableCount - ($0.knownExpiries.isEmpty
@@ -113,15 +114,18 @@ public struct AccountOverview: Equatable, Sendable {
 
     public let accounts: [Account]
     public let deadlines: [Deadline]
-    private init(accounts: [Account], deadlines: [Deadline]) {
+    /// The moment the readings were judged; Use next measures time left from here.
+    public let rankedAt: Date
+    private init(accounts: [Account], deadlines: [Deadline], rankedAt: Date) {
         self.accounts = accounts
         self.deadlines = deadlines
+        self.rankedAt = rankedAt
     }
 
     /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.
     public func filtered(to provider: Provider) -> AccountOverview {
         AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },
-                        deadlines: deadlines.filter { $0.provider == provider })
+                        deadlines: deadlines.filter { $0.provider == provider }, rankedAt: rankedAt)
     }
 
     public var closest: Account? {
@@ -130,11 +134,9 @@ public struct AccountOverview: Equatable, Sendable {
             return (row.remainingFraction ?? 1) < (best.remainingFraction ?? 1) ? row : best
         }
     }
+    /// The first entry of the provider's Use next ranking (#791), without launch receipts.
     public func useNext(provider: Provider) -> Account? {
-        accounts.filter { $0.metadata.provider == provider && $0.canUseNext }.reduce(nil) { best, row in
-            guard let best else { return row }
-            return (row.remainingFraction ?? 0) > (best.remainingFraction ?? 0) ? row : best
-        }
+        useNextRanking(provider: provider).useNextAccountID.flatMap { id in accounts.first { $0.id == id } }
     }
     public var nextDeadline: Deadline? { deadlines.first { $0.state == .available } }
 
@@ -142,6 +144,7 @@ public struct AccountOverview: Equatable, Sendable {
                 now: Date, maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge,
                 widgetsOnly: Bool = false, isSavedSnapshot: Bool = false,
                 accountBurnRates: [String: [String: ObservedBurnRate]] = [:]) {
+        rankedAt = now
         let presented = snapshot.presented(at: now)
         let entries = metadata ?? Self.inferredMetadata(snapshot: snapshot, reports: reports)
         accounts = entries.filter { !widgetsOnly || $0.showInWidgets }.map { entry in
@@ -164,7 +167,8 @@ public struct AccountOverview: Equatable, Sendable {
                        burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
-                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) }, status: limit.status)
+                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) }, status: limit.status,
+                       period: MainLimitWindow.infer(from: limit))
             }
             let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt
             let ageSensitive = limits.isEmpty || limits.contains { !$0.usesEventDrivenFreshness }
@@ -214,10 +218,14 @@ public struct AccountOverview: Equatable, Sendable {
             let plan = entry.provider == .openAI
                 ? (namedPlan ?? notedPlan)
                     .map { ConnectorRedactor.safeErrorDescription($0) } : nil
-            let advice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
-                .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
-            return Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
-                           bankedState: bankedState, observedAt: observed, providerPlan: plan, bankedAdvice: advice)
+            var account = Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
+                                  bankedState: bankedState, observedAt: observed, providerPlan: plan)
+            account.resetAssessment = ResetAssessment(account: account, now: now)
+            // OpenAI and Claude accounts follow the #791 reset rule; other providers keep the older guidance.
+            account.bankedAdvice = account.resetAssessment.map { BankedAdvice(title: $0.title, detail: $0.detail) }
+                ?? report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
+                    .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
+            return account
         }
         deadlines = accounts.flatMap { account -> [Deadline] in
             guard account.metadata.isEnabled, let summary = account.bankedResets else { return [] }

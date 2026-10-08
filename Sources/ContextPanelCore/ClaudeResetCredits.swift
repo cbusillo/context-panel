@@ -9,6 +9,7 @@ public enum ClaudeResetCreditParser {
               grants.count <= 1_000 else { return nil }
         var seen = Set<String>()
         var expiries: [Date] = []
+        var unrecognized = 0
         for grant in grants {
             guard grant.id.range(of: "^[a-z0-9_-]{1,40}$", options: .regularExpression) != nil,
                   grant.resetsTotal.isFinite, grant.resetsLeft.isFinite,
@@ -29,10 +30,13 @@ public enum ClaudeResetCreditParser {
             let count = remaining > 0 ? remaining : (claimable ? 1 : 0)
             guard count <= 10_000, Double(expiries.count) + count <= 10_000 else { return nil }
             expiries.append(contentsOf: repeatElement(grant.endsAt, count: Int(count)))
+            // Every Claude reset so far refills the weekly window; flag any grant that names only other windows.
+            let named = grant.clears ?? []
+            if !named.isEmpty && !named.contains(where: { $0.hasPrefix("seven_day") }) { unrecognized += Int(count) }
         }
         return ProviderResetCreditSummary(
             availableCount: expiries.count, observedAt: observedAt,
-            coverage: .complete, knownExpiries: expiries
+            coverage: .complete, knownExpiries: expiries, unrecognizedKindCount: unrecognized
         )
     }
 

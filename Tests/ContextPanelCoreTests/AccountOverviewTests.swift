@@ -116,7 +116,8 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
         stored: snapshot, history: [], now: overviewNow)
     #expect(export.accounts.first?.id == metadata.first?.id)
     #expect(export.accounts.first?.remainingFraction == 0.8)
-    #expect(export.answers.useNext.isEmpty)
+    // Use last is spent down to its cushion rather than skipped (#791): this one has 77 spare points an hour from reset.
+    #expect(export.answers.useNext.map(\.accountID) == [metadata.first?.id].compactMap { $0 })
 }
 
 @Test func companionAccountMetadataMatchesCompanionLimitsAndSurvivesBindingAndRemoteMerge() throws {
