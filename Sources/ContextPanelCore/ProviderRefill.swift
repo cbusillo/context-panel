@@ -36,13 +36,13 @@ public enum ProviderRefillDetector {
         let after = mainLimits(provider: provider, reading: current)
         var refilled: [String] = []
         for (accountID, old) in before {
-            // An unstarted window has nothing to refill.
+            // An unstarted window has nothing to refill; a natural reset or spent banked reset is not this event.
             guard let new = after[accountID], let oldUsed = old.used, oldUsed > 0 else { continue }
             guard let newUsed = new.used, newUsed < oldUsed,
                   let oldReset = old.resetsAt, let newReset = new.resetsAt,
                   oldReset > current.savedAt, newReset.timeIntervalSince(oldReset) >= minimumResetJump,
                   bankedCount(provider: provider, accountID: accountID, reading: previous)
-                    == bankedCount(provider: provider, accountID: accountID, reading: current) else { return nil }
+                    == bankedCount(provider: provider, accountID: accountID, reading: current) else { continue }
             refilled.append(resolve(new))
         }
         guard refilled.count >= 2 else { return nil }

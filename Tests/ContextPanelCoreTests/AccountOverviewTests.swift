@@ -20,7 +20,7 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     let snapshot = UsageSnapshot(generatedAt: overviewNow, limits: [
         overviewLimit("weekly-room", "Weekly", used: 10), overviewLimit("weekly-room", "5-hour", used: 100),
         overviewLimit("balanced", "Weekly", used: 30), overviewLimit("balanced", "5-hour", used: 40),
-        overviewLimit("use-last", "Weekly", used: 0), overviewLimit("unknown", "Weekly", used: nil)
+        overviewLimit("use-last", "Weekly", used: 95), overviewLimit("unknown", "Weekly", used: nil)
     ])
     let overview = AccountOverview(snapshot: snapshot, reports: [], metadata: [
         overviewMetadata("weekly-room"), overviewMetadata("balanced"), overviewMetadata("use-last", useLast: true),

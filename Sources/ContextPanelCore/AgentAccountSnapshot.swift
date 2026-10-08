@@ -295,13 +295,16 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
                 accountBurnRates: rates)
         let readings = history + [stored]
-        // Shared presentation publishes rows under the report's shared account identity, as MacSharedAccountPresentation does.
-        let sharedIDs = Dictionary(readings.flatMap(\.reports).compactMap { report in
-            report.sharedAccountIdentity.map { (report.provider.rawValue + ":" + report.accountID, $0.accountID) }
-        }, uniquingKeysWith: { _, newest in newest })
+        // History rows resolve to the IDs this snapshot publishes, through the same key shared presentation uses.
+        let reports = Dictionary(readings.flatMap(\.reports).map { ($0.provider.rawValue + ":" + $0.accountID, $0) },
+                                 uniquingKeysWith: { older, newer in newer.sharedAccountIdentity == nil ? older : newer })
+        let configured = configuration.accounts
+        let publisherID = configuration.publisherID
+        let shared = canonical != nil
         let resolve: ProviderRefillDetector.AccountResolver = { limit in
-            AccountDisplayMetadata.safeID(limit.provider, canonical == nil ? limit.accountID
-                : sharedIDs[limit.provider.rawValue + ":" + limit.accountID] ?? limit.accountID)
+            AccountDisplayMetadata.safeID(limit.provider, shared ? MacSharedAccountPresentation.accountKey(limit: limit,
+                report: reports[limit.provider.rawValue + ":" + limit.accountID], configuration: configured,
+                publisherID: publisherID) : limit.accountID)
         }
         let evidence = UseNextEvidence(receipts: receipts, readingTimes: readings.map(\.savedAt),
                                        unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve))

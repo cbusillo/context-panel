@@ -30,9 +30,10 @@ public enum ClaudeResetCreditParser {
             let count = remaining > 0 ? remaining : (claimable ? 1 : 0)
             guard count <= 10_000, Double(expiries.count) + count <= 10_000 else { return nil }
             expiries.append(contentsOf: repeatElement(grant.endsAt, count: Int(count)))
-            // Every Claude reset so far refills the weekly window; flag any grant that names only other windows.
+            // Every Claude reset so far refills the general weekly window; flag any grant that doesn't,
+            // including one that clears only a model's weekly window such as seven_day_opus.
             let named = grant.clears ?? []
-            if !named.isEmpty && !named.contains(where: { $0.hasPrefix("seven_day") }) { unrecognized += Int(count) }
+            if !named.isEmpty && !named.contains("seven_day") { unrecognized += Int(count) }
         }
         return ProviderResetCreditSummary(
             availableCount: expiries.count, observedAt: observedAt,

@@ -734,9 +734,11 @@ percent of an account's main window, which is the general weekly window
   account's burn minus agent burn attributed through receipts), at least 3
   points; an unstarted use-last clock gets its starter launch an hour after it
   is first seen unstarted.
-- **Batches:** `launchOrder` lists the next launches by D'Hondt over the
-  weights in Tiers 1–2: starters first, then the highest weight ÷ (1 + launches
-  already given). A receipt counts as given until two later readings or 30
+- **Order and batches:** each launch goes by D'Hondt over the weights (need) in
+  Tiers 1–2: starters first, then the highest weight ÷ (1 + launches already
+  given), ties to the lower tier. The published list is in that order, so Use
+  next is both its first entry and the first of `launchOrder`, which lists the
+  next launches. A receipt counts as given until two later saved readings or 30
   minutes have passed, so back-to-back launches spread.
 - **Stale readings:** when every reading is stale, the list is published with
   `basedOnStaleReadings` and `readingsObservedAt`, `useNextAccountID` is null,
@@ -748,13 +750,15 @@ percent of an account's main window, which is the general weekly window
   An OpenAI reset is worth 100 × days left ÷ 7 − percent left, because it
   restarts the weekly clock and moves later refills out; a Claude reset is
   worth what the account can still spend before its fixed refill, which never
-  moves. Claude resets are full weekly refills; a grant that clears only other
-  windows is counted in `unrecognizedKindCount` and never valued or prompted.
+  moves. Claude resets are full weekly refills; a grant that doesn't clear the
+  general weekly window (`seven_day`), such as one for a single model's window,
+  is counted in `unrecognizedKindCount` and never valued or prompted.
   Context Panel never applies a reset.
 - **Provider-wide refills:** `providerRefills` lists times in the loaded
-  history when two or more of a provider's accounts refilled before their
-  resets with no banked reset spent. Burn already treats a moved reset time as
-  a new window, so a refill never counts as use.
+  history when two or more of a provider's accounts refilled between the same
+  two readings, before their resets and with no banked reset spent. Burn
+  already treats a moved reset time as a new window, so a refill never counts
+  as use.
 
 Each `ranking` entry has `accountID`, `tier`, `need`, `weight`, `reason`,
 `deadline`, `unstarted`, `starter`, `remaining`, `burn`, `burnEstimated`

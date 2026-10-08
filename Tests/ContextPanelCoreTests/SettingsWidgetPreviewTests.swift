@@ -21,7 +21,8 @@ import Testing
     let limits = configurations.enumerated().map { index, account in
         UsageLimit(provider: account.provider, accountID: account.id, configuredAccountID: account.id,
             accountName: account.displayName, label: "Weekly", windowLabel: "Weekly", unit: .percent,
-            used: index * 20, limit: 100, resetsAt: now.addingTimeInterval(86_400),
+            // Use last holds little spare above its cushion, so the other account leads (#791).
+            used: [90, 20, 40][index], limit: 100, resetsAt: now.addingTimeInterval(86_400),
             lastUpdatedAt: now, confidence: .observed)
     }
     let reports = configurations.map { account in

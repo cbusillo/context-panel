@@ -269,7 +269,8 @@ public extension AccountOverview {
                                           reason: "Use last: holding its cushion for your own use", until: nil))
                     continue
                 }
-                let weight = candidate.useLast ? (others.isEmpty ? 1 : 0) : hoursLeft
+                let inGrace = candidate.unstarted && !candidate.starter
+                let weight = candidate.useLast ? (others.isEmpty && !inGrace ? 1 : 0) : hoursLeft
                 entries.append(candidate.entry(tier: .onPace, weight: weight, pending: pending[candidate.row.id, default: 0],
                     reason: candidate.useLast ? "Use last: only once the others run out"
                         : "Every account is on pace to run out; this one lasts longest (about \(Int(hoursLeft.rounded())) hours)"))
@@ -335,15 +336,15 @@ private struct Candidate {
 }
 
 extension AccountOverview {
-    /// Published order: accounts taking launches by tier, starters first, then by need ÷ (1 + pending launches);
-    /// accounts taking none last. Use next is the first entry; `launchOrder` splits a batch across tiers 1–2.
+    /// Published order is the D'Hondt order of the next launch: starters, then need ÷ (1 + pending launches)
+    /// across tiers 1–2 with ties to the lower tier, then accounts taking none. Use next is the first entry,
+    /// so a single launch and `launchOrder` always agree.
     static func ordered(_ entries: [UseNextRanking.Entry], counts: [String: Int]) -> [UseNextRanking.Entry] {
-        func priority(_ entry: UseNextRanking.Entry) -> (Int, Int, Int, Double) {
+        func priority(_ entry: UseNextRanking.Entry) -> (Int, Double, Int, Double) {
             let given = counts[entry.accountID, default: 0]
-            let starting = entry.starter && given == 0
-            guard entry.weight > 0 || starting else { return (1, entry.tier.rawValue, 1, -entry.remaining) }
-            if starting { return (0, entry.tier.rawValue, 0, 0) }
-            return (0, entry.tier.rawValue, 1, -entry.weight / Double(1 + max(0, given - (entry.starter ? 1 : 0))))
+            if entry.starter && given == 0 { return (0, 0, entry.tier.rawValue, 0) }
+            guard entry.weight > 0 else { return (2, -entry.remaining, entry.tier.rawValue, 0) }
+            return (1, -entry.weight / Double(1 + max(0, given - (entry.starter ? 1 : 0))), entry.tier.rawValue, -entry.weight)
         }
         return entries.enumerated().sorted { lhs, rhs in
             let (a, b) = (priority(lhs.element), priority(rhs.element))
@@ -354,7 +355,8 @@ extension AccountOverview {
     /// Receipts the readings don't reflect yet: fewer than two later readings and under 30 minutes old.
     static func pendingLaunches(evidence: UseNextEvidence, rows: [Account], now: Date) -> [String: Int] {
         let ids = Set(rows.map(\.id))
-        let readings = evidence.readingTimes + rows.compactMap(\.observedAt)
+        // Saved reading times when known; without history, each account's own observation stands in.
+        let readings = evidence.readingTimes.isEmpty ? rows.compactMap(\.observedAt) : evidence.readingTimes
         return evidence.receipts.reduce(into: [:]) { counts, receipt in
             guard ids.contains(receipt.accountID), receipt.launchedAt <= now.addingTimeInterval(60),
                   now.timeIntervalSince(receipt.launchedAt) < UseNextRanking.receiptReflectedAfter,

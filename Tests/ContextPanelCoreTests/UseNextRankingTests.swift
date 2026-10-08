@@ -188,6 +188,32 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(ranking([a], evidence: UseNextEvidence(receipts: [old])).entry(a)?.pendingLaunches == 0)
 }
 
+@Test func oneSavedReadingNeverRetiresAReceiptEvenWhenItsObservationTimeDiffers() {
+    let a = Fixture(name: "a", weeklyUsed: 40, resetHours: 100, burn: 0)
+    let receipt = LaunchReceipt(provider: .openAI, accountID: a.id, launchedAt: rankNow.addingTimeInterval(-10 * 60))
+    // One refresh: the provider observation (now) and the save a little earlier are the same reading.
+    let evidence = UseNextEvidence(receipts: [receipt], readingTimes: [rankNow.addingTimeInterval(-9 * 60)])
+    #expect(ranking([a], evidence: evidence).entry(a)?.pendingLaunches == 1)
+}
+
+@Test func useNextIsAlwaysTheFirstLaunchOfABatch() {
+    let ordinary = Fixture(name: "ordinary", weeklyUsed: 80, resetHours: 100, burn: 0)
+    let personal = Fixture(name: "personal", weeklyUsed: 10, resetHours: 100, burn: 0, useLast: true)
+    let result = ranking([ordinary, personal])
+    // Use last's 87 spare points outweigh the other's 20, so it leads both a single launch and a batch.
+    #expect(result.useNextAccountID == personal.id)
+    #expect(result.launchOrder.first == result.useNextAccountID)
+    #expect(result.entries.first?.accountID == result.useNextAccountID)
+    #expect(result.launchOrder.contains(ordinary.id))
+}
+
+@Test func soleUnstartedUseLastWaitsOutItsGraceHour() {
+    let personal = Fixture(name: "personal", weeklyUsed: 0, resetHours: nil, burn: nil, useLast: true)
+    let result = ranking([personal], evidence: UseNextEvidence(unstartedSince: [personal.id: rankNow.addingTimeInterval(-5 * 60)]))
+    #expect(result.useNextAccountID == nil)
+    #expect(result.launchOrder.isEmpty)
+}
+
 // 7. Two accounts marked use-last: configuration error; use-last is ignored.
 @Test func twoUseLastAccountsAreAConfigurationErrorAndUseLastIsIgnored() {
     let first = Fixture(name: "first", weeklyUsed: 10, resetHours: 100, burn: 0, useLast: true)
@@ -272,10 +298,22 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(events.first?.detectedAt == rankNow.addingTimeInterval(-0.5 * hour))
     #expect(Set(events.first?.accountIDs ?? []) == Set(["x", "y"].map { AccountDisplayMetadata.safeID(.openAI, $0) }))
 
-    // A banked reset spent on one account is not a provider-wide refill.
+    // A banked reset spent on the accounts is not a provider-wide refill.
     var spent = readings
     spent[2] = reading(rankNow.addingTimeInterval(-0.5 * hour), used: [0, 0], reset: newReset, banked: 1)
     #expect(ProviderRefillDetector.events(readings: spent).isEmpty)
+
+    // A third account that carries on as usual doesn't hide the other two refilling.
+    var mixed = readings
+    for index in [1, 2] {
+        var limits = mixed[index].snapshot.limits
+        limits.append(UsageLimit(provider: .openAI, accountID: "z", configuredAccountID: "z", accountName: "z", label: "Codex Weekly",
+                                 windowLabel: "Weekly", modelLabel: "Codex", unit: .percent, used: 20 + index, limit: 100,
+                                 resetsAt: oldReset, lastUpdatedAt: mixed[index].savedAt, confidence: .observed))
+        mixed[index] = StoredUsageSnapshot(savedAt: mixed[index].savedAt,
+            snapshot: UsageSnapshot(generatedAt: mixed[index].savedAt, limits: limits), reports: mixed[index].reports)
+    }
+    #expect(ProviderRefillDetector.events(readings: mixed).first?.accountIDs.count == 2)
 
     // Burn across the refill counts only real use: 5 points an hour before, 4 an hour after.
     let rates = MainLimitBurnRateEstimator.observedBurnRates(current: readings[3].snapshot, history: readings, now: rankNow,
@@ -320,6 +358,8 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(ClaudeResetCreditParser.summary(from: grants("\"seven_day\",\"five_hour\""), observedAt: observed)?.unrecognizedKindCount == 0)
     #expect(ClaudeResetCreditParser.summary(from: grants(""), observedAt: observed)?.unrecognizedKindCount == 0)
     #expect(ClaudeResetCreditParser.summary(from: grants("\"five_hour\""), observedAt: observed)?.unrecognizedKindCount == 1)
+    // A model's weekly window alone is not the general weekly refill.
+    #expect(ClaudeResetCreditParser.summary(from: grants("\"seven_day_opus\""), observedAt: observed)?.unrecognizedKindCount == 1)
 
     let flagged = Fixture(name: "flagged", provider: .anthropic, weeklyUsed: 100, resetHours: 100, bankedExpiryHours: [200],
                           unrecognizedResets: 1)
