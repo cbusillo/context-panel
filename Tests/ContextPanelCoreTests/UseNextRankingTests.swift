@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ContextPanelCore
+@testable import ContextPanelSettingsUI
 
 // Acceptance scenarios from #791: the revised spec with Chris's final amendments.
 
@@ -629,5 +630,26 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
         let assessments = overview(fixtures).accounts.compactMap(\.resetAssessment)
         #expect(assessments.first { $0.accountID == unknown.id }?.expiresAt == nil)
         #expect(assessments.filter(\.recommended).map(\.accountID) == [known.id])
+    }
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+@MainActor func resetDeadlineDetailsUseCompleteProviderAdvice(_ provider: Provider) throws {
+    let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
+    let personal = Fixture(name: "personal", provider: provider, weeklyUsed: 50, useLast: true)
+    let later = Fixture(name: "later", provider: provider, weeklyUsed: 100, bankedExpiryHours: [300])
+    for fixtures in [[empty, personal], [empty, later]] {
+        let panel = overview(fixtures)
+        let adviceByAccountID = Dictionary(fixtures.compactMap { fixture in
+            panel.accounts.first { $0.id == fixture.id }?.bankedAdvice.map { (fixture.name, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+        for fixture in fixtures {
+            let report = fixture.report(now: rankNow)
+            let deadlines = BankedResetDeadlinesView(reports: [report], limits: fixture.limits(now: rankNow),
+                presentationDate: rankNow, adviceByAccountID: adviceByAccountID)
+            let expected = panel.accounts.first { $0.id == fixture.id }?.bankedAdvice
+            #expect(deadlines.advice(for: report, now: rankNow)?.title == expected?.title)
+            #expect(deadlines.advice(for: report, now: rankNow)?.detail == expected?.detail)
+        }
     }
 }

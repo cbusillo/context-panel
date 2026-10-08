@@ -4102,7 +4102,11 @@ struct ProviderDashboard: View {
                             OpenAIAccountLimitsSection(
                                 summaries: summaries,
                                 reports: model.storedSnapshot?.reports ?? [],
-                                now: now
+                                now: now,
+                                adviceByAccountID: Dictionary(model.accountOverview(at: now).accounts.compactMap { account in
+                                    guard let id = model.rawAccountID(for: account.id), let advice = account.bankedAdvice else { return nil }
+                                    return (id, advice)
+                                }, uniquingKeysWith: { first, _ in first })
                             )
                         } else {
                             ProviderAccountLimitsSection(summaries: summaries)
@@ -4213,6 +4217,7 @@ struct OpenAIAccountLimitsSection: View {
     let summaries: [MainLimitSummary]
     let reports: [StoredProviderReport]
     let now: Date
+    let adviceByAccountID: [String: AccountOverview.BankedAdvice]
 
     private var accounts: [OpenAIAccountLimitSummary] {
         OpenAIAccountLimitSummary.accounts(from: summaries, reports: reports)
@@ -4247,7 +4252,8 @@ struct OpenAIAccountLimitsSection: View {
                         OpenAIAccountLimitRow(
                             account: account,
                             resetCreditGuidance: guidanceByAccountID[account.accountID],
-                            now: now
+                            now: now,
+                            adviceByAccountID: adviceByAccountID
                         )
                         .id("openai-account:\(account.accountID)")
                     }
@@ -4287,6 +4293,7 @@ private struct OpenAIAccountLimitRow: View {
     let account: OpenAIAccountLimitSummary
     let resetCreditGuidance: ProviderResetCreditGuidance?
     let now: Date
+    let adviceByAccountID: [String: AccountOverview.BankedAdvice]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -4319,7 +4326,7 @@ private struct OpenAIAccountLimitRow: View {
                     accountName: resetCreditGuidance.accountName,
                     generatedAt: resetCreditGuidance.resetCredits.observedAt,
                     resetCredits: resetCreditGuidance.resetCredits, status: account.status, errorMessage: nil
-                )], limits: account.limits)
+                )], limits: account.limits, presentationDate: now, adviceByAccountID: adviceByAccountID)
             }
         }
         .padding(10)

@@ -8,12 +8,14 @@ public struct BankedResetDeadlinesView: View {
     private let presentationDate: Date?
     private let limits: [UsageLimit]
     private let maximumAge: TimeInterval
+    private let adviceByAccountID: [String: AccountOverview.BankedAdvice]?
 
-    public init(reports: [StoredProviderReport], limits: [UsageLimit] = [], presentationDate: Date? = nil, maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge) {
+    public init(reports: [StoredProviderReport], limits: [UsageLimit] = [], presentationDate: Date? = nil, maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge, adviceByAccountID: [String: AccountOverview.BankedAdvice]? = nil) {
         self.reports = reports
         self.limits = limits
         self.presentationDate = presentationDate
         self.maximumAge = maximumAge
+        self.adviceByAccountID = adviceByAccountID
     }
 
     public var body: some View {
@@ -25,6 +27,15 @@ public struct BankedResetDeadlinesView: View {
                 content(now: context.date)
             }
         }
+    }
+
+    func advice(for report: StoredProviderReport, now: Date) -> (title: String, detail: String)? {
+        if let adviceByAccountID {
+            return adviceByAccountID[report.accountID].map { (title: $0.title, detail: $0.detail) }
+        }
+        guard !limits.isEmpty else { return nil }
+        return ResetCreditGuidanceAdvisor.guidance(report: report, limits: limits, now: now)
+            .map { (title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
     }
 
     private func content(now: Date) -> some View {
@@ -49,8 +60,8 @@ public struct BankedResetDeadlinesView: View {
                                 Text("Last observed · refresh the Mac for current inventory")
                                     .foregroundStyle(.secondary)
                             }
-                            if !limits.isEmpty, let guidance = ResetCreditGuidanceAdvisor.guidance(report: report, limits: limits, now: now) {
-                                Text(guidance.recommendationTitle + " · " + guidance.recommendationDetail(now: now))
+                            if let advice = advice(for: report, now: now) {
+                                Text(advice.title + " · " + advice.detail)
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         } else {
