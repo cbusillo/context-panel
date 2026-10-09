@@ -410,12 +410,12 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
         now: now,
         weeklyUsed: 85,
         resetInterval: 4 * 86_400,
-        expiryInterval: 2 * 86_400,
+        expiryInterval: 12 * 3_600,
         promptCacheObservations: resetCreditPromptCacheObservations(now: now),
         promptCacheWidgetState: .available
     )
     let considerBefore = try #require(considerBeforeSnapshot.primaryActionableResetCreditGuidance(now: now))
-    #expect(considerBefore.state == .considerBefore(now.addingTimeInterval(2 * 86_400)))
+    #expect(considerBefore.state == .considerUsingNow)
     let considerBeforeView = ContextPanelWidgetContentView(
         family: .systemMedium,
         snapshot: considerBeforeSnapshot,
@@ -643,7 +643,7 @@ private var singleLaneWidgetPreferences: WidgetDisplayPreferences {
 private func resetCreditRenderSnapshot(
     now: Date,
     weeklyUsed: Int = 100,
-    resetInterval: TimeInterval = 3 * 60 * 60,
+    resetInterval: TimeInterval = 3 * 86_400,
     expiryInterval: TimeInterval = 2 * 86_400,
     fiveHourUsed: Int? = nil,
     promptCacheObservations: [PromptCacheObservation] = [],
@@ -1006,4 +1006,30 @@ private func smallWidgetSnapshot(
     let image = try #require(renderedImage(from: view, width: 344, height: 164))
     #expect(nonBackgroundPixelCount(in: image) > 500)
     #expect(nonBackgroundPixelCount(in: image, rows: 125..<160) > 30)
+}
+
+@MainActor
+@Test func windowWidgetResetTokenReflectsSharedAssessment() throws {
+    for family in [WidgetFamily.systemMedium, .systemLarge] {
+        let height: CGFloat = family == .systemMedium ? 164 : 344
+        let rows = family == .systemMedium ? 125..<164 : 125..<155
+        var warningPixels: [Int] = []
+        for (name, snapshot) in [
+            ("hold", windowResetSnapshot()),
+            ("empty", windowResetSnapshot(secondUsed: 100)),
+            ("expiring", windowResetSnapshot(firstExpiry: 12 * 3_600)),
+        ] {
+            let view = ContextPanelWidgetContentView(family: family, snapshot: snapshot,
+                displayPreferences: legacyWindowRenderPreferences, links: renderTestWidgetLinks,
+                showsResetCreditSurfaces: true, presentationDate: windowResetNow)
+                .cpwThemeVariant(.light).frame(width: 344, height: height)
+                .background(CPWTheme.surface(variant: .light))
+            let image = try #require(renderedImage(from: view, width: 344, height: height))
+            warningPixels.append(pixelCount(in: image, near: (138, 106, 42), rows: rows))
+            #expect(nonBackgroundPixelCount(in: image) > 2_500)
+            try writeRenderArtifact(image, name: "window-reset-\(name)-\(family == .systemMedium ? "medium" : "large").png")
+        }
+        #expect(warningPixels[0] < warningPixels[1])
+        #expect(warningPixels[0] < warningPixels[2])
+    }
 }
