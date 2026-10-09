@@ -77,8 +77,8 @@ secretless trust guard verifies the protected ref, checked-out commit, main
 ancestry, version, and build number. A second secretless check refuses new runs
 unless the repository variable `RELEASE_APPROVALS_CONFIGURED` is exactly `true`.
 Before any environment job, a read-only metadata check requires `release` and
-`release-approval` to have no required reviewer, nonzero wait timer or other
-deployment protection gate. Missing environments, incomplete metadata and an
+`release-approval` to have no required reviewer or nonzero wait timer in the
+reported protection rules. Missing environments, incomplete metadata and an
 unavailable API fail closed. It also verifies that `release` accepts only `main`.
 CI's `--probe` checks the secret store; release guards check both environments.
 Both use the built-in workflow token and metadata endpoints, never secret values.
@@ -179,7 +179,7 @@ workflow and are not migrated by this setup. No release dispatch is needed.
    checker; no publication is needed for setup verification.
 
 Until that hand step is complete, the new full metadata check fails before an
-intent or secret job and directs the operator here. The structural checker proves
+intent or secret job; follow the setup above. The structural checker proves
 the source graph; it does not prove the live hand step or observe release UI.
 
 Local agents run the metadata checker through the configured automation helper
@@ -393,8 +393,7 @@ uv run --no-project python scripts/publish-github-release.py \
 
 This checks package metadata and sealed artifact identity; it does not perform
 signing or Apple notarization. The automatic intent and protected-source checks
-also apply to validation
-runs.
+also apply to validation runs.
 
 To produce a signed build, configure:
 
@@ -727,7 +726,7 @@ companion widget rendering all work.
 ### CloudKit Production Schema Gate
 
 Normal hosted publication uses the [Mac publication-time check](cloudkit-publication-check.md)
-(Q43 option B). Leave the receipt input empty: approval and building precede
+(Q43 option B). Leave the receipt input empty: intent recording and building precede
 its single live schema check. The manual receipt instructions below remain the
 option C compatibility route and the direct operator-command route. Activation
 of the Mac checker needs Chris's separate authorization; the source PR does not

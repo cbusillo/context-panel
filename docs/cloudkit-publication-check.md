@@ -143,8 +143,8 @@ public artifacts or print subprocess authentication diagnostics.
 | Choice | Seam to change | Consequence |
 | --- | --- | --- |
 | B (current default) | Empty receipt input; shared action plus operator wrapper | Mac must be available only near publication; no new credential in CI. |
-| C (existing compatibility path) | Supply `cloudkit_schema_receipt_base64` using the documented operator gate | Shared action verifies it directly; no relay request. Approval/build waiting again consumes its lifetime. Stop scheduling operator passes when all runs use this path. |
-| A (new Director access decision) | Replace request/wait in the shared action with a hosted live export and receipt issuance | CI receives the management credential's broader schema authority. Chris must authorize and place it. Do not widen approval dependencies or bypass the publisher verifier. |
+| C (existing compatibility path) | Supply `cloudkit_schema_receipt_base64` using the documented operator gate | Shared action verifies it directly; no relay request. Build waiting again consumes its lifetime. Stop scheduling operator passes when all runs use this path. |
+| A (new Director access decision) | Replace request/wait in the shared action with a hosted live export and receipt issuance | CI receives the management credential's broader schema authority. Chris must authorize and place it. Do not widen guarded dependencies or bypass the publisher verifier. |
 
 All five workflow boundaries use the same composite action. The receipt
 issue/verify API accepts optional `publicationRequestDigest`; unbound legacy receipts
