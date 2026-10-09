@@ -240,13 +240,13 @@ def trusted_run(request, run, jobs) -> None:
         or run.get("path") not in {f".github/workflows/{name}" for name in WORKFLOWS}
     ):
         raise RelayError("schema request is not from an active trusted release run")
-    for name in ("Approve Release Intent", "Validate Trusted Release Source"):
+    for name in ("Record Release Intent", "Validate Trusted Release Source"):
         matching = [job for job in jobs if job.get("name") == name]
         if any(job.get("run_attempt") is None for job in matching) and any(
             job.get("conclusion") != "success" for job in matching
         ):
             raise RelayError(
-                "approval/guard history cannot prove a successful latest execution"
+                "intent/guard history cannot prove a successful latest execution"
             )
     latest = {}
     for job in jobs:
@@ -257,11 +257,11 @@ def trusted_run(request, run, jobs) -> None:
             latest[name] = job
     names = {name: job.get("conclusion") for name, job in latest.items()}
     if (
-        names.get("Approve Release Intent") != "success"
+        names.get("Record Release Intent") != "success"
         or names.get("Validate Trusted Release Source") != "success"
     ):
         raise RelayError(
-            "release trust and owner approval must succeed before the schema check"
+            "release trust and recorded intent must succeed before the schema check"
         )
 
 

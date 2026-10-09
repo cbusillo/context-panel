@@ -11,7 +11,8 @@ from urllib.parse import quote
 
 def fetch_metadata(endpoint: str, *, pages: bool = False) -> dict | list:
     # gh uses the built-in workflow token supplied as GH_TOKEN by Actions.
-    command = ["gh", "api", "--method", "GET", endpoint]
+    command = [os.environ.get("CONTEXT_PANEL_ENVIRONMENT_GH", "gh"),
+               "api", "--method", "GET", endpoint]
     if pages:
         command += ["--paginate", "--slurp"]
     result = subprocess.run(command, capture_output=True, text=True)

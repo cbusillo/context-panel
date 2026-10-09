@@ -9,7 +9,7 @@ schema contract, existing credential setup and direct local-release route.
 ## How it works
 
 Leave `cloudkit_schema_receipt_base64` empty when dispatching Ship or a standalone
-publication workflow. Approval can wait as long as needed. Each selected channel
+publication workflow. Each selected channel
 builds first, then the shared `cloudkit-publication-check` action posts a one-day
 request artifact and waits up to twenty minutes for the Mac. GitHub publication
 requests after notarization; Mac/companion uploads archive first and upload the
@@ -19,7 +19,7 @@ request a check.
 
 The Mac's operator process reads active protected-main release requests through
 the existing automation GitHub helper. It requires completed source trust and
-owner approval jobs, the current run attempt, and a commit still in protected
+automatic release-intent jobs, the current run attempt, and a commit still in protected
 main. It reads the two schema contracts and compares three gate scripts from
 that commit in its local Git object database. It executes its own reviewed
 validator, never downloaded code.
@@ -34,9 +34,9 @@ workflow does not authenticate the result. The waiting release authenticates its
 seal, exact contract and request before continuing. Its live entrypoint verifies
 again. Those verifications are not additional live schema exports.
 
-The receipt's existing six-hour lifetime remains. It starts after approval and
-build, rather than at dispatch. The twenty-minute wait bounds how long a
-publication can wait for the new check; a new dispatch makes a new request.
+The receipt's existing six-hour lifetime remains. It starts after intent
+recording and build, rather than at dispatch. The twenty-minute wait bounds how
+long a publication can wait for the new check; a new dispatch makes a new request.
 Expired or tampered results, other runs/attempts/channels/contracts and missing
 results cannot authorize publication. Cancellation during a check stops its
 result relay. A race after that readback remains harmless because a canceled
@@ -103,7 +103,7 @@ a later pass can recover without repeating a live check.
 Missing Git objects or outdated local gate code also leave it unrecorded;
 update the matching reviewed operator checkout and repeat the pass.
 Diagnose it, then use a new dispatch or authorized rerun, which generates a new
-nonce. Successful trust/approval jobs from an earlier attempt of the *same run*
+nonce. Successful trust/intent jobs from an earlier attempt of the *same run*
 can support a partial rerun; a newer failed/pending guard overrides them. The
 check reads the [complete job history](https://docs.github.com/en/rest/actions/workflow-jobs)
 and refuses incomplete coverage. If a response workflow alone fails after a

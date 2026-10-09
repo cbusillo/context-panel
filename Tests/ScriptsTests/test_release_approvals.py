@@ -149,14 +149,14 @@ class ReleaseApprovalTests(unittest.TestCase):
                     "build": {},
                 }}
                 plan = policy.check(documents)
-                self.assertEqual(plan["ship"]["approval_count"], 0)
+                self.assertEqual(plan["ship"]["secret_environment"], "release")
 
-    def test_full_ship_plan_requires_no_human_approval(self) -> None:
+    def test_full_ship_plan_uses_single_secret_store(self) -> None:
         plan = policy.check(fixture())
         self.assertTrue(plan["reusable_workflow_coverage"]["complete"])
         self.assertEqual(plan["reusable_workflow_coverage"]["unclassified_calls"], [])
-        self.assertEqual(plan["ship"]["approval_count"], 0)
-        self.assertTrue(all(path["secret_environment"] == "release" and path["approval_count"] == 0
+        self.assertEqual(plan["ship"]["secret_environment"], "release")
+        self.assertTrue(all(path["secret_environment"] == "release"
                             for path in plan["standalone"].values()))
         self.assertEqual(plan["secret_names_by_environment"]["release-approval"], [])
 
@@ -291,6 +291,14 @@ class ReleaseApprovalTests(unittest.TestCase):
         with patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=1)):
             with self.assertRaises(ValueError):
                 metadata.fetch_metadata("repos/owner/repo/environments/release-approval")
+        with patch.dict(os.environ, {"CONTEXT_PANEL_ENVIRONMENT_GH": "/fake/bot-gh"}), \
+                patch.object(subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stdout=json.dumps(good),
+                )) as command:
+            self.assertEqual(metadata.fetch_metadata("repos/owner/repo/environments/release"), good)
+            self.assertEqual(command.call_args.args[0], [
+                "/fake/bot-gh", "api", "--method", "GET", "repos/owner/repo/environments/release",
+            ])
 
     def test_cli_checks_both_environments_before_release_and_only_store_in_probe(self) -> None:
         metadata_spec = importlib.util.spec_from_file_location(
@@ -312,7 +320,7 @@ class ReleaseApprovalTests(unittest.TestCase):
         ]}
         for probe, protected_environment in ((False, None), (True, None),
                                              (False, "release"), (True, "release"),
-                                             (False, "release-approval")):
+                                             (False, "release-approval"), (True, "release-approval")):
             with self.subTest(probe=probe, protected_environment=protected_environment):
                 documents = copy.deepcopy({"release": store, "release-approval": intent})
                 if protected_environment:
@@ -326,7 +334,7 @@ class ReleaseApprovalTests(unittest.TestCase):
                         patch.object(sys, "argv", ["check"] + (["--probe"] if probe else [])), \
                         patch.object(sys, "stdout", io.StringIO()), \
                         patch.object(sys, "stderr", io.StringIO()):
-                    if protected_environment:
+                    if protected_environment and not (probe and protected_environment == "release-approval"):
                         with self.assertRaises(SystemExit) as error:
                             metadata.main()
                         self.assertEqual(error.exception.code, 1)

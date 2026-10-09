@@ -265,13 +265,13 @@ def check(workflows: dict[str, dict]) -> dict:
             for filename in ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY))))},
         "activation": "RELEASE_APPROVALS_CONFIGURED=true; owner removes environment reviewer before no-click runs",
         "fallback": "Unset/false activation refuses new release workflows before any environment job",
-        "ship": {"intent_jobs": intent_jobs, "approval_count": 0,
+        "human_approval_policy": "none; verified by the live environment check, not this structural plan",
+        "ship": {"intent_jobs": intent_jobs,
                  "secret_environment": "release", "channels": list(CHANNELS),
                  "repository_secrets": "inherited by same-commit local channels"},
         "standalone": {
             filename: {"intent_jobs": [job_id for job_id, job in workflows[filename]["jobs"].items()
                                         if environment(job) == "release-approval"],
-                       "approval_count": 0,
                        "secret_environment": "release"}
             for filename in (*CHANNELS.values(), *STANDALONE_ONLY)
         },

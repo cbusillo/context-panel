@@ -28,7 +28,7 @@ App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
 is explicit.
 
-## Before starting Ship
+## Before starting a release
 
 Follow the overall [release direction](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md).
 For Context Panel, the [recorded Q94 decision](https://github.com/cbusillo/context-panel/issues/752#issuecomment-6062518684)
@@ -37,7 +37,10 @@ whose finish line requires the change installed. Post the list of changes since
 the last release on the release's owning issue **before dispatching Ship**.
 Check that every listed change is finished; stop if any is unfinished. An agent
 may suggest a release with that list, but a suggestion alone is not a release
-request. Do not dispatch on a schedule or because time has passed.
+request. Do not dispatch on a schedule or because time has passed. Apply this
+preflight to standalone workflows too when they publish, upload, distribute or
+submit a build, including recovery. Artifact-only and dry-run validation remain
+ordinary engineering on their existing guarded paths.
 
 A configured `Ship` run requires **zero human environment approvals**. Its
 secretless `Record Release Intent` job uses the existing `release-approval`
@@ -178,6 +181,20 @@ workflow and are not migrated by this setup. No release dispatch is needed.
 Until that hand step is complete, the new full metadata check fails before an
 intent or secret job and directs the operator here. The structural checker proves
 the source graph; it does not prove the live hand step or observe release UI.
+
+Local agents run the metadata checker through the configured automation helper
+from the [GitHub skill](https://github.com/cbusillo/codex-skills/blob/main/skills/github/SKILL.md):
+
+```sh
+CONTEXT_PANEL_ENVIRONMENT_GH="<github-skill>/scripts/gh-with-env-token" \
+  GITHUB_REPOSITORY=cbusillo/context-panel \
+  uv run --no-project python scripts/check-release-approval-environment.py
+```
+
+Replace `<github-skill>` with the installed skill directory. This performs GETs
+only and fails on the old reviewer rule until the hand step is complete. CI
+uses `--probe` to check only the secret store; workflow guards use the built-in
+token and full mode to check both environments.
 
 The lower-level workflows remain callable for recovery and validation:
 
