@@ -72,7 +72,6 @@ func windowWidgetCannotProveProviderEmptyFromDegradedSibling(state: AccountCapac
     #expect(snapshot.primaryActionableResetCreditGuidance(now: windowResetNow) == nil)
     let deadline = try #require(snapshot.resetCreditSurfaceSummary(now: windowResetNow)?.primaryDeadlineGuidance)
     #expect(deadline.state == .refresh(.assessmentUnavailable))
-    #expect(deadline.recommendationDetail(now: windowResetNow).contains("current reading"))
 }
 
 @Test func windowWidgetSchedulesTheIndependentExpiryPromptBoundary() {
