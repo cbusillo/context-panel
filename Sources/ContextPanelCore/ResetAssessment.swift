@@ -144,6 +144,24 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         detail = [reasoning, note].compactMap { $0 }.joined(separator: " ")
     }
 
+    /// When time alone makes the current reset value stop meeting its recommendation threshold.
+    /// Held candidates also transition, because they can become the selected reset later.
+    public func nextValueTransitionDate(for account: AccountOverview.Account, now: Date) -> Date? {
+        let threshold = trigger == .outOfQuota ? Self.outOfQuotaThreshold : Self.expiringThreshold
+        guard trigger != .notNeeded, let value, value >= threshold,
+              let main = account.mainWindow, let left = main.remainingFraction.map({ $0 * 100 }) else { return nil }
+        let transition: Date
+        if provider == .openAI {
+            transition = now.addingTimeInterval((value - threshold) * 7 * 86_400 / 100 + 1)
+        } else {
+            guard let refill = main.naturalResetAt else { return nil }
+            transition = refill.addingTimeInterval(
+                -(left + threshold) / Self.claudeRate(main: main, gate: account.fiveHourGate) * 3_600 + 1
+            )
+        }
+        return transition > now ? transition : nil
+    }
+
     /// Measured from this account's own 5-hour and weekly burn when both are known.
     static func claudeRate(main: AccountOverview.Window, gate: AccountOverview.Window?) -> Double {
         guard let weekly = main.burnPoints, let short = gate?.burnPoints, weekly > 0, short > 0 else { return claudeDefaultRate }

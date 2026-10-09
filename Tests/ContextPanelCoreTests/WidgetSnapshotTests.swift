@@ -2264,7 +2264,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
             widgetResetCreditWeeklyLimit(
                 accountID: "actionable",
                 used: 100,
-                resetsAt: now.addingTimeInterval(2 * 60 * 60),
+                resetsAt: now.addingTimeInterval(3 * 86_400),
                 now: now
             ),
             widgetResetCreditWeeklyLimit(

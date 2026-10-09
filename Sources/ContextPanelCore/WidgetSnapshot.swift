@@ -114,7 +114,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             reports: reports,
             limits: limits,
             now: now,
-            maximumAge: maximumAge
+            maximumAge: maximumAge,
+            accountOverview: accountOverview(now: now, maximumAge: maximumAge)
         )
     }
 
@@ -130,12 +131,18 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
     ) -> [Date] {
         guard state == .ready, syncErrorMessage == nil else { return [] }
-        return ResetCreditSurfaceAdvisor.glanceTransitionDates(
+        let inventoryTransitions = ResetCreditSurfaceAdvisor.glanceTransitionDates(
             reports: reports,
             limits: limits,
             now: now,
             maximumAge: maximumAge
         )
+        let expiryPromptTransitions = reports.compactMap { $0.resetCredits?.presented(at: now).earliestKnownExpiry }
+            .map { $0.addingTimeInterval(-ResetAssessment.expiringWithin) }.filter { $0 > now }
+        let valueTransitions = accountOverview(now: now, maximumAge: maximumAge).accounts.compactMap { account in
+            account.resetAssessment?.nextValueTransitionDate(for: account, now: now)
+        }
+        return Array(Set(inventoryTransitions + expiryPromptTransitions + valueTransitions)).sorted()
     }
 
     public var aggregateCapacityRatio: Double {

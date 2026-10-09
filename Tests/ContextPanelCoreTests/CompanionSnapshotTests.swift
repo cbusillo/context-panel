@@ -177,7 +177,7 @@ import Testing
     #expect(legacy.snapshot.providerStatuses.first?.storedProviderReport.resetCredits == nil)
 }
 
-@Test func companionWidgetSnapshotPreservesCurrentResetCreditGuidance() throws {
+@Test func companionWidgetSnapshotPreservesInventoryWithoutPrematureResetAdvice() throws {
     let now = Date(timeIntervalSince1970: 1_350)
     let resetCredits = ProviderResetCreditSummary(
         availableCount: 2,
@@ -203,8 +203,9 @@ import Testing
 
     #expect(snapshot.reports.first?.resetCredits == resetCredits)
     #expect(summary.accountCount == 1)
-    #expect(summary.primaryActionableGuidance?.accountName == "Work OpenAI")
-    #expect(summary.primaryActionableGuidance?.state == .considerBefore(now.addingTimeInterval(2 * 86_400)))
+    #expect(summary.primaryActionableGuidance == nil)
+    #expect(summary.primaryDeadlineGuidance?.accountName == "Work OpenAI")
+    #expect(summary.primaryDeadlineGuidance?.resetCredits == resetCredits)
 }
 
 @Test func companionWidgetSnapshotSuppressesStaleResetCreditGuidanceForAFreshLimit() throws {
