@@ -14,6 +14,7 @@ public enum ResetCreditRefreshReason: Equatable, Sendable {
     case expiryElapsed
     case weeklyLimitUnknown
     case naturalResetUnknown
+    case assessmentUnavailable
 }
 
 public enum ResetCreditGuidanceState: Equatable, Sendable {
@@ -40,6 +41,8 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     public let resetCredits: ProviderResetCreditSummary
     public let weeklyResetsAt: Date?
     public let state: ResetCreditGuidanceState
+    /// Window-widget advice uses the same assessment as the account panel and agent.
+    public var assessment: ResetAssessment? = nil
 
     public var id: String {
         let accountIdentity = ProviderAccountIdentity.unique(
@@ -54,7 +57,8 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     }
 
     public var recommendationTitle: String {
-        switch state {
+        if let assessment { return assessment.title }
+        return switch state {
         case .hold:
             "Hold for now"
         case .considerUsingNow:
@@ -67,7 +71,8 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     }
 
     public func recommendationDetail(now: Date) -> String {
-        switch state {
+        if let assessment { return assessment.detail }
+        return switch state {
         case .hold(.weeklyCapacityHealthy):
             "Weekly capacity is available."
         case .hold(.fiveHourOnlyPressure):
@@ -93,11 +98,14 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
             "Weekly limit pressure is unknown."
         case .refresh(.naturalResetUnknown):
             "The weekly reset time is unknown."
+        case .refresh(.assessmentUnavailable):
+            "Reset advice is unavailable for this account's current reading."
         }
     }
 
     public var compactActionText: String? {
-        switch state {
+        if let assessment { return assessment.recommended ? "apply reset now" : nil }
+        return switch state {
         case .considerUsingNow:
             "consider using now"
         case let .considerBefore(expiry):
@@ -108,7 +116,8 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
     }
 
     public var glanceActionText: String? {
-        switch state {
+        if let assessment { return assessment.recommended ? "use now" : nil }
+        return switch state {
         case .considerUsingNow:
             "use now"
         case let .considerBefore(expiry):
@@ -180,14 +189,16 @@ public enum ResetCreditSurfaceAdvisor {
         reports: [StoredProviderReport],
         limits: [UsageLimit],
         now: Date,
-        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge,
+        accountOverview: AccountOverview? = nil
     ) -> ProviderResetCreditSurfaceSummary? {
         summary(
             reports: reports,
             limits: limits,
             now: now,
             maximumAge: maximumAge,
-            includesLastSeen: false
+            includesLastSeen: false,
+            accountOverview: accountOverview
         )
     }
 
@@ -245,7 +256,8 @@ public enum ResetCreditSurfaceAdvisor {
         limits: [UsageLimit],
         now: Date,
         maximumAge: TimeInterval,
-        includesLastSeen: Bool
+        includesLastSeen: Bool,
+        accountOverview: AccountOverview? = nil
     ) -> ProviderResetCreditSurfaceSummary? {
         var guidance = ResetCreditGuidanceAdvisor.guidance(
             reports: reports,
@@ -263,6 +275,29 @@ public enum ResetCreditSurfaceAdvisor {
                 configuredAccountID: report.configuredAccountID, accountName: report.accountName,
                 resetCredits: credits, weeklyResetsAt: nil, state: .refresh(.weeklyLimitUnknown))
         })
+        if let accountOverview {
+            guidance = guidance.map { inventory in
+                guard inventory.state.supportsResetCreditGlance else { return inventory }
+                let account = accountOverview.accounts.first {
+                    $0.id == AccountDisplayMetadata.safeID(inventory.provider, inventory.accountID)
+                }
+                let assessment = account?.resetAssessment
+                // No assessment means the quota/value is not trustworthy enough to advise applying.
+                let state: ResetCreditGuidanceState
+                if let assessment {
+                    state = assessment.recommended ? .considerUsingNow : .hold(.weeklyCapacityHealthy)
+                } else if case .refresh = inventory.state {
+                    state = inventory.state
+                } else {
+                    state = .refresh(.assessmentUnavailable)
+                }
+                var result = ProviderResetCreditGuidance(provider: inventory.provider, accountID: inventory.accountID,
+                    configuredAccountID: inventory.configuredAccountID, accountName: account?.metadata.label ?? inventory.accountName,
+                    resetCredits: inventory.resetCredits, weeklyResetsAt: inventory.weeklyResetsAt, state: state)
+                result.assessment = assessment
+                return result
+            }
+        }
         let trustworthy = guidance.filter { $0.state.supportsResetCreditGlance }
         let displayed: [ProviderResetCreditGuidance]
         let isLastSeenOnly: Bool
@@ -280,12 +315,11 @@ public enum ResetCreditSurfaceAdvisor {
             accountCount: displayed.count,
             includesMultipleProviders: Set(displayed.map(\.provider)).count > 1,
             isLastSeenOnly: isLastSeenOnly,
-            primaryActionableGuidance: ResetCreditGuidanceAdvisor.primaryActionableGuidance(
-                reports: reports,
-                limits: limits,
-                now: now,
-                maximumAge: maximumAge
-            ),
+            primaryActionableGuidance: accountOverview == nil ? ResetCreditGuidanceAdvisor.primaryActionableGuidance(
+                reports: reports, limits: limits, now: now, maximumAge: maximumAge
+            ) : trustworthy.filter { $0.state.isActionable }.min {
+                ($0.assessment?.expiresAt ?? .distantFuture, $0.id) < ($1.assessment?.expiresAt ?? .distantFuture, $1.id)
+            },
             primaryDeadlineGuidance: trustworthy.min { lhs, rhs in
                 let left = lhs.resetCredits.earliestKnownExpiry ?? .distantFuture
                 let right = rhs.resetCredits.earliestKnownExpiry ?? .distantFuture
@@ -514,7 +548,7 @@ private extension ResetCreditGuidanceState {
         switch self {
         case .hold, .considerUsingNow, .considerBefore:
             true
-        case .refresh(.expiryUnknown), .refresh(.weeklyLimitUnknown), .refresh(.naturalResetUnknown):
+        case .refresh(.expiryUnknown), .refresh(.weeklyLimitUnknown), .refresh(.naturalResetUnknown), .refresh(.assessmentUnavailable):
             true
         case .refresh(.staleObservation), .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
             false
