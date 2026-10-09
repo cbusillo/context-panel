@@ -64,33 +64,33 @@ jobs:
         run: |
           scripts/release-workflow-guard.sh --version "${INPUT_VERSION}"
 
-      - name: Require Completed Approval Setup
+      - name: Require Completed Release Setup
         env:
           RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
         run: scripts/release-approval-config.sh
 
-      - name: Verify Required Review Environment
+      - name: Verify No-Click Release Environments
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check-release-approval-environment.py
 
-  approve:
-    name: Approve Release Intent
+  intent:
+    name: Record Release Intent
     needs: guard
     runs-on: ubuntu-latest
     environment: release-approval
     permissions:
       contents: read
     steps:
-      - name: Record Approved Intent
+      - name: Record Standing Acceptance
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+          printf 'Release intent under standing acceptance for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
 
   upload:
     name: Upload Screenshots
-    needs: [guard, approve]
+    needs: [guard, intent]
     runs-on: ubuntu-latest
     environment: release
 

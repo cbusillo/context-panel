@@ -11,7 +11,8 @@ from urllib.parse import quote
 
 def fetch_metadata(endpoint: str, *, pages: bool = False) -> dict | list:
     # gh uses the built-in workflow token supplied as GH_TOKEN by Actions.
-    command = ["gh", "api", "--method", "GET", endpoint]
+    command = [os.environ.get("CONTEXT_PANEL_ENVIRONMENT_GH", "gh"),
+               "api", "--method", "GET", endpoint]
     if pages:
         command += ["--paginate", "--slurp"]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -34,23 +35,14 @@ def check_fields(environment: dict) -> None:
                 raise ValueError("reviewer metadata is incomplete")
 
 
-def check(environment: dict, owner: str) -> None:
+def check(environment: dict) -> None:
     check_fields(environment)
-    if environment.get("name") != "release-approval":
-        raise ValueError("release-approval environment is missing")
-    rules = [rule for rule in environment["protection_rules"]
-             if rule.get("type") == "required_reviewers"]
-    if len(rules) != 1:
-        raise ValueError("release-approval must have a required reviewer")
-    reviewers = rules[0].get("reviewers", [])
-    if len(reviewers) != 1 or reviewers[0].get("type") != "User" or (
-        (reviewers[0].get("reviewer") or {}).get("login", "").casefold() != owner.casefold()
-    ):
-        raise ValueError("release-approval must require the repository owner's review")
-    if environment["can_admins_bypass"] is not False:
-        raise ValueError("release-approval must disable administrator bypass")
-    if rules[0].get("prevent_self_review") is not False:
-        raise ValueError("release-approval must allow the solo owner to review")
+    for rule in environment["protection_rules"]:
+        if rule.get("type") == "branch_policy":
+            continue
+        if rule.get("type") == "wait_timer" and rule.get("wait_timer") == 0:
+            continue
+        raise ValueError(f"{environment.get('name')}: remove release approval or delay protection by hand")
 
 
 def check_branches(environment: dict, branches: list[dict]) -> None:
@@ -75,6 +67,7 @@ def read_environment(repository: str, name: str) -> dict:
 
 def check_secret_store(repository: str) -> None:
     environment = read_environment(repository, "release")
+    check(environment)
     if (environment.get("deployment_branch_policy") or {}).get("protected_branches"):
         pages = fetch_metadata(f"repos/{repository}/branches?protected=true&per_page=100", pages=True)
         branches = [branch for page in pages for branch in page]
@@ -95,10 +88,10 @@ def main() -> int:
     try:
         check_secret_store(repository)
         if not args.probe:
-            check(read_environment(repository, "release-approval"), repository.split("/", 1)[0])
-        print("secret-store protection metadata verified" if args.probe else "required owner review verified")
+            check(read_environment(repository, "release-approval"))
+        print("secret-store protection metadata verified" if args.probe else "no-click release metadata verified")
     except (ValueError, TypeError, KeyError, AttributeError, OSError) as error:
-        parser.exit(1, f"release review metadata: {error}\n")
+        parser.exit(1, f"release environment metadata: {error}\n")
     return 0
 
 

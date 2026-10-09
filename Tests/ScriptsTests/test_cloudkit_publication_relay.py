@@ -44,7 +44,7 @@ class RelayTests(unittest.TestCase):
             "path": ".github/workflows/ship.yml",
         }
         self.jobs = [
-            {"name": "Approve Release Intent", "conclusion": "success"},
+            {"name": "Record Release Intent", "conclusion": "success"},
             {"name": "Validate Trusted Release Source", "conclusion": "success"},
         ]
 
@@ -75,7 +75,7 @@ class RelayTests(unittest.TestCase):
         github.api.side_effect = api
         return github
 
-    def test_approval_days_after_dispatch_gets_one_fresh_live_check(self):
+    def test_release_days_after_dispatch_gets_one_fresh_live_check(self):
         self.run["created_at"] = (self.now - timedelta(days=3)).isoformat()
         github = self.github()
         check = Mock(return_value=self.receipt())
@@ -203,7 +203,7 @@ class RelayTests(unittest.TestCase):
                 receipt, self.request, now=self.now, key=KEY, ckdb=ROOT / "README.md"
             )
 
-    def test_untrusted_pending_or_unapproved_run_never_checks_schema(self):
+    def test_untrusted_pending_or_unrecorded_run_never_checks_schema(self):
         for field, value in {
             "status": "completed",
             "head_branch": "work/test",
@@ -389,7 +389,7 @@ class RelayTests(unittest.TestCase):
         with self.assertRaises(relay.RelayError):
             relay.trusted_run(self.request, self.run, jobs)
 
-    def test_ship_nested_skipped_guards_do_not_replace_top_level_approval(self):
+    def test_ship_nested_skipped_guards_do_not_replace_top_level_intent(self):
         jobs = [
             {
                 **job,

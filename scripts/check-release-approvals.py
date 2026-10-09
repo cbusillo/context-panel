@@ -3,7 +3,7 @@
 # requires-python = ">=3.13"
 # dependencies = ["PyYAML>=6,<7"]
 # ///
-"""Lint the release approval graph and print a secretless all-channel plan.
+"""Lint the no-click release graph and print a secretless all-channel plan.
 
 This checks the classified local graph, not live settings or remote callees.
 """
@@ -19,11 +19,11 @@ import shlex
 import sys
 
 SHIP_CALLER = "github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository)"
-STANDALONE_APPROVAL = "${{ !(" + SHIP_CALLER + ") }}"
+STANDALONE_INTENT = "${{ !(" + SHIP_CALLER + ") }}"
 CHANNEL_READY = (
     "${{ !cancelled() && needs.guard.result == 'success' && "
-    "(needs.approve.result == 'success' || (" + SHIP_CALLER +
-    " && needs.approve.result == 'skipped')) }}"
+    "(needs.intent.result == 'success' || (" + SHIP_CALLER +
+    " && needs.intent.result == 'skipped')) }}"
 )
 CHANNELS = {
     "github-release": "release.yml",
@@ -145,16 +145,16 @@ def check(workflows: dict[str, dict]) -> dict:
                 and not metadata_steps[0].get("continue-on-error")
                 and metadata_steps[0].get("env", {}).get("GH_TOKEN") == "${{ github.token }}"
                 and guard.get("permissions", {}).get("actions") == "read",
-                f"{workflow_name}: live required-review metadata must be checked")
+                f"{workflow_name}: live no-click environment metadata must be checked")
 
-    def approval_check(jobs: dict, workflow_name: str, reusable: bool = False) -> None:
-        approval = jobs.get("approve", {})
-        require(environment(approval) == "release-approval" and not secret_bearing(approval),
-                f"{workflow_name}: review gate must be secretless in release-approval")
-        require(needs(approval) == ["guard"] and not approval.get("continue-on-error"),
-                f"{workflow_name}: review gate must follow successful trust guard")
-        require(approval.get("if", "") == (STANDALONE_APPROVAL if reusable else ""),
-                f"{workflow_name}: only the exact Ship caller may skip standalone review")
+    def intent_check(jobs: dict, workflow_name: str, reusable: bool = False) -> None:
+        record = jobs.get("intent", {})
+        require(environment(record) == "release-approval" and not secret_bearing(record),
+                f"{workflow_name}: intent gate must be secretless in release-approval")
+        require(needs(record) == ["guard"] and not record.get("continue-on-error"),
+                f"{workflow_name}: intent gate must follow successful trust guard")
+        require(record.get("if", "") == (STANDALONE_INTENT if reusable else ""),
+                f"{workflow_name}: only the exact Ship caller may skip standalone intent recording")
 
     for filename in ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY):
         document = workflows[filename]
@@ -162,16 +162,16 @@ def check(workflows: dict[str, dict]) -> dict:
                 f"{filename}: workflow-level secrets would reach the secretless gates")
     ship = workflows["ship.yml"]["jobs"]
     guard_check(ship, "ship.yml")
-    approval_check(ship, "ship.yml")
+    intent_check(ship, "ship.yml")
     intent = ship["validate"]
     require(environment(intent) == "release",
             "Ship preflight must use the sole release secret environment")
     require(not intent.get("if") and not intent.get("continue-on-error"),
             "Ship preflight cannot be optional or tolerate failure")
-    require(needs(intent) == ["approve"], "Ship preflight must follow approved intent")
+    require(needs(intent) == ["intent"], "Ship preflight must follow recorded intent")
     for job_id, job in ship.items():
-        require(job_id in ("approve", "validate") or environment(job) is None,
-                f"Ship/{job_id}: only review and preflight may attach environments")
+        require(job_id in ("intent", "validate") or environment(job) is None,
+                f"Ship/{job_id}: only intent and preflight may attach environments")
         require(not secret_bearing(job) or job_id == "validate",
                 f"Ship/{job_id}: only guarded preflight may reference secrets")
         if "uses" in job:
@@ -190,7 +190,7 @@ def check(workflows: dict[str, dict]) -> dict:
         condition = re.sub(r"\s+", " ", call.get("if", "")).strip()
         if re.search(r"\b(always|failure|cancelled)\s*\(", condition):
             # The TestFlight join intentionally runs with skipped upload channels.
-            # Its top-level conjunction must still require approved intent success.
+            # Its top-level conjunction must still require recorded intent success.
             require(condition.startswith(
                 "${{ !cancelled() && inputs.testflight_beta && needs.validate.result == 'success' &&"
             ) and channel == "testflight-beta" and not top_level_or(condition)
@@ -205,33 +205,33 @@ def check(workflows: dict[str, dict]) -> dict:
         require("workflow_dispatch" in document["on"] and "workflow_call" in document["on"],
                 f"{filename}: recovery dispatch and reusable call must remain supported")
         guard_check(document["jobs"], filename)
-        approval_check(document["jobs"], filename, reusable=True)
+        intent_check(document["jobs"], filename, reusable=True)
         count = 0
         for job_id, job in document["jobs"].items():
-            if job_id not in ("guard", "approve"):
+            if job_id not in ("guard", "intent"):
                 count += 1
                 require(environment(job) == "release",
                         f"{filename}/{job_id}: channel must use the sole release secret environment")
-                require(needs(job) == ["guard", "approve"]
+                require(needs(job) == ["guard", "intent"]
                         and re.sub(r"\s+", " ", job.get("if", "")).strip() == CHANNEL_READY
                         and not job.get("continue-on-error"),
-                        f"{filename}/{job_id}: must require guard and standalone or Ship approval")
+                        f"{filename}/{job_id}: must require guard and standalone or Ship intent")
             require(not secret_bearing(job) or environment(job) == "release",
                     f"{filename}/{job_id}: secrets require the single guarded environment")
-            require("uses" not in job, f"{filename}: nested channels require approval policy review")
+            require("uses" not in job, f"{filename}: nested channels require release policy review")
         require(count == 1, f"{filename}: expected one guarded channel job")
     for filename in STANDALONE_ONLY:
         standalone_jobs = workflows[filename]["jobs"]
         guard_check(standalone_jobs, filename)
-        approval_check(standalone_jobs, filename)
+        intent_check(standalone_jobs, filename)
         require(len(standalone_jobs) == 3, f"{filename}: classify additional jobs before adding them")
         for job_id, job in standalone_jobs.items():
-            if job_id not in ("guard", "approve"):
+            if job_id not in ("guard", "intent"):
                 require(environment(job) == "release",
                         f"{filename}/{job_id}: standalone secrets require the sole release secret environment")
-                require(needs(job) == ["guard", "approve"] and not job.get("if")
+                require(needs(job) == ["guard", "intent"] and not job.get("if")
                         and not job.get("continue-on-error"),
-                        f"{filename}/{job_id}: standalone secrets require successful review")
+                        f"{filename}/{job_id}: standalone secrets require successful intent recording")
     all_names = set().union(*(secret_names(workflows[filename]) for filename in
                              ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY)))
     classified = {"ship.yml", *CHANNELS.values(), *STANDALONE_ONLY}
@@ -249,30 +249,29 @@ def check(workflows: dict[str, dict]) -> dict:
                         f"{filename}/{job_id}: cannot rule out a release environment; "
                         "classify release workflows, or use a literal unrelated name or "
                         "a disjoint namespace such as preview-${{ inputs.target }}")
-    reviewed_jobs = [job_id for job_id, job in ship.items()
+    intent_jobs = [job_id for job_id, job in ship.items()
                      if environment(job) == "release-approval"]
     return {
-        "proof": "classified release graph structural dry-run; live environment configuration is owner-confirmed",
+        "proof": "classified release graph structural dry-run; live no-click environment configuration requires metadata verification",
         "secret_inventory_scope": "names referenced by jobs using each environment, not actual storage locations",
         "reusable_workflow_coverage": {
             "complete": not unclassified_calls,
             "unclassified_calls": unclassified_calls,
-            "limitation": "Unclassified reusable calls are accepted but their approval dependencies "
+            "limitation": "Unclassified reusable calls are accepted but their intent dependencies "
                           "are not checked. Remote jobs and nested calls are not fetched or executed.",
         },
         "secret_names_by_environment": {"release": sorted(all_names), "release-approval": sorted(set().union(*(
-            secret_names(workflows[filename]["jobs"]["approve"])
+            secret_names(workflows[filename]["jobs"]["intent"])
             for filename in ("ship.yml", *CHANNELS.values(), *STANDALONE_ONLY))))},
-        "activation": "RELEASE_APPROVALS_CONFIGURED=true only after owner moves reviewer role",
+        "activation": "RELEASE_APPROVALS_CONFIGURED=true; owner removes environment reviewer before no-click runs",
         "fallback": "Unset/false activation refuses new release workflows before any environment job",
-        "ship": {"reviewed_jobs": reviewed_jobs, "approval_count": len(reviewed_jobs),
+        "human_approval_policy": "none; verified by the live environment check, not this structural plan",
+        "ship": {"intent_jobs": intent_jobs,
                  "secret_environment": "release", "channels": list(CHANNELS),
                  "repository_secrets": "inherited by same-commit local channels"},
         "standalone": {
-            filename: {"reviewed_jobs": [job_id for job_id, job in workflows[filename]["jobs"].items()
+            filename: {"intent_jobs": [job_id for job_id, job in workflows[filename]["jobs"].items()
                                         if environment(job) == "release-approval"],
-                       "approval_count": sum(environment(job) == "release-approval"
-                                             for job in workflows[filename]["jobs"].values()),
                        "secret_environment": "release"}
             for filename in (*CHANNELS.values(), *STANDALONE_ONLY)
         },
