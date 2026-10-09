@@ -102,40 +102,40 @@ jobs:
             --version "${INPUT_VERSION}" \
             --build-number "${INPUT_BUILD_NUMBER}"
 
-      - name: Require Completed Approval Setup
+      - name: Require Completed Release Setup
         env:
           RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
         run: scripts/release-approval-config.sh
 
-      - name: Verify Required Review Environment
+      - name: Verify No-Click Release Environments
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check-release-approval-environment.py
 
-  approve:
-    name: Approve Release Intent
+  intent:
+    name: Record Release Intent
     needs: guard
-    # Ship already reviewed this exact caller intent; all other callers need review.
+    # Ship already records this exact caller intent; other callers record their own.
     if: ${{ !(github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository)) }}
     runs-on: ubuntu-latest
     environment: release-approval
     permissions:
       contents: read
     steps:
-      - name: Record Approved Intent
+      - name: Record Standing Acceptance
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+          printf 'Release intent under standing acceptance for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
 
   distribute:
     name: Distribute TestFlight Beta
-    needs: [guard, approve]
+    needs: [guard, intent]
     runs-on: ubuntu-latest
     if: >-
       ${{ !cancelled() && needs.guard.result == 'success' &&
-          (needs.approve.result == 'success' ||
-           (github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository) && needs.approve.result == 'skipped')) }}
+          (needs.intent.result == 'success' ||
+           (github.workflow_ref == format('{0}/.github/workflows/ship.yml@refs/heads/main', github.repository) && needs.intent.result == 'skipped')) }}
     environment: release
 
     permissions:

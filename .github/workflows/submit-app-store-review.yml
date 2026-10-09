@@ -286,33 +286,33 @@ jobs:
             --version "${INPUT_VERSION}" \
             --build-number "${INPUT_BUILD_NUMBER}"
 
-      - name: Require Completed Approval Setup
+      - name: Require Completed Release Setup
         env:
           RELEASE_APPROVALS_CONFIGURED: ${{ vars.RELEASE_APPROVALS_CONFIGURED }}
         run: scripts/release-approval-config.sh
 
-      - name: Verify Required Review Environment
+      - name: Verify No-Click Release Environments
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check-release-approval-environment.py
 
-  approve:
-    name: Approve Release Intent
+  intent:
+    name: Record Release Intent
     needs: guard
     runs-on: ubuntu-latest
     environment: release-approval
     permissions:
       contents: read
     steps:
-      - name: Record Approved Intent
+      - name: Record Standing Acceptance
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          printf 'Approved release intent for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
+          printf 'Release intent under standing acceptance for version %s at %s\n' "$INPUT_VERSION" "$GITHUB_SHA"
 
   submit:
     name: Submit App Store Review
-    needs: [guard, approve]
+    needs: [guard, intent]
     runs-on: macos-26
     environment: release
 

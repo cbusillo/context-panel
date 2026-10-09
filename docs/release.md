@@ -28,68 +28,75 @@ App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
 is explicit.
 
-A configured `Ship` run requires **one approval**: the secretless `Approve
-Release Intent` job uses `release-approval`, with Chris as required reviewer.
-After that job succeeds, `Validate Release Intent` preflights App Store versions
-and resolves the build number using the `release` environment. All signing,
-notarization, upload, CloudKit-receipt, and TestFlight jobs use `release` as
-their only secret environment, alongside inherited repository secrets. Keep each
-credential in one store. That environment has no reviewer or wait timer and accepts
-only the protected `main` branch. The gate environment contains no secrets.
+## Before starting Ship
 
-The four reusable channels identify Ship through `github.workflow_ref`,
-GitHub's caller workflow identity, rather than a dispatch input. Only this
-repository's `ship.yml` on `refs/heads/main` skips their standalone `approve`
-job; their caller jobs must depend on successful Ship validation. Every other
-caller must grant `actions: read` plus at least `contents: read` for metadata
-and checkout; GitHub Release publication requires `contents: write`. Direct
-dispatch requires its own secretless reviewed gate before
-using `release`. App Store Review submission and screenshots always require
-that gate, including reusable calls. Channel jobs explicitly reject failed or
-cancelled guards and failed standalone approvals; the skipped-gate path is
-limited to the exact Ship caller. Ship's TestFlight join also requires successful
-validation and the selected upload before distributing a build.
+Follow the overall [release direction](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md).
+For Context Panel, the [recorded Q94 decision](https://github.com/cbusillo/context-panel/issues/752#issuecomment-6062518684)
+sets the operator preflight: name Chris's release request or the approved issue
+whose finish line requires the change installed. Post the list of changes since
+the last release on the release's owning issue **before dispatching Ship**.
+Check that every listed change is finished; stop if any is unfinished. An agent
+may suggest a release with that list, but a suggestion alone is not a release
+request. Do not dispatch on a schedule or because time has passed.
+
+A configured `Ship` run requires **zero human environment approvals**. Its
+secretless `Record Release Intent` job uses the existing `release-approval`
+environment to record standing acceptance. After it succeeds, `Validate Release
+Intent` preflights App Store versions and resolves the build number using
+`release`. All signing, notarization, upload, CloudKit-receipt and TestFlight
+jobs use `release` as their only secret environment, alongside inherited
+repository secrets. Keep each credential in one store. Both environments have
+no reviewer or wait timer; `release` accepts only protected `main`.
+The intent environment contains no secrets.
+
+The four reusable channels identify Ship through `github.workflow_ref`, GitHub's
+caller identity. This repository's `ship.yml` on `refs/heads/main` skips their
+standalone intent job because Ship already recorded it. Other callers and direct
+dispatches record their own intent automatically before using `release`.
+App Store Review submission and screenshots also record intent automatically.
+Callers grant `actions: read` and at least `contents: read`; GitHub Release
+publication requires `contents: write`. Channel jobs reject failed or cancelled
+guards and failed intent jobs. The skipped-intent path remains limited to the
+exact Ship caller. Ship's TestFlight join requires successful validation and the
+selected upload before distributing a build.
 
 Ship passes repository secrets to each same-commit local channel workflow with
 `secrets: inherit`. GitHub does not automatically forward repository secrets to
 reusable workflows; selecting `environment: release` in the called job supplies
 that environment's secrets, not the caller's repository secrets. Existing
 repository entries can therefore stay in their current store without copying or
-moving values. The reviewed gate consumes no secrets, and channel calls still
-require successful approved validation. The environment and inheritance semantics
+moving values. The intent gate consumes no secrets, and channel calls still
+require successful validation. The environment and inheritance semantics
 are covered in [Reusable-workflow coverage](#reusable-workflow-coverage).
 
 Dispatch release workflows from `main`. Before any environment job, the
 secretless trust guard verifies the protected ref, checked-out commit, main
 ancestry, version, and build number. A second secretless check refuses new runs
 unless the repository variable `RELEASE_APPROVALS_CONFIGURED` is exactly `true`.
-Before any environment job, a read-only metadata check also requires
-`release-approval` to exist, name the repository owner as sole required reviewer,
-allow solo self-review and disable administrator bypass. Missing rules, a missing
-environment or an unavailable API fail closed. The check also verifies that
-`release` accepts only `main`. The CI probe verifies the secret store's current
-branch policy and protection-field visibility; the release guard checks the
-review gate's actual reviewer settings when it exists. Both use
-the built-in workflow token; no operator credential or secret endpoint is used.
-Set activation only after the owner finishes the role move below. Removing it
-pauses new release runs; it does not re-add an environment reviewer. Each pending
-channel guard reads the variable again, so removing it can also block a channel
-in an approved run. Jobs whose guards already passed are unaffected. The previous
-`RELEASE_CHANNELS_CONFIGURED` variable and `release-channels` environment are
-unused by this design.
+Before any environment job, a read-only metadata check requires `release` and
+`release-approval` to have no required reviewer, nonzero wait timer or other
+deployment protection gate. Missing environments, incomplete metadata and an
+unavailable API fail closed. It also verifies that `release` accepts only `main`.
+CI's `--probe` checks the secret store; release guards check both environments.
+Both use the built-in workflow token and metadata endpoints, never secret values.
+The existing activation variable remains the supported pause switch: unset it
+or set it to `false` to refuse new runs before environment jobs. Each pending
+channel guard reads it again; jobs whose guards passed are unaffected. It does
+not restore reviewer rules. `RELEASE_CHANNELS_CONFIGURED` and `release-channels`
+remain unused.
 
-Retry failed channel jobs within the original approved run to retain its review;
-a new Ship dispatch needs its own approval. Re-running the approval job itself
-can request review again. Live prompt counts are GitHub-owned evidence and must
-be checked during a later authorized release, never by dispatching solely to
-test this change.
+Retry failed channel jobs through the original run and its evidence-recovery
+rules. Historical runs retain their original workflow and may still expect
+review; source changes do not rewrite them. Do not dispatch or rerun a release
+solely to test this change. Signing, notarization, exact-source CloudKit schema
+receipts and signed validation evidence remain required on their existing paths.
 
 Protected-main workflow changes remain trusted: environment branch rules do
 not restrict secrets to a workflow filename. Classify new release jobs and their
-approval dependencies in the checker, and obtain the model review required for
+intent dependencies in the checker, and obtain the model review required for
 approval changes. `scripts/check-release-approvals.py` lints the parsed workflow
 graph in CI and prints an all-channel structural dry-run plus secret names,
-never values. It checks one secretless Ship gate, standalone review paths,
+never values. It checks one secretless Ship intent job, standalone intent paths,
 success dependencies, repository-secret inheritance on all four local channel
 calls, and a single secret environment. It cannot verify live
 reviewer settings or actual secret placement. In unclassified workflows, it
@@ -106,12 +113,12 @@ namespace, such as `preview-${{ inputs.target }}` or
 string, including empty; the fixed parts must rule out all three reserved
 names. Complex expressions (functions, operators, bracket lookups) are opaque
 and refused; rewrite unrelated selection using the supported namespace route.
-An actual release workflow must join the classified approval graph instead.
+An actual release workflow must join the classified release graph instead.
 The checker never reads variable values or evaluates GitHub Actions code, and
-the classified workflows' one-approval contract and protected-main checks remain
+the classified workflows' no-click contract and protected-main checks remain
 unchanged. Repository secrets themselves have no environment branch restriction:
 a different same-repository branch workflow can reference them without entering
-`release` or its approval path. This existing repository-scope exposure is not
+`release` or its guarded path. This existing repository-scope exposure is not
 changed by forwarding; the Ship checks govern this release path, not every
 possible consumer of a repository secret.
 
@@ -122,7 +129,8 @@ classified release graph, including local calls and remote calls pinned to a
 commit, tag or branch. These calls remain supported. Any listed call sets
 `complete: false` and prints a coverage warning (an annotation in GitHub Actions);
 exit success still means the
-classified graph passed, not that every called job has an approval gate.
+classified graph passed, not that every called job follows the classified
+release path.
 Step-level actions are not reusable-workflow calls. Local workflow documents
 still receive the environment-name check above, but their unclassified call
 dependencies are not qualified. Remote jobs and nested calls are never fetched
@@ -136,78 +144,40 @@ secrets. The [caller context persists](https://docs.github.com/en/actions/refere
 and a calling job cannot declare an environment. Therefore, omitting
 `secrets: inherit` does not prove a remote call cannot reach an environment
 store. A main-branch caller of an accessible remote workflow whose job selects
-`release` is a potential unreviewed secret-store path. This is an inference from
-documented semantics, not a live credential-access result; no external workflow
-was run to qualify this assessment. Actual exposure also depends on Actions
-access policy and the selected callee's jobs.
+`release` is a potential secret-store path outside the classified graph. This is
+an inference from documented semantics, not a live credential-access result;
+no external workflow was run to qualify this assessment. Actual exposure also
+depends on Actions access policy and the selected callee's jobs.
 
 For an unrelated reusable call, inspect the exact callee and any nested calls
 during protected-main source review; prefer an immutable commit reference and
-check environment selection, secret use and approval dependencies. A call can
-remain accepted with incomplete coverage; it is not an approval proof. New
+check environment selection, secret use and intent dependencies. A call can
+remain accepted with incomplete coverage; it is not a classified-graph proof. New
 release behavior must join the classified graph and its model-review route.
 A blanket ban, exception allowlist or new blocking approval policy needs a
-separate Director decision. The approved one-approval graph remains unchanged.
+separate Director decision. The no-click graph remains unchanged.
 
-## One-time environment role move (owner only)
+## One-time no-click setup (owner only)
 
-Wait until the active 1.0.69 Ship run and all standalone release jobs finish,
-and this redesign has merged. Do not follow the earlier duplicate-secret setup.
-The preferred hand step leaves the existing `release` secret entries in place:
-no secret value is read, copied, rotated, or re-entered.
+The source change does not change environment access. After it lands, Chris
+performs the already-decided hand step on [#781](https://github.com/cbusillo/context-panel/issues/781).
+Finish or cancel pending release jobs first; historical runs keep their original
+workflow and are not migrated by this setup. No release dispatch is needed.
 
-Historical runs use their original workflow commit when re-run. For up to
-[30 days after the initial run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
-a pre-redesign run can still reference `release` without the new secretless gate.
-Before removing its reviewer, Chris decides the historical-run treatment in
-[direction#24](https://github.com/cbusillo/direction/issues/24) and records it on
-issue #747. Waiting for that window to end preserves logs; deleting runs would require
-Chris's explicit choice and evidence preservation. The agent performs neither.
-Do not remove the reviewer or activate the final one-approval configuration
-before that decision. If Chris chooses a waiting period, he can first configure
-the new gate and confirm the secret inventory, leave `release` reviewed, and set
-the new variable to continue releasing with extra approvals during the transition.
-The one-approval contract applies after the role move is complete.
+1. Open **Settings → Environments → release-approval**. Under protection rules,
+   uncheck **Required reviewers**, leave **Wait timer** off, and click **Save
+   protection rules**. Keep the existing branch policy and add no secrets.
+2. Leave **release** and every secret entry untouched. It remains the single
+   environment secret store, restricted to protected `main`, with no reviewer
+   or wait timer. No credential is read, copied, rotated or re-entered.
+3. Keep the existing repository variable `RELEASE_APPROVALS_CONFIGURED=true`.
+   If it was unset to pause runs, restore `true` only after step 1. Confirm the
+   settings on #781, without values. An agent then runs the GET-only environment
+   checker; no publication is needed for setup verification.
 
-1. Inspect secret **names only** in **Settings → Environments → release** and
-   **Settings → Secrets and variables → Actions → Repository secrets**.
-   Confirm the enabled channels' names from the checker exist here or as
-   repository secrets. Keep existing repository entries in place; Ship inherits
-   them. If a needed name exists in neither store, use its original private
-   source yourself:
-   **Environment secrets → Add environment secret** in `release`, enter its name
-   and value, and click **Add secret** once. Maintain one entry for each
-   credential. If its original source is unavailable, report the name on
-   #747 before removing any reviewer or activating; do not rotate it. The agent
-   never reads, copies or re-enters a value. Skip this entry entirely when
-   each enabled-channel name exists in `release` or as a repository secret.
-2. In **Settings → Environments → New environment**, enter `release-approval`
-   and click **Configure environment**. Enable **Required reviewers**, select
-   `cbusillo`, and save protection rules. Keep self-review allowed for the solo
-   operator; disable administrator bypass. Leave wait timer off and add no
-   secrets. Under **Deployment branches and tags**, choose **Selected branches
-   and tags** → **Add deployment branch or tag rule** → **Branch**, enter `main`,
-   and save.
-3. Only after the direction#24 decision is recorded on #747, return to
-   **release**. Set the same selected **Branch** rule for `main` only.
-   Uncheck **Required reviewers**, keep wait timer off, and save protection rules.
-   Leave every environment secret untouched. The required reviewer now sits on
-   `release-approval`, while all secret jobs continue reading `release`.
-4. In **Settings → Secrets and variables → Actions → Repository secrets**,
-   remove channel-secret duplicates only when the matching name is confirmed in
-   `release`. If an earlier setup created `release-channels`, remove only its
-   confirmed duplicates too, after all older runs have finished. Keep unrelated
-   automation secrets. Missing names require an owner inventory reply, not
-   rotation or deletion of the only copy.
-5. In **Settings → Secrets and variables → Actions → Variables**, delete the
-   obsolete `RELEASE_CHANNELS_CONFIGURED` variable if present. Click **New
-   repository variable**, name it `RELEASE_APPROVALS_CONFIGURED`, enter `true`,
-   and click **Add variable** (or edit/save an existing variable). Do this last
-   for the final role move. On an owner-chosen interim route, enable it after
-   step 2 and the inventory/duplicate cleanup while keeping `release` reviewed;
-   complete step 3 only at the recorded migration time.
-6. Confirm configuration and names on #747 from `cbusillo`, never values. No
-   release dispatch is required or authorized for this setup task.
+Until that hand step is complete, the new full metadata check fails before an
+intent or secret job and directs the operator here. The structural checker proves
+the source graph; it does not prove the live hand step or observe release UI.
 
 The lower-level workflows remain callable for recovery and validation:
 
@@ -405,8 +375,9 @@ uv run --no-project python scripts/publish-github-release.py \
 ```
 
 This checks package metadata and sealed artifact identity; it does not perform
-signing or Apple notarization. The release-approval gate applies to validation
-runs as before.
+signing or Apple notarization. The automatic intent and protected-source checks
+also apply to validation
+runs.
 
 To produce a signed build, configure:
 

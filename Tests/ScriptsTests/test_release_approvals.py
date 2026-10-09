@@ -10,7 +10,7 @@ import tempfile
 from types import SimpleNamespace
 from typing import Any
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location(
     "release_approvals", Path(__file__).resolve().parents[2] / "scripts/check-release-approvals.py"
@@ -34,23 +34,23 @@ def guard() -> dict[str, Any]:
 
 def fixture() -> dict[str, Any]:
     approval = {"environment": "release-approval", "needs": "guard"}
-    ship = {"guard": guard(), "approve": copy.deepcopy(approval),
-            "validate": {"environment": "release", "needs": "approve"}}
+    ship = {"guard": guard(), "intent": copy.deepcopy(approval),
+            "validate": {"environment": "release", "needs": "intent"}}
     documents = {"ship.yml": {"jobs": ship}}
     for channel, filename in policy.CHANNELS.items():
         ship[channel] = {"uses": f"./.github/workflows/{filename}", "needs": "validate",
                          "permissions": {"contents": "read", "actions": "read"}, "secrets": "inherit"}
         documents[filename] = {
             "on": {"workflow_dispatch": {}, "workflow_call": {}},
-            "jobs": {"guard": guard(), "approve": dict(approval, **{"if": policy.STANDALONE_APPROVAL}),
+            "jobs": {"guard": guard(), "intent": dict(approval, **{"if": policy.STANDALONE_INTENT}),
                      "channel": {
-                "needs": ["guard", "approve"], "environment": "release", "if": policy.CHANNEL_READY,
+                "needs": ["guard", "intent"], "environment": "release", "if": policy.CHANNEL_READY,
                 "env": {"SIGNING_KEY": "${{ secrets.SIGNING_KEY }}"},
             }},
         }
     for filename in policy.STANDALONE_ONLY:
-        documents[filename] = {"jobs": {"guard": guard(), "approve": copy.deepcopy(approval), "submit": {
-            "environment": "release", "needs": ["guard", "approve"], "env": {"KEY": "${{ secrets.KEY }}"},
+        documents[filename] = {"jobs": {"guard": guard(), "intent": copy.deepcopy(approval), "submit": {
+            "environment": "release", "needs": ["guard", "intent"], "env": {"KEY": "${{ secrets.KEY }}"},
         }}}
     return documents
 
@@ -149,14 +149,14 @@ class ReleaseApprovalTests(unittest.TestCase):
                     "build": {},
                 }}
                 plan = policy.check(documents)
-                self.assertEqual(plan["ship"]["approval_count"], 1)
+                self.assertEqual(plan["ship"]["approval_count"], 0)
 
-    def test_full_ship_plan_requires_one_approval(self) -> None:
+    def test_full_ship_plan_requires_no_human_approval(self) -> None:
         plan = policy.check(fixture())
         self.assertTrue(plan["reusable_workflow_coverage"]["complete"])
         self.assertEqual(plan["reusable_workflow_coverage"]["unclassified_calls"], [])
-        self.assertEqual(plan["ship"]["approval_count"], 1)
-        self.assertTrue(all(path["secret_environment"] == "release" and path["approval_count"] == 1
+        self.assertEqual(plan["ship"]["approval_count"], 0)
+        self.assertTrue(all(path["secret_environment"] == "release" and path["approval_count"] == 0
                             for path in plan["standalone"].values()))
         self.assertEqual(plan["secret_names_by_environment"]["release-approval"], [])
 
@@ -176,27 +176,27 @@ class ReleaseApprovalTests(unittest.TestCase):
     def test_approval_bypasses_and_extra_prompts_fail(self) -> None:
         mutations = [
             lambda d: d["ship.yml"]["jobs"]["github-release"]["permissions"].pop("actions"),
-            lambda d: d["ship.yml"]["jobs"]["approve"].update(**{"if": "${{ false }}"}),
+            lambda d: d["ship.yml"]["jobs"]["intent"].update(**{"if": "${{ false }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][3].update(**{"if": "${{ false }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][3]["env"].update(GH_TOKEN="${{ secrets.OPERATOR_TOKEN }}"),
             lambda d: d.update({"rogue.yml": {"jobs": {"gate": {"environment": "release-approval"}}}}),
             lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"].update(extra={}),
             lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["submit"].update(needs="guard"),
-            lambda d: d["release.yml"]["jobs"]["approve"].update(**{"continue-on-error": True}),
-            lambda d: d["release.yml"]["jobs"]["approve"].update(needs=[]),
-            lambda d: d["release.yml"]["jobs"].pop("approve"),
+            lambda d: d["release.yml"]["jobs"]["intent"].update(**{"continue-on-error": True}),
+            lambda d: d["release.yml"]["jobs"]["intent"].update(needs=[]),
+            lambda d: d["release.yml"]["jobs"].pop("intent"),
             lambda d: d["release.yml"].update(env={"KEY": "${{ secrets.KEY }}"}),
             lambda d: d["release.yml"].update(defaults={"run": {"working-directory": "${{ secrets.KEY }}"}}),
             lambda d: d["ship.yml"]["jobs"]["github-release"].update(needs="guard"),
             lambda d: d["ship.yml"]["jobs"]["validate"].update(**{"continue-on-error": True}),
             lambda d: d["ship.yml"]["jobs"]["validate"].update(**{"if": "${{ false }}"}),
             lambda d: d["ship.yml"]["jobs"]["validate"].update(needs="guard"),
-            lambda d: d["ship.yml"]["jobs"]["approve"].update(env={"KEY": "${{ secrets.KEY }}"}),
-            lambda d: d["release.yml"]["jobs"]["approve"].update(**{"if": "${{ inputs.skip_approval }}"}),
+            lambda d: d["ship.yml"]["jobs"]["intent"].update(env={"KEY": "${{ secrets.KEY }}"}),
+            lambda d: d["release.yml"]["jobs"]["intent"].update(**{"if": "${{ inputs.skip_approval }}"}),
             lambda d: d["release.yml"]["jobs"]["channel"].update(**{"if": "${{ always() }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][2].update(**{"if": "${{ false }}"}),
             lambda d: d["release.yml"]["jobs"]["guard"]["steps"][2]["env"].update(RELEASE_APPROVALS_CONFIGURED="true"),
-            lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["approve"].update(**{"if": "${{ false }}"}),
+            lambda d: d[policy.STANDALONE_ONLY[0]]["jobs"]["intent"].update(**{"if": "${{ false }}"}),
             lambda d: d["ship.yml"]["jobs"].update(extra={"environment": "release"}),
             lambda d: d["ship.yml"]["jobs"]["github-release"].update(**{"if": "${{ always() }}"}),
             lambda d: d["release.yml"]["jobs"]["channel"].update(environment="release-approval"),
@@ -247,7 +247,7 @@ class ReleaseApprovalTests(unittest.TestCase):
                 result = subprocess.run([str(script)], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, succeeds)
 
-    def test_live_review_metadata_refuses_missing_or_bypassed_review(self) -> None:
+    def test_live_metadata_requires_no_click_environments(self) -> None:
         metadata_spec = importlib.util.spec_from_file_location(
             "approval_environment", Path(__file__).resolve().parents[2]
             / "scripts/check-release-approval-environment.py"
@@ -257,22 +257,21 @@ class ReleaseApprovalTests(unittest.TestCase):
         metadata = importlib.util.module_from_spec(metadata_spec)
         metadata_spec.loader.exec_module(metadata)
         good = {"name": "release-approval", "can_admins_bypass": False,
-                "protection_rules": [{"type": "required_reviewers", "prevent_self_review": False,
-                                      "reviewers": [{"type": "User", "reviewer": {"login": "owner"}}]}]}
-        metadata.check(good, "owner")
-        mutations = [
-            lambda d: d.update(protection_rules=[]),
-            lambda d: d.update(can_admins_bypass=True),
-            lambda d: d.pop("can_admins_bypass"),
-            lambda d: d["protection_rules"][0].update(reviewers=[]),
-            lambda d: d["protection_rules"][0]["reviewers"][0]["reviewer"].update(login="someone_else"),
-            lambda d: d["protection_rules"][0].update(prevent_self_review=True),
-        ]
-        for mutate in mutations:
+                "protection_rules": []}
+        for rules in ([], [{"type": "wait_timer", "wait_timer": 0}],
+                      [{"type": "branch_policy"}]):
+            metadata.check(dict(good, protection_rules=rules))
+        for rules in ([{"type": "required_reviewers", "reviewers": [
+                {"type": "User", "reviewer": {"login": "owner"}}]}],
+                [{"type": "wait_timer", "wait_timer": 5}],
+                [{"type": "wait_timer"}], [{"type": "custom_gate"}]):
+            with self.subTest(rules=rules), self.assertRaises(ValueError):
+                metadata.check(dict(good, protection_rules=rules))
+        for field in ("can_admins_bypass", "protection_rules"):
             document = copy.deepcopy(good)
-            mutate(document)
+            document.pop(field)
             with self.assertRaises(ValueError):
-                metadata.check(document, "owner")
+                metadata.check(document)
         secret_store = {"deployment_branch_policy": {"protected_branches": True,
                                                      "custom_branch_policies": False}}
         metadata.check_branches(secret_store, [{"name": "main"}])
@@ -284,10 +283,56 @@ class ReleaseApprovalTests(unittest.TestCase):
         metadata.check_branches({"deployment_branch_policy": {"protected_branches": False,
                                                              "custom_branch_policies": True}},
                                 [{"name": "main", "type": "branch"}])
-        hidden_review = copy.deepcopy(good)
-        hidden_review["protection_rules"][0]["reviewers"][0]["reviewer"] = None
+        hidden_review = dict(good, protection_rules=[{
+            "type": "required_reviewers", "reviewers": [{"reviewer": None}],
+        }])
         with self.assertRaises(ValueError):
             metadata.check_fields(hidden_review)
         with patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=1)):
             with self.assertRaises(ValueError):
                 metadata.fetch_metadata("repos/owner/repo/environments/release-approval")
+
+    def test_cli_checks_both_environments_before_release_and_only_store_in_probe(self) -> None:
+        metadata_spec = importlib.util.spec_from_file_location(
+            "approval_environment", Path(__file__).resolve().parents[2]
+            / "scripts/check-release-approval-environment.py"
+        )
+        if metadata_spec is None or metadata_spec.loader is None:
+            raise RuntimeError("environment module could not be loaded")
+        metadata = importlib.util.module_from_spec(metadata_spec)
+        metadata_spec.loader.exec_module(metadata)
+        store = {"name": "release", "can_admins_bypass": False,
+                 "protection_rules": [{"type": "branch_policy"}],
+                 "deployment_branch_policy": {"protected_branches": True,
+                                              "custom_branch_policies": False}}
+        intent = {"name": "release-approval", "can_admins_bypass": False,
+                  "protection_rules": [{"type": "branch_policy"}]}
+        reviewer = {"type": "required_reviewers", "reviewers": [
+            {"type": "User", "reviewer": {"login": "owner"}},
+        ]}
+        for probe, protected_environment in ((False, None), (True, None),
+                                             (False, "release"), (True, "release"),
+                                             (False, "release-approval")):
+            with self.subTest(probe=probe, protected_environment=protected_environment):
+                documents = copy.deepcopy({"release": store, "release-approval": intent})
+                if protected_environment:
+                    documents[protected_environment]["protection_rules"] = [reviewer]
+                responses = [documents["release"], [[{"name": "main"}]]]
+                if not probe:
+                    responses.append(documents["release-approval"])
+                fetch = Mock(side_effect=responses)
+                with patch.dict(metadata.__dict__, fetch_metadata=fetch), \
+                        patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo"}), \
+                        patch.object(sys, "argv", ["check"] + (["--probe"] if probe else [])), \
+                        patch.object(sys, "stdout", io.StringIO()), \
+                        patch.object(sys, "stderr", io.StringIO()):
+                    if protected_environment:
+                        with self.assertRaises(SystemExit) as error:
+                            metadata.main()
+                        self.assertEqual(error.exception.code, 1)
+                    else:
+                        self.assertEqual(metadata.main(), 0)
+                    endpoints = [call.args[0] for call in fetch.call_args_list]
+                    self.assertTrue(all("secrets" not in endpoint for endpoint in endpoints))
+                    self.assertEqual(any(endpoint.endswith("/release-approval") for endpoint in endpoints),
+                                     not probe and protected_environment != "release")
