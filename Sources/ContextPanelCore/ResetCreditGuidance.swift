@@ -14,6 +14,7 @@ public enum ResetCreditRefreshReason: Equatable, Sendable {
     case expiryElapsed
     case weeklyLimitUnknown
     case naturalResetUnknown
+    case assessmentUnavailable
 }
 
 public enum ResetCreditGuidanceState: Equatable, Sendable {
@@ -97,6 +98,8 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
             "Weekly limit pressure is unknown."
         case .refresh(.naturalResetUnknown):
             "The weekly reset time is unknown."
+        case .refresh(.assessmentUnavailable):
+            "Reset advice is unavailable for this account's current reading."
         }
     }
 
@@ -286,7 +289,7 @@ public enum ResetCreditSurfaceAdvisor {
                 } else if case .refresh = inventory.state {
                     state = inventory.state
                 } else {
-                    state = .refresh(.weeklyLimitUnknown)
+                    state = .refresh(.assessmentUnavailable)
                 }
                 var result = ProviderResetCreditGuidance(provider: inventory.provider, accountID: inventory.accountID,
                     configuredAccountID: inventory.configuredAccountID, accountName: account?.metadata.label ?? inventory.accountName,
@@ -545,7 +548,7 @@ private extension ResetCreditGuidanceState {
         switch self {
         case .hold, .considerUsingNow, .considerBefore:
             true
-        case .refresh(.expiryUnknown), .refresh(.weeklyLimitUnknown), .refresh(.naturalResetUnknown):
+        case .refresh(.expiryUnknown), .refresh(.weeklyLimitUnknown), .refresh(.naturalResetUnknown), .refresh(.assessmentUnavailable):
             true
         case .refresh(.staleObservation), .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
             false

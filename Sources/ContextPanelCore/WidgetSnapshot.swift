@@ -139,7 +139,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         )
         let expiryPromptTransitions = reports.compactMap { $0.resetCredits?.presented(at: now).earliestKnownExpiry }
             .map { $0.addingTimeInterval(-ResetAssessment.expiringWithin) }.filter { $0 > now }
-        return Array(Set(inventoryTransitions + expiryPromptTransitions)).sorted()
+        let valueTransitions = accountOverview(now: now, maximumAge: maximumAge).accounts.compactMap { account in
+            account.resetAssessment?.nextValueTransitionDate(for: account, now: now)
+        }
+        return Array(Set(inventoryTransitions + expiryPromptTransitions + valueTransitions)).sorted()
     }
 
     public var aggregateCapacityRatio: Double {

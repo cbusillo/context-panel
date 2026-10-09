@@ -70,7 +70,9 @@ func windowWidgetPreservesIndependentWorthwhileExpiryPrompt(provider: Provider) 
 func windowWidgetCannotProveProviderEmptyFromDegradedSibling(state: AccountCapacityState) throws {
     let snapshot = windowResetSnapshot(secondUsed: 100, secondState: state)
     #expect(snapshot.primaryActionableResetCreditGuidance(now: windowResetNow) == nil)
-    #expect(snapshot.resetCreditSurfaceSummary(now: windowResetNow)?.primaryDeadlineGuidance?.state.isActionable == false)
+    let deadline = try #require(snapshot.resetCreditSurfaceSummary(now: windowResetNow)?.primaryDeadlineGuidance)
+    #expect(deadline.state == .refresh(.assessmentUnavailable))
+    #expect(deadline.recommendationDetail(now: windowResetNow).contains("current reading"))
 }
 
 @Test func windowWidgetSchedulesTheIndependentExpiryPromptBoundary() {
@@ -87,4 +89,19 @@ func windowWidgetCannotProveProviderEmptyFromDegradedSibling(state: AccountCapac
     let deadline = try #require(summary.primaryDeadlineGuidance)
     #expect(deadline.recommendationTitle == snapshot.accountOverview(now: windowResetNow).accounts
         .first { $0.id == AccountDisplayMetadata.safeID(.openAI, deadline.accountID) }?.resetAssessment?.title)
+}
+
+@Test(arguments: [Provider.openAI, .anthropic])
+func windowWidgetSchedulesLossOfResetValueWithinFreshReading(provider: Provider) throws {
+    let thresholdHours = provider == .openAI
+        ? ResetAssessment.outOfQuotaThreshold * 7 * 24 / 100
+        : ResetAssessment.outOfQuotaThreshold / ResetAssessment.claudeDefaultRate
+    let snapshot = windowResetSnapshot(provider: provider, secondUsed: 100,
+                                       refillInterval: thresholdHours * 3_600 + 60)
+    #expect(snapshot.primaryActionableResetCreditGuidance(now: windowResetNow) != nil)
+    let afterCrossing = windowResetNow.addingTimeInterval(120)
+    #expect(snapshot.primaryActionableResetCreditGuidance(now: afterCrossing) == nil)
+    #expect(snapshot.resetCreditSurfaceTransitionDates(now: windowResetNow).contains {
+        $0 > windowResetNow && $0 < afterCrossing
+    })
 }

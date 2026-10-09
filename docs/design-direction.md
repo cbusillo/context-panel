@@ -118,8 +118,8 @@ horizontal slots rather than adding cards or reducing visible limit rows.
   current observation remains. Selecting the tag opens OpenAI detail; no app
   surface performs a credit action.
 - Medium and large widgets use the existing section-header baseline. Actionable
-  guidance names one exact account and uses explicit `use now` or `by <date>`
-  copy. Neutral availability says `Credits · N accounts` and never displays a
+  guidance names one exact account and uses explicit `use now` copy when the
+  shared assessment recommends applying. Neutral availability says `Credits · N accounts` and never displays a
   global credit total. The optional window layout takes its action, selected
   account, and accessibility rationale from the shared `ResetAssessment` used
   by the account panel and agent snapshot; inventory and expiry stay visible
