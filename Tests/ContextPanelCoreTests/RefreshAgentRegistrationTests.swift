@@ -111,11 +111,8 @@ private final class ScriptedRefreshAgentRegistrationSleep {
 }
 
 @MainActor
-private func makeRegistrationStateStore() -> (RefreshAgentRegistrationStateStore, UserDefaults, String) {
-    let suiteName = "RefreshAgentRegistrationTests.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suiteName)!
-    defaults.removePersistentDomain(forName: suiteName)
-    return (RefreshAgentRegistrationStateStore(defaults: defaults), defaults, suiteName)
+private func makeRegistrationStateStore() -> RefreshAgentRegistrationStateStore {
+    RefreshAgentRegistrationStateStore(defaults: InMemoryUserDefaults())
 }
 
 private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
@@ -130,8 +127,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         status: .enabled,
         registrationSteps: [.fail, .fail, .succeed(.enabled)]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
         stateStore: stateStore,
@@ -157,8 +153,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         status: .enabled,
         registrationSteps: [.fail, .fail, .fail, .fail]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "old-build")
     stateStore.markRepaired(build: "old-build")
     let coordinator = RefreshAgentRegistrationCoordinator(
@@ -186,8 +181,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     var isEnabled = true
     let service = ScriptedRefreshAgentRegistrationService(status: .enabled)
     service.onUnregister = { isEnabled = false }
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "old-build")
     stateStore.markRepaired(build: "old-build")
     let coordinator = RefreshAgentRegistrationCoordinator(
@@ -219,8 +213,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
             .succeed(.notRegistered),
         ]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
         stateStore: stateStore,
@@ -241,8 +234,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 @Test func refreshAgentRepairTreatsApprovalAndMissingHelperAsTerminal() async {
     for expectedStatus in [RefreshAgentRegistrationStatus.requiresApproval, .notFound] {
         let service = ScriptedRefreshAgentRegistrationService(status: expectedStatus)
-        let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stateStore = makeRegistrationStateStore()
         stateStore.markReconciled(build: "build-1")
         stateStore.markRepaired(build: "build-1")
         let coordinator = RefreshAgentRegistrationCoordinator(
@@ -273,8 +265,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         status: .notRegistered,
         registrationSteps: [.succeed(.enabled)]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "build-1")
     stateStore.markRepaired(build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(
@@ -301,8 +292,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         status: .notRegistered,
         registrationSteps: [.succeed(.notRegistered), .fail]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let verificationDelay = Duration.milliseconds(10)
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
@@ -338,8 +328,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
             .succeed(.enabled),
         ]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     var elapsed = Duration.zero
     var registrationTimes: [Duration] = []
     service.onRegister = { registrationTimes.append(elapsed) }
@@ -370,8 +359,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 @MainActor
 @Test func refreshAgentRepairMarksRunningCurrentBuildWithoutDestructiveRepair() async {
     let service = ScriptedRefreshAgentRegistrationService(status: .enabled)
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
@@ -393,8 +381,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 @MainActor
 @Test func refreshAgentRepairClearsStaleDiagnosticWhenEnabledAgentIsRunning() async {
     let service = ScriptedRefreshAgentRegistrationService(status: .enabled)
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.saveDiagnostic(kind: .failed, build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
@@ -418,8 +405,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         status: .notRegistered,
         registrationSteps: [.succeed(.notRegistered)]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
         stateStore: stateStore,
@@ -444,8 +430,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         status: .notRegistered,
         registrationSteps: [.succeed(.notRegistered), .succeed(.enabled)]
     )
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "build-1")
     stateStore.markRepaired(build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(
@@ -476,8 +461,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 @Test func refreshAgentRepairSchedulingDoesNotWaitForLaunchGrace() {
     var sleepStarted = false
     let service = ScriptedRefreshAgentRegistrationService(status: .enabled)
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
         stateStore: stateStore,
@@ -500,8 +484,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     )
     let scriptedSleep = ScriptedRefreshAgentRegistrationSleep()
     scriptedSleep.suspendsNextCall = true
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
         stateStore: stateStore,
@@ -544,8 +527,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     var staleCallbackCount = 0
     let service = ScriptedRefreshAgentRegistrationService(status: .enabled)
     service.suspendsUnregister = true
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "old-build")
     stateStore.markRepaired(build: "old-build")
     let coordinator = RefreshAgentRegistrationCoordinator(
@@ -594,8 +576,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         registrationSteps: [.succeed(.enabled)]
     )
     service.suspendsUnregister = true
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service,
         stateStore: stateStore,
@@ -642,8 +623,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 @Test func refreshAgentRepairDoesNotTrustOldSuccessWhenTheEnabledAgentIsGone() async {
     let service = ScriptedRefreshAgentRegistrationService(status: .enabled,
         registrationSteps: [.succeed(.enabled)])
-    let (stateStore, defaults, suiteName) = makeRegistrationStateStore()
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let stateStore = makeRegistrationStateStore()
     stateStore.markReconciled(build: "build-1")
     stateStore.markRepaired(build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(service: service, stateStore: stateStore,

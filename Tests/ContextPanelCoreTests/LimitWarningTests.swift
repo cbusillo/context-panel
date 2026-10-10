@@ -4,7 +4,6 @@ import Testing
 @testable import ContextPanelCore
 
 private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
-private let lockContentionSensitivityDelay = Duration.milliseconds(50)
 
 @Test func limitWarningSettingsStoreRoundTripsAndClampsThreshold() throws {
     let directory = try temporaryWarningDirectory()
@@ -962,6 +961,8 @@ private let lockContentionSensitivityDelay = Duration.milliseconds(50)
     try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
     try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
     let poster = FakeWebhookPoster(statusCodes: [204])
+    let contention = AsyncTestGate()
+    let lockInstant = ContinuousClock.now
     let service = LimitWarningWebhookDeliveryService(
         warningSettingsStore: warningSettingsStore,
         settingsStore: settingsStore,
@@ -972,7 +973,12 @@ private let lockContentionSensitivityDelay = Duration.milliseconds(50)
         appVersion: "1.0.test",
         deliveryLock: deliveryLock,
         lockWaitDuration: .seconds(2),
-        lockRetryInterval: .milliseconds(5)
+        lockRetryInterval: .milliseconds(5),
+        lockNow: { lockInstant },
+        lockSleep: { _ in
+            await contention.markStarted()
+            try await contention.waitForRelease()
+        }
     )
     let recoveredSnapshot = UsageSnapshot(generatedAt: warningNow, limits: [
         warningLimit(provider: .anthropic, accountID: "claude", label: "Claude Weekly", used: 80, limit: 100),
@@ -999,9 +1005,8 @@ private let lockContentionSensitivityDelay = Duration.milliseconds(50)
             await service.deliverIfNeeded(decision: decision, now: lowSnapshot.generatedAt)
         }
         do {
-            // SnapshotRefreshLock has no contention observer, so this delay keeps the test sensitive to
-            // moving the persisted snapshot read outside the lock. It does not order the assertions.
-            try await Task.sleep(for: lockContentionSensitivityDelay)
+            // The retry sleep proves the delivery attempted the held lock before the cache changes.
+            try await contention.waitUntilStarted()
             try snapshotStore.save(StoredUsageSnapshot(savedAt: lowSnapshot.generatedAt, snapshot: lowSnapshot))
             return delivery
         } catch {
@@ -1010,6 +1015,7 @@ private let lockContentionSensitivityDelay = Duration.milliseconds(50)
             throw error
         }
     }
+    await contention.release()
     let results = await delivery.value
 
     #expect(results.first?.succeeded == true)
@@ -1097,12 +1103,17 @@ private let lockContentionSensitivityDelay = Duration.milliseconds(50)
     #expect(state.latestTestRecord != nil)
 }
 
-@Test func limitWarningWebhookTestGateTimesOutWhenTheExpectedSignalNeverArrives() async {
+@Test func limitWarningWebhookTestGateCancellationDoesNotLeaveWaitersSuspended() async {
     let gate = AsyncTestGate()
+    let startWaiter = Task { try await gate.waitUntilStarted() }
+    let releaseWaiter = Task { try await gate.waitForRelease() }
+    startWaiter.cancel()
+    releaseWaiter.cancel()
 
-    await #expect(throws: AsyncTestGateError.self) {
-        try await gate.waitUntilStarted(timeout: .milliseconds(10))
-    }
+    await #expect(throws: CancellationError.self) { try await startWaiter.value }
+    await #expect(throws: CancellationError.self) { try await releaseWaiter.value }
+    await gate.markStarted()
+    await gate.release()
 }
 
 @Test func limitWarningWebhookDeliverySummaryRequiresWholeBatchSuccess() throws {
@@ -1469,35 +1480,35 @@ private actor AsyncTestGate {
         waiters.values.forEach { $0.resume() }
     }
 
-    func waitUntilStarted(timeout: Duration = .seconds(1)) async throws {
+    func waitUntilStarted() async throws {
         if started { return }
         let waiterID = UUID()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            guard !Task.isCancelled else {
-                continuation.resume(throwing: CancellationError())
-                return
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                startWaiters[waiterID] = continuation
             }
-            startWaiters[waiterID] = continuation
-            Task.detached {
-                try? await Task.sleep(for: timeout)
-                await self.failStartWaiter(waiterID)
-            }
+        } onCancel: {
+            Task { await self.cancelStartWaiter(waiterID) }
         }
     }
 
-    func waitForRelease(timeout: Duration = .seconds(1)) async throws {
+    func waitForRelease() async throws {
         if released { return }
         let waiterID = UUID()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            guard !Task.isCancelled else {
-                continuation.resume(throwing: CancellationError())
-                return
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                releaseWaiters[waiterID] = continuation
             }
-            releaseWaiters[waiterID] = continuation
-            Task.detached {
-                try? await Task.sleep(for: timeout)
-                await self.failReleaseWaiter(waiterID)
-            }
+        } onCancel: {
+            Task { await self.cancelReleaseWaiter(waiterID) }
         }
     }
 
@@ -1508,22 +1519,18 @@ private actor AsyncTestGate {
         waiters.values.forEach { $0.resume() }
     }
 
-    private func failStartWaiter(_ waiterID: UUID) {
+    private func cancelStartWaiter(_ waiterID: UUID) {
         startWaiters.removeValue(forKey: waiterID)?.resume(
-            throwing: AsyncTestGateError.timedOut("test gate did not start before the deadline")
+            throwing: CancellationError()
         )
     }
 
-    private func failReleaseWaiter(_ waiterID: UUID) {
+    private func cancelReleaseWaiter(_ waiterID: UUID) {
         releaseWaiters.removeValue(forKey: waiterID)?.resume(
-            throwing: AsyncTestGateError.timedOut("test gate was not released before the deadline")
+            throwing: CancellationError()
         )
     }
 
-}
-
-private enum AsyncTestGateError: Error {
-    case timedOut(String)
 }
 
 private func withHeldDeliveryLock<T>(

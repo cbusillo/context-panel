@@ -750,6 +750,8 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
     public let deliveryLock: SnapshotRefreshLock
     public let lockWaitDuration: Duration
     public let lockRetryInterval: Duration
+    private let lockNow: @Sendable () -> ContinuousClock.Instant
+    private let lockSleep: @Sendable (Duration) async throws -> Void
 
     public init(
         warningSettingsStore: LimitWarningSettingsStore,
@@ -763,7 +765,9 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         appVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0",
         deliveryLock: SnapshotRefreshLock? = nil,
         lockWaitDuration: Duration = .seconds(30),
-        lockRetryInterval: Duration = .milliseconds(50)
+        lockRetryInterval: Duration = .milliseconds(50),
+        lockNow: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
+        lockSleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.warningSettingsStore = warningSettingsStore
         self.settingsStore = settingsStore
@@ -777,6 +781,8 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         )
         self.lockWaitDuration = lockWaitDuration
         self.lockRetryInterval = lockRetryInterval
+        self.lockNow = lockNow
+        self.lockSleep = lockSleep
     }
 
     public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> LimitWarningWebhookDeliveryService {
@@ -798,7 +804,7 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
     }
 
     public func updateConfiguration(_ operation: @escaping @Sendable () throws -> Void) async throws {
-        let startedAt = ContinuousClock.now
+        let startedAt = lockNow()
         while !Task.isCancelled {
             if let _ = try await deliveryLock.withLock({
                 try operation()
@@ -806,10 +812,10 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
             }) {
                 return
             }
-            guard startedAt.duration(to: ContinuousClock.now) < lockWaitDuration else {
+            guard startedAt.duration(to: lockNow()) < lockWaitDuration else {
                 throw ConfigurationError.lockTimedOut
             }
-            try await Task.sleep(for: lockRetryInterval)
+            try await lockSleep(lockRetryInterval)
         }
         throw CancellationError()
     }
@@ -914,7 +920,7 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
     }
 
     private func withDeliveryLock<T>(_ operation: () async -> T) async -> T? {
-        let startedAt = ContinuousClock.now
+        let startedAt = lockNow()
         while !Task.isCancelled {
             do {
                 if let value = try await deliveryLock.withLock(operation) {
@@ -923,11 +929,11 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
             } catch {
                 return nil
             }
-            guard startedAt.duration(to: ContinuousClock.now) < lockWaitDuration else {
+            guard startedAt.duration(to: lockNow()) < lockWaitDuration else {
                 return nil
             }
             do {
-                try await Task.sleep(for: lockRetryInterval)
+                try await lockSleep(lockRetryInterval)
             } catch {
                 return nil
             }
