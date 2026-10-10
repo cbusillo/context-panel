@@ -836,30 +836,37 @@ import Testing
         .appending(path: "context-panel-tv-badge-cleanup-\(UUID().uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let suiteName = "ContextPanelTVBadgeCleanupTests-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suiteName))
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let defaults = InMemoryUserDefaults()
     let alertStateURL = directory.appending(path: "provider-alert-state.json")
     try Data("retired-state".utf8).write(to: alertStateURL)
-    defaults.set(true, forKey: TVRetiredProviderBadgeCleanup.badgesPreferenceKey)
+    // Seed identifiers persisted by the retired feature, independent of current cleanup constants.
+    let retiredBadgeKey = "tv-provider-badges-enabled"
+    var pendingRequests: Set<String> = ["context-panel-provider-badge-expiry"]
+    defaults.set(true, forKey: retiredBadgeKey)
     var removedRequestIdentifiers: [[String]] = []
     let cleanup = TVRetiredProviderBadgeCleanup(providerAlertStateURL: alertStateURL)
 
-    #expect(TVRetiredProviderBadgeCleanup.expiryRequestIdentifier == "context-panel-provider-badge-expiry")
-    #expect(TVRetiredProviderBadgeCleanup.badgesPreferenceKey == "tv-provider-badges-enabled")
+    #expect(defaults.object(forKey: retiredBadgeKey) as? Bool == true)
     let badgeCount = cleanup.perform(
         defaults: defaults,
-        removePendingNotificationRequests: { removedRequestIdentifiers.append($0) }
+        removePendingNotificationRequests: {
+            removedRequestIdentifiers.append($0)
+            pendingRequests.subtract($0)
+        }
     )
 
     #expect(badgeCount == 0)
     #expect(removedRequestIdentifiers == [[TVRetiredProviderBadgeCleanup.expiryRequestIdentifier]])
-    #expect(defaults.object(forKey: TVRetiredProviderBadgeCleanup.badgesPreferenceKey) == nil)
+    #expect(defaults.object(forKey: retiredBadgeKey) == nil)
+    #expect(pendingRequests.isEmpty)
     #expect(!FileManager.default.fileExists(atPath: alertStateURL.path))
 
     let repeatedBadgeCount = cleanup.perform(
         defaults: defaults,
-        removePendingNotificationRequests: { removedRequestIdentifiers.append($0) }
+        removePendingNotificationRequests: {
+            removedRequestIdentifiers.append($0)
+            pendingRequests.subtract($0)
+        }
     )
     #expect(repeatedBadgeCount == 0)
     #expect(removedRequestIdentifiers == [
