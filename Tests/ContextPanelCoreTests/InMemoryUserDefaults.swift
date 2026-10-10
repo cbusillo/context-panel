@@ -25,6 +25,22 @@ final class InMemoryUserDefaults: UserDefaults, @unchecked Sendable {
         set(value as Any, forKey: key)
     }
 
+    override func set(_ value: Int, forKey key: String) {
+        set(value as Any, forKey: key)
+    }
+
+    override func set(_ value: Float, forKey key: String) {
+        set(value as Any, forKey: key)
+    }
+
+    override func set(_ value: Double, forKey key: String) {
+        set(value as Any, forKey: key)
+    }
+
+    override func set(_ value: URL?, forKey key: String) {
+        set(value as Any?, forKey: key)
+    }
+
     override func removeObject(forKey key: String) {
         lock.withLock { values[key] = nil }
     }

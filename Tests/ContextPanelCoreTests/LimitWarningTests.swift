@@ -950,7 +950,7 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(stateStore.load().records.isEmpty)
 }
 
-@Test func limitWarningWebhookDecisionReadsLatestPersistedSnapshotInsideDeliveryLock() async throws {
+@Test(.timeLimit(.minutes(1))) func limitWarningWebhookDecisionReadsLatestPersistedSnapshotInsideDeliveryLock() async throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
@@ -1022,7 +1022,7 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(await poster.postCount == 1)
 }
 
-@Test func limitWarningWebhookDeliverySkipsWhileDeliveryLockIsHeld() async throws {
+@Test(.timeLimit(.minutes(1))) func limitWarningWebhookDeliverySkipsWhileDeliveryLockIsHeld() async throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
@@ -1103,10 +1103,14 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(state.latestTestRecord != nil)
 }
 
-@Test func limitWarningWebhookTestGateCancellationDoesNotLeaveWaitersSuspended() async {
+@Test(.timeLimit(.minutes(1))) func limitWarningWebhookTestGateCancellationDoesNotLeaveWaitersSuspended() async throws {
     let gate = AsyncTestGate()
     let startWaiter = Task { try await gate.waitUntilStarted() }
     let releaseWaiter = Task { try await gate.waitForRelease() }
+    while await gate.waitingCount < 2 {
+        try Task.checkCancellation()
+        await Task.yield()
+    }
     startWaiter.cancel()
     releaseWaiter.cancel()
 
@@ -1139,7 +1143,7 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(LimitWarningWebhookDeliverySummary(results: []) == nil)
 }
 
-@Test func limitWarningWebhookConfigurationResetWaitsForInFlightDelivery() async throws {
+@Test(.timeLimit(.minutes(1))) func limitWarningWebhookConfigurationResetWaitsForInFlightDelivery() async throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
@@ -1148,6 +1152,8 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
     try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
     let poster = GatedWebhookPoster()
+    let contention = AsyncTestGate()
+    let lockInstant = ContinuousClock.now
     let service = LimitWarningWebhookDeliveryService(
         warningSettingsStore: warningSettingsStore,
         settingsStore: settingsStore,
@@ -1155,7 +1161,12 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
         poster: poster,
         lockWaitDuration: .seconds(2),
-        lockRetryInterval: .milliseconds(5)
+        lockRetryInterval: .milliseconds(5),
+        lockNow: { lockInstant },
+        lockSleep: { _ in
+            await contention.markStarted()
+            try await contention.waitForRelease()
+        }
     )
     let delivery = Task { await service.deliverIfNeeded(snapshot: UsageSnapshot(generatedAt: warningNow, limits: [
         warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
@@ -1169,8 +1180,19 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         throw error
     }
     let reset = Task { try await service.updateConfiguration {} }
+    do {
+        try await contention.waitUntilStarted()
+    } catch {
+        await poster.releaseFirstPost()
+        reset.cancel()
+        delivery.cancel()
+        _ = await delivery.value
+        _ = try? await reset.value
+        throw error
+    }
     await poster.releaseFirstPost()
     _ = await delivery.value
+    await contention.release()
     try await reset.value
     #expect(stateStore.load().records.isEmpty)
 }
@@ -1473,6 +1495,8 @@ private actor AsyncTestGate {
     private var startWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var releaseWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
 
+    var waitingCount: Int { startWaiters.count + releaseWaiters.count }
+
     func markStarted() {
         started = true
         let waiters = startWaiters
@@ -1530,7 +1554,6 @@ private actor AsyncTestGate {
             throwing: CancellationError()
         )
     }
-
 }
 
 private func withHeldDeliveryLock<T>(
