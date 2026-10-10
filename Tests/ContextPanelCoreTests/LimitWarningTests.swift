@@ -1016,7 +1016,11 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         }
     }
     await contention.release()
-    let results = await delivery.value
+    let results = await withTaskCancellationHandler {
+        await delivery.value
+    } onCancel: {
+        delivery.cancel()
+    }
 
     #expect(results.first?.succeeded == true)
     #expect(await poster.postCount == 1)
@@ -1190,10 +1194,15 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         _ = try? await reset.value
         throw error
     }
-    await poster.releaseFirstPost()
-    _ = await delivery.value
-    await contention.release()
-    try await reset.value
+    try await withTaskCancellationHandler {
+        await poster.releaseFirstPost()
+        _ = await delivery.value
+        await contention.release()
+        try await reset.value
+    } onCancel: {
+        delivery.cancel()
+        reset.cancel()
+    }
     #expect(stateStore.load().records.isEmpty)
 }
 
