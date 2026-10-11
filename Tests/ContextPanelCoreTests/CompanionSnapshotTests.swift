@@ -3594,3 +3594,63 @@ private extension JSONDecoder {
     #expect(presentation.title == "Saved usage is stale")
     #expect(presentation.usageUpdatedAt == observedAt)
 }
+
+@Test func companionAppMissingRecordClearsOnlyItsMirrorAndRecordsDiagnostics() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 50_000)
+    let localURL = root.appending(path: "companion.json")
+    let scopeURL = root.appending(path: "scope.json")
+    let diagnostics = RefreshDiagnosticsStateStore(stateURL: root.appending(path: "diagnostics.json"))
+    let saved = CompanionSyncDocument(storedSnapshot: companionStoredSnapshot(generatedAt: now), publishedAt: now)
+        .bound(to: companionTestUserScope)
+    let store = CompanionSyncStore(documentURL: localURL)
+    try store.save(saved)
+    try CompanionCloudKitUserScopeStateStore(stateURL: scopeURL).save(companionTestUserScope)
+    let remote = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true, missingRecord: true)
+        )
+    }
+    let result = await CompanionSyncLoader.load(
+        localMirrorURL: localURL, scopeStateURL: scopeURL, remoteStore: remote,
+        timeout: .seconds(5), diagnosticsStore: diagnostics, now: now
+    )
+    #expect(result.document == nil)
+    #expect(result.status == .unknown)
+    #expect(store.load().document == nil)
+    let record = try #require(diagnostics.load().lastCompanionLoad)
+    #expect(record.cloudKitMissingRecord == true)
+    #expect(record.cloudKitSucceeded == true)
+    #expect(record.loadedDocument == false)
+    #expect(record.attemptedAt == now)
+}
+
+@Test func companionAppTransientIdentityFailureKeepsScopedCacheWithoutClaimingTimeout() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 50_000)
+    let localURL = root.appending(path: "companion.json")
+    let scopeURL = root.appending(path: "scope.json")
+    let saved = CompanionSyncDocument(storedSnapshot: companionStoredSnapshot(generatedAt: now), publishedAt: now)
+        .bound(to: companionTestUserScope)
+    try CompanionSyncStore(documentURL: localURL).save(saved)
+    try CompanionCloudKitUserScopeStateStore(stateURL: scopeURL).save(companionTestUserScope)
+    let remote = CompanionRemoteSyncStore(
+        saveDocument: { _ in CompanionRemoteSyncOutcome(succeeded: false) },
+        loadDocument: { _ in
+            CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: nil, status: .unknown),
+                outcome: CompanionRemoteSyncOutcome(succeeded: false)
+            )
+        },
+        resolveUserScopeResolution: { .transientFailure }
+    )
+    let result = await CompanionSyncLoader.load(
+        localMirrorURL: localURL, scopeStateURL: scopeURL, remoteStore: remote, timeout: .seconds(5), now: now
+    )
+    #expect(result.document == saved)
+    #expect(result.status == .stale)
+    #expect(result.errorMessage == "CloudKit account identity is temporarily unavailable.")
+}

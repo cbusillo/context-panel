@@ -2,7 +2,7 @@ import ContextPanelCore
 import ContextPanelWidgetUI
 import Foundation
 
-private enum CompanionUserScopeResolution: Sendable {
+private enum CompanionUserScopeResolution: Equatable, Sendable {
     case resolved(CompanionCloudKitUserScope)
     case unavailable
     case transientFailure
@@ -101,7 +101,9 @@ public enum CompanionSyncLoader {
                 localMirrorURL: localMirrorURL,
                 scopeStateURL: scopeStateURL,
                 now: now,
-                errorMessage: "\(clientName) timed out while checking its CloudKit account."
+                errorMessage: initialScopeResolution == .transientFailure
+                    ? "CloudKit account identity is temporarily unavailable."
+                    : "\(clientName) timed out while checking its CloudKit account."
             )
         }
         guard activateScope(
@@ -135,7 +137,9 @@ public enum CompanionSyncLoader {
                 localMirrorURL: localMirrorURL,
                 scopeStateURL: scopeStateURL,
                 now: now,
-                errorMessage: "\(clientName) timed out while rechecking its CloudKit account."
+                errorMessage: finalScopeResolution == .transientFailure
+                    ? "CloudKit account identity is temporarily unavailable."
+                    : "\(clientName) timed out while rechecking its CloudKit account."
             )
         case .unavailable, .resolved:
             return invalidateIdentity(
@@ -157,13 +161,30 @@ public enum CompanionSyncLoader {
            remoteLoad.result.document == nil,
            remoteLoad.result.status == .unknown,
            remoteLoad.result.errorMessage == nil {
-            return removeMissingWidgetMirror(
+            let result = removeMissingWidgetMirror(
                 localMirrorURL: localMirrorURL,
                 expectedDocument: localAtStart.document,
                 expectedUserScope: userScope,
                 remoteLoad: remoteLoad,
                 now: now
             )
+            recordDiagnostics(
+                CompanionSyncDiagnosticsRecord(
+                    operation: .load,
+                    outcome: result.status == .failure ? .failed : (result.document == nil ? .unavailable : .partial),
+                    attemptedAt: now,
+                    appGroupSucceeded: result.status != .failure,
+                    cloudKitSucceeded: true,
+                    cloudKitAvailable: true,
+                    cloudKitMissingRecord: true,
+                    loadedDocument: result.document != nil,
+                    mirroredDocument: false,
+                    stale: result.status == .stale,
+                    errorMessage: result.errorMessage
+                ),
+                in: diagnosticsStore
+            )
+            return result
         }
         let result = load(
             localMirrorURL: localMirrorURL,

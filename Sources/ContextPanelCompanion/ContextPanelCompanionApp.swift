@@ -270,14 +270,14 @@ private struct CompanionRootView: View {
                         if usesPageHeader {
                             CompanionPageHeader { model.reload() }
                         }
-                        TimelineView(.periodic(from: .now, by: 60)) { context in
-                            CompanionSyncStatusView(result: model.result, now: context.date)
-                        }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
-                                compact: horizontalSizeClass != .regular,
-                                openAccount: { accountPath.append(.account($0.id)) },
-                                openDeadlines: { accountPath.append(.deadlines) })
+                            VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                                CompanionSyncStatusView(result: model.result, now: context.date)
+                                AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
+                                    compact: horizontalSizeClass != .regular,
+                                    openAccount: { accountPath.append(.account($0.id)) },
+                                    openDeadlines: { accountPath.append(.deadlines) })
+                            }
                         }
                         DisclosureGroup("Settings, pace and sync details") {
                             companionContent(layoutMode: layoutMode).padding(.top, 16)
