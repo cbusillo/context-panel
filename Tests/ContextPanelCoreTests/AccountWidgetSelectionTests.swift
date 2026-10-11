@@ -75,6 +75,39 @@ private func widgetPickSnapshot(old: Bool = false, hidden: Bool = false, disable
     let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
     let current = try #require(overview.accounts.last)
     #expect(overview.widgetObservationDate(in: [current]) == widgetPickNow)
+    #expect(overview.widgetObservationDate() == widgetPickNow)
     let paused = widgetPickSnapshot(old: true, disabled: true).accountOverview(now: widgetPickNow, widgetsOnly: true)
     #expect(paused.widgetObservationDate() == nil)
+}
+
+@Test func preResetWidgetReadingRemainsExplicitlySavedWithoutGuessingARefill() throws {
+    let observed = widgetPickNow.addingTimeInterval(-86_400)
+    let limit = UsageLimit(provider: .openAI, accountID: "saved", accountName: "Saved account",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 95, limit: 100,
+        resetsAt: widgetPickNow.addingTimeInterval(-3_600), lastUpdatedAt: observed, confidence: .observed)
+    let snapshot = WidgetSnapshot(state: .ready, generatedAt: observed, limits: [limit], status: .healthy, message: "")
+    let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
+    let pick = try #require(overview.widgetPicks.first)
+    let account = try #require(pick.account)
+    #expect(account.state == .stale)
+    #expect(account.horizon(now: widgetPickNow).remaining == limit.remainingCapacityRatio)
+    #expect(account.horizon(now: widgetPickNow).runOutAt == nil)
+    #expect(account.horizon(now: widgetPickNow).resetAt == nil)
+    #expect(overview.widgetShowsOnlySavedUsage)
+    #expect(!pick.isRecommendation)
+}
+
+@Test func updatingWidgetRetainsLastKnownCapacityWithoutRecommendingIt() throws {
+    let limit = UsageLimit(provider: .openAI, accountID: "updating", accountName: "Updating account",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 25, limit: 100,
+        resetsAt: widgetPickNow.addingTimeInterval(86_400), lastUpdatedAt: widgetPickNow,
+        confidence: .observed, statusOverride: .loading)
+    let snapshot = WidgetSnapshot(state: .ready, generatedAt: widgetPickNow, limits: [limit],
+        status: .loading, message: "")
+    let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
+    let pick = try #require(overview.widgetPicks.first)
+    #expect(pick.account?.state == .refreshing)
+    #expect(pick.account?.remainingFraction == 0.75)
+    #expect(!pick.isRecommendation)
+    #expect(!overview.widgetShowsOnlySavedUsage)
 }

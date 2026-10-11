@@ -19,7 +19,13 @@ func savedAccountWidgetKeepsValuesAtEverySize(size: String, dark: Bool) throws {
 }
 
 @MainActor
-private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Bool) throws {
+@Test(arguments: ["small", "medium"], [false, true])
+func mixedAccountWidgetKeepsSavedValuesAndFreshRecommendations(size: String, dark: Bool) throws {
+    try verifyAccountWidgetPercentages(size: size, dark: dark, saved: false, mixed: true)
+}
+
+@MainActor
+private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Bool, mixed: Bool = false) throws {
     let family: WidgetFamily
     let dimensions: CGSize
     switch size {
@@ -43,12 +49,13 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
             accountName: "longest.configured.account.\(index)@example.invalid",
             label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 0, limit: 100,
             resetsAt: now.addingTimeInterval(86_400),
-            lastUpdatedAt: saved ? now.addingTimeInterval(-10 * 86_400) : now, confidence: .observed)
+            lastUpdatedAt: saved || (mixed && provider == .anthropic) ? now.addingTimeInterval(-10 * 86_400) : now,
+            confidence: .observed)
     }
     let metadata = limits.enumerated().map { index, limit in
         AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
             configurationID: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
-            provider: limit.provider, label: saved ? "Account \(index + 1)" : limit.accountName)
+            provider: limit.provider, label: saved || mixed ? "Account \(index + 1)" : limit.accountName)
     }
     let snapshot = WidgetSnapshot(state: saved ? .stale : .ready, generatedAt: now, limits: limits,
         status: saved ? .stale : .healthy, message: "", accountDisplayMetadata: metadata)
@@ -90,10 +97,11 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
         #expect(savedMarks >= (family == .systemSmall ? 1 : expected))
         #expect(!lines.joined(separator: " ").contains(AccountTerms.noEligibleAccount))
     }
+    if mixed { #expect(lines.joined(separator: " ").contains(AccountCapacityState.stale.displayText)) }
     if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
         let root = URL(fileURLWithPath: output, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
-        try data.write(to: root.appending(path: "widget-\(saved ? "saved-" : "")\(size)-\(dark ? "dark" : "light").png"))
+        try data.write(to: root.appending(path: "widget-\(saved ? "saved-" : mixed ? "mixed-" : "")\(size)-\(dark ? "dark" : "light").png"))
     }
 }

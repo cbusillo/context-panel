@@ -19,16 +19,18 @@ public extension AccountOverview {
             // A saved sibling must not mask a known current provider limit or cushion hold.
             let hasCurrent = members.contains { [.available, .closeToLimit, .limited].contains($0.state) }
             let saved = hasCurrent ? nil : members.first {
-                [.stale, .unavailable].contains($0.state) && $0.longWindow?.remainingFraction != nil
+                [.stale, .unavailable, .refreshing].contains($0.state) && $0.longWindow?.remainingFraction != nil
             }
             return WidgetPick(provider: provider, account: saved, isRecommendation: false)
         }
     }
 
-    /// Use the oldest represented observation rather than the time the widget was rendered.
+    /// Current observations lead mixed data; all-saved data uses its oldest represented reading.
     func widgetObservationDate(in displayedAccounts: [Account]? = nil) -> Date? {
-        (displayedAccounts ?? accounts)
-            .filter { [.available, .closeToLimit, .limited, .stale, .unavailable].contains($0.state) }
+        let represented = (displayedAccounts ?? accounts).filter { $0.longWindow?.remainingFraction != nil }
+        if let current = represented.filter(\.isReliable).compactMap(\.observedAt).max() { return current }
+        return represented
+            .filter { [.stale, .unavailable, .refreshing].contains($0.state) }
             .compactMap(\.observedAt).min()
     }
 

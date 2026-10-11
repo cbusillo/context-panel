@@ -70,13 +70,16 @@ struct AccountGlanceWidget: View {
         if overview.widgetShowsOnlySavedUsage {
             return ("Saved usage", "", false)
         }
+        if !overview.accounts.isEmpty, overview.accounts.allSatisfy({ $0.state == .refreshing }) {
+            return (AccountCapacityState.refreshing.displayText, "", false)
+        }
         let headline = overview.headline(now: now)
         let words = AccountTerms.compactHeadline(headline)
         return (words.lead, words.rest, headline.shortCount > 0)
     }
 
     private func observationText(_ overview: AccountOverview, rows: [AccountOverview.Account]? = nil) -> String {
-        overview.widgetObservationDate(in: rows).map { AccountPaceText.when($0, now: now) } ?? "Time unknown"
+        overview.widgetObservationDate(in: rows).map { AccountPaceText.when($0, now: now) } ?? AccountTerms.unknown
     }
 
     private func header(trailing: String?) -> some View {
@@ -98,6 +101,7 @@ struct AccountGlanceWidget: View {
     /// headline's lead at the bottom, red only when something runs out before its reset.
     private func small(_ overview: AccountOverview) -> some View {
         let picks = overview.widgetPicks.filter { $0.account != nil }
+        let shown = picks.compactMap(\.account)
         let headline = headline(overview)
         let roomy = picks.count <= 2
         return VStack(alignment: .leading, spacing: 0) {
@@ -107,14 +111,14 @@ struct AccountGlanceWidget: View {
                     Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
                 }
                 Text(overview.widgetShowsOnlySavedUsage
-                     ? AccountCapacityState.stale.displayText + " · " + observationText(overview) : headline.lead)
+                     ? AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown) : headline.lead)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(headline.short ? palette.bad : palette.primary)
                     .lineLimit(1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .ignore)
             .padding(.bottom, 5)
-            .accessibilityLabel([headline.lead, overview.widgetShowsOnlySavedUsage ? observationText(overview) : headline.rest]
+            .accessibilityLabel([headline.lead, overview.widgetShowsOnlySavedUsage ? observationText(overview, rows: shown) : headline.rest]
                 .filter { !$0.isEmpty }.joined(separator: " "))
             if picks.isEmpty {
                 Text(AccountTerms.noEligibleAccount).font(.system(size: 11, weight: .medium))
@@ -150,12 +154,14 @@ struct AccountGlanceWidget: View {
                 Spacer(minLength: 2)
                 Text(weekPercent(horizon, account: account)).font(.system(size: 12, weight: .bold)).monospacedDigit()
             }
-            Text((isNext || roomy || overview.widgetShowsOnlySavedUsage ? "" : account.stateText + " · ") + account.metadata.label)
+            // Three-provider Small keeps account identity; the full saved age remains in VoiceOver.
+            Text((!isNext && !roomy && !overview.widgetShowsOnlySavedUsage ? account.stateText + " · " : "")
+                 + account.metadata.label)
                 .font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
             if roomy {
                 horizonView(account, horizon, in: overview).frame(height: 9).padding(.top, 2)
                 if isNext || !overview.widgetShowsOnlySavedUsage {
-                    Text(AccountTerms.outcomeShort(account, horizon, now: now))
+                    Text(isNext ? AccountTerms.outcomeShort(account, horizon, now: now) : AccountTerms.accountTiming(account, now: now))
                         .font(.system(size: AccountTextSize.glanceMinimum))
                         .foregroundStyle(outcomeColor(account, horizon)).lineLimit(1)
                 }
@@ -257,9 +263,11 @@ struct AccountGlanceWidget: View {
         let totals = overview.providerTotals(now: now)
         let headline = headline(overview)
         return VStack(alignment: .leading, spacing: 0) {
-            header(trailing: (overview.widgetShowsOnlySavedUsage ? AccountCapacityState.stale.displayText : AccountTerms.updated)
-                + " " + observationText(overview, rows: rows)
-                + (overview.accounts.count > rows.count ? " · +\(overview.accounts.count - rows.count)" : ""))
+            header(trailing: [overview.widgetObservationDate(in: rows).map {
+                (rows.contains(where: \.isReliable) ? AccountTerms.updated : AccountCapacityState.stale.displayText)
+                    + " " + AccountPaceText.when($0, now: now)
+            }, overview.accounts.count > rows.count ? "+\(overview.accounts.count - rows.count)" : nil]
+                .compactMap { $0 }.joined(separator: " · "))
                 .padding(.bottom, 3)
             (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.primary)
                 + Text(headline.rest.isEmpty ? "" : " " + headline.rest).foregroundStyle(palette.secondary))
