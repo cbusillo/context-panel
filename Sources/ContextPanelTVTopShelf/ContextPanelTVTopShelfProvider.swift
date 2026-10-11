@@ -90,7 +90,7 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
 
 struct TVTopShelfRenderer {
 #if CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION
-    private static let renderVersion = 3
+    private static let renderVersion = 4
     private let imageDirectory: URL
     private let fileManager: FileManager
 
@@ -318,18 +318,6 @@ struct TVTopShelfRenderer {
         context.setFillColor(color(.surface).cgColor)
         context.fill(CGRect(origin: .zero, size: size))
 
-        let glowWidth = size.width / CGFloat(max(cards.count, 1))
-        for (index, card) in cards.enumerated() {
-            let accent = accentColor(card)
-            context.setFillColor(accent.withAlphaComponent(0.095).cgColor)
-            context.fillEllipse(in: CGRect(
-                x: CGFloat(index) * glowWidth - glowWidth * 0.05,
-                y: -size.height * 0.72,
-                width: glowWidth * 1.1,
-                height: size.height * 1.45
-            ))
-        }
-
         context.setStrokeColor(color(.line).cgColor)
         context.setLineWidth(max(size.width / 1920, 1))
         context.move(to: CGPoint(x: size.width * 0.05, y: size.height * 0.19))
@@ -397,16 +385,22 @@ struct TVTopShelfRenderer {
                     y: originY + CGFloat(index / 3) * (height + spacing), width: width, height: height)
                 color(.card).setFill()
                 UIBezierPath(roundedRect: frame, cornerRadius: 18 * scale).fill()
-                draw(card.title, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 12 * scale,
-                    width: frame.width - 36 * scale, height: 30 * scale),
-                    font: .systemFont(ofSize: 23 * scale, weight: .semibold), color: color(.primary), alignment: .left)
-                draw(card.headline, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 48 * scale,
-                    width: frame.width - 36 * scale, height: 62 * scale),
-                    font: .monospacedDigitSystemFont(ofSize: 46 * scale, weight: .semibold),
-                    color: headlineColor(card, isStale: document.isStale(at: now)), alignment: .left)
-                draw(card.detail, in: CGRect(x: frame.minX + 18 * scale, y: frame.minY + 116 * scale,
-                    width: frame.width - 36 * scale, height: frame.height - 124 * scale),
-                    font: .systemFont(ofSize: 19 * scale, weight: .medium), color: color(.secondary), alignment: .left)
+                draw(card.provider?.accountDisplayName ?? AccountTerms.accounts,
+                    in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 12 * scale,
+                               width: frame.width - 40 * scale, height: 24 * scale),
+                    font: .systemFont(ofSize: 18 * scale, weight: .semibold), color: accentColor(card))
+                draw(card.title, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 40 * scale,
+                    width: frame.width - 40 * scale, height: 30 * scale),
+                    font: .systemFont(ofSize: 23 * scale, weight: .semibold), color: color(.primary))
+                draw(card.headline, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 76 * scale,
+                    width: frame.width - 40 * scale, height: 58 * scale),
+                    font: .monospacedDigitSystemFont(ofSize: 42 * scale, weight: .semibold),
+                    color: headlineColor(card, isStale: document.isStale(at: now)))
+                drawCapacity(card, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 142 * scale,
+                    width: frame.width - 40 * scale, height: 6 * scale), isStale: document.isStale(at: now))
+                draw(card.detail, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 160 * scale,
+                    width: frame.width - 40 * scale, height: frame.height - 168 * scale),
+                    font: .systemFont(ofSize: 19 * scale, weight: .medium), color: color(.secondary))
             }
             return
         }
@@ -461,7 +455,7 @@ struct TVTopShelfRenderer {
     ) {
         let accent = accentColor(card)
         let displayedStatus = displayStatus(for: card, isStale: isStale)
-        accent.withAlphaComponent(isStale ? 0.045 : 0.075).setFill()
+        color(isStale ? .card : card.provider?.surfaceToken ?? .card).setFill()
         UIBezierPath(roundedRect: frame, cornerRadius: 30 * scale).fill()
         color(.line).setStroke()
         let outline = UIBezierPath(roundedRect: frame.insetBy(dx: 0.5 * scale, dy: 0.5 * scale), cornerRadius: 30 * scale)
@@ -470,50 +464,52 @@ struct TVTopShelfRenderer {
 
         let inset = 36 * scale
         draw(
-            card.provider?.displayName.uppercased() ?? "PROVIDER",
+            card.provider?.accountDisplayName ?? AccountTerms.accounts,
             in: CGRect(x: frame.minX + inset, y: frame.minY + 32 * scale, width: frame.width - 2 * inset, height: 36 * scale),
             font: .systemFont(ofSize: 24 * scale, weight: .bold),
             color: accent
         )
+        draw(card.title,
+            in: CGRect(x: frame.minX + inset, y: frame.minY + 78 * scale,
+                       width: frame.width - 2 * inset, height: 42 * scale),
+            font: .systemFont(ofSize: 30 * scale, weight: .semibold), color: color(.primary))
         draw(
             card.headline,
-            in: CGRect(x: frame.minX + inset, y: frame.minY + 92 * scale, width: frame.width - 2 * inset, height: 96 * scale),
+            in: CGRect(x: frame.minX + inset, y: frame.minY + 136 * scale, width: frame.width - 2 * inset, height: 96 * scale),
             font: .systemFont(ofSize: 60 * scale, weight: .bold),
             color: headlineColor(card, isStale: isStale)
         )
         draw(
             statusText(displayedStatus),
-            in: CGRect(x: frame.minX + inset, y: frame.minY + 194 * scale, width: frame.width - 2 * inset, height: 38 * scale),
+            in: CGRect(x: frame.minX + inset, y: frame.minY + 238 * scale, width: frame.width - 2 * inset, height: 38 * scale),
             font: .systemFont(ofSize: 23 * scale, weight: .semibold),
             color: statusColor(displayedStatus)
         )
 
         let barFrame = CGRect(
             x: frame.minX + inset,
-            y: frame.minY + 274 * scale,
+            y: frame.minY + 300 * scale,
             width: frame.width - 2 * inset,
             height: 12 * scale
         )
-        color(.track).setFill()
-        UIBezierPath(roundedRect: barFrame, cornerRadius: barFrame.height / 2).fill()
-        if let remainingPercent = card.remainingPercent {
-            let progress = min(max(CGFloat(remainingPercent) / 100, 0), 1)
-            let progressFrame = CGRect(
-                x: barFrame.minX,
-                y: barFrame.minY,
-                width: barFrame.width * progress,
-                height: barFrame.height
-            )
-            accent.withAlphaComponent(isStale ? 0.55 : 1).setFill()
-            UIBezierPath(roundedRect: progressFrame, cornerRadius: progressFrame.height / 2).fill()
-        }
+        drawCapacity(card, in: barFrame, isStale: isStale)
 
         draw(
             card.detail,
-            in: CGRect(x: frame.minX + inset, y: frame.minY + 324 * scale, width: frame.width - 2 * inset, height: 72 * scale),
+            in: CGRect(x: frame.minX + inset, y: frame.minY + 342 * scale, width: frame.width - 2 * inset, height: 72 * scale),
             font: .systemFont(ofSize: 21 * scale, weight: .medium),
             color: color(.secondary)
         )
+    }
+
+    private func drawCapacity(_ card: TVTopShelfCard, in frame: CGRect, isStale: Bool) {
+        color(.track).setFill()
+        UIBezierPath(roundedRect: frame, cornerRadius: frame.height / 2).fill()
+        guard let remaining = card.remainingPercent else { return }
+        let fill = CGRect(x: frame.minX, y: frame.minY,
+                          width: frame.width * min(max(CGFloat(remaining) / 100, 0), 1), height: frame.height)
+        color(card.capacityToken(isStale: isStale)).setFill()
+        UIBezierPath(roundedRect: fill, cornerRadius: frame.height / 2).fill()
     }
 
     private func draw(
@@ -545,7 +541,8 @@ struct TVTopShelfRenderer {
         let cardSummaries = cards.map { card in
             if let provider = card.provider {
                 return [
-                    provider.displayName,
+                    provider.accountDisplayName,
+                    card.title,
                     card.headline,
                     card.detail,
                     statusText(displayStatus(for: card, isStale: isStale)),
@@ -565,7 +562,8 @@ struct TVTopShelfRenderer {
     private func headlineColor(_ card: TVTopShelfCard, isStale: Bool) -> UIColor {
         let status = displayStatus(for: card, isStale: isStale)
         if status == .stale || status == .failure { return color(status.accountState.colorToken) }
-        return color(AccountTone.forRemaining(card.remainingPercent.map { Double($0) / 100 }).textToken)
+        // This document carries remaining capacity, not a forecast of running out before reset.
+        return color(.primary)
     }
 
     private func displayStatus(for card: TVTopShelfCard, isStale: Bool) -> UsageStatus {

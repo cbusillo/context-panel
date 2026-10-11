@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-10.
 
 ## Current Direction: Horizon
 
@@ -228,6 +228,14 @@ privacy/credential messaging.
 Apple TV uses a native ten-foot **Couch Mode**, not a stretched widget or iPad
 layout. Keep the accepted three-provider, focus-driven composition, provider
 drill-down, privacy modes, and explicit stale/offline states.
+
+Full Detail follows the Mac's Horizon account hierarchy through the shared
+`TVAccountAnswers` and `TVAccountGroups`: one focusable use-next card per
+provider, then its remaining accounts without repeating the recommendation.
+The controls, observation summary, and headline stay above account scrolling.
+Inset focus outlines preserve text contrast and percentage baselines. Top Shelf
+shows provider and account identity in Full Detail, with shared warm-neutral
+capacity fills for saved or failed readings; privacy modes remain anonymous.
 
 Each provider card applies the shared answer rule within that provider: the
 first visible saved time window stays as the large answer, a distinct

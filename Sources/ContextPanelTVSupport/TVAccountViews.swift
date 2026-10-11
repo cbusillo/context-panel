@@ -34,21 +34,34 @@ public struct TVAccountAnswers: View {
     let overview: AccountOverview
     let now: Date
     let showsHeadline: Bool
+    let openAccount: ((String) -> Void)?
 
-    public init(overview: AccountOverview, now: Date, showsHeadline: Bool = true) {
+    public init(overview: AccountOverview, now: Date, showsHeadline: Bool = true,
+                openAccount: ((String) -> Void)? = nil) {
         self.overview = overview
         self.now = now
         self.showsHeadline = showsHeadline
+        self.openAccount = openAccount
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             if showsHeadline { TVAccountHeadline(overview: overview, now: now) }
-            HStack(alignment: .top, spacing: 24) {
-                ForEach(tvProviders(overview), id: \.self) { provider in
-                    TVUseNextCard(provider: provider, account: overview.useNext(provider: provider),
-                                  deadlines: overview.deadlines, now: now)
+            if tvProviders(overview).contains(where: { overview.useNext(provider: $0) != nil }) {
+                HStack(alignment: .top, spacing: 24) {
+                    ForEach(tvProviders(overview), id: \.self) { provider in
+                        let account = overview.useNext(provider: provider)
+                        TVAccountAction(action: account.flatMap { account in
+                            openAccount.map { open in { open(account.id) } }
+                        }) {
+                            TVUseNextCard(provider: provider, account: account,
+                                          deadlines: overview.deadlines, now: now)
+                        }
+                    }
                 }
+            } else if !overview.accounts.isEmpty {
+                Text(AccountTerms.noEligibleAccount).font(.system(size: 22))
+                    .foregroundStyle(TVTokens.color(.secondary))
             }
             TVRunsOutCallout(overview: overview, now: now)
         }
@@ -268,11 +281,14 @@ public struct TVAccountGroups: View {
     let overview: AccountOverview
     let now: Date
     let excludesUseNext: Bool
+    let openAccount: ((String) -> Void)?
 
-    public init(overview: AccountOverview, now: Date, excludesUseNext: Bool = false) {
+    public init(overview: AccountOverview, now: Date, excludesUseNext: Bool = false,
+                openAccount: ((String) -> Void)? = nil) {
         self.overview = overview
         self.now = now
         self.excludesUseNext = excludesUseNext
+        self.openAccount = openAccount
     }
 
     public var body: some View {
@@ -290,10 +306,13 @@ public struct TVAccountGroups: View {
                     }
                     ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
                         if index > 0 { Rectangle().fill(TVTokens.color(.line)).frame(height: 1) }
-                        TVAccountLines(account: account, deadlines: overview.deadlines, now: now)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(account.glanceAccessibilityText(
-                                now: now, isNext: overview.useNext(provider: provider)?.id == account.id))
+                        TVAccountAction(action: openAccount.map { open in { open(account.id) } }) {
+                            TVAccountLines(account: account, deadlines: overview.deadlines, now: now)
+                                .padding(10)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(account.glanceAccessibilityText(
+                                    now: now, isNext: overview.useNext(provider: provider)?.id == account.id))
+                        }
                     }
                 }
                 .padding(24)
@@ -301,6 +320,37 @@ public struct TVAccountGroups: View {
                 .background(TVTokens.color(.card), in: RoundedRectangle(cornerRadius: 20))
             }
         }
+    }
+}
+
+/// A remote-focus treatment shared by recommended accounts and provider rows. The custom
+/// style prevents tvOS's white default platter from changing the account's text contrast.
+private struct TVAccountAction<Content: View>: View {
+    let action: (() -> Void)?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if let action {
+            Button(action: action, label: content)
+                .buttonStyle(TVAccountButtonStyle())
+                .focusEffectDisabled()
+        } else {
+            content()
+        }
+    }
+}
+
+private struct TVAccountButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(TVTokens.color(.primary))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(isFocused ? TVTokens.color(.primary) : .clear, lineWidth: 3)
+            }
+            .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
 

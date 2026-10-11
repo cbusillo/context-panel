@@ -49,6 +49,12 @@ public struct TVTopShelfCard: Codable, Equatable, Identifiable, Sendable {
         self.remainingPercent = remainingPercent
         self.actionURLString = actionURLString
     }
+    /// Quantitative saved data shares the Mac's warm-neutral treatment, independently of
+    /// the provider's identity hue. Refresh failure must never look like fresh capacity.
+    public func capacityToken(isStale: Bool) -> AccountColorToken {
+        isStale || status == .stale || status == .failure ? .saved : provider?.colorToken ?? .tertiary
+    }
+
 }
 
 public struct TVTopShelfDocument: Codable, Equatable, Sendable {
@@ -130,7 +136,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
 
     public func collectionTitle(at now: Date) -> String {
         guard containsProviderData else { return "Context Panel" }
-        if isStale(at: now) { return "Saved provider runway" }
+        if isStale(at: now) { return cards.first?.id.hasPrefix("provider-") == false ? "Saved accounts" : "Saved provider runway" }
         if cards.contains(where: { $0.status == .failure || $0.status == .limited }) {
             return "Provider attention"
         }

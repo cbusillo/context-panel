@@ -168,7 +168,8 @@ private struct TVRootView: View {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         TVAccountDetailContent(
                             overview: model.snapshot.accountOverview(now: context.date, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
-                            accountID: providerRawValue == "deadlines" ? nil : String(providerRawValue.dropFirst(8)))
+                            accountID: providerRawValue == "deadlines" ? nil : String(providerRawValue.dropFirst(8)),
+                            now: context.date)
                     }
                     } else {
                         ContentUnavailableView("Account details hidden", systemImage: "eye.slash",
@@ -240,69 +241,68 @@ struct TVAccountOverviewContent: View {
     let openDetails: () -> Void
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                HStack {
-                    Text("Accounts").font(.system(size: 58, weight: .semibold))
-                    Spacer()
-                    Button(isRefreshing ? "Updating" : "Refresh", action: onRefresh).disabled(isRefreshing)
-                    Menu("Display") {
-                        Picker("Presentation", selection: $presentationModeRawValue) {
-                            ForEach(TVPresentationMode.allCases) { Text($0.displayName).tag($0.rawValue) }
-                        }
-                    }
-                    Button("Details", action: openDetails)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(AccountTerms.appName).font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(TVTokens.color(.secondary))
+                    Text(AccountTerms.accounts).font(.system(size: 48, weight: .semibold))
+                        .foregroundStyle(TVTokens.color(.primary))
                 }
-                if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
-                TVAccountAnswers(overview: overview, now: now)
-                if overview.accounts.isEmpty { Text("Add an account on your Mac, then refresh.") }
-                let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 28), count: 3), spacing: 28) {
-                    ForEach(overview.accounts) { account in
-                        TVAccountOverviewCard(account: account, deadlines: overview.deadlines.filter { $0.accountID == account.id },
-                                              isNext: nextIDs.contains(account.id), now: now,
-                                              showsPace: AccountOverview.Account.hasBurn(in: overview)) {
-                            openAccount(account.id)
-                        }
+                Spacer()
+                Button(isRefreshing ? "Updating" : "Refresh", action: onRefresh).disabled(isRefreshing)
+                Menu(AccountTerms.display) {
+                    Picker("Presentation", selection: $presentationModeRawValue) {
+                        ForEach(TVPresentationMode.allCases) { Text($0.displayName).tag($0.rawValue) }
                     }
                 }
-                if let deadline = overview.nextDeadline {
-                    Button(action: openDeadlines) {
-                        HStack {
-                            Text(AccountTerms.bankedResetExpires + " · " + deadline.label)
-                            Spacer()
-                            Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
-                        }
+                Button("Details", action: openDetails)
+            }
+            if let notice {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 22)).foregroundStyle(TVTokens.color(.saved))
+            }
+            TVAccountFreshness(overview: overview, now: now)
+            if !overview.accounts.isEmpty { TVAccountHeadline(overview: overview, now: now) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if overview.accounts.isEmpty {
+                        ContentUnavailableView("No shared accounts", systemImage: "macbook.and.iphone",
+                            description: Text("Add an account on your Mac, then refresh."))
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        TVAccountAnswers(overview: overview, now: now, showsHeadline: false, openAccount: openAccount)
+                        TVAccountGroups(overview: overview, now: now, excludesUseNext: true,
+                                        openAccount: openAccount)
                     }
-                } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
-                    Button("Banked reset dates unknown", action: openDeadlines)
+                    if let deadline = overview.nextDeadline {
+                        Button(action: openDeadlines) {
+                            HStack {
+                                Image(systemName: AccountGlyphs.banked)
+                                Text(AccountTerms.bankedResetExpires + " · " + deadline.label)
+                                Spacer()
+                                Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
+                            }
+                        }
+                    } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
+                        Button("Banked reset dates unknown", action: openDeadlines)
+                    }
                 }
-            }.padding(.horizontal, 72).padding(.vertical, 40)
-        }.background(TVTheme.background.ignoresSafeArea())
-    }
-}
-
-private struct TVAccountOverviewCard: View {
-    let account: AccountOverview.Account
-    let deadlines: [AccountOverview.Deadline]
-    let isNext: Bool
-    let now: Date
-    let showsPace: Bool
-    let open: () -> Void
-    @FocusState private var isFocused: Bool
-    var body: some View {
-        // Focus changes only the outline, so percentages never move.
-        Button(action: open) {
-            TVAccountTile(account: account, isNext: isNext, now: now, showsPace: showsPace, deadlines: deadlines)
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(isFocused ? Color.white : Color.white.opacity(0.16),
-                                                                  lineWidth: isFocused ? 4 : 1))
-        }.buttonStyle(.plain).focusEffectDisabled().focused($isFocused)
+                // Focus outlines stay inside their rows; leave clearance from the scroll edge.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 72).padding(.vertical, 32)
+        .background(TVTokens.color(.surface).ignoresSafeArea())
     }
 }
 
 private struct TVAccountDetailContent: View {
     let overview: AccountOverview
     let accountID: String?
+    let now: Date
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -313,10 +313,10 @@ private struct TVAccountDetailContent: View {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(window.label).font(.headline)
                             Text(AccountNumbers.window(window) + " " + AccountTerms.left).font(.title)
-                            Text(AccountTerms.reset(window, now: Date()).map { AccountTerms.resets + " " + $0 } ?? AccountTerms.resets + " " + AccountTerms.unknown)
+                            Text(AccountTerms.reset(window, now: now).map { AccountTerms.resets + " " + $0 } ?? AccountTerms.resets + " " + AccountTerms.unknown)
                             if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
                         }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
+                            .background(TVTokens.color(.card), in: RoundedRectangle(cornerRadius: 20))
                     }
                     Text(account.bankedResets.map { AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) } ?? AccountTerms.bankedResets + " " + AccountTerms.unknown)
                     if (account.unknownExpiryCount ?? 0) > 0 { Text("Some banked reset dates are unknown.").foregroundStyle(.secondary) }
@@ -324,7 +324,7 @@ private struct TVAccountDetailContent: View {
                 ForEach(overview.deadlines.filter { accountID == nil || $0.accountID == accountID }) { deadline in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(deadline.label + " · " + deadline.provider.accountDisplayName).font(.headline)
-                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: Date()))
+                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: now))
                         if deadline.state != .available { Text("Last seen " + ContextPanelDateFormatting.accountReset(deadline.observedAt)).foregroundStyle(.secondary) }
                     }
                 }
@@ -334,7 +334,8 @@ private struct TVAccountDetailContent: View {
                     }
                 }
             }.padding(72).frame(maxWidth: .infinity, alignment: .leading)
-        }.background(TVTheme.background.ignoresSafeArea())
+        }.foregroundStyle(TVTokens.color(.primary))
+            .background(TVTokens.color(.surface).ignoresSafeArea())
     }
 }
 
@@ -2102,41 +2103,16 @@ private struct TVFreshnessNotice: View {
 }
 
 private enum TVTheme {
-    static let background = LinearGradient(
-        colors: [
-            Color(red: 0.035, green: 0.045, blue: 0.07),
-            Color(red: 0.015, green: 0.02, blue: 0.035),
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    static let background = TVTokens.color(.surface)
 
     static func providerColor(_ provider: Provider) -> Color {
-        switch provider {
-        case .openAI:
-            Color(red: 0.24, green: 0.82, blue: 0.69)
-        case .anthropic:
-            Color(red: 0.96, green: 0.57, blue: 0.39)
-        case .google:
-            Color(red: 0.38, green: 0.66, blue: 1)
-        }
+        TVTokens.color(provider.colorToken)
     }
 
-    static let staleInstrumentColor = Color(red: 0.64, green: 0.57, blue: 0.45)
+    static let staleInstrumentColor = TVTokens.color(.saved)
 
     static func statusColor(_ status: UsageStatus) -> Color {
-        switch status {
-        case .healthy:
-            .green
-        case .close:
-            .yellow
-        case .limited, .failure:
-            .orange
-        case .stale:
-            .yellow
-        case .unknown, .loading:
-            .secondary
-        }
+        TVTokens.color(status.accountState.colorToken)
     }
 }
 
