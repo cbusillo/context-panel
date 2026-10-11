@@ -615,6 +615,21 @@ private struct CompanionValidationGalleryPreview: View {
         }
     }
 
+    private var themeVariant: CPWThemeVariant {
+        #if os(visionOS)
+        previewColorScheme == .dark ? .dark : .light
+        #else
+        switch context.appearance {
+        case .adaptive:
+            .adaptive
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
+        #endif
+    }
+
     private var surfacePalette: CompanionSurfacePalette {
         #if os(visionOS)
         .visionOS(appearance: previewColorScheme == .dark ? .dark : .light)
@@ -649,6 +664,14 @@ private struct CompanionValidationGalleryPreview: View {
         )
     }
 
+    private var forecast: KeepWorkingForecast? {
+        guard context.snapshot.state == .ready else { return nil }
+        let forecast = context.snapshot.keepWorkingForecast(
+            presentationDate: context.presentationDate
+        )
+        return forecast.remainingPercent == nil ? nil : forecast
+    }
+
     var body: some View {
         Group {
             switch context.presentation {
@@ -671,8 +694,32 @@ private struct CompanionValidationGalleryPreview: View {
                     .padding(18)
                 }
             case .settings:
+                // Mirrors the Sync and settings page: sync status first, then the details it holds.
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionSyncStatusView(result: result)
+                        ContextPanelWidgetContentView(
+                            family: .systemLarge,
+                            snapshot: context.snapshot,
+                            displayPreferences: context.displayPreferences,
+                            links: CompanionDeepLinks.previewLinks,
+                            showsResetCreditSurfaces: true,
+                            resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+                            presentationDate: context.presentationDate
+                        )
+                        .cpwThemeVariant(themeVariant)
+                        .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
+                        .background(
+                            CPWTheme.surface(variant: themeVariant),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+                        if let forecast {
+                            CompanionKeepWorkingCard(forecast: forecast)
+                        }
+                        CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                        if !context.snapshot.reports.isEmpty {
+                            BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+                        }
                         CompanionWidgetMainLimitsSettingsView(
                             preferences: context.displayPreferences,
                             isLoaded: true,
