@@ -536,6 +536,83 @@ validation. Issue #274 records the completed initial iOS/visionOS validation.
 This path is separate from the normal Mac TestFlight cut unless `Ship` is
 explicitly configured to use the companion channel.
 
+### Deliver current builds to all of Chris's devices
+
+Merging companion code, running the unsigned compiler gate, or publishing the
+Mac release does not update a companion device. Use three companion `Ship`
+runs from the same protected `main` commit, waiting for each to finish before
+dispatching the next. Ship's version-level concurrency group allows one pending
+run; dispatching all three at once can cancel a queued platform.
+
+| `companion_platform` | Devices updated by that package |
+| --- | --- |
+| `ios` | iPhone and iPad; the embedded Watch app and complication extension |
+| `visionos` | Native Apple Vision Pro app and widget |
+| `tvos` | Apple TV app and Top Shelf extension |
+
+Apply [Before starting a release](#before-starting-a-release) first. Record the
+source commit and finished-change list on the delivery issue, resolve existing
+release holds, and choose a marketing version/build through the
+[versioning flow](#normal-ship-workflow) and App Store version preflight. Keep the
+source commit fixed across the three runs; if `main` advances, reconcile the
+candidate rather than calling unlike builds one train.
+
+For each platform, set these `Ship` inputs:
+
+```text
+version=<selected marketing version>
+build_number=<selected build number>
+github_release=false
+app_store_channel=skip
+companion_app_store_channel=upload
+companion_platform=<ios|visionos|tvos>
+testflight_beta=true
+testflight_beta_source=companion
+include_internal_testflight_groups=true
+```
+
+These inputs include all existing internal groups; leave `testflight_beta_groups`
+empty for that audience. For a narrower existing authorized group, set its name
+and `include_internal_testflight_groups=false`. Confirm Chris belongs to the
+selected audience; an internal group is not proof of membership, and
+distribution does not install a build. Do not add testers or grant App Store
+Connect access as an install workaround. Follow the
+[schema publication gate](#cloudkit-production-schema-gate) and the existing
+signed validation/evidence paths; these inputs do not bypass either gate.
+Use the configured CI signing route rather than retrieving Apple credentials or
+signing keys. A missing signing asset is an operator setup step, not permission
+to copy a key into a task worktree.
+
+After each run, record its source/version/build, platform, upload result,
+processing result and TestFlight distribution result on the delivery issue.
+Export-only output and a successful upload alone do not establish that a build
+is available to its tester. The iOS package supplies both phone and tablet;
+there is no separate iPad upload. Watch has no separate `companion_platform`.
+
+Chris's device steps, only when needed:
+
+1. Complete Apple ID/iCloud sign-in and Apple's verification prompts himself;
+   no password, verification code or key belongs in the issue.
+2. Open TestFlight on iPhone, iPad, Apple TV and Vision Pro with the existing
+   tester Apple ID; install/update the recorded Context Panel version/build on
+   **each** device. One iPhone install does not update the iPad.
+3. Let the paired iPhone deliver the embedded Watch app (use the Watch app's
+   install control if automatic installation is off). Confirm the new build on
+   Watch, then restart Watch before routine complication review, following
+   [AGENTS.md](../AGENTS.md#validation). Preserve existing complication placement.
+4. If an explicitly selected local dogfood route requests device unlock, trust,
+   Developer Mode or install approval, complete those prompts himself. They are
+   not routine TestFlight prerequisites. The existing Vision Pro dogfood helper
+   uses Development CloudKit and does not replace Production TestFlight proof.
+5. Read **About** in the iPhone/iPad/Vision Pro or TV app, or scroll to **About**
+   on Watch, and record the installed version/build for every device. Check the
+   new account layout separately from last-updated/sync state. An old build is a
+   delivery gap; a current build with old readings needs sync diagnosis.
+
+Keep device installation and exact-build physical acceptance open on the owning
+issue until observed. A CI summary, simulator capture or another device's
+installed version cannot close those steps.
+
 ### tvOS Release Lane
 
 The `ContextPanelTV` scheme is a standalone read-only tvOS app. The release path

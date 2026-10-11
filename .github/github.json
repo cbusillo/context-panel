@@ -5,6 +5,7 @@
     "agentNotes": "AGENTS.md",
     "codeqlCancellationCleanup": "docs/repo-settings.md",
     "overallDirection": "https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md",
+    "mergeTrain": "https://github.com/cbusillo/codex-skills/blob/main/skills/launchplane/references/merge-train.md",
     "index": "docs/README.md",
     "productGoals": "docs/product-goals.md",
     "architecture": "docs/architecture.md",

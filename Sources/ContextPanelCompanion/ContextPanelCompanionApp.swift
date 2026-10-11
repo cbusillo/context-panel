@@ -205,6 +205,7 @@ private struct CompanionRootView: View {
     @State private var model = CompanionSyncModel()
     @State private var galleryRoute: ValidationGalleryRoute?
     @State private var accountPath: [CompanionAccountRoute] = []
+    @State private var showsAbout = false
 
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
@@ -268,7 +269,9 @@ private struct CompanionRootView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         if usesPageHeader {
-                            CompanionPageHeader { model.reload() }
+                            CompanionPageHeader(
+                                onRefresh: { model.reload() },
+                                onAbout: { showsAbout = true })
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
@@ -296,6 +299,11 @@ private struct CompanionRootView: View {
             }
             .companionNavigationChrome(usesPageHeader: usesPageHeader)
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("About", systemImage: "info.circle") {
+                        showsAbout = true
+                    }
+                }
                 if !usesPageHeader {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
@@ -305,6 +313,11 @@ private struct CompanionRootView: View {
                         }
                     }
                 }
+            }
+            .alert("Context Panel", isPresented: $showsAbout) {
+                Button("Done", role: .cancel) {}
+            } message: {
+                Text(InstalledAppVersion().displayText)
             }
             .task {
                 model.registerCloudKitSubscription()
@@ -698,6 +711,7 @@ private struct CompanionPageHeader: View {
     @Environment(\.companionSurfacePalette) private var palette
 
     let onRefresh: () -> Void
+    let onAbout: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 24) {
@@ -706,6 +720,12 @@ private struct CompanionPageHeader: View {
                 .foregroundStyle(palette.primaryText)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 20)
+
+            Button(action: onAbout) {
+                Label("About", systemImage: "info.circle")
+            }
+            .buttonStyle(.bordered)
+
             Button(action: onRefresh) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
