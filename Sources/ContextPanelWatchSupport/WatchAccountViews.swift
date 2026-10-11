@@ -216,33 +216,44 @@ public struct WatchAccountCircularFace: View {
         let presentation = WatchAccountComplicationPresentation(overview: overview, now: now)
         let horizon = presentation?.horizon
         let token = presentation?.colorToken ?? .tertiary
-        ZStack {
-            Circle().stroke(WatchTokens.color(.track), style: StrokeStyle(lineWidth: 5,
-                dash: horizon?.remaining == nil ? [2, 3] : []))
-            if let horizon, let fraction = horizon.remaining {
-                Circle().trim(from: 0, to: fraction)
-                    .stroke(WatchTokens.color(token), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                if horizon.runsOutBeforeReset {
-                    // A short red mark past what is left: it runs dry before the reset refills it.
-                    let start = min(0.9, fraction + 0.05)
-                    Circle().trim(from: start, to: start + 0.08)
-                        .stroke(WatchTokens.color(.critical), style: StrokeStyle(lineWidth: 5, lineCap: .butt))
+        let numeral = AccountNumbers.percent(horizon?.remaining)
+        let qualifier = presentation?.circularQuantity.replacingOccurrences(of: numeral, with: "") ?? ""
+        GeometryReader { proxy in
+            ZStack {
+                Circle().stroke(WatchTokens.color(.track), style: StrokeStyle(lineWidth: 5,
+                    dash: horizon?.remaining == nil ? [2, 3] : []))
+                if let horizon, let fraction = horizon.remaining {
+                    Circle().trim(from: 0, to: fraction)
+                        .stroke(WatchTokens.color(token), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                }
-            }
-            Text(presentation?.circularQuantity ?? AccountTerms.unknown)
-                .font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .foregroundStyle(WatchTokens.color(.primary))
-                .overlay(alignment: .bottomTrailing) {
-                    if let symbol = presentation?.stateSymbol {
-                        Image(systemName: symbol).font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(WatchTokens.color(token)).offset(x: 5, y: 5)
-                            .accessibilityHidden(true)
+                    if horizon.runsOutBeforeReset {
+                        // A short red mark past what is left: it runs dry before the reset refills it.
+                        let start = min(0.9, fraction + 0.05)
+                        Circle().trim(from: start, to: start + 0.08)
+                            .stroke(WatchTokens.color(.critical), style: StrokeStyle(lineWidth: 5, lineCap: .butt))
+                            .rotationEffect(.degrees(-90))
                     }
                 }
+                Text(numeral)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .frame(width: proxy.size.width * 0.68)
+                    .foregroundStyle(WatchTokens.color(.primary))
+                if !qualifier.isEmpty {
+                    Text(qualifier).font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(WatchTokens.color(token))
+                        .offset(y: -proxy.size.height * 0.26)
+                        .accessibilityHidden(true)
+                }
+                if let symbol = presentation?.stateSymbol {
+                    Image(systemName: symbol).font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(WatchTokens.color(token))
+                        .offset(y: proxy.size.height * 0.28)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .padding(3)
         .accessibilityElement(children: .ignore)

@@ -21,3 +21,8 @@ The `row-*` images are host `ImageRenderer` captures of the production shared
 Watch views, at 198 points with synthetic long names, Saved and unknown readings.
 They show wrapping and capacity semantics, not watchOS text scaling or placement.
 The operator capture shell is temporary and does not ship in the app.
+
+`circular-assumed-40.png` and `circular-assumed-50.png` stress the production
+circular face with an assumed reset at 40/50 points. The approximation mark and
+uncertainty symbol sit above/below the full numeral inside the ring. These are
+host shared-view captures, not WidgetKit placement proof.

@@ -175,3 +175,72 @@ func watchSavedFocusKeepsTheLastGoodAccountInsteadOfMetadataOrder(burn: Double?)
         overview: watchAccountOverview(now: watchAccountNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 1)),
         now: watchAccountNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 1))?.stateSymbol)
 }
+
+@Test(arguments: [false, true])
+func watchFailedAndStaleFocusReplaysTheOriginalRankingTime(failed: Bool) throws {
+    let limits = [("soon", 60, 24.0), ("later", 30, 144.0)].map { id, used, hours in
+        UsageLimit(provider: .openAI, accountID: id, accountName: id, label: "Weekly", windowLabel: "Weekly",
+            unit: .percent, used: used, limit: 100, resetsAt: watchAccountNow.addingTimeInterval(hours * 3_600),
+            lastUpdatedAt: watchAccountNow)
+    }
+    func overview(now: Date, status: UsageStatus) -> AccountOverview {
+        let reports = limits.map { limit in StoredProviderReport(provider: limit.provider, accountID: limit.accountID,
+            accountName: limit.accountName, generatedAt: watchAccountNow, status: status,
+            errorMessage: status == .failure ? "Sample failure" : nil) }
+        return AccountOverview(snapshot: UsageSnapshot(generatedAt: watchAccountNow, limits: limits), reports: reports, now: now)
+    }
+    let before = try #require(WatchAccountComplicationPresentation(overview: overview(now: watchAccountNow, status: .healthy), now: watchAccountNow))
+    #expect(before.account.metadata.label == "soon")
+    let afterDate = watchAccountNow.addingTimeInterval(2 * 86_400)
+    let saved = overview(now: afterDate, status: failed ? .failure : .healthy)
+    let after = try #require(WatchAccountComplicationPresentation(overview: saved, now: afterDate))
+    #expect(after.account.id == before.account.id)
+    #expect(after.quantity == before.quantity)
+    #expect(!after.horizon.isCurrent)
+    #expect(saved.lastObservedSelection().rankedAt == watchAccountNow)
+    #expect(saved.accounts.allSatisfy { !$0.isReliable })
+}
+
+@Test func watchSavedClosestDoesNotSwitchWhenEveryShortWindowBlocksUseNext() throws {
+    let limits = [0, 1].flatMap { index in ["Weekly", "5-hour"].map { window in
+        UsageLimit(provider: .openAI, accountID: "blocked-\(index)", accountName: "Blocked \(index)", label: window,
+            windowLabel: window, unit: .percent, used: window == "Weekly" ? 10 : 99 - index,
+            limit: 100, resetsAt: watchAccountNow.addingTimeInterval(86_400), lastUpdatedAt: watchAccountNow)
+    } }
+    func overview(_ now: Date) -> AccountOverview {
+        AccountOverview(snapshot: UsageSnapshot(generatedAt: watchAccountNow, limits: limits), reports: [], now: now)
+    }
+    let fresh = overview(watchAccountNow)
+    #expect(fresh.useNext(provider: .openAI) == nil)
+    let before = try #require(WatchAccountComplicationPresentation(overview: fresh, now: watchAccountNow))
+    let later = watchAccountNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 1)
+    let after = try #require(WatchAccountComplicationPresentation(overview: overview(later), now: later))
+    #expect(after.account.id == before.account.id)
+}
+
+@Test func watchUnknownSpeechUsesAStateWordInsteadOfReadingTheDash() throws {
+    let presentation = try #require(WatchAccountComplicationPresentation(overview: watchAccountOverview(used: [nil]), now: watchAccountNow))
+    #expect(presentation.accessibilityText.contains(AccountCapacityState.unknown.displayText))
+    #expect(!presentation.accessibilityText.contains(AccountTerms.unknown))
+}
+
+@MainActor
+@Test(arguments: [40, 50])
+func watchCircularKeepsAssumedCapacityVisibleInsideSmallRing(side: Int) throws {
+    let limit = UsageLimit(provider: .google, accountID: "sample-fit", accountName: "Sample fit",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 78, limit: 100,
+        resetsAt: watchAccountNow.addingTimeInterval(-1), lastUpdatedAt: watchAccountNow.addingTimeInterval(-100),
+        freshnessMode: .eventDriven)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: watchAccountNow, limits: [limit]), reports: [], now: watchAccountNow)
+    let presentation = try #require(WatchAccountComplicationPresentation(overview: overview, now: watchAccountNow))
+    let renderer = ImageRenderer(content: WatchAccountCircularFace(overview: overview, now: watchAccountNow)
+        .frame(width: CGFloat(side), height: CGFloat(side)).background(.black).environment(\.colorScheme, .dark))
+    renderer.scale = 4
+    let image = try #require(renderer.cgImage)
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = false
+    try VNImageRequestHandler(cgImage: image).perform([request])
+    let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    #expect(text.contains(AccountNumbers.percent(presentation.horizon.remaining)), "Visible circular capacity: \(text)")
+}

@@ -179,12 +179,12 @@ unknown readings draw only the track.
 All four account complication families use one shared focus account: the first
 to run out, otherwise the Use next account with most remaining capacity, then
 the closest account. With only Saved readings, reconstruct the last-good
-run-out or recommendation from saved evidence, then the saved account with most
-capacity, instead of falling back immediately to metadata order.
+run-out, recommendation or closest account using the shared ranking at the
+last observation, instead of falling back immediately to metadata order.
 They derive quantities, forecast and
 freshness from the entry's presentation date. Circular Saved values carry a
 clock mark; inline and corner labels say Saved, while rectangular uses the Saved
-time. Assumed-reset values keep their approximation mark, a refresh symbol and
+time. Assumed-reset values keep their approximation mark, a question mark and
 explicit Assumed wording. Unknown capacity is indeterminate. VoiceOver leads
 with the displayed, named horizon window before describing other windows.
 Inline keeps the account name when it

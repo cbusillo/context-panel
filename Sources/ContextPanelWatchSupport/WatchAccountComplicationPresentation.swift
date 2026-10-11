@@ -20,20 +20,20 @@ public struct WatchAccountComplicationPresentation {
         let horizon = account.horizon(now: now)
         self.horizon = horizon
         quantity = horizon.window.map { AccountNumbers.window($0) } ?? AccountTerms.unknown
-        circularQuantity = horizon.window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown
+        circularQuantity = horizon.window.map { AccountNumbers.window($0, sign: false).replacingOccurrences(of: " ", with: "") }
+            ?? AccountTerms.unknown
         colorToken = horizon.isCurrent ? account.metadata.provider.colorToken : .saved
         let state = horizon.isCurrent ? nil : WatchAccountText.state(account, horizon: horizon)
         if horizon.remaining == nil || account.state == .unknown {
             stateSymbol = "questionmark"
-        } else if account.windows.contains(where: { $0.assumption != nil }) {
-            stateSymbol = "arrow.clockwise"
         } else {
             stateSymbol = switch account.state {
             case .stale, .unavailable: "clock"
             case .off: "pause"
             case .notConnected: "icloud.slash"
             case .refreshing: "arrow.clockwise"
-            default: horizon.isCurrent ? nil : "questionmark"
+            default: account.windows.contains(where: { $0.assumption != nil }) ? "questionmark"
+                : horizon.isCurrent ? nil : "questionmark"
             }
         }
         let provider = account.metadata.provider.accountDisplayName
@@ -45,30 +45,19 @@ public struct WatchAccountComplicationPresentation {
     }
 
     private static func focusAccount(_ overview: AccountOverview, now: Date) -> AccountOverview.Account? {
+        if let current = currentFocus(overview, now: now) { return current }
+        let previous = overview.lastObservedSelection()
+        if let focus = currentFocus(previous, now: previous.rankedAt) {
+            return overview.accounts.first { $0.id == focus.id }
+        }
+        return overview.accounts.first
+    }
+
+    private static func currentFocus(_ overview: AccountOverview, now: Date) -> AccountOverview.Account? {
         if let short = overview.runningShort(now: now).first { return short.account }
         let next = Provider.allCases.compactMap { overview.useNext(provider: $0) }
             .max { ($0.horizon(now: now).remaining ?? 0) < ($1.horizon(now: now).remaining ?? 0) }
-        if let current = next ?? overview.closest { return current }
-
-        // Reconstruct the last-good focus from saved normalized evidence, without calling it Use next.
-        let saved = overview.accounts.filter { [.stale, .unavailable].contains($0.state) }
-        let savedRunOut = saved.compactMap { account -> (AccountOverview.Account, Date)? in
-            guard let observed = account.observedAt else { return nil }
-            let long = account.windows.filter { $0.id != account.shortWindow?.id && $0.assumption == nil }
-            let first = long.compactMap { window -> Date? in
-                if window.remainingFraction == 0, (window.naturalResetAt ?? .distantPast) > observed { return observed }
-                return window.projectedRunOut(now: observed)
-            }.min()
-            return first.map { (account, $0) }
-        }.min { $0.1 < $1.1 }?.0
-        if let savedRunOut { return savedRunOut }
-        let savedNext = Provider.allCases.compactMap { provider -> AccountOverview.Account? in
-            let ranking = overview.useNextRanking(provider: provider)
-            guard ranking.basedOnStaleReadings, let id = ranking.entries.first?.accountID else { return nil }
-            return saved.first { $0.id == id }
-        }.max { ($0.horizon(now: now).remaining ?? 0) < ($1.horizon(now: now).remaining ?? 0) }
-        return savedNext ?? saved.max { ($0.horizon(now: now).remaining ?? 0) < ($1.horizon(now: now).remaining ?? 0) }
-            ?? overview.accounts.first
+        return next ?? overview.closest
     }
 }
 
@@ -85,7 +74,7 @@ public enum WatchAccountText {
         let horizon = account.horizon(now: now)
         var parts = [account.metadata.provider.accountDisplayName, account.metadata.label]
         if let window = horizon.window {
-            parts.append(window.label + " " + AccountNumbers.window(window) + " " + AccountTerms.left)
+            parts.append(quantity(window))
         } else {
             parts.append(AccountCapacityState.unknown.displayText)
         }
@@ -93,7 +82,7 @@ public enum WatchAccountText {
         if horizon.isCurrent { parts.append(AccountTerms.outcomeShort(account, horizon, now: now)) }
         for window in account.orderedWindows {
             if window.id != horizon.window?.id {
-                parts.append(window.label + " " + AccountNumbers.window(window) + " " + AccountTerms.left)
+                parts.append(quantity(window))
             }
             if let reset = AccountTerms.reset(window, now: now) { parts.append(window.label + " " + AccountTerms.resets + " " + reset) }
             if let assumption = window.assumption { parts.append(assumption.accessibilityText) }
@@ -107,5 +96,10 @@ public enum WatchAccountText {
         }
         if isNext && horizon.isCurrent { parts.append(AccountTerms.useNext) }
         return parts.joined(separator: ", ")
+    }
+
+    private static func quantity(_ window: AccountOverview.Window) -> String {
+        window.label + " " + (window.remainingFraction == nil ? AccountCapacityState.unknown.displayText
+            : AccountNumbers.window(window) + " " + AccountTerms.left)
     }
 }
