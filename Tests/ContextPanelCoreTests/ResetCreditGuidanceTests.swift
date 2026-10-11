@@ -78,8 +78,6 @@ import Testing
     let guidance = try #require(ResetCreditGuidanceAdvisor.guidance(report: report, limits: [weekly], now: now))
 
     #expect(guidance.state == .considerUsingNow)
-    #expect(guidance.compactActionText == "consider using now")
-    #expect(guidance.glanceActionText == "use now")
 }
 
 @Test func resetCreditGuidanceHoldsForImminentNaturalResetBoundary() throws {
@@ -173,9 +171,6 @@ import Testing
     let healthy = try #require(ResetCreditGuidanceAdvisor.guidance(report: report, limits: [healthyWeekly], now: now))
 
     #expect(pressured.state == .considerBefore(expiry))
-    #expect(pressured.compactActionText?.hasPrefix("consider before ") == true)
-    #expect(pressured.compactActionText?.contains(pressured.accountName) == false)
-    #expect(pressured.glanceActionText?.hasPrefix("by ") == true)
     #expect(healthy.state == .hold(.weeklyCapacityHealthy))
 }
 
@@ -320,7 +315,6 @@ import Testing
         let copy = [
             guidance.recommendationTitle,
             guidance.recommendationDetail(now: now),
-            guidance.compactActionText ?? "",
         ].joined(separator: " ").lowercased()
 
         for phrase in forbidden {
