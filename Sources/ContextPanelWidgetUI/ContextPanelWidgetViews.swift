@@ -164,7 +164,7 @@ public struct ContextPanelWidgetContentView: View {
         if displayPreferences.usesAccountRows {
             let accounts = snapshot.accountOverview(now: presentationDate, widgetsOnly: true,
                 maximumAge: resetCreditMaximumAge)
-            if family == .systemSmall, let account = accounts.closest ?? accounts.accounts.first {
+            if family == .systemSmall, let account = accounts.widgetTapAccount {
                 return links.account(account.metadata.provider, id: account.id)
             }
             return links.overview
