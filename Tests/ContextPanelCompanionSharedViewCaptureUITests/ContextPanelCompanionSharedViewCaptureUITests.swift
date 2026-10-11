@@ -404,3 +404,54 @@ private enum CaptureError: Error {
     case invalidRoute
     case routeMismatch
 }
+#if os(visionOS)
+import ContextPanelCompanionSupport
+import ContextPanelCore
+import ContextPanelSettingsUI
+import ContextPanelValidationFixtures
+import ContextPanelValidationGalleryUI
+import SwiftUI
+import UIKit
+import XCTest
+
+@MainActor
+final class SpatialAccountOverviewCaptureTests: XCTestCase {
+    func testCaptureSpatialOverview() throws {
+        let now = ValidationFixtureCatalog.referencePresentationDate
+        let cases: [(String, ValidationFixtureID, CGFloat, ColorScheme, DynamicTypeSize)] = [
+            ("wide-light", .denseAccounts, 1128, .light, .large),
+            ("wide-dark", .denseAccounts, 1128, .dark, .large),
+            ("medium-light", .denseAccounts, 810, .light, .large),
+            ("narrow-light", .denseAccounts, 540, .light, .large),
+            ("stale-dark", .stale, 810, .dark, .large),
+            ("empty-light", .missing, 810, .light, .large),
+            ("long-names-light", .fitFallback, 540, .light, .large),
+            ("accessibility-dark", .denseAccounts, 1128, .dark, .accessibility3),
+        ]
+        for (name, fixtureID, width, scheme, textSize) in cases {
+            let snapshot = ValidationGalleryFixtureAdapter().snapshot(
+                fixture: ValidationFixtureCatalog.fixture(id: fixtureID), presentationDate: now)
+            let presentation = CompanionSyncPresentation(result: CompanionSyncLoadResult(document: nil, status: snapshot.status))
+            let overview = snapshot.accountOverview(now: now, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+            let content = VStack(alignment: .leading, spacing: 18) {
+                Text("Sample data · Vision Pro shared view").font(.caption)
+                SpatialAccountOverviewPanel(overview: overview, now: now, contentWidth: width - 48,
+                    syncTitle: presentation.title, syncDetail: presentation.detail, syncSymbol: presentation.symbol,
+                    lastSyncedAt: snapshot.state == .setupNeeded ? nil : now,
+                    openAccount: { _ in }, openDeadlines: {})
+            }
+            .padding(24).frame(width: width)
+            .environment(\.colorScheme, scheme).environment(\.dynamicTypeSize, textSize)
+            .background(scheme == .dark ? Color.black : Color.white)
+            let renderer = ImageRenderer(content: content)
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.uiImage)
+            XCTAssertEqual(image.size.width, width)
+            let attachment = XCTAttachment(data: try XCTUnwrap(image.pngData()), uniformTypeIdentifier: "public.png")
+            attachment.name = "vision-\(name)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+}
+#endif

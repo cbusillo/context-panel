@@ -273,10 +273,23 @@ private struct CompanionRootView: View {
                             }
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
+                            #if os(visionOS)
+                            let presentation = CompanionSyncPresentation(result: model.result)
+                            SpatialAccountOverviewPanel(overview: accountOverview(at: context.date), now: context.date,
+                                contentWidth: min(geometry.size.width - 2 * pagePadding,
+                                    CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, platform: .visionOS)
+                                        ?? geometry.size.width),
+                                syncTitle: presentation.title, syncDetail: presentation.detail, syncSymbol: presentation.symbol,
+                                lastSyncedAt: model.result.transportMetadata?.receivedAt
+                                    ?? model.result.transportMetadata?.mirroredAt ?? model.result.document?.snapshot.publishedAt,
+                                openAccount: { accountPath.append(.account($0.id)) },
+                                openDeadlines: { accountPath.append(.deadlines) })
+                            #else
                             AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
                                 compact: horizontalSizeClass != .regular,
                                 openAccount: { accountPath.append(.account($0.id)) },
                                 openDeadlines: { accountPath.append(.deadlines) })
+                            #endif
                         }
                         DisclosureGroup("Settings, pace and sync details") {
                             companionContent(layoutMode: layoutMode).padding(.top, 16)
@@ -611,6 +624,20 @@ private struct CompanionValidationGalleryPreview: View {
         Group {
             switch context.presentation {
             case .overview:
+                #if os(visionOS)
+                GeometryReader { geometry in
+                    ScrollView {
+                        let presentation = CompanionSyncPresentation(result: result)
+                        SpatialAccountOverviewPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                            contentWidth: geometry.size.width - 48,
+                            syncTitle: presentation.title, syncDetail: presentation.detail, syncSymbol: presentation.symbol,
+                            lastSyncedAt: result.document?.snapshot.publishedAt,
+                            openAccount: { _ in }, openDeadlines: {})
+                            .padding(24)
+                    }
+                }
+                #else
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
@@ -647,6 +674,7 @@ private struct CompanionValidationGalleryPreview: View {
                     }
                     .padding(18)
                 }
+                #endif
             case .diagnostics:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {

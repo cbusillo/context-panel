@@ -11,15 +11,21 @@ public struct AccountDashboardPanel: View {
     let openAccount: (AccountOverview.Account) -> Void
     let openDeadlines: () -> Void
     let compact: Bool
+    let compactAccounts: Bool
+    let emptyMessage: String
     let accountDetails: ((AccountOverview.Account) -> AnyView)?
 
     /// `compact` stacks everything into one column, for phone widths.
     public init(overview: AccountOverview, now: Date, compact: Bool = false,
+                compactAccounts: Bool? = nil,
+                emptyMessage: String = "Add an account in Settings to see its usage and reset times.",
                 accountDetails: ((AccountOverview.Account) -> AnyView)? = nil,
                 openAccount: @escaping (AccountOverview.Account) -> Void, openDeadlines: @escaping () -> Void) {
         self.overview = overview
         self.now = now
         self.compact = compact
+        self.compactAccounts = compactAccounts ?? compact
+        self.emptyMessage = emptyMessage
         self.accountDetails = accountDetails
         self.openAccount = openAccount
         self.openDeadlines = openDeadlines
@@ -33,11 +39,11 @@ public struct AccountDashboardPanel: View {
         VStack(alignment: .leading, spacing: compact ? 16 : 22) {
             header
             if overview.accounts.isEmpty {
-                Text("Add an account in Settings to see its usage and reset times.").foregroundStyle(palette.secondary)
+                Text(emptyMessage).foregroundStyle(palette.secondary)
             } else {
                 useNextCards
                 callout
-                if compact { compactGroups } else { table }
+                if compactAccounts { compactGroups } else { table }
                 legend
             }
         }
@@ -200,17 +206,26 @@ public struct AccountDashboardPanel: View {
     // MARK: Table
 
     private enum Column {
+        static let accountMinimum: CGFloat = 140
+        static let spacing: CGFloat = 14
+        static let padding: CGFloat = 16
         static let week: CGFloat = 50
         static let horizon: CGFloat = 206
         static let fiveHour: CGFloat = 118
         static let outcome: CGFloat = 172
     }
 
+    /// The desktop table's fixed columns, gaps and padding plus room for the account name.
+    public nonisolated static var minimumTableWidth: CGFloat {
+        Column.accountMinimum + Column.week + Column.horizon + Column.fiveHour + Column.outcome
+            + 4 * Column.spacing + 2 * Column.padding
+    }
+
     private var weeklyColumns: Bool { overview.accounts.allSatisfy { $0.longWindow == nil || $0.longWindow?.duration == 7 * 86_400 } }
 
     private var table: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
+            HStack(spacing: Column.spacing) {
                 Text(AccountTerms.account).frame(maxWidth: .infinity, alignment: .leading)
                 Text(AccountTerms.longColumn(weekly: weeklyColumns)).frame(width: Column.week, alignment: .trailing)
                 DashboardHorizonAxis(now: now, palette: palette).frame(width: Column.horizon)
@@ -218,7 +233,7 @@ public struct AccountDashboardPanel: View {
                 Text(AccountTerms.beforeItsReset).frame(width: Column.outcome, alignment: .leading)
             }
             .font(.system(size: AccountTextSize.appMinimum, weight: .semibold)).foregroundStyle(palette.secondary)
-            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
+            .padding(.horizontal, Column.padding).padding(.top, 10).padding(.bottom, 6)
             ForEach(totals) { total in
                 Rectangle().fill(palette.line).frame(height: 1)
                 groupHeader(total).padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
@@ -249,16 +264,16 @@ public struct AccountDashboardPanel: View {
 
     private func groupHeader(_ total: AccountProviderTotal) -> some View {
         let summary = AccountTerms.providerSummary(total, now: now)
-        let layout = compact ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+        let layout = compactAccounts ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
             : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 14))
         return layout {
             Text(total.provider.accountDisplayName).font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(palette.provider(total.provider))
-                .frame(width: compact ? nil : 140, alignment: .leading)
+                .frame(width: compactAccounts ? nil : Column.accountMinimum, alignment: .leading)
             (Text(summary.facts + " · ") + Text(summary.outlook).foregroundStyle(palette.color(AccountAlarm.providerOutlookToken)))
                 .font(.system(size: 12)).monospacedDigit().foregroundStyle(palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if !compact { Spacer(minLength: 0) }
+            if !compactAccounts { Spacer(minLength: 0) }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(total.accessibilityText(now: now))
@@ -267,7 +282,7 @@ public struct AccountDashboardPanel: View {
     private func row(_ account: AccountOverview.Account) -> some View {
         let horizon = account.horizon(now: now)
         let outcome = AccountTerms.outcome(account, horizon, now: now)
-        return HStack(alignment: .center, spacing: 14) {
+        return HStack(alignment: .center, spacing: Column.spacing) {
             nameBlock(account).frame(maxWidth: .infinity, alignment: .leading)
             percent(horizon, account: account, size: 20).frame(width: Column.week, alignment: .trailing)
             DashboardHorizon(account: account, horizon: horizon, deadlines: deadlines(account), now: now, palette: palette)
@@ -282,7 +297,7 @@ public struct AccountDashboardPanel: View {
             .monospacedDigit()
             .frame(width: Column.outcome, alignment: .leading)
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, Column.padding).padding(.vertical, 8)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibility(account, horizon))
