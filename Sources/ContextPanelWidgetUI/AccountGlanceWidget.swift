@@ -68,15 +68,15 @@ struct AccountGlanceWidget: View {
 
     private func headline(_ overview: AccountOverview) -> (lead: String, rest: String, short: Bool) {
         if overview.widgetShowsOnlySavedUsage {
-            return ("Saved usage", observationText(overview), false)
+            return ("Saved usage", "", false)
         }
         let headline = overview.headline(now: now)
         let words = AccountTerms.compactHeadline(headline)
         return (words.lead, words.rest, headline.shortCount > 0)
     }
 
-    private func observationText(_ overview: AccountOverview) -> String {
-        overview.widgetObservationDate.map { AccountPaceText.when($0, now: now) } ?? "Time unknown"
+    private func observationText(_ overview: AccountOverview, rows: [AccountOverview.Account]? = nil) -> String {
+        overview.widgetObservationDate(in: rows).map { AccountPaceText.when($0, now: now) } ?? "Time unknown"
     }
 
     private func header(trailing: String?) -> some View {
@@ -106,14 +106,16 @@ struct AccountGlanceWidget: View {
                 if headline.short {
                     Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
                 }
-                Text(headline.lead + (overview.widgetShowsOnlySavedUsage ? " · " + headline.rest : ""))
+                Text(overview.widgetShowsOnlySavedUsage
+                     ? AccountCapacityState.stale.displayText + " · " + observationText(overview) : headline.lead)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(headline.short ? palette.bad : palette.primary)
-                    .lineLimit(1).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .ignore)
             .padding(.bottom, 5)
-            .accessibilityLabel([headline.lead, headline.rest].filter { !$0.isEmpty }.joined(separator: " "))
+            .accessibilityLabel([headline.lead, overview.widgetShowsOnlySavedUsage ? observationText(overview) : headline.rest]
+                .filter { !$0.isEmpty }.joined(separator: " "))
             if picks.isEmpty {
                 Text(AccountTerms.noEligibleAccount).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
@@ -148,13 +150,15 @@ struct AccountGlanceWidget: View {
                 Spacer(minLength: 2)
                 Text(weekPercent(horizon, account: account)).font(.system(size: 12, weight: .bold)).monospacedDigit()
             }
-            Text((isNext ? "" : account.stateText + " · ") + account.metadata.label)
+            Text((isNext || roomy || overview.widgetShowsOnlySavedUsage ? "" : account.stateText + " · ") + account.metadata.label)
                 .font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
             if roomy {
                 horizonView(account, horizon, in: overview).frame(height: 9).padding(.top, 2)
-                Text(AccountTerms.outcomeShort(account, horizon, now: now))
-                    .font(.system(size: AccountTextSize.glanceMinimum))
-                    .foregroundStyle(outcomeColor(account, horizon)).lineLimit(1)
+                if isNext || !overview.widgetShowsOnlySavedUsage {
+                    Text(AccountTerms.outcomeShort(account, horizon, now: now))
+                        .font(.system(size: AccountTextSize.glanceMinimum))
+                        .foregroundStyle(outcomeColor(account, horizon)).lineLimit(1)
+                }
             }
         }
         .padding(.leading, 6)
@@ -253,7 +257,8 @@ struct AccountGlanceWidget: View {
         let totals = overview.providerTotals(now: now)
         let headline = headline(overview)
         return VStack(alignment: .leading, spacing: 0) {
-            header(trailing: observationText(overview)
+            header(trailing: (overview.widgetShowsOnlySavedUsage ? AccountCapacityState.stale.displayText : AccountTerms.updated)
+                + " " + observationText(overview, rows: rows)
                 + (overview.accounts.count > rows.count ? " · +\(overview.accounts.count - rows.count)" : ""))
                 .padding(.bottom, 3)
             (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.primary)

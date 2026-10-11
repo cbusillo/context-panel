@@ -34,7 +34,7 @@ private func widgetPickSnapshot(old: Bool = false, hidden: Bool = false, disable
     #expect(overview.useNext(provider: .openAI) == nil)
     #expect(!account.glanceAccessibilityText(now: widgetPickNow, isNext: pick.isRecommendation).contains(AccountTerms.useNext))
     #expect(overview.widgetShowsOnlySavedUsage)
-    #expect(overview.widgetObservationDate == widgetPickNow.addingTimeInterval(-86_400))
+    #expect(overview.widgetObservationDate() == widgetPickNow.addingTimeInterval(-86_400))
 }
 
 @Test func currentWidgetRecommendationWinsOverSavedFallback() throws {
@@ -53,4 +53,28 @@ private func widgetPickSnapshot(old: Bool = false, hidden: Bool = false, disable
     let unknown = widgetPickSnapshot(old: true, unknown: true).accountOverview(now: widgetPickNow, widgetsOnly: true)
     #expect(unknown.widgetPicks.first?.account == nil)
     #expect(!unknown.widgetShowsOnlySavedUsage)
+}
+
+@Test func savedWidgetFallbackDoesNotMaskCurrentExhaustion() throws {
+    let snapshot = widgetPickSnapshot(old: true, withCurrent: true)
+    var limits = snapshot.limits
+    limits[1] = UsageLimit(provider: .openAI, accountID: "current", accountName: "Current account",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 100, limit: 100,
+        resetsAt: widgetPickNow.addingTimeInterval(86_400), lastUpdatedAt: widgetPickNow, confidence: .observed)
+    let exhausted = WidgetSnapshot(state: .ready, generatedAt: widgetPickNow, limits: limits,
+        status: .healthy, message: "", accountDisplayMetadata: snapshot.accountDisplayMetadata)
+    let overview = exhausted.accountOverview(now: widgetPickNow, widgetsOnly: true)
+    #expect(overview.accounts.last?.state == .limited)
+    let pick = try #require(overview.widgetPicks.first)
+    #expect(pick.account == nil)
+    #expect(!pick.isRecommendation)
+}
+
+@Test func widgetObservationUsesDisplayedActiveOrSavedReadings() throws {
+    let snapshot = widgetPickSnapshot(old: true, withCurrent: true)
+    let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
+    let current = try #require(overview.accounts.last)
+    #expect(overview.widgetObservationDate(in: [current]) == widgetPickNow)
+    let paused = widgetPickSnapshot(old: true, disabled: true).accountOverview(now: widgetPickNow, widgetsOnly: true)
+    #expect(paused.widgetObservationDate() == nil)
 }

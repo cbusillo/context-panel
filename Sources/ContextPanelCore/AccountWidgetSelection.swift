@@ -16,7 +16,9 @@ public extension AccountOverview {
             if let account = useNext(provider: provider) {
                 return WidgetPick(provider: provider, account: account, isRecommendation: true)
             }
-            let saved = members.first {
+            // A saved sibling must not mask a known current provider limit or cushion hold.
+            let hasCurrent = members.contains { [.available, .closeToLimit, .limited].contains($0.state) }
+            let saved = hasCurrent ? nil : members.first {
                 [.stale, .unavailable].contains($0.state) && $0.longWindow?.remainingFraction != nil
             }
             return WidgetPick(provider: provider, account: saved, isRecommendation: false)
@@ -24,8 +26,10 @@ public extension AccountOverview {
     }
 
     /// Use the oldest represented observation rather than the time the widget was rendered.
-    var widgetObservationDate: Date? {
-        accounts.compactMap(\.observedAt).min()
+    func widgetObservationDate(in displayedAccounts: [Account]? = nil) -> Date? {
+        (displayedAccounts ?? accounts)
+            .filter { [.available, .closeToLimit, .limited, .stale, .unavailable].contains($0.state) }
+            .compactMap(\.observedAt).min()
     }
 
     var widgetShowsOnlySavedUsage: Bool {

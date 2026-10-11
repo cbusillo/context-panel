@@ -42,12 +42,13 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
         UsageLimit(provider: provider, accountID: "synthetic-\(index)",
             accountName: "longest.configured.account.\(index)@example.invalid",
             label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 0, limit: 100,
-            resetsAt: now.addingTimeInterval(86_400), lastUpdatedAt: now, confidence: .observed)
+            resetsAt: now.addingTimeInterval(86_400),
+            lastUpdatedAt: saved ? now.addingTimeInterval(-10 * 86_400) : now, confidence: .observed)
     }
-    let metadata = limits.map { limit in
+    let metadata = limits.enumerated().map { index, limit in
         AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
             configurationID: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
-            provider: limit.provider, label: limit.accountName)
+            provider: limit.provider, label: saved ? "Account \(index + 1)" : limit.accountName)
     }
     let snapshot = WidgetSnapshot(state: saved ? .stale : .ready, generatedAt: now, limits: limits,
         status: saved ? .stale : .healthy, message: "", accountDisplayMetadata: metadata)
@@ -84,7 +85,9 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
     let expected = family == .systemLarge || family == .systemExtraLarge ? limits.count : Set(providers).count
     #expect(fullPercentages == expected, "Visible account percentages: \(lines)")
     if saved {
-        #expect(lines.joined(separator: " ").contains(AccountCapacityState.stale.displayText))
+        let savedMarks = lines.joined(separator: " ").components(separatedBy: AccountCapacityState.stale.displayText).count - 1
+        // Small has one shared freshness line; larger widgets mark each represented account.
+        #expect(savedMarks >= (family == .systemSmall ? 1 : expected))
         #expect(!lines.joined(separator: " ").contains(AccountTerms.noEligibleAccount))
     }
     if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
