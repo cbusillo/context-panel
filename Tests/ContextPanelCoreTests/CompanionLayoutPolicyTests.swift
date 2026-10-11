@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 
 @testable import ContextPanelCompanionSupport
@@ -133,4 +134,26 @@ import Testing
         CompanionLayoutPolicy.settingsColumnWidth(platform: .visionOS)
             == CompanionLayoutPolicy.visionSettingsColumnWidth
     )
+}
+
+/// iPhone 393, iPad mini portrait 744, iPad portrait 834: too narrow for the Mac table's columns.
+@Test(arguments: [393, 744, 834] as [CGFloat])
+func companionLayoutPolicyStacksAccountsBelowTheMacPaneWidth(width: CGFloat) {
+    #expect(!CompanionLayoutPolicy.usesAccountTable(width: width))
+}
+
+/// iPad landscape 1194 has room for the table.
+@Test func companionLayoutPolicyUsesTheAccountTableInIPadLandscape() {
+    #expect(CompanionLayoutPolicy.usesAccountTable(width: 1_194))
+}
+
+@Test func companionLayoutPolicySwitchesToTheAccountTableAtTheMacPaneWidth() {
+    let threshold = CompanionLayoutPolicy.accountTableMinimumWidth
+    #expect(!CompanionLayoutPolicy.usesAccountTable(width: threshold - 1))
+    #expect(CompanionLayoutPolicy.usesAccountTable(width: threshold))
+}
+
+@Test func companionLayoutPolicyStacksAccountsForInvalidWidths() {
+    #expect(!CompanionLayoutPolicy.usesAccountTable(width: .nan))
+    #expect(!CompanionLayoutPolicy.usesAccountTable(width: .infinity))
 }

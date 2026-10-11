@@ -194,13 +194,17 @@ The native macOS app should stay a work-focused sidebar-and-detail window:
   naming, widget lane preferences, refresh cadence, warning/webhook settings,
   and troubleshooting.
 
-The read-only iPhone, iPad, and visionOS companion uses an adaptive composition:
+The read-only iPhone, iPad, and visionOS companion leads with the shared account
+overview. It uses the Mac's account table only when the window is at least 900
+points wide (the Mac account pane); narrower windows, including iPad portrait,
+use the stacked account rows. One "Sync and settings" row opens the sync status,
+widget preview, pace details, and settings, which use an adaptive composition:
 
 - iPhone keeps the existing full-width single column with 16-point page padding
   in every orientation.
 - Non-phone content widths below 824 points and accessibility text sizes use one
   centered column capped at 760 points with 24-point page padding. The order is
-  usage instrument, sync status, display settings, refresh settings, then
+  sync status, usage instrument, display settings, refresh settings, then
   visionOS appearance.
 - Regular-width iPad windows use an inline page header aligned with the content
   grid, with refresh beside the current sync state. Two bounded columns begin
