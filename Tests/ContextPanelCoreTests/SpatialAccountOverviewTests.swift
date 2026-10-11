@@ -1,5 +1,4 @@
 import AppKit
-import ContextPanelCompanionSupport
 import ContextPanelCore
 import ContextPanelSettingsUI
 import ContextPanelValidationFixtures
@@ -9,16 +8,16 @@ import Testing
 
 @Test func spatialOverviewKeepsCardsWideWhenOnlyTheLedgerNeedsToStack() {
     let intermediateWidth = AccountDashboardPanel.minimumTableWidth - 1
-    #expect(SpatialAccountOverviewPanel.usesCompactAccounts(contentWidth: intermediateWidth, accessibility: false))
-    #expect(!SpatialAccountOverviewPanel.usesCompactCards(contentWidth: intermediateWidth, accessibility: false))
-    #expect(!SpatialAccountOverviewPanel.usesCompactAccounts(contentWidth: AccountDashboardPanel.minimumTableWidth, accessibility: false))
-    #expect(SpatialAccountOverviewPanel.usesCompactCards(contentWidth: 492, accessibility: false))
+    #expect(SpatialAccountOverviewLayout.usesCompactAccounts(contentWidth: intermediateWidth, accessibility: false))
+    #expect(!SpatialAccountOverviewLayout.usesCompactCards(contentWidth: intermediateWidth, accessibility: false))
+    #expect(!SpatialAccountOverviewLayout.usesCompactAccounts(contentWidth: AccountDashboardPanel.minimumTableWidth, accessibility: false))
+    #expect(SpatialAccountOverviewLayout.usesCompactCards(contentWidth: 492, accessibility: false))
     for width in [CGFloat.nan, -.infinity, .infinity, -1] {
-        #expect(SpatialAccountOverviewPanel.usesCompactAccounts(contentWidth: width, accessibility: false))
-        #expect(SpatialAccountOverviewPanel.usesCompactCards(contentWidth: width, accessibility: false))
+        #expect(SpatialAccountOverviewLayout.usesCompactAccounts(contentWidth: width, accessibility: false))
+        #expect(SpatialAccountOverviewLayout.usesCompactCards(contentWidth: width, accessibility: false))
     }
-    #expect(SpatialAccountOverviewPanel.usesCompactAccounts(contentWidth: 1080, accessibility: true))
-    #expect(SpatialAccountOverviewPanel.usesCompactCards(contentWidth: 1080, accessibility: true))
+    #expect(SpatialAccountOverviewLayout.usesCompactAccounts(contentWidth: 1080, accessibility: true))
+    #expect(SpatialAccountOverviewLayout.usesCompactCards(contentWidth: 1080, accessibility: true))
 }
 
 @MainActor
@@ -26,13 +25,11 @@ import Testing
     let now = ValidationFixtureCatalog.referencePresentationDate
     let snapshot = ValidationGalleryFixtureAdapter().snapshot(
         fixture: ValidationFixtureCatalog.fixture(id: .denseAccounts), presentationDate: now)
-    let presentation = CompanionSyncPresentation(result: CompanionSyncLoadResult(document: nil, status: snapshot.status))
     func render(width: CGFloat) throws -> CGImage {
         let renderer = ImageRenderer(content: SpatialAccountOverviewPanel(
             overview: snapshot.accountOverview(now: now, maximumAge: SnapshotFreshness.companionProviderMaximumAge),
             now: now, contentWidth: width,
-            syncTitle: presentation.title, syncDetail: presentation.detail, syncSymbol: presentation.symbol,
-            lastSyncedAt: now, openAccount: { _ in }, openDeadlines: {})
+            openAccount: { _ in }, openDeadlines: {})
             .frame(width: width).environment(\.colorScheme, .light))
         return try #require(renderer.cgImage)
     }
@@ -41,5 +38,13 @@ import Testing
     let narrow = try render(width: 492)
     #expect(medium.height > wide.height)
     #expect(narrow.height > medium.height)
-    #expect(narrow.width < medium.width && medium.width < wide.width)
+    // macOS has no UIKit Dynamic Type metrics. Test the shared opt-in typography here;
+    // the visionOS capture verifies the platform's actual scaling.
+    func scaledHeight(_ scale: CGFloat) throws -> Int {
+        let renderer = ImageRenderer(content: AccountDashboardPanel(
+            overview: snapshot.accountOverview(now: now), now: now, compact: true, textScale: scale,
+            openAccount: { _ in }, openDeadlines: {}).frame(width: 492))
+        return try #require(renderer.cgImage).height
+    }
+    #expect(try scaledHeight(2) > scaledHeight(1) + 200)
 }

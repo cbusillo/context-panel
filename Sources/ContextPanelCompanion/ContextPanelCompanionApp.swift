@@ -620,50 +620,13 @@ private struct CompanionValidationGalleryPreview: View {
         Group {
             switch context.presentation {
             case .overview:
+                #if os(visionOS)
                 GeometryReader { geometry in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                        CompanionSyncStatusView(result: result, now: context.presentationDate)
-                        #if os(visionOS)
-                        SpatialAccountOverviewPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
-                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
-                            contentWidth: geometry.size.width - 36, openAccount: { _ in }, openDeadlines: {})
-                        #else
-                        AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
-                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
-                            compact: true, openAccount: { _ in }, openDeadlines: {})
-                        #endif
-                        DisclosureGroup("Settings, pace and sync details") {
-                        VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                        ContextPanelWidgetContentView(
-                            family: .systemLarge,
-                            snapshot: context.snapshot,
-                            displayPreferences: context.displayPreferences,
-                            links: CompanionDeepLinks.previewLinks,
-                            showsResetCreditSurfaces: true,
-                            resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
-                            presentationDate: context.presentationDate
-                        )
-                        .cpwThemeVariant(themeVariant)
-                        .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
-                        .background(
-                            CPWTheme.surface(variant: themeVariant),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        )
-
-                        if let forecast {
-                            CompanionKeepWorkingCard(forecast: forecast)
-                        }
-                        CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
-                        if !context.snapshot.reports.isEmpty {
-                            BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
-                        }
-                        }
-                        }
-                    }
-                    .padding(18)
+                    overviewContent(contentWidth: geometry.size.width - 36)
                 }
-                }
+                #else
+                overviewContent(contentWidth: 0)
+                #endif
             case .diagnostics:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
@@ -708,6 +671,50 @@ private struct CompanionValidationGalleryPreview: View {
         .background(surfacePalette.pageBackground)
         .environment(\.companionSurfacePalette, surfacePalette)
         .environment(\.colorScheme, previewColorScheme)
+    }
+    private func overviewContent(contentWidth: CGFloat) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                CompanionSyncStatusView(result: result, now: context.presentationDate)
+                #if os(visionOS)
+                SpatialAccountOverviewPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                    contentWidth: contentWidth, openAccount: { _ in }, openDeadlines: {})
+                #else
+                AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                    compact: true, openAccount: { _ in }, openDeadlines: {})
+                #endif
+                DisclosureGroup("Settings, pace and sync details") {
+                VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                ContextPanelWidgetContentView(
+                    family: .systemLarge,
+                    snapshot: context.snapshot,
+                    displayPreferences: context.displayPreferences,
+                    links: CompanionDeepLinks.previewLinks,
+                    showsResetCreditSurfaces: true,
+                    resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+                    presentationDate: context.presentationDate
+                )
+                .cpwThemeVariant(themeVariant)
+                .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
+                .background(
+                    CPWTheme.surface(variant: themeVariant),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+
+                if let forecast {
+                    CompanionKeepWorkingCard(forecast: forecast)
+                }
+                CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                if !context.snapshot.reports.isEmpty {
+                    BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+                }
+                }
+                }
+            }
+            .padding(18)
+        }
     }
 }
 

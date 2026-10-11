@@ -13,12 +13,15 @@ public struct AccountDashboardPanel: View {
     let compact: Bool
     let compactAccounts: Bool
     let emptyMessage: String
+    let emptyHeadline: String?
+    let textScale: CGFloat
     let accountDetails: ((AccountOverview.Account) -> AnyView)?
 
     /// `compact` stacks everything into one column, for phone widths.
     public init(overview: AccountOverview, now: Date, compact: Bool = false,
                 compactAccounts: Bool? = nil,
                 emptyMessage: String = "Add an account in Settings to see its usage and reset times.",
+                emptyHeadline: String? = nil, textScale: CGFloat = 1,
                 accountDetails: ((AccountOverview.Account) -> AnyView)? = nil,
                 openAccount: @escaping (AccountOverview.Account) -> Void, openDeadlines: @escaping () -> Void) {
         self.overview = overview
@@ -26,9 +29,15 @@ public struct AccountDashboardPanel: View {
         self.compact = compact
         self.compactAccounts = compactAccounts ?? compact
         self.emptyMessage = emptyMessage
+        self.emptyHeadline = emptyHeadline
+        self.textScale = textScale
         self.accountDetails = accountDetails
         self.openAccount = openAccount
         self.openDeadlines = openDeadlines
+    }
+
+    private func scaledFont(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+        .system(size: size * textScale, weight: weight, design: design)
     }
 
     private var palette: DashboardPalette { DashboardPalette(dark: colorScheme == .dark) }
@@ -60,13 +69,13 @@ public struct AccountDashboardPanel: View {
                       + (overview.accounts.compactMap(\.observedAt).max().map {
                           [AccountTerms.updated.lowercased() + " " + AccountPaceText.when($0, now: now)] } ?? []))
                     .joined(separator: " · "))
-                    .font(.system(size: 12)).monospacedDigit().foregroundStyle(palette.secondary)
+                    .font(scaledFont(12)).monospacedDigit().foregroundStyle(palette.secondary)
                 Spacer(minLength: 8)
                 if !compact { bankedLink }
             }
-            (Text(sentence.lead).foregroundStyle(palette.primary)
+            (Text(overview.accounts.isEmpty ? emptyHeadline ?? sentence.lead : sentence.lead).foregroundStyle(palette.primary)
              + Text(sentence.rest.isEmpty ? "" : " " + sentence.rest).foregroundStyle(palette.tertiary))
-                .font(.system(size: compact ? 24 : 26, weight: .bold)).tracking(-0.4)
+                .font(scaledFont(compact ? 24 : 26, weight: .bold)).tracking(-0.4)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
             if compact { bankedLink }
@@ -87,9 +96,9 @@ public struct AccountDashboardPanel: View {
                         .fontWeight(.medium)
                     Text(timingText)
                         .foregroundStyle(palette.secondary)
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.tertiary)
+                    Image(systemName: "chevron.right").font(scaledFont(9, weight: .semibold)).foregroundStyle(palette.tertiary)
                 }
-                .font(.system(size: 12)).monospacedDigit().lineLimit(1)
+                .font(scaledFont(12)).monospacedDigit().lineLimit(1)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -113,30 +122,31 @@ public struct AccountDashboardPanel: View {
         return Button { if let account { openAccount(account) } } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text(provider.accountDisplayName).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.provider(provider))
+                    Text(provider.accountDisplayName).font(scaledFont(12, weight: .semibold)).foregroundStyle(palette.provider(provider))
                     Spacer()
-                    Text(AccountTerms.useNext).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.provider(provider))
+                    Text(AccountTerms.useNext).font(scaledFont(12, weight: .semibold)).foregroundStyle(palette.provider(provider))
                 }
                 if let account {
                     let horizon = account.horizon(now: now)
-                    Text(account.metadata.label).font(.system(size: 16, weight: .semibold)).lineLimit(2)
+                    Text(account.metadata.label).font(scaledFont(16, weight: .semibold)).lineLimit(2)
                     HStack(alignment: .center, spacing: 10) {
                         DashboardRing(fraction: horizon.remaining, color: palette.provider(provider), track: palette.track, lineWidth: 5)
                             .frame(width: 38, height: 38)
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(AccountNumbers.percent(horizon.remaining)).font(.system(size: 30, weight: .semibold, design: .rounded))
+                            Text(AccountNumbers.percent(horizon.remaining)).font(scaledFont(30, weight: .semibold, design: .rounded))
+                                .fixedSize()
                                 .monospacedDigit()
                             if horizon.remaining != nil {
-                                Text("%").font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundStyle(palette.secondary)
+                                Text("%").font(scaledFont(16, weight: .semibold, design: .rounded)).foregroundStyle(palette.secondary)
                             }
-                            Text(AccountTerms.horizonLeft(horizon.window)).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
+                            Text(AccountTerms.horizonLeft(horizon.window)).font(scaledFont(13, weight: .medium)).foregroundStyle(palette.secondary)
                         }
                     }
                     Text(AccountTerms.useNextReason(account, horizon, now: now))
-                        .font(.system(size: 12)).monospacedDigit().foregroundStyle(palette.secondary)
+                        .font(scaledFont(12)).monospacedDigit().foregroundStyle(palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(AccountTerms.noEligibleAccount).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                    Text(AccountTerms.noEligibleAccount).font(scaledFont(12)).foregroundStyle(palette.secondary)
                 }
             }
             .padding(compact ? 14 : 18)
@@ -161,15 +171,15 @@ public struct AccountDashboardPanel: View {
             let layout = compact ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
                 : AnyLayout(HStackLayout(alignment: .top, spacing: 24))
             layout {
-                Text(AccountTerms.runsOutBeforeReset.uppercased()).font(.system(size: 10.5, weight: .bold)).tracking(1.2)
+                Text(AccountTerms.runsOutBeforeReset.uppercased()).font(scaledFont(10.5, weight: .bold)).tracking(1.2)
                     .foregroundStyle(palette.color(AccountAlarm.token))
                     .frame(width: compact ? nil : 110, alignment: .leading)
                 ForEach(short, id: \.account.id) { account, horizon in
                     Button { openAccount(account) } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 5) {
-                                Image(systemName: AccountGlyphs.runOut).font(.system(size: 10))
-                                Text(account.metadata.label).font(.system(size: 13.5, weight: .semibold)).lineLimit(2)
+                                Image(systemName: AccountGlyphs.runOut).font(scaledFont(10))
+                                Text(account.metadata.label).font(scaledFont(13.5, weight: .semibold)).lineLimit(2)
                             }
                             .foregroundStyle(palette.bad)
                             let outcome = AccountTerms.outcome(account, horizon, now: now)
@@ -179,14 +189,14 @@ public struct AccountDashboardPanel: View {
                                 ? String(outcome.title.dropFirst(repeatedPrefix.count)) : outcome.title
                             (Text(providerName).foregroundStyle(palette.provider(account.metadata.provider))
                              + Text(" · " + title))
-                                .font(.system(size: 12, weight: .medium))
-                            Text(outcome.detail).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                                .font(scaledFont(12, weight: .medium))
+                            Text(outcome.detail).font(scaledFont(12)).foregroundStyle(palette.secondary)
                             if let banked = overview.bankedBeforeRunOut(account, now: now) {
                                 HStack(spacing: 5) {
                                     DashboardDiamond(palette: palette, size: 7)
                                     Text(AccountTerms.bankedBeforeRunOut(banked, now: now))
                                 }
-                                .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                                .font(scaledFont(12)).foregroundStyle(palette.secondary)
                             }
                         }
                         .monospacedDigit()
@@ -232,7 +242,7 @@ public struct AccountDashboardPanel: View {
                 Text(AccountTerms.fiveHourLong).frame(width: Column.fiveHour, alignment: .leading)
                 Text(AccountTerms.beforeItsReset).frame(width: Column.outcome, alignment: .leading)
             }
-            .font(.system(size: AccountTextSize.appMinimum, weight: .semibold)).foregroundStyle(palette.secondary)
+            .font(scaledFont(AccountTextSize.appMinimum, weight: .semibold)).foregroundStyle(palette.secondary)
             .padding(.horizontal, Column.padding).padding(.top, 10).padding(.bottom, 6)
             ForEach(totals) { total in
                 Rectangle().fill(palette.line).frame(height: 1)
@@ -256,7 +266,7 @@ public struct AccountDashboardPanel: View {
                 Text("Windows and banked resets")
                     .accessibilityLabel("Windows and banked resets for " + account.metadata.label)
             }
-            .font(.system(size: 12))
+            .font(scaledFont(12))
             .foregroundStyle(palette.secondary)
             .padding(.horizontal, 16).padding(.bottom, 8)
         }
@@ -267,11 +277,11 @@ public struct AccountDashboardPanel: View {
         let layout = compactAccounts ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
             : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 14))
         return layout {
-            Text(total.provider.accountDisplayName).font(.system(size: 14, weight: .semibold))
+            Text(total.provider.accountDisplayName).font(scaledFont(14, weight: .semibold))
                 .foregroundStyle(palette.provider(total.provider))
                 .frame(width: compactAccounts ? nil : Column.accountMinimum, alignment: .leading)
             (Text(summary.facts + " · ") + Text(summary.outlook).foregroundStyle(palette.color(AccountAlarm.providerOutlookToken)))
-                .font(.system(size: 12)).monospacedDigit().foregroundStyle(palette.secondary)
+                .font(scaledFont(12)).monospacedDigit().foregroundStyle(palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !compactAccounts { Spacer(minLength: 0) }
         }
@@ -289,9 +299,9 @@ public struct AccountDashboardPanel: View {
                 .frame(width: Column.horizon, height: 30)
             fiveHour(account).frame(width: Column.fiveHour, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
-                Text(outcome.title).font(.system(size: 13, weight: .semibold))
+                Text(outcome.title).font(scaledFont(13, weight: .semibold))
                     .foregroundStyle(palette.color(AccountAlarm.outcomeToken(account, horizon)))
-                Text(outcome.detail).font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
+                Text(outcome.detail).font(scaledFont(AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .monospacedDigit()
@@ -305,7 +315,7 @@ public struct AccountDashboardPanel: View {
 
     private func nameBlock(_ account: AccountOverview.Account) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            (Text(account.metadata.label).font(.system(size: compact ? 15 : AccountTextSize.appMinimum, weight: .semibold))
+            (Text(account.metadata.label).font(scaledFont(compact ? 15 : AccountTextSize.appMinimum, weight: .semibold))
              + tags(account))
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
             meta(account)
@@ -315,11 +325,11 @@ public struct AccountDashboardPanel: View {
     private func tags(_ account: AccountOverview.Account) -> Text {
         var text = Text("")
         if nextIDs.contains(account.id) {
-            text = text + Text("  " + AccountTerms.useNext).font(.system(size: AccountTextSize.appMinimum, weight: .semibold))
+            text = text + Text("  " + AccountTerms.useNext).font(scaledFont(AccountTextSize.appMinimum, weight: .semibold))
                 .foregroundColor(palette.provider(account.metadata.provider))
         }
         if account.metadata.useLast {
-            text = text + Text("  " + AccountTerms.useLast).font(.system(size: AccountTextSize.appMinimum, weight: .medium)).foregroundColor(palette.secondary)
+            text = text + Text("  " + AccountTerms.useLast).font(scaledFont(AccountTextSize.appMinimum, weight: .medium)).foregroundColor(palette.secondary)
         }
         return text
     }
@@ -339,7 +349,7 @@ public struct AccountDashboardPanel: View {
                          + (next.map { " · next lapses " + AccountPaceText.when($0.expiresAt, now: now) } ?? ""))
                 }
             }
-            .font(.system(size: AccountTextSize.appMinimum)).monospacedDigit().foregroundStyle(palette.secondary)
+            .font(scaledFont(AccountTextSize.appMinimum)).monospacedDigit().foregroundStyle(palette.secondary)
             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -347,9 +357,9 @@ public struct AccountDashboardPanel: View {
     private func percent(_ horizon: AccountHorizon, account: AccountOverview.Account, size: CGFloat) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(horizon.window.map { AccountNumbers.window($0, sign: false) } ?? AccountTerms.unknown)
-                .font(.system(size: size, weight: .semibold, design: .rounded)).monospacedDigit()
+                .font(scaledFont(size, weight: .semibold, design: .rounded)).monospacedDigit()
                 .foregroundStyle(horizon.isCurrent ? palette.primary : palette.stale)
-            if horizon.remaining != nil { Text("%").font(.system(size: size * 0.55, weight: .medium)).foregroundStyle(palette.tertiary) }
+            if horizon.remaining != nil { Text("%").font(scaledFont(size * 0.55, weight: .medium)).foregroundStyle(palette.tertiary) }
         }
     }
 
@@ -359,8 +369,8 @@ public struct AccountDashboardPanel: View {
                 DashboardRing(fraction: window.remainingFraction, color: palette.secondary, track: palette.track, lineWidth: 3.5)
                     .frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(AccountNumbers.window(window)).font(.system(size: 12.5, weight: .semibold))
-                    Text(AccountTerms.refill(window, now: now)).font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
+                    Text(AccountNumbers.window(window)).font(scaledFont(12.5, weight: .semibold))
+                    Text(AccountTerms.refill(window, now: now)).font(scaledFont(AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
                 }
                 .monospacedDigit().fixedSize()
             }
@@ -412,16 +422,16 @@ public struct AccountDashboardPanel: View {
                 .frame(height: 26)
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(outcome.title).font(.system(size: 13.5, weight: .semibold))
+                    Text(outcome.title).font(scaledFont(13.5, weight: .semibold))
                         .foregroundStyle(palette.color(AccountAlarm.outcomeToken(account, horizon)))
-                    Text(outcome.detail).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                    Text(outcome.detail).font(scaledFont(12)).foregroundStyle(palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
                 if let window = account.shortWindow {
                     VStack(alignment: .trailing, spacing: 1) {
-                        Text(AccountTerms.fiveHour + " " + AccountNumbers.window(window)).font(.system(size: 12.5, weight: .semibold))
-                        Text(AccountTerms.refill(window, now: now)).font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
+                        Text(AccountTerms.fiveHour + " " + AccountNumbers.window(window)).font(scaledFont(12.5, weight: .semibold))
+                        Text(AccountTerms.refill(window, now: now)).font(scaledFont(AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
                     }
                 }
             }
@@ -456,7 +466,7 @@ public struct AccountDashboardPanel: View {
             }
             if !compact { Spacer(minLength: 0) }
         }
-        .font(.system(size: AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
+        .font(scaledFont(AccountTextSize.appMinimum)).foregroundStyle(palette.secondary)
     }
 }
 
