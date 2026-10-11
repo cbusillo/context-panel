@@ -23,18 +23,25 @@ import WidgetKit
 private let canvas = CGSize(width: 1_024, height: 768)
 private let interactive = CommandLine.arguments.contains("--interactive")
 private let windowsLayout = CommandLine.arguments.contains("windows")
+private let appStoreScenario: Bool = {
+    let arguments = CommandLine.arguments
+    guard let index = arguments.firstIndex(of: "--scenario"), index + 1 < arguments.count else { return false }
+    return arguments[index + 1] == "app-store"
+}()
 private var presentationWindow: NSWindow?
 
 private let unsupportedPresentationStatus: Int32 = 3
 
-// Account surfaces at their real point sizes: Mac pane, iPhone 15 Pro, Apple Watch 45 mm, Apple TV.
+// Default review sizes, plus App Store draft canvases selected by the app-store scenario.
 private let accountPresentationSizes: [String: CGSize] = [
-    "account-overview": CGSize(width: 900, height: 880),
+    "account-overview": appStoreScenario ? CGSize(width: 1_024, height: 1_366) : CGSize(width: 900, height: 880),
+    "vision-overview": CGSize(width: 1_200, height: 900),
     "account-deadlines": CGSize(width: 900, height: 1_060),
-    "account-detail": CGSize(width: 900, height: 720),
+    "account-detail": appStoreScenario ? CGSize(width: 1_440, height: 900) : CGSize(width: 900, height: 720),
     "phone-overview": CGSize(width: 393, height: 1_960),
-    "phone-detail": CGSize(width: 393, height: 852),
-    "watch-app": CGSize(width: 198, height: 560),
+    "phone-detail": appStoreScenario ? CGSize(width: 402, height: 874) : CGSize(width: 393, height: 852),
+    "phone-detail-65": CGSize(width: 428, height: 926),
+    "watch-app": appStoreScenario ? CGSize(width: 205, height: 251) : CGSize(width: 198, height: 560),
     "watch-rectangular": CGSize(width: 184, height: 74),
     "watch-circular": CGSize(width: 76, height: 76),
     "tv-board": CGSize(width: 1_920, height: 1_080),
@@ -70,10 +77,13 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
     let deadlines = values["--presentation"] == "reset-deadlines"
     if let layout = values["--layout"], !["accounts", "windows"].contains(layout) { fail("unsupported layout") }
     if let interactive = values["--interactive"], interactive != "yes" { fail("--interactive requires yes") }
+    if let scale = values["--scale"], Int(scale).map({ (1...3).contains($0) }) != true {
+        fail("--scale requires 1, 2, or 3")
+    }
     let accountPresentation = accountPresentationSizes.keys.contains(values["--presentation"] ?? "") ? values["--presentation"] : nil
-    let sixAccounts = values["--scenario"] == "six-accounts"
+    let sixAccounts = ["six-accounts", "app-store"].contains(values["--scenario"] ?? "")
     let presentationValue = deadlines || accountPresentation != nil ? "widget" : values["--presentation"] ?? ""
-    if let scenario = values["--scenario"], scenario != "four-offers-long-name" && scenario != "six-accounts" { fail("unsupported scenario") }
+    if let scenario = values["--scenario"], !["four-offers-long-name", "six-accounts", "app-store"].contains(scenario) { fail("unsupported scenario") }
     guard let fixture = values["--fixture"].flatMap(ValidationFixtureID.init(rawValue:)),
           let family = values["--family"].flatMap(ValidationGalleryFamily.init(rawValue:)),
           let appearance = values["--appearance"].flatMap(ValidationGalleryAppearance.init(rawValue:)),
@@ -142,7 +152,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
                         onLayoutChange: { _ in }, onVisibilityChange: { _, _ in }, onMove: { _, _ in })
                 }.formStyle(.grouped)
             })
-        case "account-overview":
+        case "account-overview", "vision-overview":
             view = AnyView(AccountDashboardPanel(overview: overview, now: now, openAccount: { _ in }, openDeadlines: {}).padding(24))
         case "account-deadlines":
             view = AnyView(AccountDeadlinesPanel(overview: overview, now: now, openAccount: { _ in }).padding(24))
@@ -151,15 +161,18 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         case "phone-overview":
             view = AnyView(AccountDashboardPanel(overview: overview, now: now, compact: true, openAccount: { _ in },
                 openDeadlines: {}).padding(16))
-        case "phone-detail":
+        case "phone-detail", "phone-detail-65":
             view = AnyView(AccountDashboardDetail(account: overview.accounts[0], overview: overview, now: now, compact: true).padding(16))
         case "watch-app":
             let nextIDs = Set(Provider.allCases.compactMap { overview.useNext(provider: $0)?.id })
+            let visibleAccounts = appStoreScenario ? Array(overview.accounts.prefix(1)) : overview.accounts
             view = AnyView(VStack(alignment: .leading, spacing: 8) {
                 Text(AccountTerms.accounts).font(.system(size: 15, weight: .semibold))
-                WatchAccountHeadline(overview: overview, now: now)
-                if let deadline = overview.nextDeadline { WatchBankedLine(deadline: deadline, now: now) }
-                ForEach(overview.accounts) { account in
+                if !appStoreScenario {
+                    WatchAccountHeadline(overview: overview, now: now)
+                    if let deadline = overview.nextDeadline { WatchBankedLine(deadline: deadline, now: now) }
+                }
+                ForEach(visibleAccounts) { account in
                     WatchAccountRow(account: account, isNext: nextIDs.contains(account.id), now: now,
                                     deadlines: overview.deadlines.filter { $0.accountID == account.id })
                         .padding(8).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
@@ -215,7 +228,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         .foregroundStyle(tokenColor(.primary, dark: isDark))
         .background(accountPresentation?.hasPrefix("watch") == true ? tokenColor(.watchSurface, dark: true)
             : accountPresentation == "tv-board" ? tokenColor(.surface, dark: true)
-            : deadlines || accountPresentation != nil ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
+            : deadlines || accountPresentation != nil || appStoreScenario ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
         .environment(\.colorScheme, isDark ? .dark : .light)
         // The gallery prints its fixed presentation time; pin how it is formatted so
         // the image does not depend on the host's region or time zone.
@@ -264,8 +277,8 @@ private func accountFixture(now: Date) -> WidgetSnapshot {
     // weekly burn %/h, 5h burn %/h (nil while measuring), banked expiries (h).
     typealias Row = (String, Provider, Int, Double, Int, Double, Double?, Double?, [Double])
     let rows: [Row] = [
-        ("A deliberately long OpenAI account name", .openAI, 85, 120, 40, 2 + 10 / 60.0, 0.45, 6, [24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
-        ("work@example.invalid", .openAI, 28, 55, 12, 4, 0.4, 3, [26 * 24 + 3, 44 * 24 + 30 / 60.0]),
+        (appStoreScenario ? "Studio" : "A deliberately long OpenAI account name", .openAI, 85, 120, 40, 2 + 10 / 60.0, 0.45, 6, [24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
+        (appStoreScenario ? "Work" : "work@example.invalid", .openAI, 28, 55, 12, 4, 0.4, 3, [26 * 24 + 3, 44 * 24 + 30 / 60.0]),
         ("Personal", .openAI, 11, 147, 0, 5, 0.03, nil, []),
         ("Claude primary", .anthropic, 63, 138, 78, 1 + 13 / 60.0, 0.35, 15, [4 * 24 + 20 / 60.0, 12 * 24 + 55 / 60.0]),
         ("Claude backup", .anthropic, 43, 74, 5, 4 + 40 / 60.0, 0.2, 1, []),

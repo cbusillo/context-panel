@@ -1,0 +1,195 @@
+{
+  "status": "draft-unapproved",
+  "kind": "host-rendered-shared-view-compositions",
+  "productSourceCommit": "9360297c31c25bd69f1810626fb9618b6c1ac6a8",
+  "rendererSourceSHA256": "a28d404712b952e0b6efc23eb9c887dff9b3d9bbd90c7183bb15e73cc034fc86",
+  "fixtureTime": "2026-10-01T14:07:00Z",
+  "locale": "en_US_POSIX",
+  "timeZone": "UTC",
+  "assets": [
+    {
+      "file": "mac-detail-light.png",
+      "width": 1440,
+      "height": 900,
+      "sha256": "0ae97535019dc3d47c56c2860676bbdaf6fc2ce25b4d7c290a4113216c4cc35d",
+      "presentation": "account-detail",
+      "family": "systemLarge",
+      "appearance": "light",
+      "scale": 1,
+      "padding": null
+    },
+    {
+      "file": "mac-detail-dark.png",
+      "width": 1440,
+      "height": 900,
+      "sha256": "241af404f46c2f7c86e8ecf34843226add21d5bc444ec1bb9bf63699f2f7b252",
+      "presentation": "account-detail",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 1,
+      "padding": null
+    },
+    {
+      "file": "mac-widget-light.png",
+      "width": 1440,
+      "height": 900,
+      "sha256": "91d2ea01ad6c3e544ac663b979b6983f572ac081a077dfc1480d89fedceb1d9e",
+      "presentation": "widget",
+      "family": "systemLarge",
+      "appearance": "light",
+      "scale": 2,
+      "padding": [
+        900,
+        1440
+      ],
+      "paddingColor": "FAFAFA",
+      "rawWidth": 688,
+      "rawHeight": 688
+    },
+    {
+      "file": "mac-widget-dark.png",
+      "width": 1440,
+      "height": 900,
+      "sha256": "a0c942bfa6b6172f2aa2af90210931f85fa278d6d115140ef4bdcc6321acf706",
+      "presentation": "widget",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 2,
+      "padding": [
+        900,
+        1440
+      ],
+      "paddingColor": "202124",
+      "rawWidth": 688,
+      "rawHeight": 688
+    },
+    {
+      "file": "iphone-detail-light.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "51cb41b31913c56fdb26055f0e03a548d502b9cfa78424b4803bcd58bf56abec",
+      "presentation": "phone-detail",
+      "family": "systemLarge",
+      "appearance": "light",
+      "scale": 3,
+      "padding": null
+    },
+    {
+      "file": "iphone-detail-dark.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "f0476f369064a779159499dd7ceae9e6dc864cc01a87fadbd28d9ad7c70c37fe",
+      "presentation": "phone-detail",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 3,
+      "padding": null
+    },
+    {
+      "file": "iphone65-detail-light.png",
+      "width": 1284,
+      "height": 2778,
+      "sha256": "6e54d7b96533a5cbaa4cd7e0e2387973a4f5cc99fbdc68a6fee3b1c44f06c820",
+      "presentation": "phone-detail-65",
+      "family": "systemLarge",
+      "appearance": "light",
+      "scale": 3,
+      "padding": null
+    },
+    {
+      "file": "iphone65-detail-dark.png",
+      "width": 1284,
+      "height": 2778,
+      "sha256": "1d1959b21bb0b511bf4ae34cc6aaa82335304ec14bf914a7733dbf200d1a5d1b",
+      "presentation": "phone-detail-65",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 3,
+      "padding": null
+    },
+    {
+      "file": "ipad-overview-light.png",
+      "width": 2048,
+      "height": 2732,
+      "sha256": "08d78a31c2a80dd4a3595ecc86979af24c3979600ee8558b3b776b0a84140141",
+      "presentation": "account-overview",
+      "family": "systemLarge",
+      "appearance": "light",
+      "scale": 2,
+      "padding": null
+    },
+    {
+      "file": "ipad-overview-dark.png",
+      "width": 2048,
+      "height": 2732,
+      "sha256": "cb3ce184ba0a3e4e05ce7344d18c1acec765a35bcc5cfc19a525f73a235e8349",
+      "presentation": "account-overview",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 2,
+      "padding": null
+    },
+    {
+      "file": "visionpro-overview-light.png",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "8cee40e3d24a78f2ce44dcdfb7fb2f980ae8faf12b7626c2370712af4615c0d7",
+      "presentation": "vision-overview",
+      "family": "systemLarge",
+      "appearance": "light",
+      "scale": 2,
+      "padding": [
+        2160,
+        3840
+      ],
+      "paddingColor": "FAFAFA",
+      "rawWidth": 2400,
+      "rawHeight": 1800
+    },
+    {
+      "file": "visionpro-overview-dark.png",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "81a7e91b0458bdc73c67e69a0c217c1bd682bd986926f561e9e7f75d2e4d8f16",
+      "presentation": "vision-overview",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 2,
+      "padding": [
+        2160,
+        3840
+      ],
+      "paddingColor": "202124",
+      "rawWidth": 2400,
+      "rawHeight": 1800
+    },
+    {
+      "file": "watch-account-dark.png",
+      "width": 410,
+      "height": 502,
+      "sha256": "e11ce1ce3e9f9a3fc86664b5d94e633329726d93da722682fd11feb6bd12adbd",
+      "presentation": "watch-app",
+      "family": "systemSmall",
+      "appearance": "dark",
+      "scale": 2,
+      "padding": null
+    },
+    {
+      "file": "tvos-board-dark.png",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "3c759c697b03ef3168a006973ebd036fbe1a81e1f5e0e74bf4bbaffc78769d21",
+      "presentation": "tv-board",
+      "family": "systemLarge",
+      "appearance": "dark",
+      "scale": 1,
+      "padding": null
+    }
+  ],
+  "rendererBaseArguments": [
+    "--fixture",
+    "healthy",
+    "--scenario",
+    "app-store"
+  ]
+}

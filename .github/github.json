@@ -10,6 +10,7 @@
     "architecture": "docs/architecture.md",
     "designDirection": "docs/design-direction.md",
     "release": "docs/release.md",
+    "appStoreScreenshots": "Resources/AppStore/Screenshots/screenshot-matrix.md",
     "cloudKitPublicationCheck": "docs/cloudkit-publication-check.md",
     "validationAuthority": "docs/validation-authority.md",
     "signedValidationFingerprints": "docs/signed-validation-fingerprints.md",

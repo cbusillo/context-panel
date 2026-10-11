@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Testing
 
@@ -60,6 +61,54 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     ]
 }
 
+@Test func appStoreDraftImageBytesMatchTheirRecordedIdentity() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appending(path: "Resources/AppStore/Screenshots/horizon-draft")
+    let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appending(path: "manifest.json"))) as? [String: Any])
+    let assets = try #require(manifest["assets"] as? [[String: Any]])
+    #expect(!assets.isEmpty)
+    for asset in assets {
+        let file = try #require(asset["file"] as? String)
+        let data = try Data(contentsOf: root.appending(path: file))
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #expect(digest == asset["sha256"] as? String, "\(file)")
+        let bitmap = try #require(NSBitmapImageRep(data: data))
+        #expect(bitmap.pixelsWide == asset["width"] as? Int, "\(file)")
+        #expect(bitmap.pixelsHigh == asset["height"] as? Int, "\(file)")
+    }
+}
+
+@Test func appStoreDraftRendererProducesTheRecordedCanvases() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let manifestURL = root.appending(path: "Resources/AppStore/Screenshots/horizon-draft/manifest.json")
+    let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any])
+    let base = try #require(manifest["rendererBaseArguments"] as? [String])
+    let assets = try #require(manifest["assets"] as? [[String: Any]])
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    for asset in assets {
+        let file = try #require(asset["file"] as? String)
+        let output = directory.appending(path: file)
+        let scale = try #require(asset["scale"] as? Int)
+        let arguments = base + [
+            "--presentation", try #require(asset["presentation"] as? String),
+            "--family", try #require(asset["family"] as? String),
+            "--appearance", try #require(asset["appearance"] as? String),
+            "--scale", String(scale), "--output", output.path,
+        ]
+        let run = try runRenderer(arguments)
+        #expect(run.status == 0, "\(file): \(run.output)")
+        let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: output)))
+        let width = try #require(asset["width"] as? Int)
+        let height = try #require(asset["height"] as? Int)
+        #expect(bitmap.pixelsWide == (asset["rawWidth"] as? Int ?? width))
+        #expect(bitmap.pixelsHigh == (asset["rawHeight"] as? Int ?? height))
+        #expect(bitmap.pixelsWide <= width)
+        #expect(bitmap.pixelsHigh <= height)
+    }
+}
+
 @Test func rendererDrawsEveryMacWidgetCellInTheSharedViewMatrix() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -114,6 +163,8 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         valid.map { $0 == "light" ? "adaptive" : $0 },
         valid + ["--fixture", "stale"],
         valid + ["--unlock"],
+        valid + ["--scale", "4"],
+        valid + ["--scale", "x"],
     ]
     for arguments in invalid {
         #expect(try runRenderer(arguments).status != 0, "\(arguments)")
