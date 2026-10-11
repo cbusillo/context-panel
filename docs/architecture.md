@@ -262,8 +262,14 @@ user record. The raw CloudKit record name is never persisted. A client resolves
 that identity before reading cached usage, re-resolves it after remote work, and
 rejects any result, fallback, merge, or write whose scope is missing or
 different. Legacy unscoped local data is deleted rather than attributed to the
-current user. Companion WidgetKit timelines also read the CloudKit record
-directly, bounded by a five-second deadline, select the
+current user. Foreground companion loads and WidgetKit timelines share the same
+scoped CloudKit/cache selection path, with a five-second deadline per identity
+or usage operation. Foreground preference and validation-session reads are also
+bounded so they cannot indefinitely hold the usage UI or its next refresh.
+The app keeps freshness visible above the account overview, recomputes it as
+presentation time advances, and labels the usage observation time rather than
+the time an old document was received. Failed syncs identify saved usage even
+when its observations are still recent. Both app and widget loads select the
 freshest remote or local document, and preserve the selected remote document in
 the App Group mirror. This keeps a cold widget correct without requiring a
 foreground companion-app launch; app push and foreground hydration remain
