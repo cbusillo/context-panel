@@ -392,10 +392,18 @@ struct TVTopShelfRenderer {
                 draw(card.title, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 40 * scale,
                     width: frame.width - 40 * scale, height: 30 * scale),
                     font: .systemFont(ofSize: 23 * scale, weight: .semibold), color: color(.primary))
+                let statusText = card.gridStatusText(isStale: document.isStale(at: now))
+                let statusWidth = statusText == nil ? 0 : 148 * scale
                 draw(card.headline, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 76 * scale,
-                    width: frame.width - 40 * scale, height: 58 * scale),
+                    width: frame.width - 40 * scale - statusWidth, height: 58 * scale),
                     font: .monospacedDigitSystemFont(ofSize: 42 * scale, weight: .semibold),
                     color: headlineColor(card, isStale: document.isStale(at: now)))
+                if let statusText {
+                    draw(statusText, in: CGRect(x: frame.maxX - 20 * scale - statusWidth,
+                        y: frame.minY + 94 * scale, width: statusWidth, height: 28 * scale),
+                        font: .systemFont(ofSize: 18 * scale, weight: .semibold),
+                        color: statusColor(card.status), alignment: .right)
+                }
                 drawCapacity(card, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 142 * scale,
                     width: frame.width - 40 * scale, height: 6 * scale), isStale: document.isStale(at: now))
                 draw(card.detail, in: CGRect(x: frame.minX + 20 * scale, y: frame.minY + 160 * scale,

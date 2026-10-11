@@ -9,7 +9,7 @@ in memory inside that simulator; they do not prove Home Screen placement.
 - `proposed-shared-board.png`: existing host-rendered Horizon board, used in
   the design note before implementation; it is a composition proposal.
 - `tv-healthy.png`, `tv-dense.png`, `tv-saved.png`, `tv-failed.png`,
-  `tv-empty.png`, `tv-loading.png`, `tv-banked.png`: revised TV account surface.
+  `tv-empty.png`, `tv-loading.png`, `tv-reset-visible.png`: revised TV account surface.
 - `tv-counts.png`, `tv-private.png`: the TV app privacy presentations.
 - `top-shelf-healthy.png`, `top-shelf-dense.png`, `top-shelf-saved.png`,
   `top-shelf-counts.png`: revised Top Shelf renderer, including anonymous mode.

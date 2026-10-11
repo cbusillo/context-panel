@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-10-10.
+Last updated: 2026-10-11.
 
 ## Current Direction: Horizon
 
@@ -233,7 +233,9 @@ Full Detail follows the Mac's Horizon account hierarchy through the shared
 `TVAccountAnswers` and `TVAccountGroups`: one focusable use-next card per
 provider, then its remaining accounts without repeating the recommendation.
 The controls, observation summary, and headline stay above account scrolling.
-Inset focus outlines preserve text contrast and percentage baselines. Top Shelf
+Inset focus outlines preserve text contrast and percentage baselines. Account
+and deadline detail cards take read-only focus so long lists scroll with the
+remote. Top Shelf
 shows provider and account identity in Full Detail, with shared warm-neutral
 capacity fills for saved or failed readings; privacy modes remain anonymous.
 

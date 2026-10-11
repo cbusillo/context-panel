@@ -62,6 +62,12 @@ public struct TVTopShelfCard: Codable, Equatable, Identifiable, Sendable {
         provider != nil && !id.hasPrefix(Self.providerIDPrefix) ? title : nil
     }
 
+    /// Compact cards still identify pressure and an in-progress update without relying on colour.
+    public func gridStatusText(isStale: Bool) -> String? {
+        guard !isStale, [.close, .limited, .loading].contains(status) else { return nil }
+        return status.displayText
+    }
+
 }
 
 public struct TVTopShelfDocument: Codable, Equatable, Sendable {
@@ -143,14 +149,18 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
 
     public func collectionTitle(at now: Date) -> String {
         guard containsProviderData else { return "Context Panel" }
-        if isStale(at: now) { return cards.first?.accountTitle != nil ? "Saved accounts" : "Saved provider runway" }
+        if isStale(at: now) {
+            return cards.first?.accountTitle != nil
+                ? AccountCapacityState.stale.displayText + " " + AccountTerms.accounts.lowercased()
+                : "Saved provider runway"
+        }
         if cards.contains(where: { $0.status == .failure || $0.status == .limited }) {
             return "Provider attention"
         }
         if cards.contains(where: { $0.status == .close }) {
             return "Runway is getting tight"
         }
-        return cards.first?.accountTitle != nil ? "Accounts" : "Provider runway"
+        return cards.first?.accountTitle != nil ? AccountTerms.accounts : "Provider runway"
     }
 
     public func freshnessText(at now: Date) -> String {
@@ -340,8 +350,7 @@ public struct TVTopShelfRuntimeReceiptEvidence: Equatable, Sendable {
                 )
             },
             contentReturned: contentReturned,
-            visibleCardsDigest: document.renderedCards.first?.id.hasPrefix("provider-") == false
-                && document.renderedCards.first?.provider != nil
+            visibleCardsDigest: document.renderedCards.first?.accountTitle != nil
                 ? Self.visibleCardsDigest(document.renderedCards) : nil
         )
     }

@@ -1041,6 +1041,11 @@ private func makeRecoveredTopShelfSnapshot(
     #expect(full.renderedCards.count == 6)
     #expect(full.cards.map(\.title) == accounts.map(\.label))
     #expect(full.cards.map(\.accountTitle) == accounts.map { Optional($0.label) })
+    let savedSnapshot = WidgetSnapshot(state: .stale, generatedAt: now, limits: limits, status: .stale,
+        message: "", accountDisplayMetadata: accounts)
+    let saved = TVTopShelfDocument(snapshot: savedSnapshot, mode: .fullDetail, now: now)
+    #expect(saved.collectionTitle(at: now)
+        == AccountCapacityState.stale.displayText + " " + AccountTerms.accounts.lowercased())
     #expect(full.cards.allSatisfy { $0.remainingPercent == 15 })
     #expect(TVAppRoute(url: try #require(URL(string: full.cards[0].actionURLString))) == .account(.openAI, accounts[0].id))
     for mode in [TVPresentationMode.projectOnly, .countsOnly] {

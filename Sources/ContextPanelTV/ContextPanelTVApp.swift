@@ -288,7 +288,12 @@ struct TVAccountOverviewContent: View {
                         }
                         .buttonStyle(TVAccountButtonStyle()).focusEffectDisabled()
                     } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
-                        Button("Banked reset dates unknown", action: openDeadlines)
+                        Button(action: openDeadlines) {
+                            Text(AccountTerms.bankedResets + " · " + AccountTerms.datesUnknown.lowercased())
+                                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(TVTokens.color(.card), in: RoundedRectangle(cornerRadius: 20))
+                        }
+                        .buttonStyle(TVAccountButtonStyle()).focusEffectDisabled()
                     }
                 }
                 // Focus outlines stay inside their rows; leave clearance from the scroll edge.
@@ -299,6 +304,23 @@ struct TVAccountOverviewContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 72).padding(.vertical, 32)
         .background(TVTokens.color(.surface).ignoresSafeArea())
+    }
+}
+
+/// Quiet, non-button focus lets the remote scroll through long account/deadline detail lists.
+private struct TVReadOnlyAccountCard<Content: View>: View {
+    @FocusState private var isFocused: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content().padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            .background(TVTokens.color(.card), in: RoundedRectangle(cornerRadius: 20))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(isFocused ? TVTokens.color(.primary) : .clear, lineWidth: 3)
+            }
+            .accessibilityElement(children: .combine)
+            .focusable().focusEffectDisabled().focused($isFocused)
     }
 }
 
@@ -313,22 +335,25 @@ private struct TVAccountDetailContent: View {
                     Text(account.metadata.label).font(.largeTitle)
                     Text(account.metadata.provider.accountDisplayName + " · " + account.state.displayText)
                     ForEach(account.windows) { window in
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(window.label).font(.headline)
-                            Text(AccountNumbers.window(window) + " " + AccountTerms.left).font(.title)
-                            Text(AccountTerms.reset(window, now: now).map { AccountTerms.resets + " " + $0 } ?? AccountTerms.resets + " " + AccountTerms.unknown)
-                            if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
-                        }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(TVTokens.color(.card), in: RoundedRectangle(cornerRadius: 20))
+                        TVReadOnlyAccountCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(window.label).font(.headline)
+                                Text(AccountNumbers.window(window) + " " + AccountTerms.left).font(.title)
+                                Text(AccountTerms.reset(window, now: now).map { AccountTerms.resets + " " + $0 } ?? AccountTerms.resets + " " + AccountTerms.unknown)
+                                if let date = window.observedAt { Text("Observed " + ContextPanelDateFormatting.accountReset(date)).foregroundStyle(.secondary) }
+                            }
+                        }
                     }
                     Text(account.bankedResets.map { AccountTerms.bankedCount($0.availableCount, current: account.bankedState == .available) } ?? AccountTerms.bankedResets + " " + AccountTerms.unknown)
                     if (account.unknownExpiryCount ?? 0) > 0 { Text("Some banked reset dates are unknown.").foregroundStyle(.secondary) }
                 } else { Text(accountID == nil ? "Deadlines" : "Account no longer in this snapshot").font(.largeTitle) }
                 ForEach(overview.deadlines.filter { accountID == nil || $0.accountID == accountID }) { deadline in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(deadline.label + " · " + deadline.provider.accountDisplayName).font(.headline)
-                        Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: now))
-                        if deadline.state != .available { Text("Last seen " + ContextPanelDateFormatting.accountReset(deadline.observedAt)).foregroundStyle(.secondary) }
+                    TVReadOnlyAccountCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(deadline.label + " · " + deadline.provider.accountDisplayName).font(.headline)
+                            Text("Expires " + AccountPaceText.when(deadline.expiresAt, now: now))
+                            if deadline.state != .available { Text("Last seen " + ContextPanelDateFormatting.accountReset(deadline.observedAt)).foregroundStyle(.secondary) }
+                        }
                     }
                 }
                 if accountID == nil {
