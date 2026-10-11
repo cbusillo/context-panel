@@ -7,6 +7,11 @@ public extension AccountOverview {
         public let isRecommendation: Bool
     }
 
+    struct WidgetObservation: Equatable, Sendable {
+        public let date: Date
+        public let isCurrent: Bool
+    }
+
     /// Saved readings remain glanceable without becoming live recommendations.
     /// Fallbacks keep the person's saved order and never restore hidden/paused accounts.
     var widgetPicks: [WidgetPick] {
@@ -26,16 +31,28 @@ public extension AccountOverview {
     }
 
     /// Current observations lead mixed data; all-saved data uses its oldest represented reading.
-    func widgetObservationDate(in displayedAccounts: [Account]? = nil) -> Date? {
+    func widgetObservation(in displayedAccounts: [Account]? = nil) -> WidgetObservation? {
         let represented = (displayedAccounts ?? accounts).filter { $0.longWindow?.remainingFraction != nil }
-        if let current = represented.filter(\.isReliable).compactMap(\.observedAt).max() { return current }
+        if let current = represented.filter(\.isReliable).compactMap(\.observedAt).max() {
+            return WidgetObservation(date: current, isCurrent: true)
+        }
         return represented
             .filter { [.stale, .unavailable, .refreshing].contains($0.state) }
             .compactMap(\.observedAt).min()
+            .map { WidgetObservation(date: $0, isCurrent: false) }
     }
 
     var widgetShowsOnlySavedUsage: Bool {
-        !accounts.isEmpty && accounts.allSatisfy { [.stale, .unavailable].contains($0.state) }
-            && accounts.contains { $0.longWindow?.remainingFraction != nil }
+        let represented = accounts.filter {
+            ![.off, .notConnected].contains($0.state)
+                && ($0.remainingFraction != nil || $0.longWindow?.remainingFraction != nil)
+        }
+        return !represented.isEmpty && represented.allSatisfy { [.stale, .unavailable].contains($0.state) }
+    }
+
+    var widgetTapAccount: Account? {
+        let shown = widgetPicks.compactMap(\.account)
+        if let closest, let selected = shown.first(where: { $0.id == closest.id }) { return selected }
+        return shown.first
     }
 }

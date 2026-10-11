@@ -79,7 +79,7 @@ struct AccountGlanceWidget: View {
     }
 
     private func observationText(_ overview: AccountOverview, rows: [AccountOverview.Account]? = nil) -> String {
-        overview.widgetObservationDate(in: rows).map { AccountPaceText.when($0, now: now) } ?? AccountTerms.unknown
+        overview.widgetObservation(in: rows).map { AccountPaceText.when($0.date, now: now) } ?? AccountTerms.unknown
     }
 
     private func header(trailing: String?) -> some View {
@@ -263,9 +263,9 @@ struct AccountGlanceWidget: View {
         let totals = overview.providerTotals(now: now)
         let headline = headline(overview)
         return VStack(alignment: .leading, spacing: 0) {
-            header(trailing: [overview.widgetObservationDate(in: rows).map {
-                (rows.contains(where: \.isReliable) ? AccountTerms.updated : AccountCapacityState.stale.displayText)
-                    + " " + AccountPaceText.when($0, now: now)
+            header(trailing: [overview.widgetObservation(in: rows).map {
+                ($0.isCurrent ? AccountTerms.updated : AccountCapacityState.stale.displayText)
+                    + " " + AccountPaceText.when($0.date, now: now)
             }, overview.accounts.count > rows.count ? "+\(overview.accounts.count - rows.count)" : nil]
                 .compactMap { $0 }.joined(separator: " · "))
                 .padding(.bottom, 3)

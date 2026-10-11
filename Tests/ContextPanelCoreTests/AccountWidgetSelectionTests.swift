@@ -34,7 +34,8 @@ private func widgetPickSnapshot(old: Bool = false, hidden: Bool = false, disable
     #expect(overview.useNext(provider: .openAI) == nil)
     #expect(!account.glanceAccessibilityText(now: widgetPickNow, isNext: pick.isRecommendation).contains(AccountTerms.useNext))
     #expect(overview.widgetShowsOnlySavedUsage)
-    #expect(overview.widgetObservationDate() == widgetPickNow.addingTimeInterval(-86_400))
+    #expect(overview.widgetObservation()?.date == widgetPickNow.addingTimeInterval(-86_400))
+    #expect(overview.widgetObservation()?.isCurrent == false)
 }
 
 @Test func currentWidgetRecommendationWinsOverSavedFallback() throws {
@@ -74,10 +75,40 @@ private func widgetPickSnapshot(old: Bool = false, hidden: Bool = false, disable
     let snapshot = widgetPickSnapshot(old: true, withCurrent: true)
     let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
     let current = try #require(overview.accounts.last)
-    #expect(overview.widgetObservationDate(in: [current]) == widgetPickNow)
-    #expect(overview.widgetObservationDate() == widgetPickNow)
+    #expect(overview.widgetObservation(in: [current])?.date == widgetPickNow)
+    #expect(overview.widgetObservation()?.date == widgetPickNow)
+    #expect(overview.widgetObservation()?.isCurrent == true)
     let paused = widgetPickSnapshot(old: true, disabled: true).accountOverview(now: widgetPickNow, widgetsOnly: true)
-    #expect(paused.widgetObservationDate() == nil)
+    #expect(paused.widgetObservation() == nil)
+}
+
+@Test func savedWidgetHeadlineAndTapIgnorePausedAccounts() throws {
+    let saved = widgetPickSnapshot(old: true)
+    let paused = try #require(widgetPickSnapshot(old: true, disabled: true).accountDisplayMetadata?.first)
+    let pausedMetadata = AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(.anthropic, "paused"),
+        configurationID: AccountDisplayMetadata.safeID(.anthropic, "paused"), provider: .anthropic,
+        label: paused.label, isEnabled: false)
+    let snapshot = WidgetSnapshot(state: .stale, generatedAt: widgetPickNow, limits: saved.limits,
+        status: .stale, message: "", accountDisplayMetadata: [pausedMetadata] + (saved.accountDisplayMetadata ?? []))
+    let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
+    #expect(overview.accounts.first?.state == .off)
+    #expect(overview.widgetShowsOnlySavedUsage)
+    #expect(overview.widgetTapAccount?.metadata.provider == .openAI)
+    #expect(overview.widgetPicks.compactMap(\.account).contains { $0.id == overview.widgetTapAccount?.id })
+}
+
+@Test func savedWidgetObservationCannotBeLabeledCurrentByAShortOnlySibling() {
+    let saved = widgetPickSnapshot(old: true)
+    let short = UsageLimit(provider: .anthropic, accountID: "short", accountName: "Short only",
+        label: "5-hour", windowLabel: "5-hour", unit: .percent, used: 20, limit: 100,
+        resetsAt: widgetPickNow.addingTimeInterval(3_600), lastUpdatedAt: widgetPickNow, confidence: .observed)
+    let snapshot = WidgetSnapshot(state: .ready, generatedAt: widgetPickNow, limits: saved.limits + [short],
+        status: .healthy, message: "")
+    let overview = snapshot.accountOverview(now: widgetPickNow, widgetsOnly: true)
+    #expect(overview.accounts.contains { $0.isReliable && $0.longWindow == nil })
+    #expect(overview.widgetObservation()?.isCurrent == false)
+    #expect(overview.widgetObservation()?.date == saved.limits.first?.lastUpdatedAt)
+    #expect(!overview.widgetShowsOnlySavedUsage)
 }
 
 @Test func preResetWidgetReadingRemainsExplicitlySavedWithoutGuessingARefill() throws {
