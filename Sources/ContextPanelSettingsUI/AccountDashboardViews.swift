@@ -98,7 +98,7 @@ public struct AccountDashboardPanel: View {
                         .foregroundStyle(palette.secondary)
                     Image(systemName: "chevron.right").font(scaledFont(9, weight: .semibold)).foregroundStyle(palette.tertiary)
                 }
-                .font(scaledFont(12)).monospacedDigit().lineLimit(1)
+                .font(scaledFont(12)).monospacedDigit().lineLimit(textScale > 1 ? nil : 1)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -315,7 +315,7 @@ public struct AccountDashboardPanel: View {
 
     private func nameBlock(_ account: AccountOverview.Account) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            (Text(account.metadata.label).font(scaledFont(compact ? 15 : AccountTextSize.appMinimum, weight: .semibold))
+            (Text(account.metadata.label).font(scaledFont(compactAccounts ? 15 : AccountTextSize.appMinimum, weight: .semibold))
              + tags(account))
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
             meta(account)

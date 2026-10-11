@@ -414,10 +414,10 @@ final class SpatialAccountOverviewCaptureTests: XCTestCase {
         let dense = ValidationGalleryFixtureAdapter().snapshot(fixtureID: .denseAccounts, presentationDate: now)
         let denseOverview = dense.accountOverview(now: now)
         let ordinary = ImageRenderer(content: AccountDashboardPanel(overview: denseOverview, now: now,
-            compact: true, openAccount: { _ in }, openDeadlines: {}).frame(width: 1080))
+            compact: true, openAccount: { _ in }, openDeadlines: {}).frame(width: 720))
         let enlarged = ImageRenderer(content: SpatialAccountOverviewPanel(overview: denseOverview, now: now,
-            contentWidth: 1080, openAccount: { _ in }, openDeadlines: {})
-            .frame(width: 1080).environment(\.dynamicTypeSize, .accessibility3))
+            contentWidth: 720, openAccount: { _ in }, openDeadlines: {})
+            .frame(width: 720).environment(\.dynamicTypeSize, .accessibility3))
         XCTAssertGreaterThan(try XCTUnwrap(enlarged.uiImage).size.height,
             try XCTUnwrap(ordinary.uiImage).size.height + 200,
             "Account text must grow, rather than only switching to the stacked layout.")
@@ -430,7 +430,8 @@ final class SpatialAccountOverviewCaptureTests: XCTestCase {
             ("stale-dark", .stale, 810, .dark, .large),
             ("empty-light", .missing, 810, .light, .large),
             ("long-names-light", .fitFallback, 540, .light, .large),
-            ("accessibility-dark", .denseAccounts, 1128, .dark, .accessibility3),
+            ("accessibility-dark", .denseAccounts, 768, .dark, .accessibility3),
+            ("banked-accessibility-dark", .denseAccounts, 768, .dark, .accessibility5),
         ]
         for (name, fixtureID, width, scheme, textSize) in cases {
             let snapshot = ValidationGalleryFixtureAdapter().snapshot(
@@ -438,7 +439,16 @@ final class SpatialAccountOverviewCaptureTests: XCTestCase {
             let stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: snapshot.generatedAt, limits: snapshot.limits), reports: snapshot.reports)
             let document = snapshot.state == .setupNeeded ? nil : CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
             let presentation = CompanionSyncPresentation(result: CompanionSyncLoadResult(document: document, status: snapshot.status), now: now)
-            let overview = snapshot.accountOverview(now: now, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+            var overview = snapshot.accountOverview(now: now, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+            if name == "banked-accessibility-dark" {
+                let credits = ProviderResetCreditSummary(availableCount: 3, observedAt: now,
+                    coverage: .partial, knownExpiries: [now.addingTimeInterval(2 * 86_400), now.addingTimeInterval(5 * 86_400)])
+                let report = StoredProviderReport(provider: .openAI, accountID: "sample-openai-a",
+                    configuredAccountID: "sample-openai-a", accountName: "Sample OpenAI A", generatedAt: now,
+                    resetCredits: credits, status: .healthy, errorMessage: nil)
+                overview = AccountOverview(snapshot: stored.snapshot, reports: [report], now: now)
+                XCTAssertEqual(overview.deadlines.map(\.expiresAt), credits.knownExpiries)
+            }
             let content = VStack(alignment: .leading, spacing: 18) {
                 Text("Sample data · Vision Pro shared view").font(.caption)
                 // A synthetic sync shell; production reuses CompanionSyncStatusView from #807.
