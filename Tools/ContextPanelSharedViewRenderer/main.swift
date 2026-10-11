@@ -77,6 +77,9 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
     let deadlines = values["--presentation"] == "reset-deadlines"
     if let layout = values["--layout"], !["accounts", "windows"].contains(layout) { fail("unsupported layout") }
     if let interactive = values["--interactive"], interactive != "yes" { fail("--interactive requires yes") }
+    if let scale = values["--scale"], Int(scale).map({ (1...3).contains($0) }) != true {
+        fail("--scale requires 1, 2, or 3")
+    }
     let accountPresentation = accountPresentationSizes.keys.contains(values["--presentation"] ?? "") ? values["--presentation"] : nil
     let sixAccounts = ["six-accounts", "app-store"].contains(values["--scenario"] ?? "")
     let presentationValue = deadlines || accountPresentation != nil ? "widget" : values["--presentation"] ?? ""

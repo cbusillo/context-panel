@@ -78,7 +78,7 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     }
 }
 
-@Test func appStoreDraftRendererProducesTheRecordedUnpaddedCanvases() throws {
+@Test func appStoreDraftRendererProducesTheRecordedCanvases() throws {
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let manifestURL = root.appending(path: "Resources/AppStore/Screenshots/horizon-draft/manifest.json")
     let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any])
@@ -87,7 +87,7 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    for asset in assets where asset["padding"] is NSNull {
+    for asset in assets {
         let file = try #require(asset["file"] as? String)
         let output = directory.appending(path: file)
         let scale = try #require(asset["scale"] as? Int)
@@ -100,8 +100,12 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         let run = try runRenderer(arguments)
         #expect(run.status == 0, "\(file): \(run.output)")
         let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: output)))
-        #expect(bitmap.pixelsWide == asset["width"] as? Int)
-        #expect(bitmap.pixelsHigh == asset["height"] as? Int)
+        let width = try #require(asset["width"] as? Int)
+        let height = try #require(asset["height"] as? Int)
+        #expect(bitmap.pixelsWide == (asset["rawWidth"] as? Int ?? width))
+        #expect(bitmap.pixelsHigh == (asset["rawHeight"] as? Int ?? height))
+        #expect(bitmap.pixelsWide <= width)
+        #expect(bitmap.pixelsHigh <= height)
     }
 }
 
@@ -159,6 +163,8 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         valid.map { $0 == "light" ? "adaptive" : $0 },
         valid + ["--fixture", "stale"],
         valid + ["--unlock"],
+        valid + ["--scale", "4"],
+        valid + ["--scale", "x"],
     ]
     for arguments in invalid {
         #expect(try runRenderer(arguments).status != 0, "\(arguments)")

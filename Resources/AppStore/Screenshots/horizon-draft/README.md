@@ -13,6 +13,8 @@ navigation, sync status, and OS chrome. Vision Pro has a flat background rather
 than spatial composition. Compact detail text retains the production view's
 truncation; the smaller iPhone canvas also clips the bottom of the banked-reset
 card. Review those limitations before choosing any image for the store.
+The Mac widget composition is magnified at 2 pixels per point on its canvas,
+while the Mac detail panel uses 1 pixel per point; their apparent sizes differ.
 
 The fixture is pinned to October 1, 2026 at 2:07 PM UTC. Studio, Work, Personal,
 Claude primary, Claude backup, and Antigravity are synthetic labels. No account
@@ -72,6 +74,8 @@ it does not resize, crop, or retouch the rendered UI. Record hashes of the final
 PNG bytes. Host OS/fonts can affect bytes on another machine.
 
 `productSourceCommit` identifies the unchanged shipping view source used for
-this set. `rendererSourceSHA256` identifies the operator renderer changes in
-this PR. Existing validation fixture scenarios and their canvas sizes are
+this set. `rendererSourceSHA256` is SHA-256 of the exact bytes of
+`Tools/ContextPanelSharedViewRenderer/main.swift` used to generate the images.
+Verify it directly when reproducing; tests check real image artifacts rather
+than Swift source text. Existing validation fixture scenarios and their canvas sizes are
 preserved; the `app-store` scenario is for these draft assets only.

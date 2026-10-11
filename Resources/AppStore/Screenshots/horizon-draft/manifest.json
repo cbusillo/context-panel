@@ -2,7 +2,7 @@
   "status": "draft-unapproved",
   "kind": "host-rendered-shared-view-compositions",
   "productSourceCommit": "9360297c31c25bd69f1810626fb9618b6c1ac6a8",
-  "rendererSourceSHA256": "033897d3b3653f70d419219025d2ae9d9d3321b354cb7f1a9254eb2f7c8b2b93",
+  "rendererSourceSHA256": "a28d404712b952e0b6efc23eb9c887dff9b3d9bbd90c7183bb15e73cc034fc86",
   "fixtureTime": "2026-10-01T14:07:00Z",
   "locale": "en_US_POSIX",
   "timeZone": "UTC",
@@ -42,7 +42,9 @@
         900,
         1440
       ],
-      "paddingColor": "FAFAFA"
+      "paddingColor": "FAFAFA",
+      "rawWidth": 688,
+      "rawHeight": 688
     },
     {
       "file": "mac-widget-dark.png",
@@ -57,7 +59,9 @@
         900,
         1440
       ],
-      "paddingColor": "202124"
+      "paddingColor": "202124",
+      "rawWidth": 688,
+      "rawHeight": 688
     },
     {
       "file": "iphone-detail-light.png",
@@ -138,7 +142,9 @@
         2160,
         3840
       ],
-      "paddingColor": "FAFAFA"
+      "paddingColor": "FAFAFA",
+      "rawWidth": 2400,
+      "rawHeight": 1800
     },
     {
       "file": "visionpro-overview-dark.png",
@@ -153,7 +159,9 @@
         2160,
         3840
       ],
-      "paddingColor": "202124"
+      "paddingColor": "202124",
+      "rawWidth": 2400,
+      "rawHeight": 1800
     },
     {
       "file": "watch-account-dark.png",
