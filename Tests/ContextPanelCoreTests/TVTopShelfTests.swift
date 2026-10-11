@@ -15,6 +15,7 @@ import Testing
         #expect(!json.contains("Private Account"))
         #expect(!json.contains("private-account-id"))
         #expect(document.cards.map(\.provider) == Provider.allCases.map(Optional.some))
+        #expect(document.cards.allSatisfy { $0.accountTitle == nil })
         #expect(document.cards.allSatisfy { $0.actionURLString.hasPrefix("contextpaneltv://provider/") })
     }
 }
@@ -1039,10 +1040,12 @@ private func makeRecoveredTopShelfSnapshot(
     let full = TVTopShelfDocument(snapshot: snapshot, mode: .fullDetail, now: now)
     #expect(full.renderedCards.count == 6)
     #expect(full.cards.map(\.title) == accounts.map(\.label))
+    #expect(full.cards.map(\.accountTitle) == accounts.map { Optional($0.label) })
     #expect(full.cards.allSatisfy { $0.remainingPercent == 15 })
     #expect(TVAppRoute(url: try #require(URL(string: full.cards[0].actionURLString))) == .account(.openAI, accounts[0].id))
     for mode in [TVPresentationMode.projectOnly, .countsOnly] {
         let document = TVTopShelfDocument(snapshot: snapshot, mode: mode, now: now)
+        #expect(document.cards.allSatisfy { $0.accountTitle == nil })
         let json = String(decoding: try JSONEncoder().encode(document), as: UTF8.self)
         #expect(!json.contains("Typed name"))
         #expect(!json.contains("Provider identity"))

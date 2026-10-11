@@ -283,7 +283,10 @@ struct TVAccountOverviewContent: View {
                                 Spacer()
                                 Text(AccountPaceText.when(deadline.expiresAt, now: now)).monospacedDigit()
                             }
+                            .padding(20)
+                            .background(TVTokens.color(.card), in: RoundedRectangle(cornerRadius: 20))
                         }
+                        .buttonStyle(TVAccountButtonStyle()).focusEffectDisabled()
                     } else if overview.accounts.contains(where: { ($0.unknownExpiryCount ?? 0) > 0 }) {
                         Button("Banked reset dates unknown", action: openDeadlines)
                     }

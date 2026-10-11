@@ -469,10 +469,12 @@ struct TVTopShelfRenderer {
             font: .systemFont(ofSize: 24 * scale, weight: .bold),
             color: accent
         )
-        draw(card.title,
-            in: CGRect(x: frame.minX + inset, y: frame.minY + 78 * scale,
-                       width: frame.width - 2 * inset, height: 42 * scale),
-            font: .systemFont(ofSize: 30 * scale, weight: .semibold), color: color(.primary))
+        if let title = card.accountTitle {
+            draw(title,
+                in: CGRect(x: frame.minX + inset, y: frame.minY + 78 * scale,
+                           width: frame.width - 2 * inset, height: 42 * scale),
+                font: .systemFont(ofSize: 30 * scale, weight: .semibold), color: color(.primary))
+        }
         draw(
             card.headline,
             in: CGRect(x: frame.minX + inset, y: frame.minY + 136 * scale, width: frame.width - 2 * inset, height: 96 * scale),
@@ -542,11 +544,11 @@ struct TVTopShelfRenderer {
             if let provider = card.provider {
                 return [
                     provider.accountDisplayName,
-                    card.title,
+                    card.accountTitle,
                     card.headline,
                     card.detail,
                     statusText(displayStatus(for: card, isStale: isStale)),
-                ].filter { !$0.isEmpty }.joined(separator: ", ")
+                ].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
             }
             return [card.headline, card.detail].filter { !$0.isEmpty }.joined(separator: ", ")
         }

@@ -340,10 +340,12 @@ private struct TVAccountAction<Content: View>: View {
     }
 }
 
-private struct TVAccountButtonStyle: ButtonStyle {
+public struct TVAccountButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var isFocused
 
-    func makeBody(configuration: Configuration) -> some View {
+    public init() {}
+
+    public func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(TVTokens.color(.primary))
             .overlay {
