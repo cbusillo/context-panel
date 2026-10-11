@@ -19,8 +19,8 @@ Apple TV and Vision Pro, and other Macs running Context Panel. The document can
 include provider names, normalized usage capacity, reset timing, freshness,
 usage pace, prompt-cache hit rates and token counts, the user-facing account
 display label, the account's display settings (such as whether it is shown in
-widgets or marked "use last"), and records of accounts the user removed or
-restored. That display label may be an email address when the provider or user
+widgets or marked "use last"), widget and forecast preferences, and records of
+accounts the user removed or restored. That display label may be an email address when the provider or user
 uses an email as the account name. Companion documents do not include provider
 tokens, raw account identifiers, prompts, transcripts, raw provider responses,
 or diagnostic logs. Reset-credit data in the document is limited to the
@@ -30,8 +30,9 @@ are never included.
 A receiving Mac validates the shared document, keeps it in a bounded local
 cache, and shows those accounts alongside its own. It does not add them to its
 local provider history or republish them as its own readings. The cache is
-withheld when the current iCloud account is unavailable or changes, and it
-expires shortly after the configured refresh interval.
+withheld when the current iCloud account is unavailable or changes. Cached
+readings stop being shown ten minutes after the configured refresh interval
+passes without a newer document; expiry alone does not delete the cache file.
 
 To recognize the same provider account across the user's devices, Context Panel
 derives a per-iCloud-user keyed pseudonym from the provider's stable account ID
