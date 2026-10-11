@@ -9,6 +9,17 @@ import WidgetKit
 @MainActor
 @Test(arguments: ["small", "medium", "large", "extra-large"], [false, true])
 func accountWidgetKeepsFullPercentageWithLongNames(size: String, dark: Bool) throws {
+    try verifyAccountWidgetPercentages(size: size, dark: dark, saved: false)
+}
+
+@MainActor
+@Test(arguments: ["small", "medium", "large", "extra-large"], [false, true])
+func savedAccountWidgetKeepsValuesAtEverySize(size: String, dark: Bool) throws {
+    try verifyAccountWidgetPercentages(size: size, dark: dark, saved: true)
+}
+
+@MainActor
+private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Bool) throws {
     let family: WidgetFamily
     let dimensions: CGSize
     switch size {
@@ -38,8 +49,8 @@ func accountWidgetKeepsFullPercentageWithLongNames(size: String, dark: Bool) thr
             configurationID: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
             provider: limit.provider, label: limit.accountName)
     }
-    let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: limits,
-        status: .healthy, message: "", accountDisplayMetadata: metadata)
+    let snapshot = WidgetSnapshot(state: saved ? .stale : .ready, generatedAt: now, limits: limits,
+        status: saved ? .stale : .healthy, message: "", accountDisplayMetadata: metadata)
     let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!,
         reconnect: URL(string: "contextpanel://settings")!,
         cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!, resetCreditInteraction: .none)
@@ -72,10 +83,14 @@ func accountWidgetKeepsFullPercentageWithLongNames(size: String, dark: Bool) thr
     }
     let expected = family == .systemLarge || family == .systemExtraLarge ? limits.count : Set(providers).count
     #expect(fullPercentages == expected, "Visible account percentages: \(lines)")
+    if saved {
+        #expect(lines.joined(separator: " ").contains(AccountCapacityState.stale.displayText))
+        #expect(!lines.joined(separator: " ").contains(AccountTerms.noEligibleAccount))
+    }
     if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
         let root = URL(fileURLWithPath: output, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
-        try data.write(to: root.appending(path: "widget-\(size)-\(dark ? "dark" : "light").png"))
+        try data.write(to: root.appending(path: "widget-\(saved ? "saved-" : "")\(size)-\(dark ? "dark" : "light").png"))
     }
 }

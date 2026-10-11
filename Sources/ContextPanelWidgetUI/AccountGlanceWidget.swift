@@ -49,13 +49,6 @@ struct AccountGlanceWidget: View {
 
     // MARK: Shared pieces
 
-    /// Each provider with accounts, and its account to use next (nil when none is eligible).
-    private func picks(_ overview: AccountOverview) -> [(provider: Provider, account: AccountOverview.Account?)] {
-        Provider.allCases.compactMap { provider in
-            overview.accounts.contains { $0.metadata.provider == provider } ? (provider, overview.useNext(provider: provider)) : nil
-        }
-    }
-
     /// Week percent from the window the horizon follows, keeping "≈" for assumed capacity.
     private func weekPercent(_ horizon: AccountHorizon, account: AccountOverview.Account) -> String {
         horizon.window.map { AccountNumbers.window($0) } ?? AccountNumbers.account(account)
@@ -74,9 +67,16 @@ struct AccountGlanceWidget: View {
     }
 
     private func headline(_ overview: AccountOverview) -> (lead: String, rest: String, short: Bool) {
+        if overview.widgetShowsOnlySavedUsage {
+            return ("Saved usage", observationText(overview), false)
+        }
         let headline = overview.headline(now: now)
         let words = AccountTerms.compactHeadline(headline)
         return (words.lead, words.rest, headline.shortCount > 0)
+    }
+
+    private func observationText(_ overview: AccountOverview) -> String {
+        overview.widgetObservationDate.map { AccountPaceText.when($0, now: now) } ?? "Time unknown"
     }
 
     private func header(trailing: String?) -> some View {
@@ -97,16 +97,16 @@ struct AccountGlanceWidget: View {
     /// One row per provider: its name in its hue, the account to use next and its week left; the
     /// headline's lead at the bottom, red only when something runs out before its reset.
     private func small(_ overview: AccountOverview) -> some View {
-        let picks = picks(overview).filter { $0.account != nil }
+        let picks = overview.widgetPicks.filter { $0.account != nil }
         let headline = headline(overview)
         let roomy = picks.count <= 2
         return VStack(alignment: .leading, spacing: 0) {
-            header(trailing: picks.isEmpty ? nil : nextUpWord).padding(.bottom, 2)
+            header(trailing: !picks.isEmpty && picks.allSatisfy { $0.isRecommendation } ? nextUpWord : nil).padding(.bottom, 2)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if headline.short {
                     Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
                 }
-                Text(headline.lead)
+                Text(headline.lead + (overview.widgetShowsOnlySavedUsage ? " · " + headline.rest : ""))
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(headline.short ? palette.bad : palette.primary)
                     .lineLimit(1).fixedSize(horizontal: false, vertical: true)
@@ -120,7 +120,7 @@ struct AccountGlanceWidget: View {
             }
             VStack(alignment: .leading, spacing: roomy ? 8 : 4) {
                 ForEach(picks, id: \.provider) { pick in
-                    if let account = pick.account { smallRow(account, roomy: roomy, overview: overview) }
+                    if let account = pick.account { smallRow(account, roomy: roomy, overview: overview, isNext: pick.isRecommendation) }
                 }
             }
             Spacer(minLength: 2)
@@ -138,7 +138,7 @@ struct AccountGlanceWidget: View {
         }
     }
 
-    private func smallRow(_ account: AccountOverview.Account, roomy: Bool, overview: AccountOverview) -> some View {
+    private func smallRow(_ account: AccountOverview.Account, roomy: Bool, overview: AccountOverview, isNext: Bool) -> some View {
         let horizon = account.horizon(now: now)
         let provider = account.metadata.provider
         return VStack(alignment: .leading, spacing: 0) {
@@ -148,7 +148,8 @@ struct AccountGlanceWidget: View {
                 Spacer(minLength: 2)
                 Text(weekPercent(horizon, account: account)).font(.system(size: 12, weight: .bold)).monospacedDigit()
             }
-            Text(account.metadata.label).font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+            Text((isNext ? "" : account.stateText + " · ") + account.metadata.label)
+                .font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
             if roomy {
                 horizonView(account, horizon, in: overview).frame(height: 9).padding(.top, 2)
                 Text(AccountTerms.outcomeShort(account, horizon, now: now))
@@ -161,7 +162,7 @@ struct AccountGlanceWidget: View {
             RoundedRectangle(cornerRadius: 1).fill(palette.provider(provider)).frame(width: 2)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: true))
+        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: isNext))
     }
 
     // MARK: Medium
@@ -169,7 +170,7 @@ struct AccountGlanceWidget: View {
     /// A calm "use next" card per provider, tinted with its hue: name, the account, its week left, its horizon and
     /// that account's own outcome; when other accounts of the provider run out, a calm "1 other runs out" under it.
     private func medium(_ overview: AccountOverview) -> some View {
-        let picks = picks(overview)
+        let picks = overview.widgetPicks
         let totals = overview.providerTotals(now: now)
         return VStack(alignment: .leading, spacing: 6) {
             let headline = headline(overview)
@@ -185,7 +186,8 @@ struct AccountGlanceWidget: View {
             HStack(alignment: .top, spacing: 6) {
                 ForEach(picks, id: \.provider) { pick in
                     let card = mediumCard(pick.provider, account: pick.account,
-                                          total: totals.first { $0.provider == pick.provider }, overview: overview)
+                                          total: totals.first { $0.provider == pick.provider }, overview: overview,
+                                          isNext: pick.isRecommendation)
                     CPWNavigationLink(destination: pick.account.map { links.account(pick.provider, id: $0.id) } ?? links.overview) { card }
                         .buttonStyle(.plain)
                 }
@@ -195,12 +197,12 @@ struct AccountGlanceWidget: View {
     }
 
     private func mediumCard(_ provider: Provider, account: AccountOverview.Account?, total: AccountProviderTotal?,
-                            overview: AccountOverview) -> some View {
+                            overview: AccountOverview, isNext: Bool) -> some View {
         let horizon = account?.horizon(now: now)
         // The shown account's own outcome; the provider's other run-outs are said apart from it, so a card
         // never reads as its account being in trouble. The header's lead is the widget's one alarm.
         let own: String? = if let account, let horizon {
-            horizon.isCurrent ? AccountTerms.outcomeShort(account, horizon, now: now) : account.stateText
+            horizon.isCurrent ? AccountTerms.outcomeShort(account, horizon, now: now) : AccountTerms.accountTiming(account, now: now)
         } else {
             total.map { AccountTerms.providerSummary($0, now: now).outlook }
         }
@@ -238,7 +240,7 @@ struct AccountGlanceWidget: View {
         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.color(provider.surfaceToken)))
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([account.map { $0.glanceAccessibilityText(now: now, isNext: true) }
+        .accessibilityLabel([account.map { $0.glanceAccessibilityText(now: now, isNext: isNext) }
                                 ?? provider.accountDisplayName + ", " + AccountTerms.noEligibleAccount,
                              total.map { $0.accessibilityText(now: now) }].compactMap { $0 }.joined(separator: ". "))
         .cpwNavigationHint(account == nil ? "Opens Context Panel" : "Opens this account")
@@ -251,7 +253,7 @@ struct AccountGlanceWidget: View {
         let totals = overview.providerTotals(now: now)
         let headline = headline(overview)
         return VStack(alignment: .leading, spacing: 0) {
-            header(trailing: AccountPaceText.when(now, now: now)
+            header(trailing: observationText(overview)
                 + (overview.accounts.count > rows.count ? " · +\(overview.accounts.count - rows.count)" : ""))
                 .padding(.bottom, 3)
             (Text(headline.lead).foregroundStyle(headline.short ? palette.bad : palette.primary)
