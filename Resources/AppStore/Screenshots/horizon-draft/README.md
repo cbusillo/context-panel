@@ -11,7 +11,8 @@ approval. The Watch image isolates one account row and omits the overview
 headline and deadline list. Mac detail omits the sidebar; companion panels omit
 navigation, sync status, and OS chrome. Vision Pro has a flat background rather
 than spatial composition. Compact detail text retains the production view's
-truncation. Review those limitations before choosing any image for the store.
+truncation; the smaller iPhone canvas also clips the bottom of the banked-reset
+card. Review those limitations before choosing any image for the store.
 
 The fixture is pinned to October 1, 2026 at 2:07 PM UTC. Studio, Work, Personal,
 Claude primary, Claude backup, and Antigravity are synthetic labels. No account
@@ -65,7 +66,8 @@ For example:
 
 For assets with `padding`, center the raw render on the recorded height/width
 canvas with `sips --padToHeightWidth HEIGHT WIDTH --padColor COLOR INPUT --out OUTPUT`.
-Use `F9F9F9` for light and `1E1F21` for dark. The padding adds a flat background;
+Use the asset's `paddingColor` from the manifest, matched to the rendered
+surface color. The padding adds a flat background;
 it does not resize, crop, or retouch the rendered UI. Record hashes of the final
 PNG bytes. Host OS/fonts can affect bytes on another machine.
 

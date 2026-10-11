@@ -2,7 +2,7 @@
   "status": "draft-unapproved",
   "kind": "host-rendered-shared-view-compositions",
   "productSourceCommit": "9360297c31c25bd69f1810626fb9618b6c1ac6a8",
-  "rendererSourceSHA256": "24204c2e0f2593e21127a974b9430ab951172dd53eeec31577093fb7a9b52cdc",
+  "rendererSourceSHA256": "033897d3b3653f70d419219025d2ae9d9d3321b354cb7f1a9254eb2f7c8b2b93",
   "fixtureTime": "2026-10-01T14:07:00Z",
   "locale": "en_US_POSIX",
   "timeZone": "UTC",
@@ -33,7 +33,7 @@
       "file": "mac-widget-light.png",
       "width": 1440,
       "height": 900,
-      "sha256": "f3701fb8a599e073222480681bbf234e0c9a5c3f2d863d7496b45f27280db854",
+      "sha256": "91d2ea01ad6c3e544ac663b979b6983f572ac081a077dfc1480d89fedceb1d9e",
       "presentation": "widget",
       "family": "systemLarge",
       "appearance": "light",
@@ -41,13 +41,14 @@
       "padding": [
         900,
         1440
-      ]
+      ],
+      "paddingColor": "FAFAFA"
     },
     {
       "file": "mac-widget-dark.png",
       "width": 1440,
       "height": 900,
-      "sha256": "90bcb9ae80bf94f8d48b8e975ca75b421234ede960689890e5148e2f02b6841e",
+      "sha256": "a0c942bfa6b6172f2aa2af90210931f85fa278d6d115140ef4bdcc6321acf706",
       "presentation": "widget",
       "family": "systemLarge",
       "appearance": "dark",
@@ -55,7 +56,8 @@
       "padding": [
         900,
         1440
-      ]
+      ],
+      "paddingColor": "202124"
     },
     {
       "file": "iphone-detail-light.png",
@@ -127,7 +129,7 @@
       "file": "visionpro-overview-light.png",
       "width": 3840,
       "height": 2160,
-      "sha256": "16bf539174f0019320c074c3e90f2fa797084d0a2419d9d6d3e58e187a6c3e96",
+      "sha256": "8cee40e3d24a78f2ce44dcdfb7fb2f980ae8faf12b7626c2370712af4615c0d7",
       "presentation": "vision-overview",
       "family": "systemLarge",
       "appearance": "light",
@@ -135,13 +137,14 @@
       "padding": [
         2160,
         3840
-      ]
+      ],
+      "paddingColor": "FAFAFA"
     },
     {
       "file": "visionpro-overview-dark.png",
       "width": 3840,
       "height": 2160,
-      "sha256": "ad2f65b357935c0fc3f6f9d9f96a22c5f42f34f4a4d3cf923e225db10294f767",
+      "sha256": "81a7e91b0458bdc73c67e69a0c217c1bd682bd986926f561e9e7f75d2e4d8f16",
       "presentation": "vision-overview",
       "family": "systemLarge",
       "appearance": "dark",
@@ -149,7 +152,8 @@
       "padding": [
         2160,
         3840
-      ]
+      ],
+      "paddingColor": "202124"
     },
     {
       "file": "watch-account-dark.png",

@@ -23,12 +23,16 @@ import WidgetKit
 private let canvas = CGSize(width: 1_024, height: 768)
 private let interactive = CommandLine.arguments.contains("--interactive")
 private let windowsLayout = CommandLine.arguments.contains("windows")
-private let appStoreScenario = CommandLine.arguments.contains("app-store")
+private let appStoreScenario: Bool = {
+    let arguments = CommandLine.arguments
+    guard let index = arguments.firstIndex(of: "--scenario"), index + 1 < arguments.count else { return false }
+    return arguments[index + 1] == "app-store"
+}()
 private var presentationWindow: NSWindow?
 
 private let unsupportedPresentationStatus: Int32 = 3
 
-// Account surfaces at their real point sizes: Mac pane, iPhone 15 Pro, Apple Watch 45 mm, Apple TV.
+// Default review sizes, plus App Store draft canvases selected by the app-store scenario.
 private let accountPresentationSizes: [String: CGSize] = [
     "account-overview": appStoreScenario ? CGSize(width: 1_024, height: 1_366) : CGSize(width: 900, height: 880),
     "vision-overview": CGSize(width: 1_200, height: 900),
@@ -221,7 +225,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         .foregroundStyle(tokenColor(.primary, dark: isDark))
         .background(accountPresentation?.hasPrefix("watch") == true ? tokenColor(.watchSurface, dark: true)
             : accountPresentation == "tv-board" ? tokenColor(.surface, dark: true)
-            : deadlines || accountPresentation != nil ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
+            : deadlines || accountPresentation != nil || appStoreScenario ? CPWTheme.surface(variant: isDark ? .dark : .light) : Color.clear)
         .environment(\.colorScheme, isDark ? .dark : .light)
         // The gallery prints its fixed presentation time; pin how it is formatted so
         // the image does not depend on the host's region or time zone.

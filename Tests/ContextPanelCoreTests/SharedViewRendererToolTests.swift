@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Testing
 
@@ -58,6 +59,23 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         "--presentation", try #require(cell["presentation"]),
         "--output", output.path,
     ]
+}
+
+@Test func appStoreDraftImageBytesMatchTheirRecordedIdentity() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appending(path: "Resources/AppStore/Screenshots/horizon-draft")
+    let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appending(path: "manifest.json"))) as? [String: Any])
+    let assets = try #require(manifest["assets"] as? [[String: Any]])
+    #expect(!assets.isEmpty)
+    for asset in assets {
+        let file = try #require(asset["file"] as? String)
+        let data = try Data(contentsOf: root.appending(path: file))
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #expect(digest == asset["sha256"] as? String, "\(file)")
+        let bitmap = try #require(NSBitmapImageRep(data: data))
+        #expect(bitmap.pixelsWide == asset["width"] as? Int, "\(file)")
+        #expect(bitmap.pixelsHigh == asset["height"] as? Int, "\(file)")
+    }
 }
 
 @Test func appStoreDraftRendererProducesTheRecordedUnpaddedCanvases() throws {
