@@ -60,6 +60,33 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     ]
 }
 
+@Test func appStoreDraftRendererProducesTheRecordedUnpaddedCanvases() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let manifestURL = root.appending(path: "Resources/AppStore/Screenshots/horizon-draft/manifest.json")
+    let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any])
+    let base = try #require(manifest["rendererBaseArguments"] as? [String])
+    let assets = try #require(manifest["assets"] as? [[String: Any]])
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    for asset in assets where asset["padding"] is NSNull {
+        let file = try #require(asset["file"] as? String)
+        let output = directory.appending(path: file)
+        let scale = try #require(asset["scale"] as? Int)
+        let arguments = base + [
+            "--presentation", try #require(asset["presentation"] as? String),
+            "--family", try #require(asset["family"] as? String),
+            "--appearance", try #require(asset["appearance"] as? String),
+            "--scale", String(scale), "--output", output.path,
+        ]
+        let run = try runRenderer(arguments)
+        #expect(run.status == 0, "\(file): \(run.output)")
+        let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: output)))
+        #expect(bitmap.pixelsWide == asset["width"] as? Int)
+        #expect(bitmap.pixelsHigh == asset["height"] as? Int)
+    }
+}
+
 @Test func rendererDrawsEveryMacWidgetCellInTheSharedViewMatrix() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

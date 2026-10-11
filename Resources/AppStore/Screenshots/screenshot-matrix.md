@@ -1,5 +1,17 @@
 # App Store Screenshot Matrix
 
+## Horizon Draft Review Set
+
+Repo-only Horizon candidates for [#744](https://github.com/cbusillo/context-panel/issues/744)
+are in [horizon-draft/](horizon-draft/README.md). That review index explains
+the host-rendered source, image limitations, intended display types, and
+reproduction route. [manifest.json](horizon-draft/manifest.json) is the single
+source for their dimensions, SHA-256 checksums, and renderer provenance.
+They are unapproved shared-view compositions, separate from the historical
+approved captures below. Chris has not approved this set, and it is not wired
+into the uploader. No App Store version, screenshot upload, or submission was
+changed while preparing it.
+
 Source plan: [#299](https://github.com/cbusillo/context-panel/issues/299)
 
 Apple screenshot specs checked on 2026-06-27:
