@@ -103,36 +103,8 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
         }
     }
 
-    public var compactActionText: String? {
-        if let assessment { return assessment.recommended ? "apply reset now" : nil }
-        return switch state {
-        case .considerUsingNow:
-            "consider using now"
-        case let .considerBefore(expiry):
-            "consider before \(Self.compactDateText(expiry))"
-        case .hold, .refresh:
-            nil
-        }
-    }
-
-    public var glanceActionText: String? {
-        if let assessment { return assessment.recommended ? "use now" : nil }
-        return switch state {
-        case .considerUsingNow:
-            "use now"
-        case let .considerBefore(expiry):
-            "by \(Self.compactDateText(expiry))"
-        case .hold, .refresh:
-            nil
-        }
-    }
-
     private static func dateText(_ date: Date) -> String {
         ContextPanelDateFormatting.resetDeadline(date)
-    }
-
-    private static func compactDateText(_ date: Date) -> String {
-        ContextPanelDateFormatting.resetDeadline(date, compact: true)
     }
 
     private static func relativeText(_ date: Date, now: Date) -> String {

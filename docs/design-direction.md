@@ -118,9 +118,10 @@ horizontal slots rather than adding cards or reducing visible limit rows.
   current observation remains. Selecting the tag opens OpenAI detail; no app
   surface performs a credit action.
 - Medium and large widgets use the existing section-header baseline. Actionable
-  guidance names one exact account and uses explicit `use now` copy when the
-  shared assessment recommends applying. Neutral availability says `Credits · N accounts` and never displays a
-  global credit total. The optional window layout takes its action, selected
+  guidance shows one exact account, its credit count, and the expiry deadline;
+  a warning tone marks a reset recommended by the shared assessment. Neutral
+  availability shows the number of credit-bearing accounts, never a global
+  credit total. The optional window layout takes its recommendation, selected
   account, and accessibility rationale from the shared `ResetAssessment` used
   by the account panel and agent snapshot; inventory and expiry stay visible
   when applying is not recommended. Provider exhaustion includes hidden and
@@ -128,8 +129,9 @@ horizontal slots rather than adding cards or reducing visible limit rows.
 - Medium and large widgets keep reset availability and prompt-cache telemetry
   visible together whenever both are available. Their single-line header uses a
   progressive fit ladder: cache drops its rolling average first, reset guidance
-  then drops the account name and action text, and the cache label disappears
-  only as a last resort. Authorization and stale-cache pills shorten to labels
+  then drops the account name while retaining the credit count and expiry
+  deadline, and the cache label disappears only as a last resort.
+  Authorization and stale-cache pills shorten to labels
   and then symbols under the same pressure. Full cache averages, account
   identity, credit counts, and guidance remain in accessibility and the app.
   Neither family gives up a saved limit row for reset-credit presentation.
