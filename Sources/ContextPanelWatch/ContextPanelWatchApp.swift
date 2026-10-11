@@ -67,6 +67,10 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage,
                     presentationDate: Date()
                 )
+                Section("About") {
+                    Text(InstalledAppVersion().displayText)
+                        .font(.footnote)
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

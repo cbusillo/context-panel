@@ -17,9 +17,9 @@ its own. [AGENTS.md](AGENTS.md) is the only agent-instruction file and owns the
 repository's execution and validation guidance. Durable work is tracked in
 GitHub issues.
 
-Contributions use focused branches and pull requests. Authorized changes land
-with a normal merge commit after green CI and required checks; this repository
-does not use the Launchplane merge train. Reviews by another model follow the
+Contributions use focused branches and pull requests. Landing follows the
+overall direction and the [shared merge-train procedure](https://github.com/cbusillo/codex-skills/blob/main/skills/launchplane/references/merge-train.md).
+Reviews by another model follow the
 [shared review reference](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md):
 findings are weighed against evidence, rather than reviewer approval being a
 gate. Releases are separate from merging and follow [the release procedure](docs/release.md).

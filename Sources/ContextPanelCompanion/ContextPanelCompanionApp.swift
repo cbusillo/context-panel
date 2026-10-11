@@ -205,6 +205,7 @@ private struct CompanionRootView: View {
     @State private var model = CompanionSyncModel()
     @State private var galleryRoute: ValidationGalleryRoute?
     @State private var accountPath: [CompanionAccountRoute] = []
+    @State private var showsAbout = false
 
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
@@ -295,6 +296,11 @@ private struct CompanionRootView: View {
             }
             .companionNavigationChrome(usesPageHeader: usesPageHeader)
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("About", systemImage: "info.circle") {
+                        showsAbout = true
+                    }
+                }
                 if !usesPageHeader {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
@@ -304,6 +310,11 @@ private struct CompanionRootView: View {
                         }
                     }
                 }
+            }
+            .alert("Context Panel", isPresented: $showsAbout) {
+                Button("Done", role: .cancel) {}
+            } message: {
+                Text(InstalledAppVersion().displayText)
             }
             .task {
                 model.registerCloudKitSubscription()
