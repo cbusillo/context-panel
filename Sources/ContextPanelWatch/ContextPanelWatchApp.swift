@@ -136,10 +136,6 @@ struct WatchUsageContent: View {
             presentationDate: presentationDate
         )
 
-        if let keepWorkingForecast {
-            WatchForecastSection(forecast: keepWorkingForecast)
-        }
-
         if let alert = snapshot.primaryProviderAccessAlert {
             WatchProviderAccessSection(alert: alert, presentationDate: presentationDate)
         }
@@ -169,6 +165,10 @@ struct WatchUsageContent: View {
                     WatchLimitRow(limit: limit, presentationDate: presentationDate)
                 }
             }
+        }
+
+        if let keepWorkingForecast {
+            WatchForecastSection(forecast: keepWorkingForecast)
         }
     }
 }
@@ -522,7 +522,7 @@ private struct WatchLimitRow: View {
         }
         .padding(.vertical, 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(limit.accessibilitySentence(direction: .used, now: presentationDate))
+        .accessibilityLabel(limit.accessibilitySentence(direction: .remaining, now: presentationDate))
     }
 
     private var header: some View {
@@ -584,7 +584,7 @@ private struct WatchLimitRow: View {
 
     @ViewBuilder
     private var pressureTrack: some View {
-        if let ratio = limit.usedPressure.ratio {
+        if let ratio = limit.remainingCapacity.ratio {
             ProgressView(value: ratio)
                 .tint(statusColor)
         } else {

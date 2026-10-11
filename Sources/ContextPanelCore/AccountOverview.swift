@@ -153,6 +153,24 @@ public struct AccountOverview: Equatable, Sendable {
     public func useNext(provider: Provider) -> Account? {
         useNextRanking(provider: provider).useNextAccountID.flatMap { id in accounts.first { $0.id == id } }
     }
+
+    /// Replay selection at the last observation when a glance surface needs its last-good account.
+    /// This is selection evidence only: render the original accounts with their actual freshness.
+    public func lastObservedSelection() -> AccountOverview {
+        let observed = accounts.compactMap(\.observedAt).max() ?? rankedAt
+        let replay = accounts.map { account -> Account in
+            guard [.stale, .unavailable].contains(account.state) else { return account }
+            let known = !account.windows.isEmpty && account.windows.allSatisfy {
+                $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil
+            }
+            return Account(metadata: account.metadata, state: known ? .available : .unknown,
+                windows: account.windows, bankedResets: account.bankedResets,
+                bankedState: account.bankedState, observedAt: account.observedAt,
+                providerPlan: account.providerPlan, bankedAdvice: account.bankedAdvice,
+                resetAssessment: account.resetAssessment)
+        }
+        return AccountOverview(accounts: replay, deadlines: deadlines, rankedAt: observed)
+    }
     public var nextDeadline: Deadline? { deadlines.first { $0.state == .available } }
 
     public init(snapshot: UsageSnapshot, reports: [StoredProviderReport], metadata: [AccountDisplayMetadata]? = nil,

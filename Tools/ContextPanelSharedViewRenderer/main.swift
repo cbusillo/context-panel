@@ -168,7 +168,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         case "watch-rectangular":
             view = AnyView(WatchAccountRectangularFace(overview: overview, now: now).padding(4).foregroundStyle(.white))
         case "watch-circular":
-            view = AnyView(WatchAccountCircularFace(overview: overview).foregroundStyle(.white))
+            view = AnyView(WatchAccountCircularFace(overview: overview, now: now).foregroundStyle(.white))
         case "tv-board":
             view = AnyView(TVAccountBoard(overview: overview, now: now).padding(.horizontal, 72).padding(.vertical, 48))
         default:

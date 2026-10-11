@@ -187,7 +187,7 @@ public struct WatchValidationFixtureAdapter: Sendable {
                 presentationDate: presentationDate
             )
         }
-        return context(snapshot: snapshot, presentationDate: presentationDate)
+        return context(snapshot: accountSnapshot(snapshot, now: presentationDate), presentationDate: presentationDate)
     }
 
     public func complicationContext(
@@ -204,7 +204,27 @@ public struct WatchValidationFixtureAdapter: Sendable {
         case .providerAccess:
             adapter.providerAccessSnapshot(presentationDate: presentationDate)
         }
-        return context(snapshot: snapshot, presentationDate: presentationDate)
+        return context(snapshot: accountSnapshot(snapshot, now: presentationDate), presentationDate: presentationDate)
+    }
+
+    /// Watch previews exercise the account path with the existing synthetic fixture identities.
+    /// The catalog stays unchanged; older publishers without metadata still have a live fallback.
+    private func accountSnapshot(_ snapshot: WidgetSnapshot, now: Date) -> WidgetSnapshot {
+        let accounts = snapshot.accountOverview(now: now).accounts
+        guard !accounts.isEmpty, !snapshot.limits.isEmpty else { return snapshot }
+        return WidgetSnapshot(
+            state: snapshot.state, generatedAt: snapshot.generatedAt,
+            limits: snapshot.limits, reports: snapshot.reports,
+            promptCacheObservations: snapshot.promptCacheObservations,
+            promptCacheWidgetState: snapshot.promptCacheWidgetState,
+            observedBurnRates: snapshot.observedBurnRates,
+            fastModeForecastSettings: snapshot.fastModeForecastSettings,
+            status: snapshot.status, message: snapshot.message,
+            refreshAttentionSummary: snapshot.refreshAttentionSummary,
+            syncErrorMessage: snapshot.syncErrorMessage,
+            accountDisplayMetadata: accounts.map(\.metadata),
+            accountBurnRates: snapshot.accountBurnRates
+        )
     }
 
     private func context(

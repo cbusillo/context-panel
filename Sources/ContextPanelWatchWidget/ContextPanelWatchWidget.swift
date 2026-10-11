@@ -312,7 +312,7 @@ struct ContextPanelWatchWidgetView: View {
             if let alert = compactContent.providerAccessFallback {
                 WatchCircularProviderAccessComplication(alert: alert, presentationDate: presentationDate)
             } else if let accounts = accountOverview {
-                WatchAccountCircularFace(overview: accounts)
+                WatchAccountCircularFace(overview: accounts, now: presentationDate)
             } else {
                 WatchCircularComplication(
                     limit: compactContent.limits.first,
@@ -335,6 +335,14 @@ struct ContextPanelWatchWidgetView: View {
         case .accessoryInline:
             if let alert = inlineContent.providerAccessFallback {
                 WatchInlineProviderAccessComplication(alert: alert, presentationDate: presentationDate)
+            } else if let accounts = accountOverview,
+                      let presentation = WatchAccountComplicationPresentation(overview: accounts, now: presentationDate) {
+                ViewThatFits(in: .horizontal) {
+                    Text(presentation.inlineText)
+                    Text(presentation.compactInlineText)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(presentation.accessibilityText)
             } else {
                 WatchInlineComplication(
                     limits: inlineContent.limits,
@@ -345,6 +353,9 @@ struct ContextPanelWatchWidgetView: View {
         case .accessoryCorner:
             if let alert = compactContent.providerAccessFallback {
                 WatchCornerProviderAccessComplication(alert: alert, presentationDate: presentationDate)
+            } else if let accounts = accountOverview,
+                      let presentation = WatchAccountComplicationPresentation(overview: accounts, now: presentationDate) {
+                WatchAccountCornerComplication(presentation: presentation)
             } else {
                 WatchCornerComplication(
                     limit: compactContent.limits.first,
@@ -363,6 +374,30 @@ struct ContextPanelWatchWidgetView: View {
                 )
             }
         }
+    }
+}
+
+private struct WatchAccountCornerComplication: View {
+    let presentation: WatchAccountComplicationPresentation
+
+    var body: some View {
+        Text(presentation.quantity)
+            .widgetCurvesContent()
+            .widgetLabel {
+                if let remaining = presentation.horizon.remaining {
+                    Gauge(value: remaining) { Text(presentation.cornerLabel) }
+                        .tint(color)
+                } else {
+                    Text(presentation.cornerLabel)
+                }
+            }
+            .foregroundStyle(color)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(presentation.accessibilityText)
+    }
+
+    private var color: Color {
+        WatchTokens.color(presentation.colorToken)
     }
 }
 

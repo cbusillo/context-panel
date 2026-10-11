@@ -74,6 +74,7 @@ public enum AccountTerms {
     public static let noEligibleAccount = "No eligible account for Use next"
     public static let addFirstAccount = "Add your first account"
     public static let unknown = "—"
+    public static let assumed = "Assumed"
     public static func accountTiming(_ account: AccountOverview.Account, now: Date) -> String {
         if [.stale, .unavailable].contains(account.state) {
             return account.stateText + (account.windows.isEmpty ? "" : account.observedAt.map { " " + AccountPaceText.when($0, now: now) } ?? "")
@@ -345,7 +346,7 @@ public enum AccountTerms {
 
     /// A window's reset, "Assumed" when the scheduled reset passed without a new reading.
     public static func reset(_ window: AccountOverview.Window, now: Date) -> String? {
-        window.naturalResetAt.map { (window.assumption == nil ? "" : "Assumed ") + AccountPaceText.when($0, now: now) }
+        window.naturalResetAt.map { (window.assumption == nil ? "" : assumed + " ") + AccountPaceText.when($0, now: now) }
     }
 
     /// Short window column name.
