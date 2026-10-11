@@ -195,6 +195,7 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
 private enum CompanionAccountRoute: Hashable {
     case account(String)
     case deadlines
+    case syncAndSettings
 }
 
 @MainActor
@@ -268,19 +269,18 @@ private struct CompanionRootView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         if usesPageHeader {
-                            CompanionPageHeader(result: model.result) {
-                                model.reload()
-                            }
+                            CompanionPageHeader { model.reload() }
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
-                                compact: horizontalSizeClass != .regular,
-                                openAccount: { accountPath.append(.account($0.id)) },
-                                openDeadlines: { accountPath.append(.deadlines) })
+                            VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                                CompanionSyncStatusView(result: model.result, now: context.date)
+                                AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
+                                    compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),
+                                    openAccount: { accountPath.append(.account($0.id)) },
+                                    openDeadlines: { accountPath.append(.deadlines) })
+                            }
                         }
-                        DisclosureGroup("Settings, pace and sync details") {
-                            companionContent(layoutMode: layoutMode).padding(.top, 16)
-                        }
+                        CompanionSyncAndSettingsRow { accountPath.append(.syncAndSettings) }
                     }
                         .frame(
                             maxWidth: CompanionLayoutPolicy.maximumContentWidth(
@@ -323,21 +323,27 @@ private struct CompanionRootView: View {
                 model.handleCloudKitAccountChange()
             }
             .navigationDestination(for: CompanionAccountRoute.self) { route in
-                ScrollView {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        let overview = accountOverview(at: context.date)
-                        switch route {
-                        case .deadlines:
-                            AccountDeadlinesPanel(overview: overview, now: context.date,
-                                openAccount: { accountPath.append(.account($0)) })
-                        case let .account(id):
-                            if let account = overview.accounts.first(where: { $0.id == id }) {
-                                AccountDashboardDetail(account: account, overview: overview, now: context.date,
-                                    compact: horizontalSizeClass != .regular)
-                            } else { Text("Account is no longer in this snapshot.") }
-                        }
-                    }.padding(pagePadding)
-                }.background(surfacePalette.pageBackground.ignoresSafeArea())
+                if route == .syncAndSettings {
+                    syncAndSettingsPage
+                } else {
+                    ScrollView {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            let overview = accountOverview(at: context.date)
+                            switch route {
+                            case .deadlines:
+                                AccountDeadlinesPanel(overview: overview, now: context.date,
+                                    openAccount: { accountPath.append(.account($0)) })
+                            case let .account(id):
+                                if let account = overview.accounts.first(where: { $0.id == id }) {
+                                    AccountDashboardDetail(account: account, overview: overview, now: context.date,
+                                        compact: horizontalSizeClass != .regular)
+                                } else { Text("Account is no longer in this snapshot.") }
+                            case .syncAndSettings:
+                                EmptyView()
+                            }
+                        }.padding(pagePadding)
+                    }.background(surfacePalette.pageBackground.ignoresSafeArea())
+                }
             }
             .onOpenURL { url in
                 if let route = ValidationGalleryRoute(url: url) { galleryRoute = route }
@@ -358,6 +364,40 @@ private struct CompanionRootView: View {
 
     private func accountOverview(at date: Date) -> AccountOverview {
         model.snapshot.accountOverview(now: date, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+    }
+
+    /// Sync status first, so a sync problem is one tap from the top, then the widget preview, pace,
+    /// banked resets and the display and refresh settings that used to sit in a disclosure on the main screen.
+    private var syncAndSettingsPage: some View {
+        GeometryReader { geometry in
+            let layoutMode = CompanionLayoutPolicy.mode(
+                availableWidth: geometry.size.width,
+                platform: layoutPlatform,
+                usesAccessibilityTextSizes: dynamicTypeSize.isAccessibilitySize
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        CompanionSyncStatusView(result: model.result, now: context.date)
+                    }
+                    companionContent(layoutMode: layoutMode)
+                }
+                .frame(
+                    maxWidth: CompanionLayoutPolicy.maximumContentWidth(
+                        layoutMode: layoutMode,
+                        platform: layoutPlatform
+                    )
+                )
+                .frame(maxWidth: .infinity)
+                .padding(pagePadding)
+            }
+            .background(surfacePalette.pageBackground.ignoresSafeArea())
+        }
+        .navigationTitle(CompanionSyncAndSettingsRow.title)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 
     @ViewBuilder
@@ -393,7 +433,6 @@ private struct CompanionRootView: View {
             if !model.snapshot.reports.isEmpty {
                 BankedResetDeadlinesView(reports: model.snapshot.reports, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
             }
-            CompanionSyncStatusView(result: model.result)
         }
         .frame(
             minWidth: layoutMode == .twoColumn
@@ -465,6 +504,35 @@ private struct CompanionRootView: View {
                 : nil,
             alignment: .topLeading
         )
+    }
+}
+
+/// The main screen's one row to sync status, the widget preview, pace details and settings.
+private struct CompanionSyncAndSettingsRow: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
+    static let title = "Sync and settings"
+
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 12) {
+                Label(Self.title, systemImage: "gearshape")
+                    .font(.headline)
+                    .foregroundStyle(palette.primaryText)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(palette.secondaryText)
+                    .accessibilityHidden(true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(palette.cardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -613,11 +681,27 @@ private struct CompanionValidationGalleryPreview: View {
             case .overview:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionSyncStatusView(result: result, now: context.presentationDate)
                         AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
                             maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
                             compact: true, openAccount: { _ in }, openDeadlines: {})
-                        DisclosureGroup("Settings, pace and sync details") {
-                        VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionSyncAndSettingsRow {}
+                    }
+                    .padding(18)
+                }
+            case .diagnostics:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionSyncStatusView(result: result, now: context.presentationDate)
+                        CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                    }
+                    .padding(18)
+                }
+            case .settings:
+                // Mirrors the Sync and settings page: sync status first, then the details it holds.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionSyncStatusView(result: result, now: context.presentationDate)
                         ContextPanelWidgetContentView(
                             family: .systemLarge,
                             snapshot: context.snapshot,
@@ -633,7 +717,6 @@ private struct CompanionValidationGalleryPreview: View {
                             CPWTheme.surface(variant: themeVariant),
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
-
                         if let forecast {
                             CompanionKeepWorkingCard(forecast: forecast)
                         }
@@ -641,23 +724,7 @@ private struct CompanionValidationGalleryPreview: View {
                         if !context.snapshot.reports.isEmpty {
                             BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
                         }
-                        CompanionSyncStatusView(result: result)
-                        }
-                        }
-                    }
-                    .padding(18)
-                }
-            case .diagnostics:
-                ScrollView {
-                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                        CompanionSyncStatusView(result: result)
-                        CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
-                    }
-                    .padding(18)
-                }
-            case .settings:
-                ScrollView {
-                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+
                         CompanionWidgetMainLimitsSettingsView(
                             preferences: context.displayPreferences,
                             isLoaded: true,
@@ -697,41 +764,15 @@ private struct CompanionValidationGalleryPreview: View {
 private struct CompanionPageHeader: View {
     @Environment(\.companionSurfacePalette) private var palette
 
-    let result: CompanionSyncLoadResult
     let onRefresh: () -> Void
-
-    private var presentation: CompanionSyncPresentation {
-        CompanionSyncPresentation(result: result)
-    }
-
-    private var lastSyncedAt: Date? {
-        result.transportMetadata?.receivedAt
-            ?? result.transportMetadata?.mirroredAt
-            ?? result.document?.snapshot.publishedAt
-    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 24) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Context Panel")
-                    .font(.system(size: 34, weight: .semibold, design: .rounded))
-                    .foregroundStyle(palette.primaryText)
-                    .accessibilityAddTraits(.isHeader)
-                HStack(spacing: 8) {
-                    Text(presentation.title)
-                    if let lastSyncedAt {
-                        Text("·")
-                            .foregroundStyle(palette.tertiaryText)
-                        Text("Synced " + lastSyncedAt.formatted(.relative(presentation: .named)))
-                    }
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(palette.secondaryText)
-                .lineLimit(1)
-            }
-
+            Text("Context Panel")
+                .font(.system(size: 34, weight: .semibold, design: .rounded))
+                .foregroundStyle(palette.primaryText)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 20)
-
             Button(action: onRefresh) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
@@ -852,11 +893,16 @@ private final class CompanionSyncModel {
                     }
                 }
             }
-            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: now)
+            async let sessionRelayResult = CompanionAsyncDeadline.value(timeout: .seconds(5)) {
+                await runtimeReceiptRelay?.synchronizeSession(now: now)
+            }
             let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
             async let loadedResult = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
-            async let presentationResult = presentationPreferencesRemoteStore?.load()
-            let (loaded, presentationLoad) = await (loadedResult, presentationResult)
+            async let presentationResult = CompanionAsyncDeadline.value(timeout: .seconds(5)) {
+                await presentationPreferencesRemoteStore?.load()
+            }
+            let (loaded, boundedPresentationLoad) = await (loadedResult, presentationResult)
+            let presentationLoad = boundedPresentationLoad ?? nil
             guard !Task.isCancelled else { return }
             guard let self else { return }
             _ = await sessionRelayResult
@@ -1457,15 +1503,10 @@ private struct CompanionSyncStatusView: View {
     @Environment(\.companionSurfacePalette) private var palette
 
     let result: CompanionSyncLoadResult
+    var now: Date = Date()
 
     private var presentation: CompanionSyncPresentation {
-        CompanionSyncPresentation(result: result)
-    }
-
-    private var lastSyncedAt: Date? {
-        result.transportMetadata?.receivedAt
-            ?? result.transportMetadata?.mirroredAt
-            ?? result.document?.snapshot.publishedAt
+        CompanionSyncPresentation(result: result, now: now)
     }
 
     var body: some View {
@@ -1484,8 +1525,8 @@ private struct CompanionSyncStatusView: View {
                     .foregroundStyle(palette.secondaryText)
             }
 
-            if let lastSyncedAt {
-                Text("Last synced " + lastSyncedAt.formatted(date: .abbreviated, time: .shortened))
+            if let updatedAt = presentation.usageUpdatedAt {
+                Text("Usage updated " + SnapshotFreshness.compactAgeText(since: updatedAt, now: now))
                     .font(.footnote)
                     .foregroundStyle(palette.tertiaryText)
             }

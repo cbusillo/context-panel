@@ -21,6 +21,7 @@ public enum TVSnapshotFreshnessPolicy {
 }
 
 public struct TVTopShelfCard: Codable, Equatable, Identifiable, Sendable {
+    fileprivate static let providerIDPrefix = "provider-"
     public let id: String
     public let provider: Provider?
     public let title: String
@@ -49,6 +50,24 @@ public struct TVTopShelfCard: Codable, Equatable, Identifiable, Sendable {
         self.remainingPercent = remainingPercent
         self.actionURLString = actionURLString
     }
+    /// Quantitative saved data shares the Mac's warm-neutral treatment, independently of
+    /// the provider's identity hue. Refresh failure must never look like fresh capacity.
+    public func capacityToken(isStale: Bool) -> AccountColorToken {
+        isStale || status == .stale || status == .failure ? .saved : provider?.colorToken ?? .tertiary
+    }
+
+    /// Provider summaries already carry provider/capacity in their title. Only named
+    /// account cards need an additional identity line in the image and spoken summary.
+    public var accountTitle: String? {
+        provider != nil && !id.hasPrefix(Self.providerIDPrefix) ? title : nil
+    }
+
+    /// Compact cards still identify pressure and an in-progress update without relying on colour.
+    public func gridStatusText(isStale: Bool) -> String? {
+        guard !isStale, [.close, .limited, .loading].contains(status) else { return nil }
+        return status.displayText
+    }
+
 }
 
 public struct TVTopShelfDocument: Codable, Equatable, Sendable {
@@ -113,7 +132,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
     }
 
     public var renderedCards: [TVTopShelfCard] {
-        Array(cards.prefix(cards.first?.id.hasPrefix("provider-") == false && cards.first?.provider != nil ? 6 : Provider.allCases.count))
+        Array(cards.prefix(cards.first?.accountTitle != nil ? 6 : Provider.allCases.count))
     }
 
     public func isStale(
@@ -130,14 +149,18 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
 
     public func collectionTitle(at now: Date) -> String {
         guard containsProviderData else { return "Context Panel" }
-        if isStale(at: now) { return "Saved provider runway" }
+        if isStale(at: now) {
+            return cards.first?.accountTitle != nil
+                ? AccountCapacityState.stale.displayText + " " + AccountTerms.accounts.lowercased()
+                : "Saved provider runway"
+        }
         if cards.contains(where: { $0.status == .failure || $0.status == .limited }) {
             return "Provider attention"
         }
         if cards.contains(where: { $0.status == .close }) {
             return "Runway is getting tight"
         }
-        return cards.first?.id.hasPrefix("provider-") == false ? "Accounts" : "Provider runway"
+        return cards.first?.accountTitle != nil ? AccountTerms.accounts : "Provider runway"
     }
 
     public func freshnessText(at now: Date) -> String {
@@ -174,7 +197,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         }
         let detail = detailText(lane: displayLane, mode: mode, fallbackStatus: section.status)
         return TVTopShelfCard(
-            id: "provider-\(section.provider.rawValue)",
+            id: TVTopShelfCard.providerIDPrefix + section.provider.rawValue,
             provider: section.provider,
             title: "\(section.provider.displayName) · \(headline)",
             headline: headline,
@@ -327,8 +350,7 @@ public struct TVTopShelfRuntimeReceiptEvidence: Equatable, Sendable {
                 )
             },
             contentReturned: contentReturned,
-            visibleCardsDigest: document.renderedCards.first?.id.hasPrefix("provider-") == false
-                && document.renderedCards.first?.provider != nil
+            visibleCardsDigest: document.renderedCards.first?.accountTitle != nil
                 ? Self.visibleCardsDigest(document.renderedCards) : nil
         )
     }

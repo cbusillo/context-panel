@@ -30,6 +30,15 @@ public enum CompanionLayoutPolicy {
     public static let visionInstrumentMaximumWidth: CGFloat = 720
     public static let visionSettingsColumnWidth: CGFloat = 340
     public static let visionColumnSpacing: CGFloat = 20
+    /// The account table's columns were designed in the Mac account pane, which is 900 points wide.
+    /// Narrower companion windows use the stacked account rows instead, whatever their size class.
+    public static let accountTableMinimumWidth: CGFloat = 900
+
+    /// Whether the account overview uses the Mac table rather than stacked rows, by the window width the
+    /// companion measures. Size class is not enough: a regular-width iPad portrait window is too narrow.
+    public static func usesAccountTable(width: CGFloat) -> Bool {
+        width.isFinite && width >= accountTableMinimumWidth
+    }
 
     public static func mode(
         availableWidth: CGFloat,

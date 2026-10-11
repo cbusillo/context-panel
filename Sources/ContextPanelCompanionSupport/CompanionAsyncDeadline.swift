@@ -5,8 +5,8 @@ private enum CompanionAsyncDeadlineOutcome<Value: Sendable>: Sendable {
     case timedOut
 }
 
-enum CompanionAsyncDeadline {
-    static func value<Value: Sendable>(
+public enum CompanionAsyncDeadline {
+    public static func value<Value: Sendable>(
         timeout: Duration,
         operation: @escaping @Sendable () async -> Value
     ) async -> Value? {

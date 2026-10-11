@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-11.
 
 ## Current Direction: Horizon
 
@@ -118,9 +118,10 @@ horizontal slots rather than adding cards or reducing visible limit rows.
   current observation remains. Selecting the tag opens OpenAI detail; no app
   surface performs a credit action.
 - Medium and large widgets use the existing section-header baseline. Actionable
-  guidance names one exact account and uses explicit `use now` copy when the
-  shared assessment recommends applying. Neutral availability says `Credits · N accounts` and never displays a
-  global credit total. The optional window layout takes its action, selected
+  guidance shows one exact account, its credit count, and the expiry deadline;
+  a warning tone marks a reset recommended by the shared assessment. Neutral
+  availability shows the number of credit-bearing accounts, never a global
+  credit total. The optional window layout takes its recommendation, selected
   account, and accessibility rationale from the shared `ResetAssessment` used
   by the account panel and agent snapshot; inventory and expiry stay visible
   when applying is not recommended. Provider exhaustion includes hidden and
@@ -128,8 +129,9 @@ horizontal slots rather than adding cards or reducing visible limit rows.
 - Medium and large widgets keep reset availability and prompt-cache telemetry
   visible together whenever both are available. Their single-line header uses a
   progressive fit ladder: cache drops its rolling average first, reset guidance
-  then drops the account name and action text, and the cache label disappears
-  only as a last resort. Authorization and stale-cache pills shorten to labels
+  then drops the account name while retaining the credit count and expiry
+  deadline, and the cache label disappears only as a last resort.
+  Authorization and stale-cache pills shorten to labels
   and then symbols under the same pressure. Full cache averages, account
   identity, credit counts, and guidance remain in accessibility and the app.
   Neither family gives up a saved limit row for reset-credit presentation.
@@ -155,8 +157,8 @@ centered numeral. Percentage values omit the percent sign because the
 surrounding ring already conveys relative capacity; absolute counts remain
 unchanged, and accessibility retains the full spoken unit. Watch app rows remain
 detail surfaces and
-stay explicitly used-pressure while following saved main-limit visibility and
-order; auxiliary provider buckets such as Spark remain in the larger app detail
+show explicitly labelled remaining capacity while following saved main-limit
+visibility and order; auxiliary provider buckets such as Spark remain in the larger app detail
 views. In every case, the visible number, wording,
 fill, color, and accessibility sentence describe the same quantity. Keep
 unknown values indeterminate rather than substituting zero, preserve stale
@@ -168,6 +170,30 @@ available states so updating, stale, and failure labels keep their full width.
 Allow those status labels to wrap rather than truncate at larger text sizes.
 Keep settled-state freshness visually compact while preserving the full elapsed
 duration for accessibility output.
+
+The Horizon Watch app puts sync health and the account sentence before its
+account rows; pooled pace detail follows the accounts. Account names, outcomes,
+and reset or Saved timestamps wrap, and type scales with the system text size.
+Capacity stays prominent and explicitly says which window is left. The existing
+shared Watch Horizon draws the normalized account geometry and provider tokens;
+unknown readings draw only the track.
+
+All four account complication families use one shared focus account: the first
+to run out, otherwise the Use next account with most remaining capacity, then
+the closest account. With only Saved readings, reconstruct the last-good
+run-out, recommendation or closest account using the shared ranking at the
+last observation, instead of falling back immediately to metadata order.
+They derive quantities, forecast and
+freshness from the entry's presentation date. Circular Saved values carry a
+clock mark; inline and corner labels say Saved, while rectangular uses the Saved
+time. Assumed-reset values keep their approximation mark, a question mark and
+explicit Assumed wording. Unknown capacity is indeterminate. VoiceOver leads
+with the displayed, named horizon window before describing other windows.
+Inline keeps the account name when it
+fits and falls back to provider and capacity with full account accessibility.
+Publishers without account metadata retain saved-limit selection. Watch gallery
+adapters add synthetic account metadata to existing fixtures so both shipping
+account views and provider-access/empty fallbacks can be inspected.
 When a Watch sync fails without saved usage, keep the plain-language failure
 sentence primary and allow one quieter, bounded, sanitized diagnostic line for
 troubleshooting. Let both lines wrap at large text sizes, provide explicit sync
@@ -192,13 +218,17 @@ The native macOS app should stay a work-focused sidebar-and-detail window:
   naming, widget lane preferences, refresh cadence, warning/webhook settings,
   and troubleshooting.
 
-The read-only iPhone, iPad, and visionOS companion uses an adaptive composition:
+The read-only iPhone, iPad, and visionOS companion leads with the shared account
+overview. It uses the Mac's account table only when the window is at least 900
+points wide (the Mac account pane); narrower windows, including iPad portrait,
+use the stacked account rows. One "Sync and settings" row opens the sync status,
+widget preview, pace details, and settings, which use an adaptive composition:
 
 - iPhone keeps the existing full-width single column with 16-point page padding
   in every orientation.
 - Non-phone content widths below 824 points and accessibility text sizes use one
   centered column capped at 760 points with 24-point page padding. The order is
-  usage instrument, sync status, display settings, refresh settings, then
+  sync status, usage instrument, display settings, refresh settings, then
   visionOS appearance.
 - Regular-width iPad windows use an inline page header aligned with the content
   grid, with refresh beside the current sync state. Two bounded columns begin
@@ -228,6 +258,16 @@ privacy/credential messaging.
 Apple TV uses a native ten-foot **Couch Mode**, not a stretched widget or iPad
 layout. Keep the accepted three-provider, focus-driven composition, provider
 drill-down, privacy modes, and explicit stale/offline states.
+
+Full Detail follows the Mac's Horizon account hierarchy through the shared
+`TVAccountAnswers` and `TVAccountGroups`: one focusable use-next card per
+provider, then its remaining accounts without repeating the recommendation.
+The controls, observation summary, and headline stay above account scrolling.
+Inset focus outlines preserve text contrast and percentage baselines. Account
+and deadline detail cards take read-only focus so long lists scroll with the
+remote. Top Shelf
+shows provider and account identity in Full Detail, with shared warm-neutral
+capacity fills for saved or failed readings; privacy modes remain anonymous.
 
 Each provider card applies the shared answer rule within that provider: the
 first visible saved time window stays as the large answer, a distinct

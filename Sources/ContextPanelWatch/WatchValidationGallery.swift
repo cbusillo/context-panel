@@ -199,7 +199,7 @@ private extension ContextPanelWatchComplicationFamily {
     var previewHeight: CGFloat {
         switch self {
         case .circular, .corner: 50
-        case .rectangular: 42
+        case .rectangular: 74
         case .inline: 24
         }
     }
