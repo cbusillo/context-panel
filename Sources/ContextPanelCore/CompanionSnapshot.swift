@@ -1591,6 +1591,12 @@ private extension Array where Element == CompanionLimit {
 }
 
 public extension CompanionSyncDocument {
+    /// The latest observed usage, independent of publication or receipt time.
+    var latestUsageObservationAt: Date? {
+        snapshot.limits.compactMap(\.lastUpdatedAt).max()
+            ?? snapshot.providerStatuses.filter { $0.status.isCompanionObservationStatus }.map(\.generatedAt).max()
+    }
+
     var companionStatus: UsageStatus {
         let accessStatuses = snapshot.providerStatuses.compactMap(\.accessState.statusContribution)
         let limitStatuses = snapshot.limits.map(\.status) + accessStatuses
