@@ -268,9 +268,10 @@ private struct CompanionRootView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         if usesPageHeader {
-                            CompanionPageHeader(result: model.result) {
-                                model.reload()
-                            }
+                            CompanionPageHeader { model.reload() }
+                        }
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            CompanionSyncStatusView(result: model.result, now: context.date)
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
@@ -393,7 +394,6 @@ private struct CompanionRootView: View {
             if !model.snapshot.reports.isEmpty {
                 BankedResetDeadlinesView(reports: model.snapshot.reports, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
             }
-            CompanionSyncStatusView(result: model.result)
         }
         .frame(
             minWidth: layoutMode == .twoColumn
@@ -641,7 +641,7 @@ private struct CompanionValidationGalleryPreview: View {
                         if !context.snapshot.reports.isEmpty {
                             BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
                         }
-                        CompanionSyncStatusView(result: result)
+                        CompanionSyncStatusView(result: result, now: context.presentationDate)
                         }
                         }
                     }
@@ -650,7 +650,7 @@ private struct CompanionValidationGalleryPreview: View {
             case .diagnostics:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                        CompanionSyncStatusView(result: result)
+                        CompanionSyncStatusView(result: result, now: context.presentationDate)
                         CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
                     }
                     .padding(18)
@@ -697,41 +697,15 @@ private struct CompanionValidationGalleryPreview: View {
 private struct CompanionPageHeader: View {
     @Environment(\.companionSurfacePalette) private var palette
 
-    let result: CompanionSyncLoadResult
     let onRefresh: () -> Void
-
-    private var presentation: CompanionSyncPresentation {
-        CompanionSyncPresentation(result: result)
-    }
-
-    private var lastSyncedAt: Date? {
-        result.transportMetadata?.receivedAt
-            ?? result.transportMetadata?.mirroredAt
-            ?? result.document?.snapshot.publishedAt
-    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 24) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Context Panel")
-                    .font(.system(size: 34, weight: .semibold, design: .rounded))
-                    .foregroundStyle(palette.primaryText)
-                    .accessibilityAddTraits(.isHeader)
-                HStack(spacing: 8) {
-                    Text(presentation.title)
-                    if let lastSyncedAt {
-                        Text("·")
-                            .foregroundStyle(palette.tertiaryText)
-                        Text("Synced " + lastSyncedAt.formatted(.relative(presentation: .named)))
-                    }
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(palette.secondaryText)
-                .lineLimit(1)
-            }
-
+            Text("Context Panel")
+                .font(.system(size: 34, weight: .semibold, design: .rounded))
+                .foregroundStyle(palette.primaryText)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 20)
-
             Button(action: onRefresh) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
@@ -852,11 +826,16 @@ private final class CompanionSyncModel {
                     }
                 }
             }
-            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: now)
+            async let sessionRelayResult = CompanionAsyncDeadline.value(timeout: .seconds(5)) {
+                await runtimeReceiptRelay?.synchronizeSession(now: now)
+            }
             let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
             async let loadedResult = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
-            async let presentationResult = presentationPreferencesRemoteStore?.load()
-            let (loaded, presentationLoad) = await (loadedResult, presentationResult)
+            async let presentationResult = CompanionAsyncDeadline.value(timeout: .seconds(5)) {
+                await presentationPreferencesRemoteStore?.load()
+            }
+            let (loaded, boundedPresentationLoad) = await (loadedResult, presentationResult)
+            let presentationLoad = boundedPresentationLoad ?? nil
             guard !Task.isCancelled else { return }
             guard let self else { return }
             _ = await sessionRelayResult
@@ -1457,15 +1436,10 @@ private struct CompanionSyncStatusView: View {
     @Environment(\.companionSurfacePalette) private var palette
 
     let result: CompanionSyncLoadResult
+    var now: Date = Date()
 
     private var presentation: CompanionSyncPresentation {
-        CompanionSyncPresentation(result: result)
-    }
-
-    private var lastSyncedAt: Date? {
-        result.transportMetadata?.receivedAt
-            ?? result.transportMetadata?.mirroredAt
-            ?? result.document?.snapshot.publishedAt
+        CompanionSyncPresentation(result: result, now: now)
     }
 
     var body: some View {
@@ -1484,8 +1458,8 @@ private struct CompanionSyncStatusView: View {
                     .foregroundStyle(palette.secondaryText)
             }
 
-            if let lastSyncedAt {
-                Text("Last synced " + lastSyncedAt.formatted(date: .abbreviated, time: .shortened))
+            if let updatedAt = presentation.usageUpdatedAt {
+                Text("Usage updated " + SnapshotFreshness.compactAgeText(since: updatedAt, now: now))
                     .font(.footnote)
                     .foregroundStyle(palette.tertiaryText)
             }

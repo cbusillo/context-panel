@@ -3497,3 +3497,86 @@ private extension JSONDecoder {
         return decoder
     }
 }
+
+@Test func companionPresentationAgesWithoutAnotherNetworkLoad() {
+    let observedAt = Date(timeIntervalSince1970: 50_000)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: observedAt),
+        publishedAt: observedAt
+    )
+    let result = CompanionSyncLoadResult(document: document, status: .healthy)
+    let current = CompanionSyncPresentation(result: result, now: observedAt)
+    let stale = CompanionSyncPresentation(
+        result: result,
+        now: observedAt.addingTimeInterval(SnapshotFreshness.companionProviderMaximumAge + 1)
+    )
+    #expect(current.title == "Synced from Mac")
+    #expect(stale.title == "Saved usage is stale")
+    #expect(stale.usageUpdatedAt == observedAt)
+}
+
+@Test func companionPresentationDoesNotCallOldUsageFreshWhenJustReceived() {
+    let observedAt = Date(timeIntervalSince1970: 50_000)
+    let receivedAt = observedAt.addingTimeInterval(SnapshotFreshness.companionProviderMaximumAge + 60)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: observedAt),
+        publishedAt: receivedAt
+    )
+    let result = CompanionSyncLoadResult(
+        document: document, status: .healthy,
+        transportMetadata: CompanionSyncTransportMetadata(
+            source: .cloudKit, receivedAt: receivedAt, mirroredAt: receivedAt, deliveryStatus: .healthy
+        )
+    )
+    let presentation = CompanionSyncPresentation(result: result, now: receivedAt)
+    #expect(presentation.title == "Saved usage is stale")
+    #expect(presentation.usageUpdatedAt == observedAt)
+}
+
+@Test func companionPresentationShowsTransportFailureWithFreshSavedUsage() {
+    let now = Date(timeIntervalSince1970: 50_000)
+    let document = CompanionSyncDocument(storedSnapshot: companionStoredSnapshot(generatedAt: now), publishedAt: now)
+    let result = CompanionSyncLoadResult(
+        document: document, status: .healthy,
+        transportStatuses: [CompanionSyncTransportStatus(source: .cloudKit, isAvailable: true, succeeded: false)]
+    )
+    let presentation = CompanionSyncPresentation(result: result, now: now)
+    #expect(presentation.title == "Showing saved usage")
+    #expect(presentation.usageUpdatedAt == now)
+}
+
+@Test func companionAppLoadRecoversAfterIdentityDeadlineWithoutDiscardingSavedUsage() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 50_000)
+    let localURL = root.appending(path: "companion.json")
+    let scopeURL = root.appending(path: "scope.json")
+    let saved = CompanionSyncDocument(storedSnapshot: companionStoredSnapshot(generatedAt: now), publishedAt: now)
+        .bound(to: companionTestUserScope)
+    let store = CompanionSyncStore(documentURL: localURL)
+    try store.save(saved)
+    try CompanionCloudKitUserScopeStateStore(stateURL: scopeURL).save(companionTestUserScope)
+    let newerAt = now.addingTimeInterval(60)
+    let fresh = CompanionSyncDocument(storedSnapshot: companionStoredSnapshot(generatedAt: newerAt), publishedAt: newerAt)
+        .bound(to: companionTestUserScope)
+    let remote = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: fresh, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        )
+    }
+    // A zero deadline injects expiry without sleeping or depending on elapsed time.
+    let timedOut = await CompanionSyncLoader.load(
+        localMirrorURL: localURL, scopeStateURL: scopeURL, remoteStore: remote, timeout: .zero, now: now
+    )
+    #expect(timedOut.document == saved)
+    #expect(timedOut.status == .stale)
+    #expect(timedOut.errorMessage == "Context Panel timed out while checking its CloudKit account.")
+    #expect(store.load().document == saved)
+    let recovered = await CompanionSyncLoader.load(
+        localMirrorURL: localURL, scopeStateURL: scopeURL, remoteStore: remote, timeout: .seconds(5), now: newerAt
+    )
+    #expect(recovered.document == fresh)
+    #expect(recovered.errorMessage == nil)
+    #expect(store.load().document == fresh)
+}

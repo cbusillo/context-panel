@@ -1,13 +1,20 @@
 import ContextPanelCore
+import Foundation
 
 public struct CompanionSyncPresentation: Equatable, Sendable {
     public let title: String
     public let detail: String
     public let symbol: String
     public let usageSummary: String?
+    public let usageUpdatedAt: Date?
 
-    public init(result: CompanionSyncLoadResult) {
-        if result.errorMessage != nil {
+    public init(result: CompanionSyncLoadResult, now: Date? = nil) {
+        usageUpdatedAt = result.document?.snapshot.generatedAt
+        let status = now.flatMap { date in
+            result.document?.companionStatus(now: date, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+        } ?? result.status
+        let syncFailed = result.errorMessage != nil || result.transportStatuses.contains { !$0.succeeded }
+        if syncFailed {
             if result.document != nil {
                 usageSummary = Self.usageSummary(for: result.document)
                 title = "Showing saved usage"
@@ -22,7 +29,7 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
             return
         }
 
-        switch result.status {
+        switch result.status == .stale ? .stale : status {
         case .healthy, .close, .limited:
             usageSummary = Self.usageSummary(for: result.document)
             title = "Synced from Mac"
