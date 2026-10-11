@@ -9,7 +9,7 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
     public let usageUpdatedAt: Date?
 
     public init(result: CompanionSyncLoadResult, now: Date? = nil) {
-        usageUpdatedAt = result.document?.snapshot.generatedAt
+        usageUpdatedAt = result.document?.latestUsageObservationAt
         let status = now.flatMap { date in
             result.document?.companionStatus(now: date, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
         } ?? result.status

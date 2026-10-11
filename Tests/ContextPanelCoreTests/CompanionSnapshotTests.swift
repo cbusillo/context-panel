@@ -3580,3 +3580,17 @@ private extension JSONDecoder {
     #expect(recovered.errorMessage == nil)
     #expect(store.load().document == fresh)
 }
+
+@Test func companionPresentationUsesObservationAgeWhenMacRepackagesOldUsage() {
+    let observedAt = Date(timeIntervalSince1970: 50_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionProviderMaximumAge + 60)
+    let old = CompanionSnapshot(storedSnapshot: companionStoredSnapshot(generatedAt: observedAt))
+    let snapshot = CompanionSnapshot(
+        generatedAt: now, publishedAt: now, limits: old.limits,
+        providerStatuses: old.providerStatuses, promptCacheSummaries: old.promptCacheSummaries
+    )
+    let result = CompanionSyncLoadResult(document: CompanionSyncDocument(snapshot: snapshot), status: .healthy)
+    let presentation = CompanionSyncPresentation(result: result, now: now)
+    #expect(presentation.title == "Saved usage is stale")
+    #expect(presentation.usageUpdatedAt == observedAt)
+}

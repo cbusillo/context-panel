@@ -141,7 +141,7 @@ public enum CompanionSyncLoader {
             return invalidateIdentity(
                 localMirrorURL: localMirrorURL,
                 scopeStateURL: scopeStateURL,
-                errorMessage: "CloudKit account changed while refreshing widget usage."
+                errorMessage: "CloudKit account changed while refreshing usage."
             )
         }
         guard remoteLoadMatchesScope(remoteLoad, expectedScope: userScope) else {
@@ -149,7 +149,7 @@ public enum CompanionSyncLoader {
             return CompanionSyncLoadResult(
                 document: nil,
                 status: .failure,
-                errorMessage: "CloudKit returned widget usage for another account scope."
+                errorMessage: "CloudKit returned usage for another account scope."
             )
         }
         if remoteLoad.outcome.succeeded,
