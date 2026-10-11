@@ -155,8 +155,8 @@ centered numeral. Percentage values omit the percent sign because the
 surrounding ring already conveys relative capacity; absolute counts remain
 unchanged, and accessibility retains the full spoken unit. Watch app rows remain
 detail surfaces and
-stay explicitly used-pressure while following saved main-limit visibility and
-order; auxiliary provider buckets such as Spark remain in the larger app detail
+show explicitly labelled remaining capacity while following saved main-limit
+visibility and order; auxiliary provider buckets such as Spark remain in the larger app detail
 views. In every case, the visible number, wording,
 fill, color, and accessibility sentence describe the same quantity. Keep
 unknown values indeterminate rather than substituting zero, preserve stale
@@ -168,6 +168,24 @@ available states so updating, stale, and failure labels keep their full width.
 Allow those status labels to wrap rather than truncate at larger text sizes.
 Keep settled-state freshness visually compact while preserving the full elapsed
 duration for accessibility output.
+
+The Horizon Watch app puts sync health and the account sentence before its
+account rows; pooled pace detail follows the accounts. Account names, outcomes,
+and reset or Saved timestamps wrap, and type scales with the system text size.
+Capacity stays prominent and explicitly says which window is left. The existing
+shared Watch Horizon draws the normalized account geometry and provider tokens;
+unknown readings draw only the track.
+
+All four account complication families use one shared focus account: the first
+to run out, otherwise the Use next account with most remaining capacity, then
+the closest account or first saved account. They derive quantities, forecast and
+freshness from the entry's presentation date. Circular Saved values carry a
+clock mark; inline and corner labels say Saved, while rectangular uses the Saved
+time. Unknown capacity is indeterminate. Inline keeps the account name when it
+fits and falls back to provider and capacity with full account accessibility.
+Publishers without account metadata retain saved-limit selection. Watch gallery
+adapters add synthetic account metadata to existing fixtures so both shipping
+account views and provider-access/empty fallbacks can be inspected.
 When a Watch sync fails without saved usage, keep the plain-language failure
 sentence primary and allow one quieter, bounded, sanitized diagnostic line for
 troubleshooting. Let both lines wrap at large text sizes, provide explicit sync
