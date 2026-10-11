@@ -96,7 +96,7 @@ public struct WatchAccountRow: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(account.glanceAccessibilityText(now: now, isNext: isNext && horizon.isCurrent))
+        .accessibilityLabel(WatchAccountText.accessibility(account, now: now, isNext: isNext))
     }
 
     private func quantity(_ horizon: AccountHorizon) -> some View {
@@ -111,8 +111,9 @@ public struct WatchAccountRow: View {
     }
 
     private func outcome(_ horizon: AccountHorizon) -> String {
-        !horizon.isCurrent && account.state.needsWord ? savedText(account, now: now)
-            : AccountTerms.outcomeShort(account, horizon, now: now)
+        horizon.isCurrent ? AccountTerms.outcomeShort(account, horizon, now: now)
+            : [.stale, .unavailable].contains(account.state) ? savedText(account, now: now)
+            : WatchAccountText.state(account, horizon: horizon)
     }
 
 }
@@ -183,14 +184,17 @@ public struct WatchAccountRectangularFace: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(AccountTerms.compactHeadline(headline).lead + " "
-                + account.glanceAccessibilityText(now: now, isNext: false))
+                + presentation.accessibilityText)
         } else {
             Text(AccountTerms.addFirstAccount).font(.system(size: 12))
         }
     }
 
     private func footer(_ account: AccountOverview.Account, _ horizon: AccountHorizon) -> String {
-        if !horizon.isCurrent, account.state.needsWord { return savedText(account, now: now) }
+        if !horizon.isCurrent {
+            return [.stale, .unavailable].contains(account.state) ? savedText(account, now: now)
+                : WatchAccountText.state(account, horizon: horizon)
+        }
         let outcome = AccountTerms.outcomeShort(account, horizon, now: now)
         guard !horizon.runsOutBeforeReset, let deadline = overview.nextDeadline else { return outcome }
         return outcome + " · ◆ " + AccountPaceText.when(deadline.expiresAt, now: now)
@@ -229,6 +233,8 @@ public struct WatchAccountCircularFace: View {
             }
             Text(presentation?.circularQuantity ?? AccountTerms.unknown)
                 .font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
                 .foregroundStyle(WatchTokens.color(.primary))
                 .overlay(alignment: .bottomTrailing) {
                     if let symbol = presentation?.stateSymbol {

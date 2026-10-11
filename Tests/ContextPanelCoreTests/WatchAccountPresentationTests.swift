@@ -42,7 +42,6 @@ private func watchAccountOverview(
     #expect(next.horizon.remaining == 0.8)
     #expect(next.quantity == AccountNumbers.window(next.horizon.window!))
     #expect(next.circularQuantity == AccountNumbers.window(next.horizon.window!, sign: false))
-    #expect(next.accessibilityText == next.account.glanceAccessibilityText(now: watchAccountNow, isNext: false))
 
     let risky = watchAccountOverview(burn: 10)
     let firstOut = try #require(WatchAccountComplicationPresentation(overview: risky, now: watchAccountNow))
@@ -75,7 +74,7 @@ private func watchAccountOverview(
     #expect(saved.stateSymbol != nil)
     #expect(saved.inlineText.contains(saved.account.stateText))
     #expect(saved.cornerLabel.contains(saved.account.stateText))
-    #expect(saved.accessibilityText == saved.account.glanceAccessibilityText(now: later, isNext: false))
+    #expect(saved.accessibilityText.contains(AccountTerms.lastSeen))
     #expect(saved.quantity == AccountNumbers.window(saved.horizon.window!))
 }
 
@@ -130,4 +129,49 @@ func watchRowsKeepNamesCapacityAndSavedStateVisible(width: Int, saved: Bool) thr
     } else {
         #expect(text.contains(AccountTerms.resets), "Visible row: \(text)")
     }
+}
+
+@Test(arguments: [nil as Double?, 10.0])
+func watchSavedFocusKeepsTheLastGoodAccountInsteadOfMetadataOrder(burn: Double?) throws {
+    let fresh = try #require(WatchAccountComplicationPresentation(
+        overview: watchAccountOverview(burn: burn), now: watchAccountNow))
+    let later = watchAccountNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 1)
+    let saved = try #require(WatchAccountComplicationPresentation(
+        overview: watchAccountOverview(now: later, burn: burn), now: later))
+    #expect(saved.account.id == fresh.account.id)
+    #expect(saved.quantity == fresh.quantity)
+    #expect(!saved.horizon.isCurrent)
+}
+
+@Test func watchSpeechLeadsWithTheDisplayedWindowAndNamesTheTighterShortWindow() throws {
+    let limits = [("Weekly", 40), ("5-hour", 90)].map { label, used in
+        UsageLimit(provider: .openAI, accountID: "sample-speech", accountName: "Sample Work",
+            label: label, windowLabel: label, unit: .percent, used: used, limit: 100,
+            resetsAt: watchAccountNow.addingTimeInterval(3_600), lastUpdatedAt: watchAccountNow)
+    }
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: watchAccountNow, limits: limits), reports: [], now: watchAccountNow)
+    let presentation = try #require(WatchAccountComplicationPresentation(overview: overview, now: watchAccountNow))
+    let window = try #require(presentation.horizon.window)
+    let first = window.label + " " + presentation.quantity + " " + AccountTerms.left
+    #expect(presentation.accessibilityText.hasPrefix(presentation.account.metadata.provider.accountDisplayName
+        + ", " + presentation.account.metadata.label + ", " + first))
+    let short = try #require(presentation.account.shortWindow)
+    #expect(presentation.accessibilityText.contains(short.label + " " + AccountNumbers.window(short) + " " + AccountTerms.left))
+}
+
+@Test func watchAssumedResetUsesExplicitAssumptionInsteadOfSavedOrAvailable() throws {
+    let limit = UsageLimit(provider: .google, accountID: "sample-assumed", accountName: "Sample Google",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 78, limit: 100,
+        resetsAt: watchAccountNow.addingTimeInterval(-1), lastUpdatedAt: watchAccountNow.addingTimeInterval(-100),
+        freshnessMode: .eventDriven)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: watchAccountNow, limits: [limit]), reports: [], now: watchAccountNow)
+    let presentation = try #require(WatchAccountComplicationPresentation(overview: overview, now: watchAccountNow))
+    #expect(presentation.horizon.window?.assumption == .scheduledReset)
+    #expect(presentation.inlineText.contains(AccountTerms.assumed))
+    #expect(presentation.cornerLabel.contains(AccountTerms.assumed))
+    #expect(presentation.accessibilityText.contains(UsagePresentationAssumption.scheduledReset.accessibilityText))
+    #expect(presentation.stateSymbol != nil)
+    #expect(presentation.stateSymbol != WatchAccountComplicationPresentation(
+        overview: watchAccountOverview(now: watchAccountNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 1)),
+        now: watchAccountNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 1))?.stateSymbol)
 }

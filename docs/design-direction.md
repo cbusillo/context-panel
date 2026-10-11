@@ -178,10 +178,16 @@ unknown readings draw only the track.
 
 All four account complication families use one shared focus account: the first
 to run out, otherwise the Use next account with most remaining capacity, then
-the closest account or first saved account. They derive quantities, forecast and
+the closest account. With only Saved readings, reconstruct the last-good
+run-out or recommendation from saved evidence, then the saved account with most
+capacity, instead of falling back immediately to metadata order.
+They derive quantities, forecast and
 freshness from the entry's presentation date. Circular Saved values carry a
 clock mark; inline and corner labels say Saved, while rectangular uses the Saved
-time. Unknown capacity is indeterminate. Inline keeps the account name when it
+time. Assumed-reset values keep their approximation mark, a refresh symbol and
+explicit Assumed wording. Unknown capacity is indeterminate. VoiceOver leads
+with the displayed, named horizon window before describing other windows.
+Inline keeps the account name when it
 fits and falls back to provider and capacity with full account accessibility.
 Publishers without account metadata retain saved-limit selection. Watch gallery
 adapters add synthetic account metadata to existing fixtures so both shipping
