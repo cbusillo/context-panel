@@ -378,7 +378,9 @@ private struct CompanionRootView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                    CompanionSyncStatusView(result: model.result)
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        CompanionSyncStatusView(result: model.result, now: context.date)
+                    }
                     companionContent(layoutMode: layoutMode)
                 }
                 .frame(
