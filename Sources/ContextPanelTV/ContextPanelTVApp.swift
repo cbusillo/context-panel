@@ -46,6 +46,7 @@ private struct TVRootView: View {
     @State private var model: TVSyncModel
     @State private var navigationPath: [String] = []
     @State private var pendingProviderRawValue: String?
+    @State private var showsAbout = false
 
     init(runtimeReceiptRelayProvider: TVRuntimeReceiptRelayProvider) {
         _model = State(
@@ -137,6 +138,19 @@ private struct TVRootView: View {
                 snapshotReports: model.snapshot.reports
             )
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Spacer()
+                    Button("About") { showsAbout = true }
+                }
+                .padding(.horizontal, 80)
+                .padding(.vertical, 12)
+            }
+            .alert("Context Panel", isPresented: $showsAbout) {
+                Button("Done", role: .cancel) {}
+            } message: {
+                Text(InstalledAppVersion().displayText)
             }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {

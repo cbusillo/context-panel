@@ -407,8 +407,9 @@ someone makes an intended change.
   and run `gh-plan.py claim` before creating the linked task worktree.
 - Work on focused branches and open pull requests. Commit and push through the
   configured bot helpers. GitHub issues hold durable plans and Current Status.
-- This repository does not use the Launchplane merge train. Land authorized
-  changes with a normal merge commit after current-head CI and required checks.
+- Follow the overall DIRECTION.md and the shared
+  [merge-train procedure](https://github.com/cbusillo/codex-skills/blob/main/skills/launchplane/references/merge-train.md)
+  for landing. Launchplane's active policy owns enrollment and routing.
   Apply [reviews by another model](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md)
   to execution guidance and other changes it covers: account for findings with
   evidence; reviewer approval is not a merge or completion gate.
