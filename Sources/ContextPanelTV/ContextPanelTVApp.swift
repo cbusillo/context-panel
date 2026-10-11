@@ -139,10 +139,13 @@ private struct TVRootView: View {
             )
                 }
             }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Spacer()
                     Button("About") { showsAbout = true }
                 }
+                .padding(.horizontal, 80)
+                .padding(.vertical, 12)
             }
             .alert("Context Panel", isPresented: $showsAbout) {
                 Button("Done", role: .cancel) {}

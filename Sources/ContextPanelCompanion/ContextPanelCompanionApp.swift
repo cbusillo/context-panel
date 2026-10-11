@@ -269,9 +269,9 @@ private struct CompanionRootView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                         if usesPageHeader {
-                            CompanionPageHeader(result: model.result) {
-                                model.reload()
-                            }
+                            CompanionPageHeader(result: model.result,
+                                onRefresh: { model.reload() },
+                                onAbout: { showsAbout = true })
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
@@ -710,6 +710,7 @@ private struct CompanionPageHeader: View {
 
     let result: CompanionSyncLoadResult
     let onRefresh: () -> Void
+    let onAbout: () -> Void
 
     private var presentation: CompanionSyncPresentation {
         CompanionSyncPresentation(result: result)
@@ -742,6 +743,11 @@ private struct CompanionPageHeader: View {
             }
 
             Spacer(minLength: 20)
+
+            Button(action: onAbout) {
+                Label("About", systemImage: "info.circle")
+            }
+            .buttonStyle(.bordered)
 
             Button(action: onRefresh) {
                 Label("Refresh", systemImage: "arrow.clockwise")

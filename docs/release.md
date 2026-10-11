@@ -540,7 +540,9 @@ explicitly configured to use the companion channel.
 
 Merging companion code, running the unsigned compiler gate, or publishing the
 Mac release does not update a companion device. Use three companion `Ship`
-runs from the same protected `main` commit:
+runs from the same protected `main` commit, waiting for each to finish before
+dispatching the next. Ship's version-level concurrency group allows one pending
+run; dispatching all three at once can cancel a queued platform.
 
 | `companion_platform` | Devices updated by that package |
 | --- | --- |
@@ -569,9 +571,12 @@ testflight_beta_source=companion
 include_internal_testflight_groups=true
 ```
 
-Select only an existing authorized tester group. An internal group is not proof
-that Chris is a member, and distribution does not install a build. Do not add
-testers or grant App Store Connect access as an install workaround. Follow the
+These inputs include all existing internal groups; leave `testflight_beta_groups`
+empty for that audience. For a narrower existing authorized group, set its name
+and `include_internal_testflight_groups=false`. Confirm Chris belongs to the
+selected audience; an internal group is not proof of membership, and
+distribution does not install a build. Do not add testers or grant App Store
+Connect access as an install workaround. Follow the
 [schema publication gate](#cloudkit-production-schema-gate) and the existing
 signed validation/evidence paths; these inputs do not bypass either gate.
 Use the configured CI signing route rather than retrieving Apple credentials or
