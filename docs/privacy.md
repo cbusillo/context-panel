@@ -1,6 +1,6 @@
 # Context Panel Privacy Policy
 
-Effective date: July 31, 2026
+Effective date: October 10, 2026
 
 Context Panel is a native macOS utility for viewing local AI-provider usage
 limits and reset timing.
@@ -8,28 +8,43 @@ limits and reset timing.
 Context Panel does not operate a developer-hosted backend service and does not
 sell personal data. Account configuration, credentials, usage snapshots, widget
 preferences, refresh history, and diagnostics are stored locally on the user's
-Mac.
+Mac. A Mac signed in to the same iCloud account as another Mac running Context
+Panel also keeps a local cache of the usage document that Mac shares, described
+below.
 
-When the user installs a companion app, Context Panel may sync a normalized
-companion snapshot through the user's private iCloud/CloudKit account to that
-user's Apple devices. The snapshot can include provider names, normalized usage
-capacity, reset timing, freshness, and the user-facing account display label.
-That display label may be an email address when the provider or user uses an
-email as the account name. Companion snapshots do not include provider tokens,
-raw account identifiers, prompts, transcripts, raw provider responses, or
-diagnostic logs. OpenAI reset-credit companion data is limited to the normalized
-available count, observation time, detail coverage, and earliest trustworthy
-expiry described below; provider credit identifiers and raw rows are never
-included.
+When the user is signed in to iCloud, Context Panel may sync a normalized
+companion usage document through the user's private iCloud/CloudKit database to
+that user's own Apple devices: companion apps on iPhone, iPad, Apple Watch,
+Apple TV and Vision Pro, and other Macs running Context Panel. The document can
+include provider names, normalized usage capacity, reset timing, freshness,
+usage pace, prompt-cache hit rates and token counts, the user-facing account
+display label, the account's display settings (such as whether it is shown in
+widgets or marked "use last"), widget and forecast preferences, and records of
+accounts the user removed or restored. That display label may be an email address when the provider or user
+uses an email as the account name. Companion documents do not include provider
+tokens, raw account identifiers, prompts, transcripts, raw provider responses,
+or diagnostic logs. Reset-credit data in the document is limited to the
+normalized summary described below; provider credit identifiers and raw rows
+are never included.
 
-The shared account identity implementation derives a per-iCloud-user keyed
-pseudonym from a provider's stable account ID. Usage records can contain the
-pseudonym, its provider identifier kind, and an identity qualification status;
-they never contain the raw provider ID or the hashing secret. The random secret
-has a separate encrypted field in the private CloudKit database and a local
-Keychain cache bound to the iCloud user. Provider OAuth credentials stay local.
-The identity integration is not enabled until its migration and live schema
-qualification gates pass; see [the implementation contract](shared-account-identity.md).
+A receiving Mac validates the shared document, keeps it in a bounded local
+cache, and shows those accounts alongside its own. It does not add them to its
+local provider history or republish them as its own readings. The cache is
+withheld when the current iCloud account is unavailable or changes. Cached
+readings stop being shown ten minutes after the configured refresh interval
+passes without a newer document; expiry alone does not delete the cache file.
+
+To recognize the same provider account across the user's devices, Context Panel
+derives a per-iCloud-user keyed pseudonym from the provider's stable account ID
+(for OpenAI, the authenticated ChatGPT account and user IDs; for Anthropic, the
+account and organization IDs from Context Panel's own signed-in profile
+request). Usage documents can contain the pseudonym, its provider identifier
+kind, and an identity qualification status; they never contain the raw provider
+ID or the hashing secret. The random secret is kept in a separate encrypted
+field in the user's private CloudKit database and in a local Keychain cache
+bound to the iCloud user. Raw provider account IDs and provider OAuth
+credentials stay on the Mac. See
+[the implementation contract](shared-account-identity.md).
 
 During an explicit expiring signed-validation session, Context Panel may sync
 privacy-safe runtime receipts through the user's private CloudKit database.
@@ -67,14 +82,25 @@ can display current capacity. Context Panel does not intentionally store raw
 provider responses, prompts, transcript contents, API keys, emails,
 organization identifiers, or access tokens in diagnostic reports.
 
-For OpenAI Codex reset credits, Context Panel performs read-only GET requests
-and stores only a normalized summary: available count, observation time, detail
-coverage, and the earliest trustworthy expiry when known. That sanitized summary
-may sync through the user's private iCloud/CloudKit account to the user's own
-companion devices. It does not include provider credit IDs, status or reset-type
-strings, titles, descriptions, or raw detail rows. Context Panel does not redeem,
-consume, create, or otherwise mutate reset credits; that is a permanent product
-boundary.
+For provider reset credits (OpenAI Codex reset credits and Anthropic Claude
+limit resets), Context Panel performs read-only GET requests and stores only a
+normalized summary: available count, observation time, detail coverage, the
+known expiry date of each available credit, and, for Claude, a count of credits
+of an unrecognized kind. That sanitized summary may sync through the user's
+private iCloud/CloudKit account to the user's own devices. It does not include
+provider credit IDs, status or reset-type strings, titles, descriptions, or raw
+detail rows. Context Panel does not redeem, consume, create, or otherwise mutate
+reset credits; that is a permanent product boundary.
+
+When the user authorizes a local Codex home or sessions directory, Context Panel
+reads bounded usage-counter fields from recent session files to estimate usage
+and prompt-cache hit rates. It stores only normalized counts, never session text,
+prompts, or provider account IDs.
+
+For local agent tools on the same Mac, Context Panel can print a
+credential-free summary of the accounts it shows, and it can read count-only
+launch records (provider, account, time) that a local launcher writes to Context
+Panel's storage folder. Neither leaves the Mac.
 
 Refresh and alert diagnostics are stored locally to help explain whether the app
 or background agent refreshed successfully and whether configured local or
