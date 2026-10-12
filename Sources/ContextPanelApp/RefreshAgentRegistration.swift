@@ -188,18 +188,27 @@ enum RefreshAgentRegistrationError: LocalizedError {
 @MainActor
 final class RefreshAgentRegistrationCoordinator {
     typealias Sleep = @MainActor (Duration) async throws -> Void
+    static let automaticRepairCooldown: TimeInterval = 300
 
     private let service: any RefreshAgentRegistrationService
     private let stateStore: RefreshAgentRegistrationStateStore
     private let policy: RefreshAgentRegistrationPolicy
     private let currentBuild: @MainActor () -> String
     private let isAgentHealthy: @MainActor () -> Bool
+    private let currentAgentRunID: @MainActor () -> String?
+    private let now: @MainActor () -> Date
+    private let awakeTime: @MainActor () -> Duration
     private let sleep: Sleep
 
     private var pendingRepairTask: Task<Void, Never>?
     private var pendingRepairToken: UUID?
     private var repairGeneration = 0
     private var isRestorativeUnregisterInFlight = false
+    private var agentRunBeforeRegistration: String?
+    private var requiresNewAgentRun = false
+    private var nextAutomaticRepairAt = Date.distantPast
+    private var lastHealthCheckTime: Date
+    private var lastHealthCheckAwakeTime: Duration
 
     init(
         service: any RefreshAgentRegistrationService,
@@ -207,6 +216,9 @@ final class RefreshAgentRegistrationCoordinator {
         policy: RefreshAgentRegistrationPolicy = .appDefault,
         currentBuild: @escaping @MainActor () -> String,
         isAgentHealthy: @escaping @MainActor () -> Bool,
+        currentAgentRunID: @escaping @MainActor () -> String? = { nil },
+        now: @escaping @MainActor () -> Date = { Date() },
+        awakeTime: (@MainActor () -> Duration)? = nil,
         sleep: @escaping Sleep = { duration in try await Task.sleep(for: duration) }
     ) {
         self.service = service
@@ -214,6 +226,14 @@ final class RefreshAgentRegistrationCoordinator {
         self.policy = policy
         self.currentBuild = currentBuild
         self.isAgentHealthy = isAgentHealthy
+        self.currentAgentRunID = currentAgentRunID
+        self.now = now
+        let clock = SuspendingClock()
+        let start = clock.now
+        let resolvedAwakeTime = awakeTime ?? { start.duration(to: clock.now) }
+        self.awakeTime = resolvedAwakeTime
+        lastHealthCheckTime = now()
+        lastHealthCheckAwakeTime = resolvedAwakeTime()
         self.sleep = sleep
     }
 
@@ -281,10 +301,40 @@ final class RefreshAgentRegistrationCoordinator {
     /// A health check must not cancel a repair already waiting for ServiceManagement.
     func scheduleHealthCheck(
         isEnabled: @escaping @MainActor () -> Bool,
+        wakeRecoveryInterval: TimeInterval = automaticRepairCooldown,
         onDiagnosticChange: @escaping @MainActor (RefreshAgentRegistrationDiagnostic?) -> Void = { _ in }
     ) {
+        let checkedAt = now()
+        let checkedAwakeTime = awakeTime()
+        let wallElapsed = Duration.seconds(checkedAt.timeIntervalSince(lastHealthCheckTime))
+        let awakeElapsed = checkedAwakeTime - lastHealthCheckAwakeTime
+        lastHealthCheckTime = checkedAt
+        lastHealthCheckAwakeTime = checkedAwakeTime
+        if wallElapsed > awakeElapsed + .seconds(RefreshAgentHealth.schedulingAllowance) {
+            nextAutomaticRepairAt = checkedAt.addingTimeInterval(wakeRecoveryInterval + RefreshAgentHealth.schedulingAllowance)
+        }
         guard pendingRepairTask == nil else { return }
+        if !isEnabled() {
+            onDiagnosticChange(nil)
+            return
+        }
+        if !hasVerifiedAgentActivity(), checkedAt < nextAutomaticRepairAt {
+            onDiagnosticChange(currentDiagnostic)
+            return
+        }
         scheduleRepair(isEnabled: isEnabled, launchGrace: .zero, onDiagnosticChange: onDiagnosticChange)
+    }
+
+    private func hasVerifiedAgentActivity() -> Bool {
+        guard isAgentHealthy() else { return false }
+        guard requiresNewAgentRun else { return true }
+        guard let runID = currentAgentRunID() else { return false }
+        return runID != agentRunBeforeRegistration
+    }
+
+    private func expectNewAgentRun() {
+        agentRunBeforeRegistration = currentAgentRunID()
+        requiresNewAgentRun = true
     }
 
     func cancelPendingRepair() {
@@ -322,7 +372,8 @@ final class RefreshAgentRegistrationCoordinator {
 
         let build = currentBuild()
         let initialStatus = service.status
-        if stateStore.repairedBuild == build, initialStatus == .enabled, isAgentHealthy() {
+        if stateStore.repairedBuild == build, initialStatus == .enabled, hasVerifiedAgentActivity() {
+            nextAutomaticRepairAt = .distantPast
             stateStore.clearDiagnostic()
             return .verifiedEnabled
         }
@@ -331,7 +382,8 @@ final class RefreshAgentRegistrationCoordinator {
         }
 
         if initialStatus == .enabled {
-            if isAgentHealthy() {
+            if hasVerifiedAgentActivity() {
+                nextAutomaticRepairAt = .distantPast
                 stateStore.clearDiagnostic()
                 if stateStore.reconciledBuild == build {
                     stateStore.markRepaired(build: build)
@@ -339,6 +391,8 @@ final class RefreshAgentRegistrationCoordinator {
                 return .agentAlreadyRunning
             }
 
+            expectNewAgentRun()
+            nextAutomaticRepairAt = now().addingTimeInterval(Self.automaticRepairCooldown)
             isRestorativeUnregisterInFlight = true
             do {
                 try await service.unregisterAndWait()
@@ -374,7 +428,7 @@ final class RefreshAgentRegistrationCoordinator {
 
         if initialStatus == .enabled {
             guard stateStore.reconciledBuild != build else {
-                if isAgentHealthy() { stateStore.clearDiagnostic() }
+                if hasVerifiedAgentActivity() { stateStore.clearDiagnostic() }
                 return
             }
             do {
@@ -383,7 +437,7 @@ final class RefreshAgentRegistrationCoordinator {
                     throw RefreshAgentRegistrationError.statusNotEnabled(service.status)
                 }
                 stateStore.markReconciled(build: build)
-                if isAgentHealthy() { stateStore.clearDiagnostic() }
+                if hasVerifiedAgentActivity() { stateStore.clearDiagnostic() }
             } catch {
                 refreshAgentRegistrationLogger.error(
                     "refresh agent non-destructive registration refresh failed error=\(ConnectorRedactor.safeErrorDescription(error), privacy: .private)"
@@ -391,6 +445,7 @@ final class RefreshAgentRegistrationCoordinator {
             }
         } else {
             stateStore.clearMarkers()
+            expectNewAgentRun()
             do {
                 try service.register()
             } catch {
@@ -404,7 +459,7 @@ final class RefreshAgentRegistrationCoordinator {
                 throw RefreshAgentRegistrationError.statusNotEnabled(service.status)
             }
             stateStore.markReconciled(build: build)
-            if isAgentHealthy() { stateStore.clearDiagnostic() }
+            if hasVerifiedAgentActivity() { stateStore.clearDiagnostic() }
         }
 
         refreshAgentRegistrationLogger.notice(
@@ -416,6 +471,8 @@ final class RefreshAgentRegistrationCoordinator {
         build: String,
         isEnabled: @escaping @MainActor () -> Bool
     ) async -> RefreshAgentRegistrationOutcome {
+        if !requiresNewAgentRun { expectNewAgentRun() }
+        nextAutomaticRepairAt = now().addingTimeInterval(Self.automaticRepairCooldown)
         let attemptCount = policy.retryDelays.count + 1
         var elapsedSincePreviousAttempt = Duration.zero
 
@@ -481,7 +538,7 @@ final class RefreshAgentRegistrationCoordinator {
         attempts: Int,
         isEnabled: @MainActor () -> Bool
     ) async -> RefreshAgentRegistrationOutcome {
-        if !isAgentHealthy(), policy.launchGrace > .zero {
+        if !hasVerifiedAgentActivity(), policy.launchGrace > .zero {
             do { try await sleep(policy.launchGrace) }
             catch { return .cancelled }
         }
@@ -499,7 +556,7 @@ final class RefreshAgentRegistrationCoordinator {
             saveDiagnostic(.failed, build: build)
             return .failed(attempts: attempts)
         }
-        guard isAgentHealthy() else {
+        guard hasVerifiedAgentActivity() else {
             stateStore.clearMarkers()
             saveDiagnostic(.notUpdating, build: build)
             refreshAgentRegistrationLogger.error("refresh agent is enabled but did not start")
@@ -508,6 +565,8 @@ final class RefreshAgentRegistrationCoordinator {
 
         stateStore.markReconciled(build: build)
         stateStore.markRepaired(build: build)
+        requiresNewAgentRun = false
+        nextAutomaticRepairAt = .distantPast
         stateStore.clearDiagnostic()
         refreshAgentRegistrationLogger.notice(
             "refresh agent registration repair succeeded attempts=\(attempts, privacy: .public) build=\(build, privacy: .public)"
@@ -534,6 +593,8 @@ final class RefreshAgentRegistrationCoordinator {
     }
 
     private func stopDisabled() -> RefreshAgentRegistrationOutcome {
+        requiresNewAgentRun = false
+        nextAutomaticRepairAt = .distantPast
         stateStore.clearAll()
         return .stoppedDisabled
     }
@@ -587,7 +648,8 @@ enum RefreshAgentRegistration {
         service: SystemRefreshAgentRegistrationService(identifier: ContextPanelLocations.refreshAgentBundleID),
         stateStore: stateStore,
         currentBuild: currentBuild,
-        isAgentHealthy: isRefreshAgentHealthy
+        isAgentHealthy: isRefreshAgentHealthy,
+        currentAgentRunID: { RefreshAgentHealth.latestRun(state: agentDiagnosticsState()).map(\.id) }
     )
 
     static func reconcile(settings: BackgroundRefreshSettings) throws {
@@ -618,6 +680,7 @@ enum RefreshAgentRegistration {
     ) {
         coordinator.scheduleHealthCheck(
             isEnabled: { settingsStore.load().isEnabled },
+            wakeRecoveryInterval: TimeInterval(settingsStore.load().intervalSeconds),
             onDiagnosticChange: { diagnostic in
                 publishDiagnosticChange()
                 onDiagnosticChange(diagnostic)
@@ -659,9 +722,12 @@ enum RefreshAgentRegistration {
         let settings = BackgroundRefreshSettingsStore(
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         ).load()
-        let state = RefreshDiagnosticsStateStore(
+        return RefreshAgentHealth.hasRecentWake(state: agentDiagnosticsState(), intervalSeconds: settings.intervalSeconds, now: Date())
+    }
+
+    private static func agentDiagnosticsState() -> RefreshDiagnosticsState {
+        RefreshDiagnosticsStateStore(
             stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
         ).load()
-        return RefreshAgentHealth.hasRecentWake(state: state, intervalSeconds: settings.intervalSeconds, now: Date())
     }
 }

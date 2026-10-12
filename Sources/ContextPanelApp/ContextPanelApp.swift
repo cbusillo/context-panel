@@ -5533,6 +5533,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var primaryErrorStatusText: String {
+        if let backgroundRefreshDiagnosticMessage, errorMessage == backgroundRefreshDiagnosticMessage {
+            return backgroundRefreshDiagnosticMessage
+        }
         if let report = primaryProviderReportNeedingAttention {
             if report.hasProviderConfigurationFailure {
                 return "Fix \(report.provider.displayName) setup"

@@ -10,14 +10,18 @@ public enum RefreshAgentHealth {
         intervalSeconds: Int,
         now: Date
     ) -> Bool {
-        let runs = [state.lastAgentRun, state.lastRun, state.lastSuccessfulRun]
-            .compactMap { $0 }
-            .filter { $0.source == .refreshAgent }
-        guard let run = runs.max(by: { ($0.finishedAt ?? $0.startedAt) < ($1.finishedAt ?? $1.startedAt) }) else {
+        guard let run = latestRun(state: state) else {
             return false
         }
         let age = now.timeIntervalSince(run.finishedAt ?? run.startedAt)
         let expectedInterval = max(intervalSeconds, run.intervalSeconds ?? intervalSeconds)
         return age >= 0 && age <= TimeInterval(expectedInterval) + schedulingAllowance
+    }
+
+    public static func latestRun(state: RefreshDiagnosticsState) -> RefreshDiagnosticsRun? {
+        [state.lastAgentRun, state.lastRun, state.lastSuccessfulRun]
+            .compactMap { $0 }
+            .filter { $0.source == .refreshAgent }
+            .max(by: { ($0.finishedAt ?? $0.startedAt) < ($1.finishedAt ?? $1.startedAt) })
     }
 }

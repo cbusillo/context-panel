@@ -21,7 +21,12 @@ private final class ScriptedRefreshAgentRegistrationService: RefreshAgentRegistr
     var unregisterError: Error?
     var suspendsUnregister = false
     var isUserEnabled = true
-    var isRunning = false
+    var latestRunID: String?
+    var isRunning = false {
+        didSet {
+            if isRunning, !oldValue { latestRunID = UUID().uuidString }
+        }
+    }
     var startsAgentOnRegister = true
     var onRegister: (() -> Void)?
     var onUnregister: (() -> Void)?
@@ -144,7 +149,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -172,7 +177,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -199,7 +204,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -229,7 +234,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -252,7 +257,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
             stateStore: stateStore,
             policy: immediateRepairPolicy,
             currentBuild: { "build-1" },
-            isAgentHealthy: { service.isRunning },
+            isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
             sleep: { _ in }
         )
 
@@ -283,7 +288,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -313,7 +318,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
             verificationDelay: verificationDelay
         ),
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { duration in
             if duration == verificationDelay {
                 service.status = .enabled
@@ -348,7 +353,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: .appDefault,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { elapsed += $0 }
     )
 
@@ -422,7 +427,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -449,7 +454,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -477,7 +482,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         service: service,
         stateStore: stateStore,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in sleepStarted = true }
     )
 
@@ -505,7 +510,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
             verificationDelay: .zero
         ),
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { try await scriptedSleep.sleep(for: $0) }
     )
 
@@ -546,7 +551,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
         stateStore: stateStore,
         policy: immediateRepairPolicy,
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { _ in }
     )
 
@@ -597,7 +602,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
             verificationDelay: .zero
         ),
         currentBuild: { "build-1" },
-        isAgentHealthy: { service.isRunning },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { sleepDurations.append($0) }
     )
 
@@ -638,7 +643,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     stateStore.markReconciled(build: "build-1")
     stateStore.markRepaired(build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(service: service, stateStore: stateStore,
-        policy: immediateRepairPolicy, currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, sleep: { _ in })
+        policy: immediateRepairPolicy, currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID }, sleep: { _ in })
     let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
     #expect(outcome == .repaired(attempts: 1))
     #expect(service.unregisterCount == 1)
@@ -654,7 +659,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service, stateStore: stateStore, policy: immediateRepairPolicy,
-        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, sleep: { _ in }
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID }, sleep: { _ in }
     )
 
     let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
@@ -673,7 +678,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     stateStore.saveDiagnostic(kind: .failed, build: "build-1")
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service, stateStore: stateStore, policy: immediateRepairPolicy,
-        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, sleep: { _ in }
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID }, sleep: { _ in }
     )
 
     try coordinator.reconcile(settings: BackgroundRefreshSettings(isEnabled: true))
@@ -697,7 +702,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     var waits: [Duration] = []
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service, stateStore: stateStore, policy: policy,
-        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning },
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { duration in
             waits.append(duration)
             if service.status == .enabled { service.isRunning = true }
@@ -720,7 +725,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     let stateStore = makeRegistrationStateStore()
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service, stateStore: stateStore, policy: immediateRepairPolicy,
-        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, sleep: { _ in }
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID }, sleep: { _ in }
     )
     #expect(await coordinator.repairIfNeeded(isEnabled: { true }) == .agentAlreadyRunning)
 
@@ -749,7 +754,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     sleep.suspendsNextCall = true
     let coordinator = RefreshAgentRegistrationCoordinator(
         service: service, stateStore: makeRegistrationStateStore(), policy: immediateRepairPolicy,
-        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning },
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
         sleep: { try await sleep.sleep(for: $0) }
     )
     var repairCallbackCount = 0
@@ -783,6 +788,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     let diagnostic = RefreshAgentRegistrationDiagnostic(kind: .notUpdating)
     model.updateBackgroundRefreshDiagnostic(diagnostic)
     #expect(model.errorMessage == diagnostic.userFacingMessage)
+    #expect(model.primaryErrorStatusText == diagnostic.userFacingMessage)
     model.updateBackgroundRefreshDiagnostic(nil)
     #expect(model.errorMessage == nil)
 
@@ -791,4 +797,88 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     model.updateBackgroundRefreshDiagnostic(diagnostic)
     model.updateBackgroundRefreshDiagnostic(nil)
     #expect(model.errorMessage == providerError)
+}
+
+@MainActor
+@Test func refreshAgentPersistentFailureDoesNotReregisterEveryHealthTick() async {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: .enabled, registrationSteps: [.succeed(.enabled)]
+    )
+    service.startsAgentOnRegister = false
+    let start = Date(timeIntervalSince1970: 10_000)
+    var now = start
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: makeRegistrationStateStore(), policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning },
+        currentAgentRunID: { service.latestRunID }, now: { now },
+        awakeTime: { .seconds(now.timeIntervalSince(start)) }, sleep: { _ in }
+    )
+    #expect(await coordinator.repairIfNeeded(isEnabled: { true }) == .failed(attempts: 1))
+    let registrations = service.registerCount
+    for _ in 0..<3 {
+        now = now.addingTimeInterval(30)
+        let diagnostic = await withCheckedContinuation { continuation in
+            coordinator.scheduleHealthCheck(isEnabled: { true }) { continuation.resume(returning: $0) }
+        }
+        #expect(diagnostic?.kind == .notUpdating)
+    }
+    #expect(service.registerCount == registrations)
+    #expect(service.unregisterCount == 1)
+
+    now = start.addingTimeInterval(RefreshAgentRegistrationCoordinator.automaticRepairCooldown)
+    await withCheckedContinuation { continuation in
+        coordinator.scheduleHealthCheck(isEnabled: { true }) { _ in continuation.resume() }
+    }
+    #expect(service.registerCount > registrations)
+}
+
+@MainActor
+@Test func refreshAgentHealthCheckAllowsTheExistingHelperToResumeAfterSleep() async {
+    let service = ScriptedRefreshAgentRegistrationService(status: .enabled)
+    let start = Date(timeIntervalSince1970: 20_000)
+    var now = start
+    var awake = Duration.zero
+    var isHealthy = false
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: makeRegistrationStateStore(), policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { isHealthy },
+        now: { now }, awakeTime: { awake }, sleep: { _ in }
+    )
+    now = now.addingTimeInterval(3_600)
+    let afterWake = await withCheckedContinuation { continuation in
+        coordinator.scheduleHealthCheck(isEnabled: { true }, wakeRecoveryInterval: 300) {
+            continuation.resume(returning: $0)
+        }
+    }
+    #expect(afterWake == nil)
+    #expect(service.unregisterCount == 0)
+
+    now = now.addingTimeInterval(30)
+    awake += .seconds(30)
+    isHealthy = true
+    await withCheckedContinuation { continuation in
+        coordinator.scheduleHealthCheck(isEnabled: { true }) { _ in continuation.resume() }
+    }
+    #expect(service.unregisterCount == 0)
+    #expect(service.registerCount == 0)
+}
+
+@MainActor
+@Test func refreshAgentReregistrationRejectsThePreviousHelpersRecentWake() async throws {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: .notRegistered, registrationSteps: [.succeed(.enabled)]
+    )
+    service.startsAgentOnRegister = false
+    let previousRun = UUID().uuidString
+    let stateStore = makeRegistrationStateStore()
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: stateStore, policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { true },
+        currentAgentRunID: { previousRun }, sleep: { _ in }
+    )
+    try coordinator.reconcile(settings: BackgroundRefreshSettings(isEnabled: true))
+    let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
+    #expect(outcome == .failed(attempts: 4))
+    #expect(stateStore.repairedBuild == nil)
+    #expect(coordinator.currentDiagnostic != nil)
 }
