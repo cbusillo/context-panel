@@ -2146,6 +2146,68 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(guard_calls, [])
                 self.assertEqual(output, "")
 
+    def test_app_store_review_dry_run_receives_credentials_without_evidence_preparation(self) -> None:
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        step = workflow.split("      - name: Submit Review\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        script, = workflow_run_blocks(step)
+        inputs = {
+            "version": "9.8.7", "platform": "MAC_OS", "build_number": "42",
+            "whats_new": "Fixture release", "dry_run": "true",
+            "cancel_review_only": "false", "prepare_only": "false",
+            "validation_train": "release", "release_evidence_mode": "enforce",
+        }
+        secrets = {
+            "APP_STORE_CONNECT_KEY_ID": "fixture-key-id",
+            "APP_STORE_CONNECT_ISSUER_ID": "fixture-issuer-id",
+            "APP_STORE_CONNECT_API_KEY_P8_BASE64": base64.b64encode(b"fixture-p8").decode(),
+        }
+        # Resolve this step's bindings, without inheriting an operator environment
+        # or running the optional evidence-preparation step.
+        environment = {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"}
+        for name, context, key in re.findall(
+            r"^ {10}(\w+):\s*(?:>-\s*)?\$\{\{ (inputs|secrets)\.(\w+) }}",
+            step, re.MULTILINE,
+        ):
+            environment[name] = (inputs if context == "inputs" else secrets).get(key, "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            consumer = root / "consume.py"
+            consumer.write_text(textwrap.dedent("""\
+                import sys
+                from pathlib import Path
+                sys.path.insert(0, sys.argv.pop(1))
+                from Tests.ScriptsTests.test_submit_app_store_review import submit_app_store_review as submit
+                sys.argv.pop(1)  # workflow's script path
+                args = submit.parse_args()
+                if args.api_key_id != 'fixture-key-id' or args.api_issuer_id != 'fixture-issuer-id':
+                    raise SystemExit('submission consumer did not receive fixture identity')
+                key_path, cleanup = submit.expanded_key_path(args)
+                try:
+                    if key_path.read_bytes() != b'fixture-p8':
+                        raise SystemExit('submission consumer did not receive fixture key')
+                finally:
+                    if cleanup:
+                        cleanup.unlink()
+                if not args.dry_run or args.validation_report or args.release_evidence_report:
+                    raise SystemExit('expected metadata-only dry run')
+            """))
+            python_path = root / ".build/submit-review-venv/bin/python"
+            python_path.parent.mkdir(parents=True)
+            python_path.write_text(
+                "#!/bin/bash\nexec " + shlex.join(
+                    [sys.executable, str(consumer), str(REPO_ROOT)]
+                ) + ' "$@"\n'
+            )
+            python_path.chmod(0o755)
+            environment.update(GITHUB_STEP_SUMMARY=str(root / "summary.md"), GITHUB_SHA="fixture-source")
+            result = subprocess.run(
+                ["/bin/bash", "-c", script], cwd=root, env=environment,
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self) -> None:
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         submit_step = re.search(
