@@ -17,6 +17,7 @@ targets:
       - target: ContextPanelCoreCompanion
       - target: ContextPanelWidgetUICompanion
       - target: ContextPanelCompanionSupport
+      - target: ContextPanelSettingsUICompanion
       - target: ContextPanelValidationFixturesCompanion
       - target: ContextPanelValidationGalleryUICompanion
     settings:

@@ -277,10 +277,19 @@ private struct CompanionRootView: View {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                                 CompanionSyncStatusView(result: model.result, now: context.date)
+                                #if os(visionOS)
+                                SpatialAccountOverviewPanel(overview: accountOverview(at: context.date), now: context.date,
+                                    contentWidth: min(geometry.size.width - 2 * pagePadding,
+                                        CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, platform: .visionOS)
+                                            ?? geometry.size.width),
+                                    openAccount: { accountPath.append(.account($0.id)) },
+                                    openDeadlines: { accountPath.append(.deadlines) })
+                                #else
                                 AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
                                     compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
+                                #endif
                             }
                         }
                         CompanionSyncAndSettingsRow { accountPath.append(.syncAndSettings) }
@@ -616,6 +625,7 @@ private struct CompanionValidationGallerySheet: View {
 }
 
 private struct CompanionValidationGalleryPreview: View {
+    @State private var overviewContentWidth: CGFloat = 0
     @Environment(\.colorScheme) private var hostColorScheme
 
     let context: ValidationGalleryContext
@@ -692,16 +702,16 @@ private struct CompanionValidationGalleryPreview: View {
         Group {
             switch context.presentation {
             case .overview:
-                ScrollView {
-                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                        CompanionSyncStatusView(result: result, now: context.presentationDate)
-                        AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
-                            maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
-                            compact: true, openAccount: { _ in }, openDeadlines: {})
-                        CompanionSyncAndSettingsRow {}
+                #if os(visionOS)
+                overviewContent(contentWidth: overviewContentWidth)
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.width - 36
+                    } action: { width in
+                        overviewContentWidth = width
                     }
-                    .padding(18)
-                }
+                #else
+                overviewContent(contentWidth: 0)
+                #endif
             case .diagnostics:
                 ScrollView {
                     VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
@@ -737,7 +747,6 @@ private struct CompanionValidationGalleryPreview: View {
                         if !context.snapshot.reports.isEmpty {
                             BankedResetDeadlinesView(reports: context.snapshot.reports, presentationDate: context.presentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
                         }
-
                         CompanionWidgetMainLimitsSettingsView(
                             preferences: context.displayPreferences,
                             isLoaded: true,
@@ -771,6 +780,24 @@ private struct CompanionValidationGalleryPreview: View {
         .background(surfacePalette.pageBackground)
         .environment(\.companionSurfacePalette, surfacePalette)
         .environment(\.colorScheme, previewColorScheme)
+    }
+    private func overviewContent(contentWidth: CGFloat) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                CompanionSyncStatusView(result: result, now: context.presentationDate)
+                #if os(visionOS)
+                SpatialAccountOverviewPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                    contentWidth: contentWidth, openAccount: { _ in }, openDeadlines: {})
+                #else
+                AccountDashboardPanel(overview: context.snapshot.accountOverview(now: context.presentationDate,
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
+                    compact: true, openAccount: { _ in }, openDeadlines: {})
+                #endif
+                CompanionSyncAndSettingsRow {}
+            }
+            .padding(18)
+        }
     }
 }
 
