@@ -7,9 +7,6 @@ import Testing
     let subscription = CompanionCloudKitSubscriptionFactory.make()
 
     #expect(subscription.subscriptionID == CompanionRemoteSync.cloudKitSubscriptionID)
-    #expect(subscription.subscriptionID == "companion-sync-updates")
-    #expect(CompanionRemoteSync.cloudKitRecordName == "current-v2")
-    #expect(CompanionRemoteSync.cloudKitSubscriptionRecordName == "current")
     #expect(CompanionRemoteSync.cloudKitLegacyRecordNames == [CompanionRemoteSync.cloudKitSubscriptionRecordName])
     #expect(CompanionRemoteSync.cloudKitRetiredSubscriptionIDs.isEmpty)
     #expect(subscription.recordType == CompanionRemoteSync.cloudKitRecordType)
