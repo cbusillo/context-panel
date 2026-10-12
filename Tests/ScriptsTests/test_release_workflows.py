@@ -20,6 +20,8 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
 FIXTURE_SIGNING_FINGERPRINT = hashlib.sha1(FIXTURE_SIGNING_CERTIFICATE).hexdigest().upper()
@@ -2147,10 +2149,10 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(output, "")
 
     def test_app_store_review_dry_run_receives_credentials_without_evidence_preparation(self) -> None:
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        step = workflow.split("      - name: Submit Review\n", 1)[1]
-        step = step.split("\n      - name:", 1)[0]
-        script, = workflow_run_blocks(step)
+        workflow = yaml.safe_load(self.read(".github/workflows/submit-app-store-review.yml"))
+        job = workflow["jobs"]["submit"]
+        step = next(step for step in job["steps"] if step.get("name") == "Submit Review")
+        script = step["run"]
         inputs = {
             "version": "9.8.7", "platform": "MAC_OS", "build_number": "42",
             "whats_new": "Fixture release", "dry_run": "true",
@@ -2165,11 +2167,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         # Resolve this step's bindings, without inheriting an operator environment
         # or running the optional evidence-preparation step.
         environment = {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"}
-        for name, context, key in re.findall(
-            r"^ {10}(\w+):\s*(?:>-\s*)?\$\{\{ (inputs|secrets)\.(\w+) }}",
-            step, re.MULTILINE,
-        ):
-            environment[name] = (inputs if context == "inputs" else secrets).get(key, "")
+        bindings = {**workflow.get("env", {}), **job.get("env", {}), **step.get("env", {})}
+        for name, value in bindings.items():
+            match = re.fullmatch(r"\$\{\{\s*(inputs|secrets)\.(\w+)\s*}}", value.strip())
+            if match:
+                context, key = match.groups()
+                value = (inputs if context == "inputs" else secrets).get(key, "")
+            environment[name] = value
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2204,7 +2208,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             environment.update(GITHUB_STEP_SUMMARY=str(root / "summary.md"), GITHUB_SHA="fixture-source")
             result = subprocess.run(
                 ["/bin/bash", "-c", script], cwd=root, env=environment,
-                text=True, capture_output=True, check=False,
+                text=True, capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 

@@ -39,7 +39,7 @@
       "lanesManifest": "Config/ContextPanelTestLanes.json",
       "lanesValidate": "uv run --no-project python scripts/context-panel-test-lanes.py validate",
       "fastPython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane fast-local-python",
-      "routinePython": "uv run --no-project --with cryptography python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
+      "routinePython": "uv run --no-project --with cryptography --with PyYAML python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
       "routineSwift": "uv run --no-project python scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test",
       "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)"
     },

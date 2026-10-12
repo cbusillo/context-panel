@@ -404,6 +404,7 @@ def run_python_lane(
                 "uv", "run", "--no-project", "--python", sys.executable,
                 "--with", "pytest==9.1.1", "--with", "pytest-xdist==3.8.0",
                 "--with", "cryptography==50.0.2",
+                "--with", "PyYAML>=6,<7",
                 "python", "-m", "pytest", "-n", str(workers), path,
             ]
         try:
