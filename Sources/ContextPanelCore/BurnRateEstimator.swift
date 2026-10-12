@@ -19,11 +19,13 @@ public struct ObservedBurnRate: Codable, Equatable, Sendable {
 }
 
 public enum MainLimitBurnRateEstimator {
+    public static let historyLookback: TimeInterval = 24 * 3_600
+
     public static func observedBurnRates(
         current: UsageSnapshot,
         history: [StoredUsageSnapshot],
         now: Date = Date(),
-        lookback: TimeInterval = 24 * 3_600,
+        lookback: TimeInterval = historyLookback,
         recentLookback: TimeInterval = 6 * 3_600,
         minimumObservation: TimeInterval = 30 * 60,
         minimumUsableIntervals: Int = 2

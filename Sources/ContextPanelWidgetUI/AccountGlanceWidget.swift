@@ -67,6 +67,9 @@ struct AccountGlanceWidget: View {
     }
 
     private func headline(_ overview: AccountOverview) -> (lead: String, rest: String, short: Bool) {
+        if snapshot.state == .stale {
+            return ("Updates delayed.", "Showing saved usage.", false)
+        }
         if overview.widgetShowsOnlySavedUsage {
             return ("Saved usage", "", false)
         }
@@ -104,21 +107,29 @@ struct AccountGlanceWidget: View {
         let shown = picks.compactMap(\.account)
         let headline = headline(overview)
         let roomy = picks.count <= 2
+        let freshnessText: String
+        if snapshot.state == .stale {
+            freshnessText = headline.lead + " " + AccountCapacityState.stale.displayText
+                + " · " + observationText(overview, rows: shown)
+        } else if overview.widgetShowsOnlySavedUsage {
+            freshnessText = AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown)
+        } else {
+            freshnessText = headline.lead
+        }
         return VStack(alignment: .leading, spacing: 0) {
             header(trailing: !picks.isEmpty && picks.allSatisfy { $0.isRecommendation } ? nextUpWord : nil).padding(.bottom, 2)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if headline.short {
                     Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
                 }
-                Text(overview.widgetShowsOnlySavedUsage
-                     ? AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown) : headline.lead)
+                Text(freshnessText)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(headline.short ? palette.bad : palette.primary)
-                    .lineLimit(1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(snapshot.state == .stale ? 2 : 1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .ignore)
             .padding(.bottom, 5)
-            .accessibilityLabel([headline.lead, overview.widgetShowsOnlySavedUsage ? observationText(overview, rows: shown) : headline.rest]
+            .accessibilityLabel([headline.lead, headline.rest, overview.widgetShowsOnlySavedUsage ? observationText(overview, rows: shown) : ""]
                 .filter { !$0.isEmpty }.joined(separator: " "))
             if picks.isEmpty {
                 Text(AccountTerms.noEligibleAccount).font(.system(size: 11, weight: .medium))
