@@ -107,15 +107,22 @@ struct AccountGlanceWidget: View {
         let shown = picks.compactMap(\.account)
         let headline = headline(overview)
         let roomy = picks.count <= 2
+        let freshnessText: String
+        if snapshot.state == .stale {
+            freshnessText = headline.lead + " " + AccountCapacityState.stale.displayText
+                + " · " + observationText(overview, rows: shown)
+        } else if overview.widgetShowsOnlySavedUsage {
+            freshnessText = AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown)
+        } else {
+            freshnessText = headline.lead
+        }
         return VStack(alignment: .leading, spacing: 0) {
             header(trailing: !picks.isEmpty && picks.allSatisfy { $0.isRecommendation } ? nextUpWord : nil).padding(.bottom, 2)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if headline.short {
                     Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
                 }
-                Text(snapshot.state == .stale ? headline.lead + " " + AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown)
-                     : overview.widgetShowsOnlySavedUsage
-                     ? AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown) : headline.lead)
+                Text(freshnessText)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(headline.short ? palette.bad : palette.primary)
                     .lineLimit(snapshot.state == .stale ? 2 : 1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
