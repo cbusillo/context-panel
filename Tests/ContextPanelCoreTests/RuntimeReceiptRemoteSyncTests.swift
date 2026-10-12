@@ -937,7 +937,7 @@ import Testing
     let receiptBuilder = RuntimeReceiptCloudKitRecordBuilder()
     let receiptRecord = try receiptBuilder.makeRecord(receipt)
     try expectCloudKitRecordFitsProductionSchema(sessionRecord.record)
-    try expectCloudKitRecordFitsProductionSchema(receiptRecord.record)
+    try expectCloudKitRecordFitsProductionSchema(receiptRecord.record, identityDigest: receipt.id)
 
     #expect(sessionRecord.record.recordType == RuntimeReceiptRemoteSync.cloudKitSessionRecordType)
     #expect(sessionRecord.record.recordID.recordName == RuntimeReceiptRemoteSync.cloudKitSessionRecordName)
@@ -966,7 +966,6 @@ import Testing
     #expect(!clearedDocument.canBeSuperseded(by: olderSession))
     #expect(clearedDocument.canBeSuperseded(by: newerSession))
     #expect(receiptRecord.record.recordType == RuntimeReceiptRemoteSync.cloudKitReceiptRecordType)
-    #expect(receiptRecord.record.recordID.recordName == "runtime-receipt-\(receipt.id)")
     #expect(try receiptBuilder.decodeReceipt(from: receiptRecord.record) == receipt)
     #expect(CompanionCloudKitSubscriptionFactory.make().recordType == CompanionRemoteSync.cloudKitRecordType)
     #expect(CompanionCloudKitSubscriptionFactory.make().recordType != receiptRecord.record.recordType)

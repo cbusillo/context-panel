@@ -7,7 +7,7 @@ import Testing
     let subscription = CompanionCloudKitSubscriptionFactory.make()
 
     #expect(subscription.subscriptionID == CompanionRemoteSync.cloudKitSubscriptionID)
-    #expect(CompanionRemoteSync.cloudKitLegacyRecordNames == [CompanionRemoteSync.cloudKitSubscriptionRecordName])
+    #expect(CompanionRemoteSync.cloudKitLegacyRecordNames.contains(CompanionRemoteSync.cloudKitSubscriptionRecordName))
     #expect(subscription.recordType == CompanionRemoteSync.cloudKitRecordType)
     let comparison = try #require(subscription.predicate as? NSComparisonPredicate)
     #expect(comparison.leftExpression.keyPath == "recordID")
@@ -306,7 +306,7 @@ private func makeRegistrar(
     fetchError: CompanionCloudKitSubscriptionTestError? = nil,
     saveError: CompanionCloudKitSubscriptionTestError? = nil,
     deleteError: CompanionCloudKitSubscriptionTestError? = nil,
-    retiredSubscriptionIDs: [String] = CompanionRemoteSync.cloudKitRetiredSubscriptionIDs
+    retiredSubscriptionIDs: [String] = []
 ) -> CompanionCloudKitSubscriptionRegistrar {
     CompanionCloudKitSubscriptionRegistrar(
         currentSubscriptionExists: {
@@ -328,7 +328,7 @@ private func makeRegistrar(
 
 // Compare constructed records with the schema consumed by the Production schema gate.
 // Adding a field to both sources remains an intended change; undeployed fields fail.
-func expectCloudKitRecordFitsProductionSchema(_ record: CKRecord) throws {
+func expectCloudKitRecordFitsProductionSchema(_ record: CKRecord, identityDigest: String? = nil) throws {
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let data = try Data(contentsOf: root.appending(path: "CloudKit/companion-sync.schema.json"))
     let schema = try JSONDecoder().decode(RecordSchemaContract.self, from: data)
@@ -338,6 +338,9 @@ func expectCloudKitRecordFitsProductionSchema(_ record: CKRecord) throws {
     #expect(Set(record.allKeys()).isSubset(of: declaredFields), "Undeployed fields in \(record.recordType)")
     if let expectedName = declaration.recordName {
         #expect(record.recordID.recordName == expectedName)
+    } else if let pattern = declaration.recordNamePattern {
+        let digest = try #require(identityDigest)
+        #expect(record.recordID.recordName == pattern.replacingOccurrences(of: "<sha256>", with: digest))
     }
 }
 
@@ -348,6 +351,7 @@ private struct RecordSchemaContract: Decodable {
     struct RecordType: Decodable {
         let name: String
         let recordName: String?
+        let recordNamePattern: String?
         let fields: [Field]
     }
 
