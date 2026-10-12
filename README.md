@@ -109,6 +109,7 @@ Packaging and distribution use [the release procedure](docs/release.md), includi
 version/build inputs, signing, CloudKit schema receipts, and release gates.
 The `Release` workflow runs from `main` through manual dispatch or `Ship`;
 creating a tag does not start it, and merging a PR does not publish a release.
+Release closeout follows the [definition of released](docs/release.md#definition-of-released).
 
 ## Local Provider Probes
 

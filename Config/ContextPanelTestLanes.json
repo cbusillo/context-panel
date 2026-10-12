@@ -89,7 +89,8 @@
       "Tests/ScriptsTests/test_validation_operator_flow.py",
       "Tests/ScriptsTests/test_visual_approvals.py",
       "Tests/ScriptsTests/test_companion_upload_script.py",
-      "Tests/ScriptsTests/test_macos_upload_script.py"
+      "Tests/ScriptsTests/test_macos_upload_script.py",
+      "Tests/ScriptsTests/test_app_store_release_status.py"
     ],
     "routine-ci-swift": [],
     "release-only": [],

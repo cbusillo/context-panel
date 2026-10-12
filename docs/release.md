@@ -28,6 +28,60 @@ App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
 is explicit.
 
+## Definition of released
+
+A release is complete only when every shipping channel is current for each
+shipping platform: the signed/notarized GitHub Mac artifact is published,
+the intended builds are available to the intended TestFlight testers, and the
+exact App Store builds have been submitted, approved, and verified live on the
+public App Store. iOS includes iPadOS and its embedded Watch app; Mac, visionOS,
+and tvOS have independent store versions. A skipped companion channel does not
+make that platform current. An intentionally scoped beta or upload can finish
+its stated scope, but cannot be reported as a completed product release.
+
+Session closeout, issue finish lines, and Supervisor reports link here and
+name the channel result: **GitHub published**, **uploaded to App Store Connect**,
+**available in TestFlight**, **App Store submission pending**, **in review**,
+**rejected**, or **live on the App Store**, per platform. Include the version,
+build number, source, evidence, and next actor/command for unfinished delivery.
+Do not use an unqualified “shipped” or “released” for uploaded/TestFlight work.
+Merging source is separate from all of these channel results.
+
+### Durable handoff and public drift
+
+Ship's summary creates an issue for each successful platform upload, even when
+another channel fails. The issue records **App Store submission pending**, the
+exact uploaded identity, channel results, run link, and the `Submit App Store
+Review` workflow command with `dry_run=true`. Failure to record it fails Ship's
+summary job. Retries reuse the same platform/version/build/source record.
+The release agent owns TestFlight validation and the existing submission gates;
+recording a pending issue grants no submission authority. Keep it open until
+the exact build is verified live, then close it with that proof. Submission,
+rejection, and approval updates belong on the same issue.
+
+`App Store Release Drift` runs every six hours and can also be dispatched
+manually. `scripts/app-store-release-status.py check --lag-hours 48` reads the
+public US storefront separately for each platform and compares its numeric
+marketing version with that platform's latest tracked uploaded build. It also
+uses the latest sealed GitHub Mac publication as a baseline, including releases
+predating these records; that baseline explicitly leaves upload and TestFlight
+state unknown. Other platforms are tracked when selected for a successful Ship
+upload, never inferred from a Mac release.
+
+After 48 hours from the upload record (or GitHub publication for the legacy Mac
+baseline), lag produces an alert comment on that durable issue and a failing
+workflow signal for Supervisor watchers. This also catches a release stalled
+in review or rejected without querying or changing App Store Connect. An
+unreadable or changed public page alerts as **unknown**, immediately. Identical
+observations produce no duplicate comments; a later recovery is recorded.
+Closed records still participate, so premature closeout cannot hide drift.
+No store credentials or store writes are used. The public page parser verifies
+the requested app/platform; it never substitutes another platform's version.
+Public version equality reports only “public version current”; public listings
+do not expose the exact build number, so this alone cannot close the issue or
+prove the release definition above. The check does not automatically submit,
+approve, release, or alter submission evidence policy.
+
 ## Before starting a release
 
 Follow the overall [release direction](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md).
