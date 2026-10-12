@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import Testing
-import ContextPanelCore
 
 /// Every target for a platform declares one minimum OS, in both the XcodeGen
 /// `deploymentTarget` and its explicit build setting, so an embedded extension or
@@ -72,6 +71,20 @@ import ContextPanelCore
 
     let plist = try loadInfoPlist("Config/ContextPanelRefreshAgent-Info.plist")
     #expect(plist.keys.allSatisfy { !$0.hasPrefix("CONTEXT_PANEL_GOOGLE_") })
+}
+
+// Negative security scan retained until signed-artifact validation covers these grants.
+@Test func widgetEntitlementsDoNotGrantProviderCredentialOrFileAccess() throws {
+    let entitlements = try loadInfoPlist("Config/ContextPanelWidget.entitlements")
+    for key in [
+        "com.apple.security.network.client",
+        "keychain-access-groups",
+        "com.apple.security.files.user-selected.read-only",
+        "com.apple.security.files.bookmarks.app-scope",
+        "com.apple.security.files.bookmarks.document-scope",
+    ] {
+        #expect(entitlements[key] == nil, "Widget must not receive \(key)")
+    }
 }
 
 private func loadInfoPlist(_ path: String) throws -> [String: Any] {

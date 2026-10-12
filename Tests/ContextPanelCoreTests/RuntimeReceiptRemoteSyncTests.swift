@@ -936,6 +936,8 @@ import Testing
     )
     let receiptBuilder = RuntimeReceiptCloudKitRecordBuilder()
     let receiptRecord = try receiptBuilder.makeRecord(receipt)
+    try expectCloudKitRecordFitsProductionSchema(sessionRecord.record)
+    try expectCloudKitRecordFitsProductionSchema(receiptRecord.record)
 
     #expect(sessionRecord.record.recordType == RuntimeReceiptRemoteSync.cloudKitSessionRecordType)
     #expect(sessionRecord.record.recordID.recordName == RuntimeReceiptRemoteSync.cloudKitSessionRecordName)

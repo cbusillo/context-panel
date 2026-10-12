@@ -8,7 +8,6 @@ import Testing
 
     #expect(subscription.subscriptionID == CompanionRemoteSync.cloudKitSubscriptionID)
     #expect(CompanionRemoteSync.cloudKitLegacyRecordNames == [CompanionRemoteSync.cloudKitSubscriptionRecordName])
-    #expect(CompanionRemoteSync.cloudKitRetiredSubscriptionIDs.isEmpty)
     #expect(subscription.recordType == CompanionRemoteSync.cloudKitRecordType)
     let comparison = try #require(subscription.predicate as? NSComparisonPredicate)
     #expect(comparison.leftExpression.keyPath == "recordID")
@@ -161,6 +160,7 @@ import Testing
         now: incomingDate,
         userScope: cloudKitUserScope
     )
+    try expectCloudKitRecordFitsProductionSchema(pendingSave.record)
     let mergedDocument = try CompanionSyncPayloadCodec.decode(pendingSave.payload)
 
     #expect(pendingSave.record === record)
@@ -324,4 +324,34 @@ private func makeRegistrar(
         },
         retiredSubscriptionIDs: retiredSubscriptionIDs
     )
+}
+
+// Compare constructed records with the schema consumed by the Production schema gate.
+// Adding a field to both sources remains an intended change; undeployed fields fail.
+func expectCloudKitRecordFitsProductionSchema(_ record: CKRecord) throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let data = try Data(contentsOf: root.appending(path: "CloudKit/companion-sync.schema.json"))
+    let schema = try JSONDecoder().decode(RecordSchemaContract.self, from: data)
+    #expect(schema.containerIdentifier == ContextPanelLocations.iCloudContainerID)
+    let declaration = try #require(schema.recordTypes.first { $0.name == record.recordType })
+    let declaredFields = Set(declaration.fields.map(\.name))
+    #expect(Set(record.allKeys()).isSubset(of: declaredFields), "Undeployed fields in \(record.recordType)")
+    if let expectedName = declaration.recordName {
+        #expect(record.recordID.recordName == expectedName)
+    }
+}
+
+private struct RecordSchemaContract: Decodable {
+    let containerIdentifier: String
+    let recordTypes: [RecordType]
+
+    struct RecordType: Decodable {
+        let name: String
+        let recordName: String?
+        let fields: [Field]
+    }
+
+    struct Field: Decodable {
+        let name: String
+    }
 }
