@@ -1,0 +1,27 @@
+---
+name: App Store Release Drift
+
+"on":
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: app-store-release-status
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Read public store versions and alert on drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Compare platform releases (48-hour grace period)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/app-store-release-status.py check --lag-hours 48

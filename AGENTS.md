@@ -415,5 +415,7 @@ someone makes an intended change.
   evidence; reviewer approval is not a merge or completion gate.
 - Merging a PR does not publish a release. Use [the release procedure](docs/release.md)
   for separately authorized release work and preserve its implemented gates.
+- Release closeout and Supervisor reporting follow the single
+  [definition of released](docs/release.md#definition-of-released).
 - Keep `.github/github.json` current when docs, validation gates,
   important workflows, or repo ownership assumptions change.

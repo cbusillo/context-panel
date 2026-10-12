@@ -246,7 +246,7 @@ jobs:
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   summary:
-    name: Release Summary
+    name: Upload and TestFlight Summary (App Store pending)
     needs:
       - validate
       - github-release
@@ -255,8 +255,35 @@ jobs:
       - testflight-beta
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: app-store-release-status
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Record durable App Store submission handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          GITHUB_RELEASE_RESULT: ${{ needs.github-release.result }}
+          APP_STORE_UPLOAD_RESULT: ${{ needs.app-store-upload.result }}
+          COMPANION_APP_STORE_UPLOAD_RESULT: ${{ needs.companion-app-store-upload.result }}
+          TESTFLIGHT_BETA_RESULT: ${{ needs.testflight-beta.result }}
+          INPUT_APP_STORE_CHANNEL: ${{ inputs.app_store_channel }}
+          INPUT_COMPANION_APP_STORE_CHANNEL: ${{ inputs.companion_app_store_channel }}
+          INPUT_TESTFLIGHT_BETA_SOURCE: ${{ inputs.testflight_beta_source }}
+          MAC_BUILD_NUMBER: ${{ needs.app-store-upload.outputs.build_number }}
+          COMPANION_BUILD_NUMBER: ${{ needs.companion-app-store-upload.outputs.build_number }}
+          COMPANION_PLATFORM: ${{ needs.companion-app-store-upload.outputs.app_store_platform }}
+        run: python3 scripts/app-store-release-status.py record-ship
+
       - name: Summarize Channels
+        if: ${{ always() }}
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -284,7 +311,7 @@ jobs:
           testflight_beta_selected="${INPUT_TESTFLIGHT_BETA}"
           testflight_beta_source="${INPUT_TESTFLIGHT_BETA_SOURCE}"
           {
-            echo "### Ship Summary"
+            echo "### Uploaded/TestFlight channel results"
             echo
             echo "- Version: ${INPUT_VERSION}"
             echo "- Build number: ${BUILD_NUMBER}"
@@ -297,6 +324,8 @@ jobs:
             echo "- TestFlight source: ${testflight_beta_source}"
             echo
             echo "Ship does not submit App Store Review."
+            echo "These results do not prove the build is live on the public App Store."
+            echo "Release completion: docs/release.md#definition-of-released"
             echo "After TestFlight validation, run Submit App Store Review separately; use dry_run=true first."
           } >>"${GITHUB_STEP_SUMMARY}"
 

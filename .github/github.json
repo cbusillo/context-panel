@@ -27,7 +27,8 @@
     "currentCodexHomes": "docs/provider-usage-access.md#current-codex-homes-and-openai-recovery",
     "agentAccountSnapshot": "docs/provider-usage-access.md#agent-readable-account-snapshot",
     "repoSettings": "docs/repo-settings.md",
-    "sharedAccountIdentity": "docs/shared-account-identity.md"
+    "sharedAccountIdentity": "docs/shared-account-identity.md",
+    "releaseCompletion": "docs/release.md#definition-of-released"
   },
   "qualityGate": {
     "build": {
@@ -120,7 +121,8 @@
       "releaseEvidenceReleaseReportValidation": "scripts/validate-release-evidence-report.py --report <release-evidence.json> --validation-report <final-report.json> --comparison <comparison.json> --expected-build-manifest <ExpectedBuildManifest-platform.json> --policy Config/ContextPanelReleaseEvidencePolicy.json --surface-policy Config/ContextPanelSurfacePolicy.json [--historical-policy-archive <policy-archive.json>] --selected-rc-ledger <approved-rc-lineage.json> --shadow-evidence <shadow-evidence.json> --version <version> --build-number <build-number> --train release --enforce",
       "appStoreReviewReleaseEvidenceDefault": "enforce",
       "releaseEvidenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_release_evidence_gate.py Tests/ScriptsTests/test_submit_app_store_review.py Tests/ScriptsTests/test_release_workflows.py",
-      "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration|retired|settingsAccounts)\""
+      "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration|retired|settingsAccounts)\"",
+      "appStoreReleaseStatusTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_app_store_release_status"
     },
     "docsRequiredWhen": [
       "provider behavior changes",
@@ -143,7 +145,8 @@
     "Shared-View Capture Evidence",
     "TestFlight Beta Distribution",
     "Submit App Store Review",
-    "Upload App Store Screenshots"
+    "Upload App Store Screenshots",
+    "App Store Release Drift"
   ],
   "qaLabels": [],
   "deployLabels": [],
