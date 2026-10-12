@@ -404,3 +404,78 @@ private enum CaptureError: Error {
     case invalidRoute
     case routeMismatch
 }
+#if os(visionOS)
+import ContextPanelSettingsUI
+
+@MainActor
+final class SpatialAccountOverviewCaptureTests: XCTestCase {
+    func testCaptureSpatialOverview() throws {
+        let now = ValidationFixtureCatalog.referencePresentationDate
+        let dense = ValidationGalleryFixtureAdapter().snapshot(fixtureID: .denseAccounts, presentationDate: now)
+        let denseOverview = dense.accountOverview(now: now)
+        let ordinary = ImageRenderer(content: AccountDashboardPanel(overview: denseOverview, now: now,
+            compact: true, openAccount: { _ in }, openDeadlines: {}).frame(width: 720))
+        let enlarged = ImageRenderer(content: SpatialAccountOverviewPanel(overview: denseOverview, now: now,
+            contentWidth: 720, openAccount: { _ in }, openDeadlines: {})
+            .frame(width: 720).environment(\.dynamicTypeSize, .accessibility3))
+        XCTAssertGreaterThan(try XCTUnwrap(enlarged.uiImage).size.height,
+            try XCTUnwrap(ordinary.uiImage).size.height + 200,
+            "Account text must grow, rather than only switching to the stacked layout.")
+        let cases: [(String, ValidationFixtureID, CGFloat, ColorScheme, DynamicTypeSize)] = [
+            ("wide-light", .denseAccounts, 1128, .light, .large),
+            ("wide-dark", .denseAccounts, 1128, .dark, .large),
+            ("medium-light", .denseAccounts, 810, .light, .large),
+            ("narrow-light", .denseAccounts, 540, .light, .large),
+            ("cards-boundary-light", .denseAccounts, 648, .light, .large),
+            ("stale-dark", .stale, 810, .dark, .large),
+            ("empty-light", .missing, 810, .light, .large),
+            ("long-names-light", .fitFallback, 540, .light, .large),
+            ("accessibility-dark", .denseAccounts, 768, .dark, .accessibility3),
+            ("banked-accessibility-dark", .denseAccounts, 768, .dark, .accessibility5),
+        ]
+        for (name, fixtureID, width, scheme, textSize) in cases {
+            let snapshot = ValidationGalleryFixtureAdapter().snapshot(
+                fixture: ValidationFixtureCatalog.fixture(id: fixtureID), presentationDate: now)
+            let stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: snapshot.generatedAt, limits: snapshot.limits), reports: snapshot.reports)
+            let document = snapshot.state == .setupNeeded ? nil : CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+            let presentation = CompanionSyncPresentation(result: CompanionSyncLoadResult(document: document, status: snapshot.status), now: now)
+            var overview = snapshot.accountOverview(now: now, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+            if name == "banked-accessibility-dark" {
+                let credits = ProviderResetCreditSummary(availableCount: 3, observedAt: now,
+                    coverage: .partial, knownExpiries: [now.addingTimeInterval(2 * 86_400), now.addingTimeInterval(5 * 86_400)])
+                let report = StoredProviderReport(provider: .openAI, accountID: "sample-openai-a",
+                    configuredAccountID: "sample-openai-a", accountName: "Sample OpenAI A", generatedAt: now,
+                    resetCredits: credits, status: .healthy, errorMessage: nil)
+                overview = AccountOverview(snapshot: stored.snapshot, reports: [report], now: now)
+                XCTAssertEqual(overview.deadlines.map(\.expiresAt), credits.knownExpiries)
+            }
+            let content = VStack(alignment: .leading, spacing: 18) {
+                Text("Sample data · Vision Pro shared view").font(.caption)
+                // A synthetic sync shell; production reuses CompanionSyncStatusView from #807.
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(presentation.title, systemImage: presentation.symbol).font(.headline)
+                    Text(presentation.detail).font(.subheadline).foregroundStyle(.secondary)
+                    if let updatedAt = presentation.usageUpdatedAt {
+                        Text("Usage updated " + SnapshotFreshness.compactAgeText(since: updatedAt, now: now))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                SpatialAccountOverviewPanel(overview: overview, now: now, contentWidth: width - 48,
+                    openAccount: { _ in }, openDeadlines: {})
+            }
+            .padding(24).frame(width: width)
+            .environment(\.colorScheme, scheme).environment(\.dynamicTypeSize, textSize)
+            .background(scheme == .dark ? Color.black : Color.white)
+            let renderer = ImageRenderer(content: content)
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.uiImage)
+            XCTAssertEqual(image.size.width, width)
+            let attachment = XCTAttachment(data: try XCTUnwrap(image.pngData()), uniformTypeIdentifier: "public.png")
+            attachment.name = "vision-\(name)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+}
+#endif

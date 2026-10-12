@@ -239,7 +239,13 @@ widget preview, pace details, and settings, which use an adaptive composition:
   iPad-specific title and width changes must not be imposed on it automatically.
   Its established 810-point breakpoint, 720/1080-point content caps, 400–720
   point instrument column, 340-point settings column, and 20-point gap remain
-  unchanged.
+  unchanged. The account overview reuses the Mac's Horizon components and
+  palette, with sync freshness visible above the headline. Its table becomes
+  account rows when the fixed columns no longer fit the available content;
+  recommendation cards stay side by side at intermediate widths and stack in
+  narrow windows or at accessibility text sizes. Account text grows with the
+  platform's accessibility typography; other surfaces retain their typography.
+  Empty readings point to the Mac without implying that setup is missing.
 - Resizing must preserve view identity, settings state, and accessibility
   reading order.
 - The companion remains a focused read-only utility. Do not turn regular width
