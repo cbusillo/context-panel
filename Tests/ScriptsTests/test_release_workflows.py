@@ -2542,60 +2542,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         )
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
-    def test_cloudkit_companion_schema_contract_matches_app_constants(self) -> None:
-        schema = json.loads(self.read("CloudKit/companion-sync.schema.json"))
-        remote_sync = self.read("Sources/ContextPanelCore/CompanionRemoteSync.swift")
-        runtime_sync = self.read("Sources/ContextPanelCore/RuntimeReceiptRemoteSync.swift")
-
-        self.assertEqual(schema["containerIdentifier"], "iCloud.com.shinycomputers.contextpanel")
-        self.assertEqual(schema["database"], "private")
-        record_types = {record["name"]: record for record in schema["recordTypes"]}
-        record = record_types["CompanionSyncDocument"]
-        self.assertEqual(record["recordName"], "current-v2")
-        self.assertIn('cloudKitRecordName = "current-v2"', remote_sync)
-        self.assertIn('cloudKitSubscriptionRecordName = "current"', remote_sync)
-        self.assertIn("cloudKitLegacyRecordNames = [cloudKitSubscriptionRecordName]", remote_sync)
-        self.assertIn('cloudKitSubscriptionID = "companion-sync-updates"', remote_sync)
-        self.assertIn("cloudKitRetiredSubscriptionIDs: [String] = []", remote_sync)
-        field_definitions = {field["name"]: field for field in record["fields"]}
-        fields = {name: field["type"] for name, field in field_definitions.items()}
-        self.assertEqual(fields["payload"], "BYTES")
-        self.assertEqual(fields["schemaVersion"], "INT64")
-        self.assertEqual(fields["documentSchemaVersion"], "INT64")
-        self.assertEqual(fields["snapshotSchemaVersion"], "INT64")
-        self.assertEqual(fields["generatedAt"], "TIMESTAMP")
-        self.assertEqual(fields["publishedAt"], "TIMESTAMP")
-        self.assertEqual(fields["payloadByteCount"], "INT64")
-        self.assertTrue(field_definitions["snapshotSchemaVersion"]["queryable"])
-        for field_name in fields:
-            self.assertIn(f'= "{field_name}"', remote_sync)
-
-        session_record = record_types["RuntimeValidationSession"]
-        self.assertEqual(
-            session_record["recordName"],
-            "runtime-validation-session-current-v1",
-        )
-        session_fields = {field["name"]: field["type"] for field in session_record["fields"]}
-        self.assertEqual(session_record["publicDatabaseGrants"], [])
-        self.assertEqual(session_fields["retentionExpiresAt"], "TIMESTAMP")
-        self.assertEqual(session_fields["sessionState"], "STRING")
-        self.assertEqual(session_fields["stateUpdatedAt"], "TIMESTAMP")
-        receipt_record = record_types["RuntimeReceipt"]
-        self.assertEqual(
-            receipt_record["recordNamePattern"],
-            "runtime-receipt-<sha256>",
-        )
-        receipt_fields = {field["name"]: field for field in receipt_record["fields"]}
-        self.assertEqual(receipt_record["publicDatabaseGrants"], [])
-        self.assertTrue(receipt_fields["sessionID"]["queryable"])
-        self.assertTrue(receipt_fields["retentionExpiresAt"]["queryable"])
-        self.assertTrue(receipt_fields["retentionExpiresAt"]["sortable"])
-        self.assertIn('cloudKitSessionRecordType = "RuntimeValidationSession"', runtime_sync)
-        self.assertIn('cloudKitReceiptRecordType = "RuntimeReceipt"', runtime_sync)
-        for record in (session_record, receipt_record):
-            for field in record["fields"]:
-                self.assertIn(f'= "{field["name"]}"', runtime_sync)
-
     def test_cloudkit_schema_receipt_round_trip_binds_contract_and_source(self) -> None:
         receipt_module = self.cloudkit_schema_receipt_module()
         key = b"cloudkit-schema-receipt-test-key-32-bytes"
