@@ -1062,13 +1062,14 @@ public struct JSONSnapshotStore: Sendable {
             return []
         }
 
+        let sinceFileTimestamp = query.since.map { ContextPanelDateFormatting.historyFileTimestamp(from: $0) }
         let snapshots = urls
             .filter { $0.pathExtension == "json" }
             .filter { url in
-                guard let since = query.since else { return true }
+                guard let sinceFileTimestamp else { return true }
                 let fileName = url.deletingPathExtension().lastPathComponent
                 guard Self.isHistoryFileTimestamp(fileName) else { return true }
-                return fileName >= ContextPanelDateFormatting.historyFileTimestamp(from: since)
+                return fileName >= sinceFileTimestamp
             }
             .compactMap { try? loadSnapshot(from: $0) }
             .filter { snapshot in
