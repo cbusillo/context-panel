@@ -430,6 +430,10 @@ jobs:
       - name: Submit Review
         shell: bash
         env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+            ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
           CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
             ${{ inputs.cloudkit_schema_receipt_base64 }}
           CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-

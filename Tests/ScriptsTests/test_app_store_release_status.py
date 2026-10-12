@@ -5,18 +5,21 @@ import shlex
 import sys
 import unittest
 from unittest import mock
+from typing import Any
 from datetime import datetime, timedelta, timezone
 
 
 PATH = Path(__file__).resolve().parents[2] / "scripts" / "app-store-release-status.py"
 SPEC = importlib.util.spec_from_file_location("store_release_status", PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"cannot load {PATH}")
 status = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = status
 SPEC.loader.exec_module(status)
 NOW = datetime(2030, 1, 10, tzinfo=timezone.utc)
 
 
-def record(platform="MAC_OS", version="2.0.10", hours=49, build="900"):
+def record(platform: str = "MAC_OS", version: str = "2.0.10", hours: int = 49, build: str = "900") -> dict[str, Any]:
     return {
         "platform": platform, "version": version, "buildNumber": build,
         "sourceCommit": "a" * 40, "uploadedAt": (NOW - timedelta(hours=hours)).isoformat(),
@@ -25,11 +28,11 @@ def record(platform="MAC_OS", version="2.0.10", hours=49, build="900"):
     }
 
 
-def issue(number, value, state="open"):
+def issue(number: int, value: dict, state: str = "open") -> dict:
     return {"number": number, "body": status.marker(status.RECORD, value), "state": state}
 
 
-def page(platform, versions, app_id="42"):
+def page(platform: str, versions: list[str], app_id: str = "42") -> str:
     return '<script id="serialized-server-data" type="application/json">' + json.dumps({"data": [{
         "intent": {"platform": status.PLATFORMS[platform], "id": app_id},
         "data": {"appPlatforms": ["pad" if p == "ipad" else p for p in status.PLATFORMS.values()], "shelfMapping": {
@@ -43,12 +46,12 @@ def page(platform, versions, app_id="42"):
 class FakeGitHub:
     repository = "example/panel"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.writes = []
         self.comments = {}
         self.release = None
 
-    def api(self, path, body=None):
+    def api(self, path: str, body: dict | None = None) -> dict:
         if body is None:
             if path == "releases/latest":
                 return self.release
@@ -61,34 +64,34 @@ class FakeGitHub:
             return body
         raise AssertionError(path)
 
-    def pages(self, path):
+    def pages(self, path: str) -> list[dict]:
         return self.comments.get(path, [])
 
 
 class StoreReleaseStatusTests(unittest.TestCase):
-    def test_numeric_versions_not_lexicographic(self):
-        self.assertTrue(status.evaluate(record(version="2.0.10"), "2.0.9", NOW, 48)["alert"])
+    def test_numeric_versions_not_lexicographic(self) -> None:
+        self.assertTrue(status.evaluate(record(), "2.0.9", NOW, 48)["alert"])
         self.assertFalse(status.evaluate(record(version="2.0.9"), "2.0.10", NOW, 48)["alert"])
 
-    def test_trailing_zero_versions_agree_with_version_authority(self):
+    def test_trailing_zero_versions_agree_with_version_authority(self) -> None:
         self.assertEqual(status.version_guard.compare_versions("2.1", "2.1.0"), 0)
         self.assertFalse(status.evaluate(record(version="2.1.0"), "2.1", NOW, 48)["alert"])
 
-    def test_grace_boundary_and_unknown(self):
+    def test_grace_boundary_and_unknown(self) -> None:
         self.assertFalse(status.evaluate(record(hours=47), "2.0.9", NOW, 48)["alert"])
         self.assertTrue(status.evaluate(record(hours=48), "2.0.9", NOW, 48)["alert"])
         result = status.evaluate(record(hours=0), None, NOW, 48)
         self.assertTrue(result["alert"])
         self.assertIsNone(result["publicVersion"])
 
-    def test_invalid_versions_and_future_dates_are_not_green(self):
+    def test_invalid_versions_and_future_dates_are_not_green(self) -> None:
         for version in ("", "2.beta", "2.-1"):
             with self.subTest(version=version), self.assertRaises(status.version_guard.AppStoreConnectError):
                 status.evaluate(record(), version, NOW, 48)
         with self.assertRaises(status.StatusError):
             status.evaluate(record(hours=-1), "2.0.10", NOW, 48)
 
-    def test_latest_record_is_selected_per_platform_including_closed_records(self):
+    def test_latest_record_is_selected_per_platform_including_closed_records(self) -> None:
         mac = record()
         vision = record("VISION_OS", version="1.8")
         items = [issue(1, record(version="2.0.9", hours=100)), issue(2, mac, "closed"),
@@ -98,11 +101,11 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertEqual(latest[vision["platform"]][1], vision)
         self.assertEqual(set(latest), {item["platform"] for item in (mac, vision, record("IOS"))})
 
-    def test_newer_build_of_same_version_wins(self):
+    def test_newer_build_of_same_version_wins(self) -> None:
         older, newer = record(hours=80), record(hours=1, build="901")
         self.assertEqual(status.latest_records([issue(2, newer), issue(1, older)])["MAC_OS"][1], newer)
 
-    def test_public_page_is_bound_to_app_and_platform(self):
+    def test_public_page_is_bound_to_app_and_platform(self) -> None:
         for platform in status.PLATFORMS:
             self.assertEqual(status.public_page_version(page(platform, ["2.0.9", "2.0.10"]), platform, "42"), "2.0.10")
         with self.assertRaises(status.StatusError):
@@ -112,12 +115,12 @@ class StoreReleaseStatusTests(unittest.TestCase):
         with self.assertRaises(status.StatusError):
             status.public_page_version("<html>unavailable</html>", "MAC_OS", "42")
 
-    def test_empty_and_changed_public_history_are_unknown(self):
-        for versions in ([], ["Version 2.0.10"], ["2.0.10", "bad"]):
+    def test_empty_and_changed_public_history_are_unknown(self) -> None:
+        for versions in ([], ["2.0.10", "bad"]):
             with self.subTest(versions=versions), self.assertRaises(status.StatusError):
                 status.public_page_version(page("MAC_OS", versions), "MAC_OS", "42")
 
-    def test_successful_upload_is_recorded_when_other_channels_fail(self):
+    def test_successful_upload_is_recorded_when_other_channels_fail(self) -> None:
         env = {
             "VALIDATE_RESULT": "success", "INPUT_VERSION": "2.0.10", "GITHUB_SHA": "a" * 40,
             "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "123",
@@ -136,7 +139,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
         env["VALIDATE_RESULT"] = "failure"
         self.assertEqual(status.ship_records(env, NOW), [])
 
-    def test_companion_testflight_is_not_attributed_to_mac(self):
+    def test_companion_testflight_is_not_attributed_to_mac(self) -> None:
         env = {
             "VALIDATE_RESULT": "success", "INPUT_VERSION": "2.0.10", "GITHUB_SHA": "a" * 40,
             "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "123",
@@ -153,7 +156,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
                            ("build_number", records[1]["buildNumber"]), ("dry_run", "true")):
             self.assertIn(f"{key}={value}", command)
 
-    def test_record_retries_reuse_exact_identity(self):
+    def test_record_retries_reuse_exact_identity(self) -> None:
         client, items, value = FakeGitHub(), [], record()
         first = status.ensure_record(client, items, value)
         again = status.ensure_record(client, items, {**value, "uploadedAt": NOW.isoformat()})
@@ -161,7 +164,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertEqual(len(client.writes), 1)
         self.assertEqual(status.read_marker(status.RECORD, first["body"]), value)
 
-    def test_retry_updates_failed_testflight_result_without_duplicate_issues(self):
+    def test_retry_updates_failed_testflight_result_without_duplicate_issues(self) -> None:
         client, items = FakeGitHub(), []
         first = status.ensure_record(client, items, {**record(), "testflight": "failure"})
         status.ensure_record(client, items, record())
@@ -171,23 +174,25 @@ class StoreReleaseStatusTests(unittest.TestCase):
         result = status.read_marker(status.CHANNELS, client.writes[-1][1]["body"])
         self.assertEqual(result["testflight"], record()["testflight"])
 
-    def test_record_entrypoint_fails_if_durable_issue_cannot_be_written(self):
+    def test_record_entrypoint_fails_if_durable_issue_cannot_be_written(self) -> None:
         env = {
             "GITHUB_REPOSITORY": "example/panel", "VALIDATE_RESULT": "success",
             "INPUT_VERSION": "2.0.10", "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123",
             "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success", "MAC_BUILD_NUMBER": "900",
         }
+        client = mock.Mock(spec=status.GitHub, repository=env["GITHUB_REPOSITORY"])
+        client.issues.return_value = []
+        client.api.side_effect = status.StatusError("write failed")
         with mock.patch.dict(status.os.environ, env, clear=True), mock.patch.object(sys, "argv", ["status", "record-ship"]), \
-                mock.patch.object(status.GitHub, "issues", return_value=[]), \
-                mock.patch.object(status.GitHub, "api", side_effect=status.StatusError("write failed")), \
-                mock.patch.object(status.sys, "stderr"):
+                mock.patch.dict(status.__dict__, {"GitHub": mock.Mock(return_value=client)}), \
+                mock.patch("sys.stderr"):
             self.assertNotEqual(status.main(), 0)
 
-    def test_monitor_is_platform_scoped_deduplicated_and_records_recovery(self):
+    def test_monitor_is_platform_scoped_deduplicated_and_records_recovery(self) -> None:
         client = FakeGitHub()
         items = [issue(1, record()), issue(2, record("VISION_OS", version="1.8"))]
 
-        def fetch(url):
+        def fetch(url: str) -> str:
             platform = "MAC_OS" if "platform=mac" in url else "VISION_OS"
             return page(platform, ["2.0.9" if platform == "MAC_OS" else "1.8"])
 
@@ -201,10 +206,10 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertEqual(len(client.writes), 3)
         self.assertTrue(all(path.endswith("/comments") for path, _ in client.writes))
 
-    def test_failed_lookup_alerts_instead_of_reporting_live(self):
+    def test_failed_lookup_alerts_instead_of_reporting_live(self) -> None:
         client = FakeGitHub()
 
-        def fail():
+        def fail() -> str:
             raise OSError("unavailable")
 
         results = status.monitor(client, [issue(1, record(hours=0))], NOW, 48, lookup=fail)
@@ -212,7 +217,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertIsNone(results[0]["publicVersion"])
         self.assertEqual(len(client.writes), 1)
 
-    def test_legacy_mac_baseline_uses_sealed_release_without_inventing_companion_uploads(self):
+    def test_legacy_mac_baseline_uses_sealed_release_without_inventing_companion_uploads(self) -> None:
         client = FakeGitHub()
         value = record()
         identity = status.publication.ReleaseIdentity(

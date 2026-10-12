@@ -255,12 +255,15 @@ jobs:
       - testflight-beta
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: app-store-release-status
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
     steps:
       - name: Checkout release source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Record durable App Store submission handoff
         env:

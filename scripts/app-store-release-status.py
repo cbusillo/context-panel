@@ -14,11 +14,13 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+from types import ModuleType
+from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
 
-def load_script(name: str, filename: str):
+def load_script(name: str, filename: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load release helper {filename}")
@@ -87,7 +89,7 @@ def ship_records(env: dict[str, str], now: datetime) -> list[dict]:
     for platform, build in selected:
         version = env["INPUT_VERSION"]
         version_guard.version_components(version)
-        if platform not in PLATFORMS or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", build):
+        if platform not in PLATFORMS or not version_guard.VERSION_PATTERN.fullmatch(build):
             raise StatusError("successful upload is missing its platform/build identity")
         source = env["GITHUB_SHA"]
         if not publication.COMMIT_PATTERN.fullmatch(source):
@@ -129,12 +131,12 @@ class GitHub:
             raise StatusError("invalid GitHub repository")
         self.repository = repository
 
-    def api(self, path: str, body: dict | None = None):
+    def api(self, path: str, body: dict | None = None) -> Any:
         args = ["gh", "api", f"repos/{self.repository}/{path}"]
         if body is not None:
             args += ["--method", "POST", "--input", "-"]
         result = subprocess.run(args, input=json.dumps(body) if body is not None else None,
-                                text=True, capture_output=True, timeout=60, check=False)
+                                text=True, capture_output=True, timeout=60)
         if result.returncode:
             raise StatusError("GitHub release-status request failed; check workflow token permissions")
         return json.loads(result.stdout)
@@ -154,12 +156,14 @@ class GitHub:
         return [item for item in self.pages("issues?state=all") if "pull_request" not in item]
 
 
-def ensure_record(client, issues: list[dict], record: dict) -> dict:
+def ensure_record(client: Any, issues: list[dict], record: dict) -> dict:
     for issue in issues:
         previous = read_marker(RECORD, issue.get("body") or "")
         if previous and all(previous.get(k) == record[k] for k in ("platform", "version", "buildNumber", "sourceCommit")):
             outcomes = {key: record[key] for key in ("github", "testflight")}
-            current = {key: previous[key] for key in outcomes}
+            outcomes["upload"] = record.get("upload", "success")
+            current = {key: previous[key] for key in ("github", "testflight")}
+            current["upload"] = previous.get("upload", "success")
             updates = [read_marker(CHANNELS, comment.get("body") or "")
                        for comment in client.pages(f"issues/{issue['number']}/comments")]
             updates = [update for update in updates if update is not None]
@@ -168,7 +172,8 @@ def ensure_record(client, issues: list[dict], record: dict) -> dict:
             if outcomes != current:
                 client.api(f"issues/{issue['number']}/comments", {"body":
                     f"[Ship retry channel results]({record['runURL']}): GitHub {record['github']}; "
-                    f"TestFlight {record['testflight']}. Public App Store delivery remains unverified.\n\n"
+                    f"upload {outcomes['upload']}; TestFlight {record['testflight']}. "
+                    "Public App Store delivery remains unverified.\n\n"
                     + marker(CHANNELS, outcomes)})
             return issue
     issue = client.api("issues", {
@@ -179,7 +184,7 @@ def ensure_record(client, issues: list[dict], record: dict) -> dict:
     return issue
 
 
-def include_published_mac(client, issues: list[dict]) -> None:
+def include_published_mac(client: Any, issues: list[dict]) -> None:
     """Cover releases predating Ship records, and GitHub-only Mac publications."""
     release = client.api("releases/latest")
     if release.get("draft") or release.get("prerelease"):
@@ -204,20 +209,20 @@ def include_published_mac(client, issues: list[dict]) -> None:
 
 
 class StorePageParser(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.collecting = False
         self.chunks = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "script" and dict(attrs).get("id") == "serialized-server-data":
             self.collecting = True
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag == "script":
             self.collecting = False
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self.collecting:
             self.chunks.append(data)
 
@@ -263,7 +268,7 @@ def public_app_id() -> str:
 
 def evaluate(record: dict, public_version: str | None, now: datetime, lag_hours: int) -> dict:
     age = now - timestamp(record["uploadedAt"])
-    if age < timedelta(0):
+    if age < timedelta():
         raise StatusError("release timestamp is in the future")
     if public_version is None:
         return {"status": "unknown", "publicVersion": None, "alert": True}
@@ -295,7 +300,9 @@ def latest_records(issues: list[dict]) -> dict[str, tuple[dict, dict]]:
     return latest
 
 
-def monitor(client, issues: list[dict], now: datetime, lag_hours: int, lookup=public_app_id, fetch=fetch_text) -> list[dict]:
+def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
+            lookup: Callable[[], str] = public_app_id,
+            fetch: Callable[[str], str] = fetch_text) -> list[dict]:
     latest = latest_records(issues)
     if not latest:
         raise StatusError("no Ship release records; public delivery is unknown")
