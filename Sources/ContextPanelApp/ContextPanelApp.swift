@@ -5555,6 +5555,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var primaryErrorDetailText: String? {
+        if backgroundRefreshDiagnosticMessage != nil, errorMessage == backgroundRefreshDiagnosticMessage {
+            return nil
+        }
         if let report = primaryProviderReportNeedingAttention {
             if let errorMessage = report.userFacingErrorMessage, !errorMessage.isEmpty {
                 return errorMessage

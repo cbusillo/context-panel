@@ -169,6 +169,26 @@ import ContextPanelTVSupport
 }
 
 @MainActor
+@Test func stoppedBackgroundRefreshKeepsOnePlainLineWhenTheSnapshotIsStale() {
+    let presentationDate = ValidationFixtureCatalog.referencePresentationDate
+    let adapter = ValidationGalleryFixtureAdapter()
+    let fixture = ValidationFixtureCatalog.fixture(id: .stale)
+    let context = ValidationGalleryContext(
+        fixture: fixture,
+        snapshot: adapter.snapshot(fixture: fixture, presentationDate: presentationDate),
+        presentationDate: presentationDate, presentation: .overview,
+        family: .systemLarge, appearance: .light, displayPreferences: adapter.displayPreferences
+    )
+    let model = ContextPanelAppModel.validationFixture(context: context)
+    let diagnostic = RefreshAgentRegistrationDiagnostic(kind: .notUpdating)
+    model.updateBackgroundRefreshDiagnostic(diagnostic)
+
+    #expect(model.storeStatus == .stale)
+    #expect(model.primaryErrorStatusText == diagnostic.userFacingMessage)
+    #expect(model.primaryErrorDetailText == nil)
+}
+
+@MainActor
 @Test func macValidationGalleryShellRendersAtProductionWidth() throws {
     let route = ValidationGalleryRoute(
         fixtureID: .denseAccounts,
