@@ -11,6 +11,57 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
 )
 
+@Test(arguments: [false, true])
+func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool) throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let primary = JSONSnapshotStore(rootDirectory: root.appending(path: "primary"))
+    let mirror = JSONSnapshotStore(rootDirectory: root.appending(path: "mirror"))
+    let selected = useMirror ? mirror : primary
+    let reset = now.addingTimeInterval(60)
+    func observation(at date: Date, used: Int) -> StoredUsageSnapshot {
+        StoredUsageSnapshot(savedAt: date, snapshot: UsageSnapshot(generatedAt: date, limits: [
+            UsageLimit(provider: .openAI, accountID: "forecast", accountName: "Forecast",
+                label: "Codex Weekly", windowLabel: "Weekly", unit: .percent,
+                used: used, limit: 100, resetsAt: reset, lastUpdatedAt: date),
+        ]))
+    }
+    let old = observation(at: now.addingTimeInterval(-2 * MainLimitBurnRateEstimator.historyLookback), used: 1)
+    let first = observation(at: now.addingTimeInterval(-2 * 3_600), used: 10)
+    let second = observation(at: now.addingTimeInterval(-3_600), used: 20)
+    let current = observation(at: now, used: 30)
+    for snapshot in [old, first, second, current] { try selected.save(snapshot) }
+    var reads: [(URL, SnapshotStoreQuery, [StoredUsageSnapshot])] = []
+    let provider = ContextPanelTimelineProvider(
+        store: primary, containerFallbackStore: mirror,
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "mirror-preferences.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "mirror-forecast.json")),
+        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json")),
+        runtimeReceiptRecorder: .disabled(),
+        historyLoader: { store, query in
+            let history = store.loadHistory(query: query)
+            reads.append((store.rootDirectory, query, history))
+            return history
+        }
+    )
+    let entries = provider.timelineEntries(date: now)
+    #expect(entries.count > 1)
+    #expect(reads.count == 1)
+    #expect(reads.first?.0 == selected.rootDirectory)
+    #expect(reads.first?.2.map(\.savedAt).contains(old.savedAt) == false)
+    #expect(Set(reads.first?.2.map(\.savedAt) ?? []) == Set([first.savedAt, second.savedAt, current.savedAt]))
+    let expectedRates = MainLimitBurnRateEstimator.observedBurnRates(
+        current: current.snapshot, history: [old, first, second, current], now: now
+    )
+    #expect(!expectedRates.isEmpty)
+    #expect(entries[0].snapshot.observedBurnRates == expectedRates)
+    #expect(entries.contains { $0.date == reset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace) })
+}
+
 @Test func widgetKindMatchesSharedReloadIdentity() {
     #expect(ContextPanelWidgetIdentity.kind == "ContextPanelWidget")
 }

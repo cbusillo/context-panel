@@ -2,6 +2,9 @@ import ContextPanelCore
 import ContextPanelWidgetUI
 import SwiftUI
 import WidgetKit
+import os
+
+private let widgetTimelineLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "widget-timeline")
 
 struct ContextPanelWidgetEntry: TimelineEntry {
     let date: Date
@@ -24,6 +27,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     let accountStore: AccountConfigurationStore
     let bookmarkStore: SecureFileBookmarkStore
     let runtimeReceiptRecorder: RuntimeReceiptRecorder
+    let historyLoader: (JSONSnapshotStore, SnapshotStoreQuery) -> [StoredUsageSnapshot]
 
     init(
         store: JSONSnapshotStore = JSONSnapshotStore(
@@ -51,7 +55,10 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         bookmarkStore: SecureFileBookmarkStore = SecureFileBookmarkStore(
             storeURL: ContextPanelLocations.bookmarkStoreURL()
         ),
-        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSWidget)
+        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSWidget),
+        historyLoader: @escaping (JSONSnapshotStore, SnapshotStoreQuery) -> [StoredUsageSnapshot] = {
+            $0.loadHistory(query: $1)
+        }
     ) {
         self.store = store
         self.containerFallbackStore = containerFallbackStore
@@ -62,6 +69,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         self.accountStore = accountStore
         self.bookmarkStore = bookmarkStore
         self.runtimeReceiptRecorder = runtimeReceiptRecorder
+        self.historyLoader = historyLoader
     }
 
     func placeholder(in context: Context) -> ContextPanelWidgetEntry {
@@ -80,6 +88,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWidgetEntry>) -> Void) {
         let now = Date()
+        widgetTimelineLogger.info("Timeline request started")
         let nextRefresh = now.addingTimeInterval(SnapshotFreshness.widgetTimelineInterval)
         let selection = timelineSelection(date: now)
         recordRuntimeReceipt(
@@ -87,6 +96,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             trigger: .widgetTimeline,
             family: context.family
         )
+        widgetTimelineLogger.notice("Timeline prepared: entries=\(selection.entries.count, privacy: .public) elapsed-seconds=\(Date().timeIntervalSince(now), privacy: .public) snapshot-age-seconds=\(now.timeIntervalSince(selection.current.entry.snapshot.generatedAt), privacy: .public)")
         completion(Timeline(entries: selection.entries, policy: .after(nextRefresh)))
     }
 
@@ -98,7 +108,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         date: Date
     ) -> (entries: [ContextPanelWidgetEntry], current: ContextPanelWidgetSelection) {
         let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
-        let current = entrySelection(date: date, stalenessPolicy: policy)
+        var historyCache: [URL: [StoredUsageSnapshot]] = [:]
+        let current = entrySelection(date: date, stalenessPolicy: policy, historyCache: &historyCache)
         let currentEntry = current.entry
         guard currentEntry.snapshot.state == .ready else { return ([currentEntry], current) }
         let staleTransition = policy.nextStaleTransitionDate(
@@ -117,7 +128,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             [staleTransition].compactMap { $0 } + resetTransitions
         ).filter { $0 > date }.sorted()
         let entries = [currentEntry] + transitionDates.map {
-            entry(date: $0, stalenessPolicy: policy, cacheValidationDate: date)
+            entrySelection(date: $0, stalenessPolicy: policy, cacheValidationDate: date,
+                historyCache: &historyCache).entry
         }
         return (entries, current)
     }
@@ -151,6 +163,17 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         date: Date,
         stalenessPolicy policy: SnapshotStoreStalenessPolicy, cacheValidationDate: Date? = nil
     ) -> ContextPanelWidgetSelection {
+        var historyCache: [URL: [StoredUsageSnapshot]] = [:]
+        return entrySelection(date: date, stalenessPolicy: policy,
+            cacheValidationDate: cacheValidationDate, historyCache: &historyCache)
+    }
+
+    private func entrySelection(
+        date: Date,
+        stalenessPolicy policy: SnapshotStoreStalenessPolicy,
+        cacheValidationDate: Date? = nil,
+        historyCache: inout [URL: [StoredUsageSnapshot]]
+    ) -> ContextPanelWidgetSelection {
         let displayPreferences = loadDisplayPreferences()
         let forecastSettings = loadForecastSettings()
         let promptCacheWidgetState = WidgetSnapshot.promptCacheWidgetState(
@@ -176,7 +199,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                         snapshot: WidgetSnapshot.fromStore(
                             fallback,
                             now: date,
-                            history: containerFallbackStore.loadHistory(),
+                            history: loadForecastHistory(store: containerFallbackStore, result: fallback,
+                                date: cacheValidationDate ?? date, cache: &historyCache),
                             fastModeForecastSettings: forecastSettings,
                             promptCacheWidgetState: promptCacheWidgetState,
                             stalenessPolicy: policy,
@@ -194,7 +218,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                 snapshot: WidgetSnapshot.fromStore(
                     result,
                     now: date,
-                    history: store.loadHistory(),
+                    history: loadForecastHistory(store: store, result: result,
+                        date: cacheValidationDate ?? date, cache: &historyCache),
                     fastModeForecastSettings: forecastSettings,
                     promptCacheWidgetState: promptCacheWidgetState,
                     stalenessPolicy: policy,
@@ -204,6 +229,23 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             ),
             selectedSource: result.snapshot == nil ? .none : .appGroupSnapshot
         )
+    }
+
+    private func loadForecastHistory(
+        store: JSONSnapshotStore,
+        result: SnapshotStoreLoadResult,
+        date: Date,
+        cache: inout [URL: [StoredUsageSnapshot]]
+    ) -> [StoredUsageSnapshot] {
+        guard let snapshot = result.snapshot else { return [] }
+        if let history = cache[store.rootDirectory] { return history }
+        // Forecasts use a rolling window, including when an old snapshot is shown.
+        // Reuse that window for every future entry instead of decoding the archive again.
+        let start = min(date, snapshot.snapshot.generatedAt)
+            .addingTimeInterval(-MainLimitBurnRateEstimator.historyLookback)
+        let history = historyLoader(store, SnapshotStoreQuery(since: start))
+        cache[store.rootDirectory] = history
+        return history
     }
 
     private func recordRuntimeReceipt(

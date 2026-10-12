@@ -200,6 +200,14 @@ changes because they affect freshness and reset guidance. The widget's fallback
 timeline interval is five minutes, matching the minimum background refresh
 cadence; macOS schedules the actual rendering after a reload request.
 
+Timeline generation reads only the burn estimator's recent history window and
+reuses those observations for every future transition in that request, including
+the widget-container fallback. Older history remains available to the app. This
+keeps archive growth from making timeline generation exceed WidgetKit's watchdog
+and delay subsequent reloads.
+The account widget labels an age-stale snapshot as delayed updates while showing
+the saved observations; it does not present a capacity forecast as current.
+
 A healthy account configuration with no enabled accounts is authoritative. If
 provider state was previously stored, the refresh service writes and publishes
 an empty snapshot rather than treating the refresh as a no-op. That clears stale

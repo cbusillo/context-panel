@@ -67,6 +67,9 @@ struct AccountGlanceWidget: View {
     }
 
     private func headline(_ overview: AccountOverview) -> (lead: String, rest: String, short: Bool) {
+        if snapshot.state == .stale {
+            return ("Updates delayed.", "Showing saved usage.", false)
+        }
         if overview.widgetShowsOnlySavedUsage {
             return ("Saved usage", "", false)
         }
@@ -110,15 +113,16 @@ struct AccountGlanceWidget: View {
                 if headline.short {
                     Circle().fill(palette.bad).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] }
                 }
-                Text(overview.widgetShowsOnlySavedUsage
+                Text(snapshot.state == .stale ? headline.lead + " " + AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown)
+                     : overview.widgetShowsOnlySavedUsage
                      ? AccountCapacityState.stale.displayText + " · " + observationText(overview, rows: shown) : headline.lead)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(headline.short ? palette.bad : palette.primary)
-                    .lineLimit(1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(snapshot.state == .stale ? 2 : 1).minimumScaleFactor(10 / 10.5).fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .ignore)
             .padding(.bottom, 5)
-            .accessibilityLabel([headline.lead, overview.widgetShowsOnlySavedUsage ? observationText(overview, rows: shown) : headline.rest]
+            .accessibilityLabel([headline.lead, headline.rest, overview.widgetShowsOnlySavedUsage ? observationText(overview, rows: shown) : ""]
                 .filter { !$0.isEmpty }.joined(separator: " "))
             if picks.isEmpty {
                 Text(AccountTerms.noEligibleAccount).font(.system(size: 11, weight: .medium))
