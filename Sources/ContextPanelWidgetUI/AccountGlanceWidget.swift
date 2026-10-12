@@ -7,6 +7,7 @@ import WidgetKit
 struct AccountGlanceWidget: View {
     @Environment(\.cpwThemeVariant) private var theme
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.widgetRenderingMode) private var renderingMode
     let family: WidgetFamily
     let snapshot: WidgetSnapshot
     let links: ContextPanelWidgetLinks
@@ -44,7 +45,9 @@ struct AccountGlanceWidget: View {
         .padding(family == .systemSmall ? 12 : 13)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .foregroundStyle(palette.primary)
-        .background(palette.surface)
+        // WidgetKit supplies the desktop's tinted/vibrant container. An opaque
+        // background in the content group would tint into the same solid tile.
+        .background(renderingMode == .fullColor ? palette.surface : .clear)
     }
 
     // MARK: Shared pieces
@@ -258,7 +261,8 @@ struct AccountGlanceWidget: View {
         }
         .padding(.horizontal, 7).padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.color(provider.surfaceToken)))
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(renderingMode == .fullColor ? palette.color(provider.surfaceToken) : .clear))
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([account.map { $0.glanceAccessibilityText(now: now, isNext: isNext) }
@@ -314,7 +318,7 @@ struct AccountGlanceWidget: View {
         }
         .padding(.horizontal, 7).padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(palette.provider(total.provider).opacity(palette.dark ? 0.10 : 0.07)))
+            .fill(renderingMode == .fullColor ? palette.provider(total.provider).opacity(palette.dark ? 0.10 : 0.07) : .clear))
     }
 
     /// "3 accounts · 59% left on average"; burn and pace are carried by the shapes instead.
