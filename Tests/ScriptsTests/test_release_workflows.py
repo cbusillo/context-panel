@@ -2149,9 +2149,12 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(output, "")
 
     def test_app_store_review_dry_run_receives_credentials_without_evidence_preparation(self) -> None:
+        from Tests.ScriptsTests.test_submit_app_store_review import MODULE_PATH
+
         workflow = yaml.safe_load(self.read(".github/workflows/submit-app-store-review.yml"))
         job = workflow["jobs"]["submit"]
-        step = next(step for step in job["steps"] if step.get("name") == "Submit Review")
+        entrypoint = str(MODULE_PATH.relative_to(REPO_ROOT))
+        step = next(step for step in job["steps"] if entrypoint in step.get("run", ""))
         script = step["run"]
         inputs = {
             "version": "9.8.7", "platform": "MAC_OS", "build_number": "42",
