@@ -625,6 +625,7 @@ private struct CompanionValidationGallerySheet: View {
 }
 
 private struct CompanionValidationGalleryPreview: View {
+    @State private var overviewContentWidth: CGFloat = 0
     @Environment(\.colorScheme) private var hostColorScheme
 
     let context: ValidationGalleryContext
@@ -702,9 +703,12 @@ private struct CompanionValidationGalleryPreview: View {
             switch context.presentation {
             case .overview:
                 #if os(visionOS)
-                GeometryReader { geometry in
-                    overviewContent(contentWidth: geometry.size.width - 36)
-                }
+                overviewContent(contentWidth: overviewContentWidth)
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.width - 36
+                    } action: { width in
+                        overviewContentWidth = width
+                    }
                 #else
                 overviewContent(contentWidth: 0)
                 #endif
