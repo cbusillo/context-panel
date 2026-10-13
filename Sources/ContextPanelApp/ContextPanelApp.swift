@@ -108,6 +108,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     private var wakeObserver: NSObjectProtocol?
     private var screensDidWakeObserver: NSObjectProtocol?
     private var becomeActiveObserver: NSObjectProtocol?
+    private var refreshAgentHealthTimer: Timer?
     private var lastWidgetTimelineRecoveryAt: Date?
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
@@ -122,6 +123,16 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         registerWidgetSnapshotUpdateObserver()
         registerWidgetTimelineRecoveryObservers()
         reconcileRefreshAgentRegistration()
+        let healthTimer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                RefreshAgentRegistration.checkHealth(settingsStore: self.backgroundRefreshSettingsStore) { [weak self] diagnostic in
+                    self?.model.updateBackgroundRefreshDiagnostic(diagnostic)
+                }
+            }
+        }
+        RunLoop.main.add(healthTimer, forMode: .common)
+        refreshAgentHealthTimer = healthTimer
         model.loadSnapshot()
         Task { await model.deliverPendingLimitWarnings() }
         reloadContextPanelWidgetTimeline()
@@ -144,6 +155,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.removeObserver(becomeActiveObserver)
         }
         RefreshAgentRegistration.cancelPendingRepair()
+        refreshAgentHealthTimer?.invalidate()
         NSAppleEventManager.shared().removeEventHandler(
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL)
@@ -267,9 +279,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(
             settingsStore: backgroundRefreshSettingsStore
         ) { [weak self] diagnostic in
-            if let diagnostic {
-                self?.model.setError(diagnostic.userFacingMessage)
-            }
+            self?.model.updateBackgroundRefreshDiagnostic(diagnostic)
         }
     }
 
@@ -5456,6 +5466,7 @@ final class ContextPanelAppModel: ObservableObject {
     private var isDeliveringPendingLimitWarnings = false
     private var pendingLimitWarningDeliveryRequested = false
     private var observedBurnRatesTask: Task<Void, Never>?
+    private var backgroundRefreshDiagnosticMessage: String?
 
     private let refreshService: SnapshotRefreshService
     private let refreshRunner: SnapshotRefreshRunner
@@ -5522,6 +5533,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var primaryErrorStatusText: String {
+        if let backgroundRefreshDiagnosticMessage, errorMessage == backgroundRefreshDiagnosticMessage {
+            return backgroundRefreshDiagnosticMessage
+        }
         if let report = primaryProviderReportNeedingAttention {
             if report.hasProviderConfigurationFailure {
                 return "Fix \(report.provider.displayName) setup"
@@ -5541,6 +5555,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var primaryErrorDetailText: String? {
+        if backgroundRefreshDiagnosticMessage != nil, errorMessage == backgroundRefreshDiagnosticMessage {
+            return nil
+        }
         if let report = primaryProviderReportNeedingAttention {
             if let errorMessage = report.userFacingErrorMessage, !errorMessage.isEmpty {
                 return errorMessage
@@ -5760,7 +5777,7 @@ final class ContextPanelAppModel: ObservableObject {
                   !attentionMessage.isEmpty {
             errorMessage = attentionMessage
         } else {
-            errorMessage = nil
+            errorMessage = backgroundRefreshDiagnosticMessage
         }
         historyCount = refreshService.historyCount()
         refreshObservedBurnRates()
@@ -5985,6 +6002,15 @@ final class ContextPanelAppModel: ObservableObject {
     func setError(_ message: String) {
         storeStatus = .failure
         errorMessage = ConnectorRedactor.safeErrorDescription(message)
+    }
+
+    func updateBackgroundRefreshDiagnostic(_ diagnostic: RefreshAgentRegistrationDiagnostic?) {
+        let message = diagnostic?.userFacingMessage
+        if errorMessage == backgroundRefreshDiagnosticMessage {
+            errorMessage = nil
+        }
+        backgroundRefreshDiagnosticMessage = message
+        if errorMessage == nil { errorMessage = message }
     }
 
     func relativeTime(_ date: Date) -> String {

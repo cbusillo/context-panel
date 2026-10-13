@@ -240,9 +240,21 @@ The app treats the saved background-refresh preference and the live
 `SMAppService` registration status as separate state. If an enabled login item
 does not launch after a grace period, the app performs one unregister operation
 and then uses bounded registration retries. It writes build repair markers only
-after the service reports `enabled`, stops immediately when the user disables
-background refresh, and surfaces approval, missing-helper, or exhausted-retry
-diagnostics in Settings instead of reporting a healthy background schedule.
+after the service reports `enabled` and the helper has recent wake evidence in
+the shared diagnostics store. Background-only login items are absent from
+AppKit's running-app list, so that list cannot establish helper health. The
+agent's latest run is retained independently of app/manual refresh diagnostics;
+manual refresh cannot hide a stopped helper. A registered helper gets a launch
+grace period and must write a new run after re-registration; a previous helper's
+recent run cannot validate the new launch. While the app is open,
+a minute timer checks helper health without interrupting an in-flight repair,
+so a later exit triggers another bounded repair. The app stops repair immediately
+when the user disables background refresh, and surfaces approval, missing-helper,
+stopped-update, or exhausted-retry diagnostics in the app and Settings.
+Persistent failure retries registration no more than once per five minutes;
+manual Refresh and the existing repair control remain available. Health checks
+compare wall-clock and awake elapsed time to allow the helper one refresh interval
+plus scheduling allowance to resume after Mac sleep before repairing it.
 
 The WidgetKit implementation uses a `WidgetSnapshot` projection from the stored
 snapshot. That projection owns setup-needed, stale, failure, provider-summary,

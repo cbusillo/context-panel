@@ -154,6 +154,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var lastRun: RefreshDiagnosticsRun?
     public var lastSuccessfulRun: RefreshDiagnosticsRun?
+    public var lastAgentRun: RefreshDiagnosticsRun?
     public var lastAlertEvaluationAt: Date?
     public var lastAlertEvaluationEventCount: Int?
     public var lastLocalNotification: RefreshDiagnosticsAlertRecord?
@@ -165,6 +166,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         case schemaVersion
         case lastRun
         case lastSuccessfulRun
+        case lastAgentRun
         case lastAlertEvaluationAt
         case lastAlertEvaluationEventCount
         case lastLocalNotification
@@ -176,6 +178,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
     public init(
         lastRun: RefreshDiagnosticsRun? = nil,
         lastSuccessfulRun: RefreshDiagnosticsRun? = nil,
+        lastAgentRun: RefreshDiagnosticsRun? = nil,
         lastAlertEvaluationAt: Date? = nil,
         lastAlertEvaluationEventCount: Int? = nil,
         lastLocalNotification: RefreshDiagnosticsAlertRecord? = nil,
@@ -186,6 +189,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         schemaVersion = 1
         self.lastRun = lastRun
         self.lastSuccessfulRun = lastSuccessfulRun
+        self.lastAgentRun = lastAgentRun
         self.lastAlertEvaluationAt = lastAlertEvaluationAt
         self.lastAlertEvaluationEventCount = lastAlertEvaluationEventCount
         self.lastLocalNotification = lastLocalNotification
@@ -208,6 +212,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
             startedAt: startedAt,
             intervalSeconds: intervalSeconds
         )
+        if source == .refreshAgent { lastAgentRun = lastRun }
     }
 
     public mutating func recordRunFinished(
@@ -222,8 +227,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         savedSnapshotAt: Date? = nil,
         errorMessage: String? = nil
     ) {
-        guard lastRun?.id == id else { return }
-        var run = lastRun ?? RefreshDiagnosticsRun(id: id, source: .app, startedAt: finishedAt)
+        guard var run = [lastRun, lastAgentRun].compactMap({ $0 }).first(where: { $0.id == id }) else { return }
         run.finishedAt = finishedAt
         run.decision = decision
         run.enabledAccountCount = enabledAccountCount ?? run.enabledAccountCount
@@ -233,6 +237,8 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         run.limitCount = limitCount ?? run.limitCount
         run.savedSnapshotAt = savedSnapshotAt
         run.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        if lastAgentRun?.id == id { lastAgentRun = run }
+        guard lastRun?.id == id else { return }
         lastRun = run
         if decision == .refreshed {
             lastSuccessfulRun = run
