@@ -111,17 +111,10 @@ jobs:
           swift_args+=(--scratch-path "$swiftpm_scratch_path")
           echo "CodeQL SwiftPM scratch path: $swiftpm_scratch_path"
 
-          # Temporary for #699: on macOS 27 the CodeQL build tracer cannot spawn
-          # SwiftPM's manifest sandbox (/usr/bin/sandbox-exec is arm64e-only there)
-          # and fails with "Bad CPU type in executable". This package has no
-          # external dependencies or plugins, so the sandbox only wraps this
-          # repository's own Package.swift. Fork pull requests keep the sandbox.
-          # Remove once CodeQL traces sandboxed SwiftPM builds on macOS 27.
-          if [[ "$TRUSTED_RUN" == "true" ]]; then
-            swift_args+=(--disable-sandbox)
-          fi
-
-          swift build --target ContextPanelCore "${swift_args[@]}"
+          # Evaluate the manifest under the tracer every run, including when a
+          # shared SwiftPM cache is warm. Verbose output records the sandbox spawn
+          # so #699's removal trial cannot pass on a cached manifest.
+          swift build --target ContextPanelCore --manifest-cache none --verbose "${swift_args[@]}"
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

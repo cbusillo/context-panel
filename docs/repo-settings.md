@@ -18,8 +18,9 @@ Expected GitHub settings:
   acquire a runner. Cleanup runs after success or failure unless the workflow
   was cancelled. The next trusted analysis sweeps direct child directories older
   than two hours under `/tmp/context-panel-codeql`; fork analyses do not use or
-  clean that root. Required analysis evidence and the #699 sandbox workaround
-  are unchanged.
+  clean that root. The traced SwiftPM build evaluates its manifest without a
+  manifest cache and logs the sandbox spawn; see [#699](https://github.com/cbusillo/context-panel/issues/699)
+  for the macOS 27 workaround removal evidence.
 - Default branch rulesets, all active:
   - `Protect main`: the rules below, with merge commits as the only merge
     method.
