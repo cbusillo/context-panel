@@ -27,7 +27,7 @@ gate. Releases are separate from merging and follow [the release procedure](docs
 ## Product Experience
 
 - Native macOS first, with WidgetKit as the primary glanceable surface.
-- A companion app for account setup, provider connection health, and deeper
+- The Mac app for account setup, provider connection health, and deeper
   usage detail.
 - Multiple logins per provider, because friends, work accounts, personal
   accounts, and team accounts all need to coexist.
@@ -84,8 +84,9 @@ xcodebuild \
   build
 ```
 
-Build outputs are intermediate artifacts. Local app/widget runtime, login-item,
-provider, sandbox, and storage testing use only `/Applications/Context Panel.app`.
+Build outputs are intermediate artifacts. Testing app/widget runtime, login-item,
+provider, sandbox, and storage behavior through an app bundle uses only
+`/Applications/Context Panel.app`.
 Shared-view captures follow [the validation authority](docs/validation-authority.md).
 For a Development runtime, use the in-place install gate:
 
