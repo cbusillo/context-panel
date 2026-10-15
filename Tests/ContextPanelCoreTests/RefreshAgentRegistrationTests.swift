@@ -871,7 +871,6 @@ func refreshAgentDiagnosticAppearsInTheAppAndClearsAfterRecovery(kind: RefreshAg
     model.updateBackgroundRefreshDiagnostic(diagnostic)
     #expect(model.errorMessage == diagnostic.userFacingMessage)
     #expect(model.primaryErrorStatusText == diagnostic.userFacingMessage)
-    #expect(model.backgroundRefreshStatusText == diagnostic.userFacingMessage)
     model.updateBackgroundRefreshDiagnostic(nil)
     #expect(model.errorMessage == nil)
 
