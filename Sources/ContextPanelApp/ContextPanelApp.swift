@@ -21,16 +21,22 @@ private func reloadContextPanelWidgetTimeline() {
 @main
 enum ContextPanelEntryPoint {
     @MainActor
-    static func main() async {
+    static func main() {
         if let result = accountSnapshotResult(arguments: Array(CommandLine.arguments.dropFirst())) {
             FileHandle.standardOutput.write(result.standardOutput)
             FileHandle.standardError.write(result.standardError)
             exit(result.exitCode)
         }
-        if let result = await refreshNowResult(arguments: Array(CommandLine.arguments.dropFirst())) {
-            FileHandle.standardOutput.write(result.standardOutput)
-            FileHandle.standardError.write(result.standardError)
-            exit(result.exitCode)
+        if CommandLine.arguments.dropFirst().first == "--refresh-now" {
+            Task {
+                guard let result = await refreshNowResult(arguments: Array(CommandLine.arguments.dropFirst())) else {
+                    exit(64)
+                }
+                FileHandle.standardOutput.write(result.standardOutput)
+                FileHandle.standardError.write(result.standardError)
+                exit(result.exitCode)
+            }
+            dispatchMain()
         }
         ContextPanelApp.main()
     }
@@ -45,6 +51,7 @@ enum ContextPanelEntryPoint {
         guard arguments.first == "--refresh-now" else { return nil }
         return await AgentRefreshCommand.run(arguments: Array(arguments.dropFirst()), refresh: { now in
             let runner = SnapshotRefreshRunner(service: .appDefault(
+                companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
                 renewsStaleBookmarks: false,
                 snapshotDidChange: {
                     reloadContextPanelWidgetTimeline()

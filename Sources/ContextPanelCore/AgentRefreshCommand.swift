@@ -15,6 +15,7 @@ public enum AgentRefreshCommand {
             fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
         ),
         now: Date = Date(),
+        sleep: @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
         refresh: @Sendable (Date) async throws -> SnapshotRefreshRunDecision
     ) async -> Result {
         if arguments == ["--help"] {
@@ -43,16 +44,20 @@ public enum AgentRefreshCommand {
             return result(1, error: "No enabled provider sources; enable an account in Context Panel.")
         }
 
-        let decision: SnapshotRefreshRunDecision
+        var decision = SnapshotRefreshRunDecision.skippedAlreadyRunning
         do {
-            decision = try await refresh(now)
+            for attempt in 0..<31 {
+                decision = try await refresh(now)
+                guard decision == .skippedAlreadyRunning else { break }
+                if attempt < 30 { try await sleep() }
+            }
         } catch {
             // Filesystem/decoder errors can include private paths and raw values.
             return result(1, error: "Refresh could not complete or save its readings; check storage and provider diagnostics in Context Panel.")
         }
         guard case let .refreshed(outcome) = decision else {
             if decision == .skippedAlreadyRunning {
-                return result(1, error: "Another refresh is running; retry --refresh-now when it finishes.")
+                return result(1, error: "Another refresh is still running after the bounded wait; retry --refresh-now when it finishes.")
             }
             return result(1, error: "Refresh did not save provider readings; check provider setup in Context Panel.")
         }
@@ -60,9 +65,15 @@ public enum AgentRefreshCommand {
             return result(1, error: "Refresh did not save its readings; check local storage in Context Panel.")
         }
 
+        // Refresh can apply shared removals, deleting a setup row intentionally.
+        let updatedConfiguration = accountStore.load(now: now)
+        guard updatedConfiguration.status == .healthy else {
+            return result(1, error: "Account setup could not be read after refresh; check Settings in Context Panel.")
+        }
+        let remainingAccounts = updatedConfiguration.document.accounts.filter { $0.isEnabled && !$0.isRetiredSource }
         var messages: [String] = []
         var failures: [String] = []
-        for (index, account) in accounts.enumerated() {
+        for (index, account) in remainingAccounts.enumerated() {
             // An ordinal identifies the failing setup row without printing local names or IDs.
             let source = "\(account.provider.rawValue) source \(index + 1)"
             let reports = outcome.refreshResult.sourceReports.filter {

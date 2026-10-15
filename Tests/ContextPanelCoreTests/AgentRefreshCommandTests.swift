@@ -103,6 +103,45 @@ func agentRefreshCommandPartialFailuresAreNonzeroAndPreserveSuccessfulReadings(s
     #expect(fixture.snapshots.loadCurrent().snapshot?.snapshot.limits.contains { $0.provider == .openAI } == true)
 }
 
+@Test(arguments: [false, true])
+func agentRefreshCommandPreservesAccountIdentityAndHonorsRemovals(removingSource: Bool) async throws {
+    let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("identified", .openAI),
+        refreshCommandAccount("other", .anthropic)])
+    defer { fixture.remove() }
+    let material = try #require(ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID,
+        identifier: "fixture-chatgpt-account", scope: "seat:fixture-seat"))
+    let localID = material.localHistoryID(configurationID: "identified")
+    let identity = ProviderAccountIdentityKey.generate().identity(for: material).bound(toLocalAccountID: localID)
+    let service = fixture.service { document in
+        document.accounts.map { account in
+            RefreshCommandConnector(account: account, logicalAccountID: account.provider == .openAI ? localID : nil,
+                sharedIdentity: account.provider == .openAI ? identity : nil)
+        }
+    }
+    let runner = fixture.runner(service)
+    // The ordinary runner's IDs and the command's saved IDs must agree.
+    _ = try await runner.refresh(now: refreshCommandNow)
+    let before = try #require(fixture.snapshots.loadCurrent().snapshot)
+    if removingSource {
+        var configuration = fixture.accounts.load(now: refreshCommandNow).document
+        let removedID = AccountDisplayMetadata.safeID(.openAI, identity.accountID)
+        configuration.pendingRemovedDisplayIDs = [removedID]
+        configuration.removedDisplayDates = [removedID: refreshCommandNow]
+        try fixture.accounts.save(configuration)
+    }
+    let result = await fixture.run(runner)
+    #expect(result.exitCode == 0)
+    #expect(result.standardError.isEmpty)
+    let after = try #require(fixture.snapshots.loadCurrent().snapshot)
+    if removingSource {
+        #expect(!fixture.accounts.load(now: refreshCommandNow).document.accounts.contains { $0.id == "identified" })
+        #expect(after.snapshot.limits.allSatisfy { $0.provider != .openAI })
+    } else {
+        #expect(after.snapshot.limits.map(\.accountID) == before.snapshot.limits.map(\.accountID))
+        #expect(after.reports.first { $0.provider == .openAI }?.sharedAccountIdentity == identity)
+    }
+}
+
 @Test func agentRefreshCommandMissingSourcesCannotBeHiddenBySuccessfulProviders() async throws {
     let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("good", .openAI),
         refreshCommandAccount("missing", .google)])
@@ -144,6 +183,28 @@ func agentRefreshCommandPartialFailuresAreNonzeroAndPreserveSuccessfulReadings(s
     #expect(!String(decoding: failed.standardError, as: UTF8.self).contains(fixture.root.path))
 }
 
+@Test func agentRefreshCommandWaitsForAnExistingRefreshThenSaves() async throws {
+    let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("good", .openAI)])
+    defer { fixture.remove() }
+    let runner = fixture.runner(fixture.service { document in [RefreshCommandConnector(account: document.accounts[0])] })
+    let busy = RefreshCommandBusyOnce()
+    let result = await AgentRefreshCommand.run(arguments: [], accountStore: fixture.accounts,
+        now: refreshCommandNow, sleep: {}, refresh: { now in
+            if await busy.take() { return .skippedAlreadyRunning }
+            return try await runner.refresh(now: now)
+        })
+    #expect(result.exitCode == 0)
+    #expect(fixture.snapshots.loadCurrent().snapshot != nil)
+}
+
+private actor RefreshCommandBusyOnce {
+    private var isBusy = true
+    func take() -> Bool {
+        defer { isBusy = false }
+        return isBusy
+    }
+}
+
 @Test func agentRefreshCommandMissingMalformedAndDisabledSetupDoNotRefresh() async throws {
     let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("off", .openAI, enabled: false)])
     defer { fixture.remove() }
@@ -173,6 +234,7 @@ private struct RefreshCommandConnector: ProviderConnector {
     let account: LocalProviderAccountConfiguration
     var failure: UsageStatus? = nil
     var logicalAccountID: String? = nil
+    var sharedIdentity: SharedProviderAccountIdentity? = nil
     var provider: Provider { account.provider }
     func refresh(now: Date) async -> ConnectorRefreshResult {
         let accountID = logicalAccountID ?? account.id
@@ -182,7 +244,8 @@ private struct RefreshCommandConnector: ProviderConnector {
         return ConnectorRefreshResult(generatedAt: now, reports: [ProviderConnectorReport(provider: provider,
             accountID: accountID, configuredAccountID: account.id, accountName: account.displayName,
             generatedAt: now, limits: failure == nil ? [limit] : [], status: failure,
-            errorMessage: failure == nil ? nil : "Read failed at /private/secret for private@example.com")])
+            errorMessage: failure == nil ? nil : "Read failed at /private/secret for private@example.com",
+            sharedAccountIdentity: sharedIdentity)])
     }
 }
 
@@ -207,7 +270,7 @@ private struct RefreshCommandFixture: Sendable {
             lock: SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock")))
     }
     func run(_ runner: SnapshotRefreshRunner) async -> AgentRefreshCommand.Result {
-        await AgentRefreshCommand.run(arguments: [], accountStore: accounts, now: refreshCommandNow,
+        await AgentRefreshCommand.run(arguments: [], accountStore: accounts, now: refreshCommandNow, sleep: {},
             refresh: { try await runner.refresh(now: $0) })
     }
 }

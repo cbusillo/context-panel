@@ -643,12 +643,19 @@ snapshot and history have been saved. It runs headlessly, including when the
 app is already open, and does not register or repair the background helper.
 It uses the installed app's existing credential, bookmark, sandbox and App
 Group access. It does not change account setup or CLI logins, launch AGY,
-deliver alerts, or wait for CloudKit companion publication.
+deliver alerts, or change background settings. It uses the same account identity
+resolution and companion synchronization as an ordinary app refresh. Exit status
+describes provider collection and local persistence; companion availability is
+reported separately in the app's diagnostics.
+
+If another refresh holds the lock, the command retries for up to 30 seconds
+before reporting contention. It still performs its own forced refresh once it
+acquires the lock.
 
 Exit status **0** means every enabled source returned usable readings and the
 local save completed. **1** means setup is unavailable, no sources are enabled,
-another refresh owns the lock (retry after it finishes), a source returned no
-usable reading, or collection/storage failed. Successful sources are still
+another refresh still owns the lock after that wait (retry after it finishes),
+a source returned no usable reading, or collection/storage failed. Successful sources are still
 saved when another fails. Stdout reports completed sources; stderr gives the
 failure reason, identifying setup rows by provider and ordinal rather than
 account names or IDs. **64** means invalid arguments. Use `--refresh-now --help`
@@ -664,9 +671,10 @@ observation, then refresh and read again if a caller needs newer Google data.
 Missing, malformed or unusable bridge data makes the command fail explicitly.
 Context Panel does not use AGY credentials or private quota endpoints.
 
-The helper's internal `--refresh-once` flag used the same Google adapter, so it
-could import an unchanged export while OpenAI and Anthropic obtained new network
-readings. It also exited zero after caught refresh errors and did not establish
+The helper's internal `--refresh-once` flag uses the same Google adapter, so it
+can import an unchanged export while other sources obtain newer readings.
+OpenAI sources bound to session folders also import local observations.
+The flag also exits zero after caught refresh errors and does not establish
 success for each source. It is not the supported command; use `--refresh-now`.
 
 Schema 1 has `schemaVersion`, `readAt`, `savedAt`, `accounts`, `answers`,
