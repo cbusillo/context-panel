@@ -497,7 +497,7 @@ final class RefreshAgentRegistrationCoordinator {
                 if service.status == .enabled {
                     return await verifyAgentLaunch(build: build, attempts: attemptIndex, isEnabled: isEnabled)
                 }
-                if let terminalOutcome = terminalOutcome(for: service.status, build: build) {
+                if service.status != .notFound, let terminalOutcome = terminalOutcome(for: service.status, build: build) {
                     return terminalOutcome
                 }
             }
@@ -525,11 +525,14 @@ final class RefreshAgentRegistrationCoordinator {
             if service.status == .enabled {
                 return await verifyAgentLaunch(build: build, attempts: attempts, isEnabled: isEnabled)
             }
-            if let terminalOutcome = terminalOutcome(for: service.status, build: build) {
+            if service.status != .notFound, let terminalOutcome = terminalOutcome(for: service.status, build: build) {
                 return terminalOutcome
             }
         }
 
+        if let terminalOutcome = terminalOutcome(for: service.status, build: build) {
+            return terminalOutcome
+        }
         saveDiagnostic(.failed, build: build)
         return .failed(attempts: attemptCount)
     }

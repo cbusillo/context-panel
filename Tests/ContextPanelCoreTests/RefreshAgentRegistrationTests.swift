@@ -138,9 +138,10 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 )
 
 @MainActor
-@Test func refreshAgentRepairRestoresAfterTransientRegistrationFailures() async {
+@Test(arguments: [RefreshAgentRegistrationStatus.enabled, .notFound])
+func refreshAgentRepairRestoresAfterTransientRegistrationFailures(initialStatus: RefreshAgentRegistrationStatus) async {
     let service = ScriptedRefreshAgentRegistrationService(
-        status: .enabled,
+        status: initialStatus,
         registrationSteps: [.fail, .fail, .succeed(.enabled)]
     )
     let stateStore = makeRegistrationStateStore()
@@ -156,7 +157,7 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
 
     #expect(outcome == .repaired(attempts: 3))
-    #expect(service.unregisterCount == 1)
+    #expect(service.unregisterCount == (initialStatus == .enabled ? 1 : 0))
     #expect(service.registerCount == 3)
     #expect(stateStore.reconciledBuild == "build-1")
     #expect(stateStore.repairedBuild == "build-1")
@@ -344,7 +345,7 @@ func refreshAgentMissingHelperReportsFailureAfterRegistration(
         } catch {}
     }
 
-    #expect(service.registerCount == 1)
+    #expect(service.registerCount == (repair ? immediateRepairPolicy.retryDelays.count + 1 : 1))
     #expect(service.unregisterCount == 0)
     #expect(stateStore.reconciledBuild == nil)
     #expect(stateStore.repairedBuild == nil)
