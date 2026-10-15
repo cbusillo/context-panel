@@ -256,7 +256,7 @@ final class RefreshAgentRegistrationCoordinator {
             do {
                 try service.unregisterImmediately()
             } catch {
-                guard service.status == .notRegistered else { throw error }
+                guard service.status == .notRegistered || service.status == .notFound else { throw error }
             }
         }
         stateStore.clearAll()

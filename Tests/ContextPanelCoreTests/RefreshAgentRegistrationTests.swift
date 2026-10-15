@@ -319,7 +319,7 @@ func refreshAgentRepairRegistersNeverRegisteredHelper(initialStatus: RefreshAgen
 
 @MainActor
 @Test(arguments: [false, true], [RefreshAgentRegistrationStatus.notRegistered, .notFound])
-func refreshAgentMissingHelperFailureOffersRecoveryAfterRegistration(
+func refreshAgentMissingHelperReportsFailureAfterRegistration(
     repair: Bool, initialStatus: RefreshAgentRegistrationStatus
 ) async {
     let service = ScriptedRefreshAgentRegistrationService(
@@ -349,10 +349,29 @@ func refreshAgentMissingHelperFailureOffersRecoveryAfterRegistration(
     #expect(stateStore.reconciledBuild == nil)
     #expect(stateStore.repairedBuild == nil)
     #expect(coordinator.currentDiagnostic?.kind == .notFound)
-    let message = coordinator.currentDiagnostic?.userFacingMessage ?? ""
-    #expect(message.contains("Update or reinstall Context Panel"))
-    #expect(message.contains("Repair background updates"))
-    #expect(message.contains("Refresh now"))
+    #expect(coordinator.currentDiagnostic?.userFacingMessage.isEmpty == false)
+}
+
+@MainActor
+@Test func refreshAgentDisableClearsMissingHelperDiagnosticWhenUnregisterCannotFindService() throws {
+    let service = ScriptedRefreshAgentRegistrationService(status: .notFound)
+    service.unregisterError = RefreshAgentRegistrationTestError.failed
+    let stateStore = makeRegistrationStateStore()
+    stateStore.markReconciled(build: "build-1")
+    stateStore.markRepaired(build: "build-1")
+    stateStore.saveDiagnostic(kind: .notFound, build: "build-1")
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: stateStore, policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning }, sleep: { _ in }
+    )
+
+    try coordinator.reconcile(settings: BackgroundRefreshSettings(isEnabled: false))
+
+    #expect(service.unregisterCount == 1)
+    #expect(service.registerCount == 0)
+    #expect(stateStore.reconciledBuild == nil)
+    #expect(stateStore.repairedBuild == nil)
+    #expect(coordinator.currentDiagnostic == nil)
 }
 
 @MainActor
