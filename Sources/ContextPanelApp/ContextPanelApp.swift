@@ -21,8 +21,13 @@ private func reloadContextPanelWidgetTimeline() {
 @main
 enum ContextPanelEntryPoint {
     @MainActor
-    static func main() {
+    static func main() async {
         if let result = accountSnapshotResult(arguments: Array(CommandLine.arguments.dropFirst())) {
+            FileHandle.standardOutput.write(result.standardOutput)
+            FileHandle.standardError.write(result.standardError)
+            exit(result.exitCode)
+        }
+        if let result = await refreshNowResult(arguments: Array(CommandLine.arguments.dropFirst())) {
             FileHandle.standardOutput.write(result.standardOutput)
             FileHandle.standardError.write(result.standardError)
             exit(result.exitCode)
@@ -34,6 +39,19 @@ enum ContextPanelEntryPoint {
     static func accountSnapshotResult(arguments: [String], now: Date = Date()) -> AgentAccountSnapshotCommand.Result? {
         guard arguments.first == "--account-snapshot" else { return nil }
         return AgentAccountSnapshotCommand.run(arguments: Array(arguments.dropFirst()), now: now)
+    }
+
+    static func refreshNowResult(arguments: [String]) async -> AgentRefreshCommand.Result? {
+        guard arguments.first == "--refresh-now" else { return nil }
+        return await AgentRefreshCommand.run(arguments: Array(arguments.dropFirst()), refresh: { now in
+            let runner = SnapshotRefreshRunner(service: .appDefault(
+                renewsStaleBookmarks: false,
+                snapshotDidChange: {
+                    reloadContextPanelWidgetTimeline()
+                }
+            ))
+            return try await runner.refresh(now: now)
+        })
     }
 }
 

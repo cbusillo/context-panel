@@ -625,6 +625,50 @@ The publisher must have saved `accounts.json` (for example after an account
 setting is edited). An unsaved default configuration deliberately fails closed;
 the reader does not invent default accounts or persist them.
 
+#### Refresh before reading
+
+To collect and save readings before taking a snapshot, invoke the installed app
+directly and wait for it to exit:
+
+```sh
+"/Applications/Context Panel.app/Contents/MacOS/Context Panel" --refresh-now
+"/Applications/Context Panel.app/Contents/MacOS/Context Panel" --account-snapshot
+```
+
+Check the first command's exit status before using the snapshot for an account
+choice. `--refresh-now` forces a refresh of every enabled, non-retired local
+source through the app's existing provider adapters, even if the saved snapshot
+is fresh or Background Refresh is off. It exits after the canonical local
+snapshot and history have been saved. It runs headlessly, including when the
+app is already open, and does not register or repair the background helper.
+It uses the installed app's existing credential, bookmark, sandbox and App
+Group access. It does not change account setup or CLI logins, launch AGY,
+deliver alerts, or wait for CloudKit companion publication.
+
+Exit status **0** means every enabled source returned usable readings and the
+local save completed. **1** means setup is unavailable, no sources are enabled,
+another refresh owns the lock (retry after it finishes), a source returned no
+usable reading, or collection/storage failed. Successful sources are still
+saved when another fails. Stdout reports completed sources; stderr gives the
+failure reason, identifying setup rows by provider and ordinal rather than
+account names or IDs. **64** means invalid arguments. Use `--refresh-now --help`
+for usage; this mode accepts no storage-root override. Use `--account-snapshot`
+afterward for the versioned JSON contract.
+
+**Google is an import, not a poll.** The command includes the Google adapter,
+which reads the latest sanitized [AGY bridge export](#google-antigravity-connector).
+On success it prints that export's original observation time. An older export
+can still be a valid event-driven reading; success does not mean AGY observed
+quota during this command. Run the already-configured AGY CLI to publish a new
+observation, then refresh and read again if a caller needs newer Google data.
+Missing, malformed or unusable bridge data makes the command fail explicitly.
+Context Panel does not use AGY credentials or private quota endpoints.
+
+The helper's internal `--refresh-once` flag used the same Google adapter, so it
+could import an unchanged export while OpenAI and Anthropic obtained new network
+readings. It also exited zero after caught refresh errors and did not establish
+success for each source. It is not the supported command; use `--refresh-now`.
+
 Schema 1 has `schemaVersion`, `readAt`, `savedAt`, `accounts`, `answers`,
 `deadlines`, `providers`, `headline`, `ranking`, `resetPrompts`,
 `configurationErrors` and `providerRefills`. `answers.tightestAccountID` repeats
