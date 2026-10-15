@@ -27,6 +27,17 @@ enum ContextPanelEntryPoint {
             FileHandle.standardError.write(result.standardError)
             exit(result.exitCode)
         }
+        if CommandLine.arguments.dropFirst().first == "--refresh-now" {
+            Task {
+                guard let result = await refreshNowResult(arguments: Array(CommandLine.arguments.dropFirst())) else {
+                    exit(64)
+                }
+                FileHandle.standardOutput.write(result.standardOutput)
+                FileHandle.standardError.write(result.standardError)
+                exit(result.exitCode)
+            }
+            dispatchMain()
+        }
         ContextPanelApp.main()
     }
 
@@ -34,6 +45,24 @@ enum ContextPanelEntryPoint {
     static func accountSnapshotResult(arguments: [String], now: Date = Date()) -> AgentAccountSnapshotCommand.Result? {
         guard arguments.first == "--account-snapshot" else { return nil }
         return AgentAccountSnapshotCommand.run(arguments: Array(arguments.dropFirst()), now: now)
+    }
+
+    static func refreshNowResult(arguments: [String]) async -> AgentRefreshCommand.Result? {
+        guard arguments.first == "--refresh-now" else { return nil }
+        return await AgentRefreshCommand.run(arguments: Array(arguments.dropFirst()), refresh: { now in
+            let runner = SnapshotRefreshRunner(service: .appDefault(
+                companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
+                renewsStaleBookmarks: false,
+                snapshotDidChange: {
+                    reloadContextPanelWidgetTimeline()
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name(ContextPanelWidgetRefreshWakeup.distributedNotificationName),
+                        object: nil, userInfo: nil, deliverImmediately: true
+                    )
+                }
+            ))
+            return try await runner.refresh(now: now)
+        })
     }
 }
 

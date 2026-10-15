@@ -32,7 +32,10 @@ Context Panel is split into these native boundaries:
 - Snapshot store: the latest normalized usage state plus refresh history for
   widgets and charts.
 - macOS app: account setup, credentials, manual refresh, detailed charts,
-  provider health, and settings.
+  provider health, and settings. Its headless `--refresh-now` route uses the
+  shared refresh runner and lock, verifies every enabled source's result, and
+  waits for local persistence before returning. See the
+  [agent command contract](provider-usage-access.md#refresh-before-reading).
 - Refresh agent: a bundled native login item that performs periodic provider
   refreshes when the app UI is not running. It evaluates local limit-warning
   thresholds but queues pending local notifications for the main app to deliver
