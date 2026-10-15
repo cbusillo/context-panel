@@ -246,32 +246,113 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 }
 
 @MainActor
-@Test func refreshAgentRepairTreatsApprovalAndMissingHelperAsTerminal() async {
-    for expectedStatus in [RefreshAgentRegistrationStatus.requiresApproval, .notFound] {
-        let service = ScriptedRefreshAgentRegistrationService(status: expectedStatus)
-        let stateStore = makeRegistrationStateStore()
-        stateStore.markReconciled(build: "build-1")
-        stateStore.markRepaired(build: "build-1")
-        let coordinator = RefreshAgentRegistrationCoordinator(
-            service: service,
-            stateStore: stateStore,
-            policy: immediateRepairPolicy,
-            currentBuild: { "build-1" },
-            isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
-            sleep: { _ in }
-        )
+@Test func refreshAgentRepairTreatsApprovalAsTerminal() async {
+    let service = ScriptedRefreshAgentRegistrationService(status: .requiresApproval)
+    let stateStore = makeRegistrationStateStore()
+    stateStore.markReconciled(build: "build-1")
+    stateStore.markRepaired(build: "build-1")
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service,
+        stateStore: stateStore,
+        policy: immediateRepairPolicy,
+        currentBuild: { "build-1" },
+        isAgentHealthy: { service.isRunning }, currentAgentRunID: { service.latestRunID },
+        sleep: { _ in }
+    )
 
-        let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
+    let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
 
-        #expect(outcome == (expectedStatus == .requiresApproval ? .requiresApproval : .notFound))
-        #expect(service.unregisterCount == 0)
-        #expect(service.registerCount == 0)
-        #expect(stateStore.reconciledBuild == nil)
-        #expect(stateStore.repairedBuild == nil)
-        #expect(coordinator.currentDiagnostic?.kind == (
-            expectedStatus == .requiresApproval ? .requiresApproval : .notFound
-        ))
+    #expect(outcome == .requiresApproval)
+    #expect(service.unregisterCount == 0)
+    #expect(service.registerCount == 0)
+    #expect(stateStore.reconciledBuild == nil)
+    #expect(stateStore.repairedBuild == nil)
+    #expect(coordinator.currentDiagnostic?.kind == .requiresApproval)
+}
+
+@MainActor
+@Test(arguments: [RefreshAgentRegistrationStatus.notRegistered, .notFound])
+func refreshAgentFreshInstallRegistersBeforeDiagnosingMissingHelper(initialStatus: RefreshAgentRegistrationStatus) throws {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: initialStatus, registrationSteps: [.succeed(.enabled)]
+    )
+    let stateStore = makeRegistrationStateStore()
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: stateStore, policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning },
+        currentAgentRunID: { service.latestRunID }, sleep: { _ in }
+    )
+
+    try coordinator.reconcile(settings: BackgroundRefreshSettings(isEnabled: true))
+
+    #expect(service.registerCount == 1)
+    #expect(service.unregisterCount == 0)
+    #expect(service.isRunning)
+    #expect(stateStore.reconciledBuild == "build-1")
+    #expect(coordinator.currentDiagnostic == nil)
+}
+
+@MainActor
+@Test(arguments: [RefreshAgentRegistrationStatus.notRegistered, .notFound])
+func refreshAgentRepairRegistersNeverRegisteredHelper(initialStatus: RefreshAgentRegistrationStatus) async {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: initialStatus, registrationSteps: [.succeed(.enabled)]
+    )
+    let stateStore = makeRegistrationStateStore()
+    // Persisted state from a previous attempt must not suppress a live registration attempt.
+    stateStore.markReconciled(build: "build-1")
+    stateStore.markRepaired(build: "build-1")
+    stateStore.saveDiagnostic(kind: .notFound, build: "build-1")
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: stateStore, policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning },
+        currentAgentRunID: { service.latestRunID }, sleep: { _ in }
+    )
+
+    #expect(await coordinator.repairIfNeeded(isEnabled: { true }) == .repaired(attempts: 1))
+    #expect(service.registerCount == 1)
+    #expect(service.unregisterCount == 0)
+    #expect(service.isRunning)
+    #expect(stateStore.repairedBuild == "build-1")
+    #expect(coordinator.currentDiagnostic == nil)
+}
+
+@MainActor
+@Test(arguments: [false, true], [RefreshAgentRegistrationStatus.notRegistered, .notFound])
+func refreshAgentMissingHelperFailureOffersRecoveryAfterRegistration(
+    repair: Bool, initialStatus: RefreshAgentRegistrationStatus
+) async {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: initialStatus,
+        registrationSteps: initialStatus == .notFound ? [.fail] : [.succeed(.notFound)]
+    )
+    let stateStore = makeRegistrationStateStore()
+    stateStore.markReconciled(build: "build-1")
+    stateStore.markRepaired(build: "build-1")
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service, stateStore: stateStore, policy: immediateRepairPolicy,
+        currentBuild: { "build-1" }, isAgentHealthy: { service.isRunning },
+        currentAgentRunID: { service.latestRunID }, sleep: { _ in }
+    )
+
+    if repair {
+        #expect(await coordinator.repairIfNeeded(isEnabled: { true }) == .notFound)
+    } else {
+        do {
+            try coordinator.reconcile(settings: BackgroundRefreshSettings(isEnabled: true))
+            Issue.record("expected a failed registration to be reported")
+        } catch {}
     }
+
+    #expect(service.registerCount == 1)
+    #expect(service.unregisterCount == 0)
+    #expect(stateStore.reconciledBuild == nil)
+    #expect(stateStore.repairedBuild == nil)
+    #expect(coordinator.currentDiagnostic?.kind == .notFound)
+    let message = coordinator.currentDiagnostic?.userFacingMessage ?? ""
+    #expect(message.contains("Update or reinstall Context Panel"))
+    #expect(message.contains("Repair background updates"))
+    #expect(message.contains("Refresh now"))
 }
 
 @MainActor
@@ -775,7 +856,8 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
 }
 
 @MainActor
-@Test func refreshAgentDiagnosticAppearsInTheAppAndClearsAfterRecovery() {
+@Test(arguments: [RefreshAgentRegistrationDiagnostic.Kind.notUpdating, .notFound])
+func refreshAgentDiagnosticAppearsInTheAppAndClearsAfterRecovery(kind: RefreshAgentRegistrationDiagnostic.Kind) {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
@@ -785,10 +867,11 @@ private let immediateRepairPolicy = RefreshAgentRegistrationPolicy(
     let model = ContextPanelAppModel(
         refreshService: service, runtimeReceiptRecorder: .disabled(), enablesRuntimeReceiptRelay: false
     )
-    let diagnostic = RefreshAgentRegistrationDiagnostic(kind: .notUpdating)
+    let diagnostic = RefreshAgentRegistrationDiagnostic(kind: kind)
     model.updateBackgroundRefreshDiagnostic(diagnostic)
     #expect(model.errorMessage == diagnostic.userFacingMessage)
     #expect(model.primaryErrorStatusText == diagnostic.userFacingMessage)
+    #expect(model.backgroundRefreshStatusText == diagnostic.userFacingMessage)
     model.updateBackgroundRefreshDiagnostic(nil)
     #expect(model.errorMessage == nil)
 

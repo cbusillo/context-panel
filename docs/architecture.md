@@ -237,7 +237,15 @@ file lock in the App Group snapshot directory prevents the app and agent from
 writing overlapping refresh results.
 
 The app treats the saved background-refresh preference and the live
-`SMAppService` registration status as separate state. If an enabled login item
+`SMAppService` registration status as separate state. With background refresh
+enabled, launch and Repair attempt registration for both `notRegistered` and
+an initial `notFound` lookup result; a lookup failure alone does not prove the
+embedded helper is missing. Apple documents a never-registered service as
+[`notRegistered`](https://developer.apple.com/documentation/servicemanagement/smappservice/status-swift.enum/notregistered).
+If registration still reports `notFound`, Settings recommends updating or
+reinstalling the app, trying Repair, and using Refresh now in the meantime.
+User approval requirements remain a separate System Settings action.
+If an enabled login item
 does not launch after a grace period, the app performs one unregister operation
 and then uses bounded registration retries. It writes build repair markers only
 after the service reports `enabled` and the helper has recent wake evidence in

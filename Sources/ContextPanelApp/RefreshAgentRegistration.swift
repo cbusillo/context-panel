@@ -47,7 +47,7 @@ struct RefreshAgentRegistrationDiagnostic: Equatable, Sendable {
         case .requiresApproval:
             "Background refresh needs approval in System Settings."
         case .notFound:
-            "Background refresh is unavailable because the helper is missing from this app."
+            "Background refresh could not register its helper. Update or reinstall Context Panel, then use Repair background updates. Use Refresh now in the meantime."
         case .failed:
             "Background refresh could not be restored. Use Refresh now while Context Panel retries."
         case .notUpdating:
@@ -377,7 +377,8 @@ final class RefreshAgentRegistrationCoordinator {
             stateStore.clearDiagnostic()
             return .verifiedEnabled
         }
-        if let terminalOutcome = terminalOutcome(for: initialStatus, build: build) {
+        // A lookup failure before registration does not establish that the bundled helper is missing.
+        if initialStatus != .notFound, let terminalOutcome = terminalOutcome(for: initialStatus, build: build) {
             return terminalOutcome
         }
 
@@ -412,7 +413,7 @@ final class RefreshAgentRegistrationCoordinator {
             stateStore.clearMarkers()
             guard isEnabled() else { return stopDisabled() }
             guard !Task.isCancelled else { return .cancelled }
-        } else if initialStatus == .notRegistered {
+        } else if initialStatus == .notRegistered || initialStatus == .notFound {
             stateStore.clearMarkers()
         }
 
@@ -422,7 +423,7 @@ final class RefreshAgentRegistrationCoordinator {
     private func reconcileEnabledRegistration() throws {
         let build = currentBuild()
         let initialStatus = service.status
-        if let terminalOutcome = terminalOutcome(for: initialStatus, build: build) {
+        if initialStatus != .notFound, let terminalOutcome = terminalOutcome(for: initialStatus, build: build) {
             throw RefreshAgentRegistrationError.statusNotEnabled(status(for: terminalOutcome))
         }
 
