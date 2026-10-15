@@ -4305,6 +4305,152 @@ wait
             self.assertEqual(exported_ipa_result.returncode, 0, exported_ipa_result.stdout)
             self.assertIn(str(ipa_path), exported_ipa_result.stdout)
 
+    @staticmethod
+    def run_loaded_refresh_agent_fixture(
+        *,
+        loaded_root: str = "canonical",
+        command_name: str = "bundle-id",
+        launch_pid: str = "4321",
+        lsof_status: int = 0,
+        lsof_pid: str = "4321",
+        inode: str = "9001",
+        device: str = "0x100000f",
+        disk_identity: str = "16777231 9001",
+        duplicate_executable: bool = False,
+        lsof_empty: bool = False,
+        launch_status: int = 0,
+        launch_output: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Exercise the acting baseline's process/login-item checks with inert records."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = root / "Applications/Context Panel.app"
+            agent = app / "Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+            widget = app / "Contents/PlugIns/ContextPanelWidgetExtension.appex"
+            executable = agent / "Contents/MacOS/ContextPanelRefreshAgent"
+            executable.parent.mkdir(parents=True)
+            widget.mkdir(parents=True)
+            executable.write_text("inert fixture; never executed")
+            resources = app / "Contents/Resources"
+            resources.mkdir()
+            (resources / "ContextPanelBuildFingerprint.txt").write_text("fixture")
+            loaded = str(executable)
+            if loaded_root == "trash":
+                loaded = str(root / "Trash/Context Panel old.app" / executable.relative_to(app))
+            elif loaded_root == "other":
+                loaded = str(root / "Other/Context Panel.app" / executable.relative_to(app))
+            elif loaded_root == "deleted":
+                loaded += " (deleted)"
+            process_command = (
+                "com.shinycomputers.contextpanel.refresh-agent"
+                if command_name == "bundle-id" else str(executable)
+            )
+            process = f"4321 {process_command}" if command_name != "hidden" else ""
+            launch = launch_output if launch_output is not None else (
+                "gui/501/com.shinycomputers.contextpanel.refresh-agent = {\n"
+                f"    state = running\n    pid = {launch_pid}\n}}"
+            )
+            loaded_files = "" if lsof_empty else (
+                f"p{lsof_pid}\nftxt\nD{device}\ni{inode}\nn{loaded}\n"
+                "ftxt\nD0x100000f\ni7\nn/usr/lib/dyld\n"
+            )
+            if duplicate_executable:
+                loaded_files += f"ftxt\nD{device}\ni{inode}\nn{loaded}\n"
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            # Stub unrelated baseline reads; no host runtime or credential read runs.
+            keep=" check_runtime active_context_processes check_refresh_agent_process check_refresh_agent_login_item fail ok note section "
+            for name in $(declare -F | awk '{{print $3}}'); do
+              [[ "$keep" == *" $name "* ]] && continue
+              eval "$name() {{ :; }}"
+            done
+            app_path={shlex.quote(str(app))}
+            widget_path={shlex.quote(str(widget))}
+            refresh_agent_path={shlex.quote(str(agent))}
+            expected_fingerprint=fixture
+            plugin_paths() {{ printf '%s\\n' "$widget_path"; }}
+            url_handler_paths() {{ printf '%s\\n' "$app_path"; }}
+            ps() {{ printf '%s\\n' {shlex.quote(process)}; }}
+            launchctl() {{
+              [[ "$1" == print ]] || exit 98
+              printf '%s\\n' {shlex.quote(launch)}
+              return {launch_status}
+            }}
+            lsof() {{
+              printf '%s' {shlex.quote(loaded_files)}
+              return {lsof_status}
+            }}
+            stat() {{
+              [[ "${{@: -1}}" == {shlex.quote(str(executable))} ]] || return 96
+              printf '%s\\n' {shlex.quote(disk_identity)}
+            }}
+            failures=0
+            check_runtime
+            [[ "$failures" == 0 ]]
+            """
+            return subprocess.run(
+                ["/bin/bash", "-c", command], cwd=REPO_ROOT,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+    def test_runtime_baseline_loaded_agent_rejects_moved_executable(self) -> None:
+        for loaded_root in ("trash", "other", "deleted"):
+            for command_name in ("bundle-id", "path", "hidden"):
+                with self.subTest(loaded_root=loaded_root, command_name=command_name):
+                    result = self.run_loaded_refresh_agent_fixture(
+                        loaded_root=loaded_root, command_name=command_name,
+                    )
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_baseline_loaded_agent_accepts_canonical_executable(self) -> None:
+        for command_name in ("bundle-id", "path", "hidden"):
+            with self.subTest(command_name=command_name):
+                result = self.run_loaded_refresh_agent_fixture(command_name=command_name)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_baseline_loaded_agent_rejects_replaced_file(self) -> None:
+        for identity in ({"inode": "8000"}, {"device": "0x1000010"}):
+            with self.subTest(identity=identity):
+                result = self.run_loaded_refresh_agent_fixture(**identity)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_baseline_loaded_agent_checks_process_without_launchd_job(self) -> None:
+        for loaded_root in ("canonical", "trash"):
+            with self.subTest(loaded_root=loaded_root):
+                result = self.run_loaded_refresh_agent_fixture(
+                    loaded_root=loaded_root, launch_status=113,
+                    launch_output='Could not find service "com.shinycomputers.contextpanel.refresh-agent" in domain for user gui: 501',
+                )
+                self.assertEqual(result.returncode == 0, loaded_root == "canonical", result.stdout)
+
+    def test_runtime_baseline_loaded_agent_preserves_unloaded_and_failed_states(self) -> None:
+        cases = (
+            (113, 'Could not find service "com.shinycomputers.contextpanel.refresh-agent" in domain for user gui: 501', True),
+            (0, "state = not running", True),
+            (0, "state = spawn failed\nlast exit code = 78", False),
+        )
+        for status, output, accepted in cases:
+            with self.subTest(output=output):
+                result = self.run_loaded_refresh_agent_fixture(
+                    command_name="hidden", launch_status=status, launch_output=output,
+                )
+                self.assertEqual(result.returncode == 0, accepted, result.stdout)
+
+    def test_runtime_baseline_loaded_agent_fails_when_identity_is_unavailable(self) -> None:
+        cases: tuple[dict[str, Any], ...] = (
+            {"lsof_status": 1}, {"lsof_empty": True}, {"lsof_pid": "9999"},
+            {"inode": ""}, {"device": ""}, {"device": "bad"},
+            {"disk_identity": ""}, {"duplicate_executable": True},
+            {"launch_pid": ""}, {"launch_pid": "invalid"},
+            {"launch_status": 1, "launch_output": "permission denied"},
+            {"launch_output": ""},
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                result = self.run_loaded_refresh_agent_fixture(**case)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+
     def test_runtime_baseline_rejects_unexpected_bookmark_counts(self) -> None:
         command = """
         source scripts/context-panel-runtime-baseline.sh --source-only
