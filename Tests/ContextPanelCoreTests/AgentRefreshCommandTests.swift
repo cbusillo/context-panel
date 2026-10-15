@@ -84,6 +84,27 @@ func agentRefreshCommandValidatesBothSourcesOfADeduplicatedAccount(secondFails: 
     #expect(saved.snapshot.limits.count == 1)
 }
 
+@Test func agentRefreshCommandPrintsSessionObservationTimeRatherThanRefreshTime() async throws {
+    var account = refreshCommandAccount("sessions", .openAI)
+    account.codexQuotaPath = "/fixture/sessions"
+    let fixture = try RefreshCommandFixture(accounts: [account])
+    defer { fixture.remove() }
+    let observedAt = refreshCommandNow.addingTimeInterval(-120)
+    let connector = CodexSessionQuotaConnector(account: account) { _ in
+        CodexSessionQuotaObservation(observedAt: observedAt, snapshot: CodexRateLimitSnapshot(
+            id: "codex", limitName: nil, planType: "pro",
+            primary: CodexRateLimitWindow(usedPercent: 20, windowMinutes: 10_080,
+                resetsAt: refreshCommandNow.addingTimeInterval(86_400)),
+            secondary: nil, credits: nil, rateLimitReachedType: nil))
+    }
+    let result = await fixture.run(fixture.runner(fixture.service { _ in [connector] }))
+    #expect(result.exitCode == 0)
+    let saved = try #require(fixture.snapshots.loadCurrent().snapshot)
+    #expect(saved.snapshot.limits.first?.lastUpdatedAt == observedAt)
+    #expect(String(decoding: result.standardOutput, as: UTF8.self).contains(observedAt.ISO8601Format()))
+    #expect(!String(decoding: result.standardOutput, as: UTF8.self).contains(refreshCommandNow.ISO8601Format()))
+}
+
 @Test(arguments: [UsageStatus.failure, .unknown, .stale])
 func agentRefreshCommandPartialFailuresAreNonzeroAndPreserveSuccessfulReadings(status: UsageStatus) async throws {
     let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("good", .openAI),

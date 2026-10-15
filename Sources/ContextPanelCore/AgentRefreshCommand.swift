@@ -89,10 +89,11 @@ public enum AgentRefreshCommand {
                     failures.append("\(source): \(ConnectorRedactor.safeErrorDescription(reason))")
                     continue
                 }
+                let observationTime = report.limits.compactMap(\.lastUpdatedAt).min()?.ISO8601Format() ?? "unknown"
                 if account.provider == .google {
-                    messages.append("\(source): saved AGY bridge observation from \(report.generatedAt.ISO8601Format()); run AGY to publish a new observation.")
+                    messages.append("\(source): saved AGY bridge observation from \(observationTime); run AGY to publish a new observation.")
                 } else if account.codexQuotaPath != nil {
-                    messages.append("\(source): saved session-folder observation from \(report.generatedAt.ISO8601Format()).")
+                    messages.append("\(source): saved session-folder observation from \(observationTime).")
                 } else {
                     messages.append("\(source): saved readings.")
                 }

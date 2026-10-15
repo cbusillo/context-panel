@@ -649,6 +649,8 @@ It uses the same account identity
 resolution and companion synchronization as an ordinary app refresh. Exit status
 describes provider collection and local persistence; companion availability is
 reported separately in the app's diagnostics.
+The command waits for that normal synchronization too; slow iCloud responses
+can delay exit even after the local save completes.
 
 If another refresh holds the lock, the command retries for up to 30 seconds
 before reporting contention. It still performs its own forced refresh once it
@@ -663,7 +665,8 @@ local save completed. **1** means setup is unavailable, no sources are enabled,
 another refresh still owns the lock after that wait (retry after it finishes),
 a source returned no usable reading, or collection/storage failed. Successful sources are still
 saved when another fails. Stdout reports completed sources; stderr gives the
-failure reason, identifying setup rows by provider and ordinal rather than
+failure reason, identifying setup rows by provider and their position among all
+remaining enabled sources rather than
 account names or IDs. **64** means invalid arguments. Use `--refresh-now --help`
 for usage; this mode accepts no storage-root override. Use `--account-snapshot`
 afterward for the versioned JSON contract.
