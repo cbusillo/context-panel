@@ -55,6 +55,10 @@ enum ContextPanelEntryPoint {
                 renewsStaleBookmarks: false,
                 snapshotDidChange: {
                     reloadContextPanelWidgetTimeline()
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name(ContextPanelWidgetRefreshWakeup.distributedNotificationName),
+                        object: nil, userInfo: nil, deliverImmediately: true
+                    )
                 }
             ))
             return try await runner.refresh(now: now)

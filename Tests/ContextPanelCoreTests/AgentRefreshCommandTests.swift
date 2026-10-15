@@ -188,13 +188,23 @@ func agentRefreshCommandPreservesAccountIdentityAndHonorsRemovals(removingSource
     defer { fixture.remove() }
     let runner = fixture.runner(fixture.service { document in [RefreshCommandConnector(account: document.accounts[0])] })
     let busy = RefreshCommandBusyOnce()
+    let clock = RefreshCommandClock()
     let result = await AgentRefreshCommand.run(arguments: [], accountStore: fixture.accounts,
-        now: refreshCommandNow, sleep: {}, refresh: { now in
+        now: { clock.read() }, sleep: { clock.advance() }, refresh: { now in
             if await busy.take() { return .skippedAlreadyRunning }
             return try await runner.refresh(now: now)
         })
     #expect(result.exitCode == 0)
-    #expect(fixture.snapshots.loadCurrent().snapshot != nil)
+    let saved = try #require(fixture.snapshots.loadCurrent().snapshot)
+    #expect(saved.savedAt == clock.read())
+    #expect(saved.savedAt > refreshCommandNow)
+}
+
+private final class RefreshCommandClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date = refreshCommandNow
+    func read() -> Date { lock.withLock { date } }
+    func advance() { lock.withLock { date += 60 } }
 }
 
 private actor RefreshCommandBusyOnce {
@@ -270,7 +280,7 @@ private struct RefreshCommandFixture: Sendable {
             lock: SnapshotRefreshLock(lockURL: root.appending(path: "refresh.lock")))
     }
     func run(_ runner: SnapshotRefreshRunner) async -> AgentRefreshCommand.Result {
-        await AgentRefreshCommand.run(arguments: [], accountStore: accounts, now: refreshCommandNow, sleep: {},
+        await AgentRefreshCommand.run(arguments: [], accountStore: accounts, now: { refreshCommandNow }, sleep: {},
             refresh: { try await runner.refresh(now: $0) })
     }
 }

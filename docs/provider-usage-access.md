@@ -642,8 +642,10 @@ is fresh or Background Refresh is off. It exits after the canonical local
 snapshot and history have been saved. It runs headlessly, including when the
 app is already open, and does not register or repair the background helper.
 It uses the installed app's existing credential, bookmark, sandbox and App
-Group access. It does not change account setup or CLI logins, launch AGY,
-deliver alerts, or change background settings. It uses the same account identity
+Group access. It does not add accounts, change CLI logins, launch AGY,
+deliver alerts, or change background settings. As with an ordinary refresh, it
+applies existing setup migrations and shared account removals.
+It uses the same account identity
 resolution and companion synchronization as an ordinary app refresh. Exit status
 describes provider collection and local persistence; companion availability is
 reported separately in the app's diagnostics.
@@ -651,6 +653,10 @@ reported separately in the app's diagnostics.
 If another refresh holds the lock, the command retries for up to 30 seconds
 before reporting contention. It still performs its own forced refresh once it
 acquires the lock.
+
+OpenAI sources bound to session folders import local observations rather than
+polling a provider. Their success output includes the observation time too;
+run the configured CLI to produce a newer session observation when needed.
 
 Exit status **0** means every enabled source returned usable readings and the
 local save completed. **1** means setup is unavailable, no sources are enabled,

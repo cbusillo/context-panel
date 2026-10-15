@@ -14,7 +14,7 @@ public enum AgentRefreshCommand {
             configurationURL: ContextPanelLocations.accountConfigurationURL(),
             fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
         ),
-        now: Date = Date(),
+        now: @Sendable () -> Date = Date.init,
         sleep: @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
         refresh: @Sendable (Date) async throws -> SnapshotRefreshRunDecision
     ) async -> Result {
@@ -35,7 +35,7 @@ public enum AgentRefreshCommand {
         else {
             return result(1, error: "Account setup is missing; configure accounts in Context Panel first.")
         }
-        let configuration = accountStore.load(now: now)
+        let configuration = accountStore.load(now: now())
         guard configuration.status == .healthy else {
             return result(1, error: "Account setup could not be read; check Settings in Context Panel.")
         }
@@ -47,7 +47,7 @@ public enum AgentRefreshCommand {
         var decision = SnapshotRefreshRunDecision.skippedAlreadyRunning
         do {
             for attempt in 0..<31 {
-                decision = try await refresh(now)
+                decision = try await refresh(now())
                 guard decision == .skippedAlreadyRunning else { break }
                 if attempt < 30 { try await sleep() }
             }
@@ -66,7 +66,7 @@ public enum AgentRefreshCommand {
         }
 
         // Refresh can apply shared removals, deleting a setup row intentionally.
-        let updatedConfiguration = accountStore.load(now: now)
+        let updatedConfiguration = accountStore.load(now: now())
         guard updatedConfiguration.status == .healthy else {
             return result(1, error: "Account setup could not be read after refresh; check Settings in Context Panel.")
         }
@@ -91,6 +91,8 @@ public enum AgentRefreshCommand {
                 }
                 if account.provider == .google {
                     messages.append("\(source): saved AGY bridge observation from \(report.generatedAt.ISO8601Format()); run AGY to publish a new observation.")
+                } else if account.codexQuotaPath != nil {
+                    messages.append("\(source): saved session-folder observation from \(report.generatedAt.ISO8601Format()).")
                 } else {
                     messages.append("\(source): saved readings.")
                 }
