@@ -65,6 +65,25 @@ private let refreshCommandNow = Date(timeIntervalSince1970: 1_800_000_000)
     #expect(String(decoding: result.standardOutput, as: UTF8.self).contains(observedAt.ISO8601Format()))
 }
 
+@Test(arguments: [false, true])
+func agentRefreshCommandValidatesBothSourcesOfADeduplicatedAccount(secondFails: Bool) async throws {
+    let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("first", .openAI),
+        refreshCommandAccount("second", .openAI)])
+    defer { fixture.remove() }
+    let service = fixture.service { document in
+        document.accounts.enumerated().map { index, account in
+            RefreshCommandConnector(account: account, failure: secondFails && index == 1 ? .failure : nil,
+                logicalAccountID: "same-chatgpt-account")
+        }
+    }
+    let result = await fixture.run(fixture.runner(service))
+    #expect(result.exitCode == (secondFails ? 1 : 0))
+    #expect(result.standardError.isEmpty == !secondFails)
+    let saved = try #require(fixture.snapshots.loadCurrent().snapshot)
+    #expect(saved.reports.count == 1)
+    #expect(saved.snapshot.limits.count == 1)
+}
+
 @Test(arguments: [UsageStatus.failure, .unknown, .stale])
 func agentRefreshCommandPartialFailuresAreNonzeroAndPreserveSuccessfulReadings(status: UsageStatus) async throws {
     let fixture = try RefreshCommandFixture(accounts: [refreshCommandAccount("good", .openAI),
@@ -153,13 +172,15 @@ private func refreshCommandAccount(_ id: String, _ provider: Provider, enabled: 
 private struct RefreshCommandConnector: ProviderConnector {
     let account: LocalProviderAccountConfiguration
     var failure: UsageStatus? = nil
+    var logicalAccountID: String? = nil
     var provider: Provider { account.provider }
     func refresh(now: Date) async -> ConnectorRefreshResult {
-        let limit = UsageLimit(provider: provider, accountID: account.id, configuredAccountID: account.id,
+        let accountID = logicalAccountID ?? account.id
+        let limit = UsageLimit(provider: provider, accountID: accountID, configuredAccountID: account.id,
             accountName: account.displayName, label: "Weekly", unit: .percent, used: 20, limit: 100,
             resetsAt: now.addingTimeInterval(86_400), lastUpdatedAt: now)
         return ConnectorRefreshResult(generatedAt: now, reports: [ProviderConnectorReport(provider: provider,
-            accountID: account.id, configuredAccountID: account.id, accountName: account.displayName,
+            accountID: accountID, configuredAccountID: account.id, accountName: account.displayName,
             generatedAt: now, limits: failure == nil ? [limit] : [], status: failure,
             errorMessage: failure == nil ? nil : "Read failed at /private/secret for private@example.com")])
     }

@@ -65,7 +65,7 @@ public enum AgentRefreshCommand {
         for (index, account) in accounts.enumerated() {
             // An ordinal identifies the failing setup row without printing local names or IDs.
             let source = "\(account.provider.rawValue) source \(index + 1)"
-            let reports = outcome.refreshResult.reports.filter {
+            let reports = outcome.refreshResult.sourceReports.filter {
                 $0.provider == account.provider && $0.configuredAccountID == account.id
             }
             guard !reports.isEmpty else {

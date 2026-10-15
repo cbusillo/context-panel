@@ -746,18 +746,22 @@ public struct SnapshotRefreshService: Sendable {
                 previousStoredSnapshot = pruned
             }
         }
-        let connectorResult = ConnectorRefreshResult(generatedAt: rawConnectorResult.generatedAt, reports: rawConnectorResult.reports.filter { report in
+        let includesReport: (ProviderConnectorReport) -> Bool = { report in
             guard let identity = report.sharedAccountIdentity else { return true }
             let key = AccountDisplayMetadata.safeID(report.provider, identity.accountID)
             if let setup = accountResult.document.accounts.first(where: { $0.id == report.configuredAccountID }),
                let requested = setup.restorationRequestedAt, report.status != .failure, !report.limits.isEmpty,
                requested > (accountResult.document.removedDisplayDates?[key] ?? Date(timeIntervalSince1970: 0)) { return true }
             return !removals.contains(key)
-        })
+        }
+        let connectorResult = ConnectorRefreshResult(generatedAt: rawConnectorResult.generatedAt,
+            reports: rawConnectorResult.reports.filter(includesReport),
+            sourceReports: rawConnectorResult.sourceReports.filter(includesReport))
         let refreshResult = ConnectorRefreshResult(
             generatedAt: connectorResult.generatedAt,
             reports: connectorResult.reports,
-            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
+            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now),
+            sourceReports: connectorResult.sourceReports
         )
         RefreshDiagnostics.logProviderReports(refreshResult.reports, previous: stores.primary.loadCurrent().snapshot)
         guard refreshResult.hasSnapshotPayload else {

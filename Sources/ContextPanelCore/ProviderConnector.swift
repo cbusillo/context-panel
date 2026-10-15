@@ -217,15 +217,20 @@ public struct ProviderConnectorReport: Equatable, Sendable {
 public struct ConnectorRefreshResult: Equatable, Sendable {
     public let generatedAt: Date
     public let reports: [ProviderConnectorReport]
+    /// Per-source outcomes before logical-account deduplication, for callers that
+    /// must establish whether every configured source completed successfully.
+    public let sourceReports: [ProviderConnectorReport]
     public let promptCacheObservations: [PromptCacheObservation]
 
     public init(
         generatedAt: Date,
         reports: [ProviderConnectorReport],
-        promptCacheObservations: [PromptCacheObservation] = []
+        promptCacheObservations: [PromptCacheObservation] = [],
+        sourceReports: [ProviderConnectorReport]? = nil
     ) {
         self.generatedAt = generatedAt
         self.reports = reports
+        self.sourceReports = sourceReports ?? reports
         self.promptCacheObservations = promptCacheObservations
     }
 
@@ -288,7 +293,8 @@ public struct ProviderConnectorRuntime: Sendable {
         return ConnectorRefreshResult(
             generatedAt: now,
             reports: Self.deduplicatedReports(reports),
-            promptCacheObservations: Self.deduplicatedPromptCacheObservations(promptCacheObservations)
+            promptCacheObservations: Self.deduplicatedPromptCacheObservations(promptCacheObservations),
+            sourceReports: reports
         )
     }
 
