@@ -242,8 +242,8 @@ enabled, launch and Repair attempt registration for both `notRegistered` and
 an initial `notFound` lookup result; a lookup failure alone does not prove the
 embedded helper is missing. Apple documents a never-registered service as
 [`notRegistered`](https://developer.apple.com/documentation/servicemanagement/smappservice/status-swift.enum/notregistered).
-If registration still reports `notFound`, Settings recommends updating or
-reinstalling the app, trying Repair, and using Refresh now in the meantime.
+Registration failure diagnostics and recovery guidance are defined by
+`RefreshAgentRegistrationDiagnostic` in `RefreshAgentRegistration.swift`.
 User approval requirements remain a separate System Settings action.
 If an enabled login item
 does not launch after a grace period, the app performs one unregister operation
