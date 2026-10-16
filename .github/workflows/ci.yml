@@ -143,6 +143,21 @@ jobs:
           python3 scripts/context-panel-test-lanes.py run
           --lane routine-ci-python
 
+      # Shared warning-only scanner (cbusillo/codex-skills#1692). It runs for
+      # tooling-only changes too; findings annotate and exit zero.
+      - name: Check out test quality scanner
+        uses: actions/checkout@v7
+        with:
+          repository: cbusillo/codex-skills
+          ref: c28a756968fa0ccce2dd02ea5fedd6f988b1475d
+          path: .test-quality-catalog
+          persist-credentials: false
+
+      - name: Warn about change-detector tests
+        run: >-
+          uv run --no-project --no-config
+          .test-quality-catalog/scripts/check_test_quality.py --repo . --format github
+
       - name: Install XcodeGen
         if: ${{ steps.scope.outputs.product != 'false' }}
         run: |
