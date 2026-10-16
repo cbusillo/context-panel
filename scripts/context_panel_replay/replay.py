@@ -17,7 +17,7 @@ from context_panel_release_gate.core import (
     _validate_policy,
 )
 
-from .comparison_adapters import ComparisonAdapterError, adapt_comparison_for_replay
+from .comparison_adapters import ComparisonAdapterError, adapt_comparison_for_replay, SUPPORTED_ADAPTER_PAIRS
 from .inventory import (
     InventoryError,
     _normalize_root_bindings,
@@ -761,7 +761,7 @@ def validate_bundle(
         adapter = _row(train["comparisonAdapter"], 2, "replay comparison adapter")
         if (
             any(type(version) is not int for version in adapter)
-            or tuple(adapter) not in {(1, 2), (2, 2), (3, 3)}
+            or tuple(adapter) not in SUPPORTED_ADAPTER_PAIRS
         ):
             raise ReplayError("replay comparison adapter is invalid")
         sources = _validate_source_rows(train["sourceVerification"], inventory_train)
@@ -777,7 +777,7 @@ def validate_bundle(
         )
         if receipt_state is None or receipt_input is None:
             raise ReplayError("replay inventory is missing physical runtime receipts")
-        surface_rows = _validate_surface_rows(
+        _validate_surface_rows(
             train["runtimeSurfaces"],
             surface_policy,
             receipt_state,

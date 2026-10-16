@@ -1367,6 +1367,11 @@ their own sealed fingerprints and dependencies remain authoritative. The check
 makes no compatibility guess for changed dependencies. A missing, partial, legacy-incomplete or
 contradictory artifact cannot silently remove a platform. Full-fleet comparisons
 without a release record retain schema-v5 behavior.
+An Xcode/SDK or toolchain change changes carried fingerprints and therefore needs
+fresh artifacts and proof for every affected platform; it is not a pure build
+number change. Retained lineage depth limits and evidence expiry still apply to
+successive mixed releases. The record embeds retained inputs, so operators should
+expect larger evidence bundles as those chains grow.
 The v5 and v6 derivations are versioned modules. Future comparison semantics must
 use a new schema and preserve those derivations for retained lineage and replay.
 

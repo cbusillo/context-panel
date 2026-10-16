@@ -476,6 +476,72 @@ class SurfaceManifestTests(unittest.TestCase):
             ledger,
         )
         self.assertEqual(adapt_comparison_for_replay(comparison), comparison)
+        # Seal and reconstruct a real mixed train through the inventory consumer.
+        from Tests.ScriptsTests.test_replay_inventory import ReplayInventoryTests
+        from context_panel_replay.inventory import (
+            seal_inventory,
+            render_json,
+            verify_inventory,
+        )
+        from context_panel_replay.replay import reconstruct_bundle
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inventory_policy, roots = ReplayInventoryTests().fixture(root)
+            train_root = roots["archive"] / "train"
+            for name, payload in {
+                "current": current,
+                "comparison": comparison,
+                "report": report,
+                "ledger": ledger,
+                "lineage": mixed_lineage,
+                "visual": report["visualApprovals"],
+            }.items():
+                (train_root / f"{name}.json").write_text(json.dumps(payload))
+            (roots["archive"] / "previous.json").write_text(json.dumps(previous))
+            for platform, entry in record["platforms"].items():
+                (
+                    train_root / "expected" / f"ExpectedBuildManifest-{platform}.json"
+                ).write_text(json.dumps(entry["expectedBuildManifest"]))
+            inventory_config = json.loads(inventory_policy.read_text())
+            train = inventory_config["trains"][0]
+            train.update(
+                trainId=f"{report['target']['version']}-{report['target']['buildNumber']}",
+                version=report["target"]["version"],
+                buildNumber=report["target"]["buildNumber"],
+            )
+            train["sealedMetadataDigest"] = (
+                release_gate_module.canonical_payload_digest(
+                    {
+                        "previousManifestId": previous["manifestId"],
+                        "currentManifestId": current["manifestId"],
+                        "contractFingerprint": current["contractFingerprint"],
+                        "scope": {
+                            k: sorted(v)
+                            for k, v in comparison["requiredSurfaces"].items()
+                        },
+                    }
+                )
+            )
+            inventory_policy.write_text(json.dumps(inventory_config))
+            inventory = seal_inventory(inventory_policy, roots)
+            inventory_path = root / "inventory.json"
+            inventory_path.write_bytes(render_json(inventory))
+            self.assertEqual(
+                verify_inventory(inventory_policy, inventory_path, roots), inventory
+            )
+            release_policy_path = root / "release-policy.json"
+            release_policy_path.write_text(json.dumps(policy()))
+            bundle = reconstruct_bundle(
+                inventory_policy_path=inventory_policy,
+                inventory_path=inventory_path,
+                release_policy_path=release_policy_path,
+                surface_policy_path=REPO_ROOT / "Config/ContextPanelSurfacePolicy.json",
+                root_bindings=roots,
+            )
+            self.assertEqual(
+                len(bundle["trains"][0]["runtimeSurfaces"]), len(comparison["surfaces"])
+            )
         damaged_lineage = copy.deepcopy(restored)
         damaged_lineage["generation"]["comparison"]["releaseSafety"]["state"] = (
             "tampered"
@@ -650,14 +716,11 @@ class SurfaceManifestTests(unittest.TestCase):
             self.assertEqual(run_gate(argv), 0)
             self.assertEqual(json.loads((root / "ledger.json").read_text()), ledger)
             requirements = root / "requirements.json"
+            from Tests.ScriptsTests.test_shared_view_capture_workflow import workflow
+
             requirements.write_text(
                 json.dumps(
-                    {
-                        "schemaVersion": 1,
-                        "kind": "context-panel-visual-review-requirements",
-                        "currentManifestID": current["manifestId"],
-                        "requirements": [],
-                    }
+                    workflow.combined_visual_plan(root / "comparison.json", REPO_ROOT)
                 )
             )
             submitted = expected_surface_identities_from_payloads(
@@ -718,6 +781,7 @@ class SurfaceManifestTests(unittest.TestCase):
                         "schema": "CloudKit/**/*.json",
                         "cloudkit": "Sources/ContextPanelCloudKitSync/*.swift",
                         "app-group": "Config/*.entitlements",
+                        "mac-producer": "Sources/ContextPanelApp/*.swift",
                     }[label]
                     candidates = list(root.glob(pattern))
                 target = candidates[0]
@@ -743,6 +807,30 @@ class SurfaceManifestTests(unittest.TestCase):
                     result["releaseSafety"]["state"], "unknown-fail-closed"
                 )
                 self.assertTrue(result["releaseSafety"]["blockers"])
+
+    def test_platform_release_carried_dependency_check_is_independent_of_producer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(temporary)
+            self.append(next((root / "Sources/ContextPanelCompanion").glob("*.swift")))
+            previous, current, builds, record = self.platform_release(
+                self.manifest(root)
+            )
+        result = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        self.assertEqual(result["releaseSafety"]["state"], "unknown-fail-closed")
+        self.assertTrue(
+            any(
+                blocker.startswith("ios:")
+                for blocker in result["releaseSafety"]["blockers"]
+            )
+        )
+        self.assertFalse(
+            any(
+                blocker.startswith("macos:")
+                for blocker in result["releaseSafety"]["blockers"]
+            )
+        )
 
     def test_platform_release_tooling_changes_preserve_binary_contract_checks(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -804,6 +892,19 @@ class SurfaceManifestTests(unittest.TestCase):
             now=NOW,
         )
         self.assertEqual(ledger["state"], "approved", ledger["blockers"])
+        from Tests.ScriptsTests.test_shared_view_capture_workflow import workflow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            comparison_path = Path(temporary) / "comparison.json"
+            comparison_path.write_text(json.dumps(result))
+            plan = workflow.combined_visual_plan(comparison_path, REPO_ROOT)
+            self.assertTrue(plan["requirements"])
+            self.assertTrue(
+                all(
+                    item["surface"].startswith("macos.")
+                    for item in plan["requirements"]
+                )
+            )
 
     def test_platform_release_missing_or_relabelled_shipped_build_is_rejected(self):
         for mutation in ("missing", "relabelled", "omitted-platform"):

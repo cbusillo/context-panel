@@ -435,8 +435,6 @@ def plan_shared_view_evidence(
         validated_comparison = validate_current_comparison(comparison)
     except ComparisonSchemaError as error:
         raise SharedViewEvidenceError("surface comparison is invalid or stale") from error
-    if validated_comparison["schemaVersion"] != 5:
-        raise SharedViewEvidenceError("surface comparison is invalid or stale")
     validate_shared_view_matrix(matrix, surface_policy)
     policy_by_id = {surface.id: surface for surface in surface_policy}
     shared_surface_ids = {surface.id for surface in surface_policy if "shared-view" in surface.evidence_capabilities}

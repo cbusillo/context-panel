@@ -588,6 +588,7 @@ def load_visual_review_plan(
         if (
             evidence_class not in VISUAL_REVIEW_CLASSES
             or surface not in full_required_by_class[evidence_class]
+            or surface not in identity_by_surface
         ):
             raise VisualApprovalError("visual review requirement is outside the required comparison scope")
         identity = identity_by_surface[str(surface)]

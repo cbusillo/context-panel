@@ -24,6 +24,14 @@ V4_COMPARISON_SCHEMA_VERSION = comparison_schema_v4.CURRENT_COMPARISON_SCHEMA_VE
 validate_comparison_v2 = comparison_schema_v2.validate_comparison_v2
 validate_comparison_v3 = comparison_schema_v3.validate_comparison_v3
 validate_comparison_v4 = comparison_schema_v4.validate_comparison_v4
+SUPPORTED_ADAPTER_PAIRS = {
+    (1, V2_COMPARISON_SCHEMA_VERSION),
+    *((version, version) for version in (
+        V2_COMPARISON_SCHEMA_VERSION, V3_COMPARISON_SCHEMA_VERSION,
+        V4_COMPARISON_SCHEMA_VERSION, CURRENT_COMPARISON_SCHEMA_VERSION,
+        PLATFORM_COMPARISON_SCHEMA_VERSION,
+    )),
+}
 
 
 def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:

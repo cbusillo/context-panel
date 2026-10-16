@@ -2058,6 +2058,8 @@ def evaluate_release_evidence(
             raise ReleaseEvidenceError("platform comparison requires its exact previous artifact lineage")
         previous_sources = comparison["releaseContext"]["releaseRecord"].get("previousSourceManifests")
         if previous_sources:
+            if previous_ledger is None:
+                raise ReleaseEvidenceError("previous platform sources require approved lineage")
             prior_comparison = previous_ledger["generation"]["comparison"]
             if prior_comparison.get("schemaVersion") != PLATFORM_COMPARISON_SCHEMA_VERSION:
                 raise ReleaseEvidenceError("previous platform sources require platform lineage")
@@ -2559,7 +2561,7 @@ def release_evidence_report_blockers(
                                 f"{surface}:{evidence_class}:validation-report-lineage-mismatch"
                             )
                     elif evidence_class == "actual-runtime" and source == "carry-forward":
-                        if not (comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION and any(
+                        if not (comparison is not None and comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION and any(
                             entry["state"] == "carried" and any(s["id"] == surface for s in entry["expectedBuildManifest"]["surfaces"])
                             for entry in comparison["releaseContext"]["releaseRecord"]["platforms"].values()
                         )):
