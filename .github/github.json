@@ -42,7 +42,8 @@
       "fastPython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane fast-local-python",
       "routinePython": "uv run --no-project --with cryptography --with PyYAML python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
       "routineSwift": "uv run --no-project python scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test",
-      "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)"
+      "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)",
+      "changeDetectorWarnings": ".github/workflows/ci.yml swift-tests (warning-only shared scanner checked out from cbusillo/codex-skills; triage annotations on added or changed tests; https://github.com/cbusillo/codex-skills/blob/main/skills/references/test-quality.md)"
     },
     "inspection": {
       "ide": "PyCharm",
