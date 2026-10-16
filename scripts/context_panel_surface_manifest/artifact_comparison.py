@@ -22,6 +22,24 @@ ARTIFACT_RISK_CODES = (
 )
 
 
+def semantic_artifact_risk_codes(
+    previous: dict[str, Any], current: dict[str, Any]
+) -> list[str]:
+    codes = [
+        code
+        for key, code in (
+            ("bundleContractSha256", "bundle-contract-changed"),
+            ("signingContractSha256", "signing-contract-changed"),
+            ("entitlementContractSha256", "entitlement-contract-changed"),
+            ("profileCapabilitySha256", "profile-capability-changed"),
+        )
+        if previous[key] != current[key]
+    ]
+    if set(previous["architectures"]) - set(current["architectures"]):
+        codes.append("architecture-loss")
+    return codes
+
+
 def artifact_runtime_escalation_surfaces(
     *,
     train: str,
@@ -186,18 +204,8 @@ def derive_artifact_comparison(
             comparable_surfaces = [
                 surface_id for surface_id in affected if surface_id in previous_surfaces
             ]
-            for key, code in (
-                ("bundleContractSha256", "bundle-contract-changed"),
-                ("signingContractSha256", "signing-contract-changed"),
-                ("entitlementContractSha256", "entitlement-contract-changed"),
-                ("profileCapabilitySha256", "profile-capability-changed"),
-            ):
-                if previous_artifact[key] != current_artifact[key]:
-                    risks.setdefault(code, []).extend(affected)
-            if set(previous_artifact["architectures"]) - set(
-                current_artifact["architectures"]
-            ):
-                risks.setdefault("architecture-loss", []).extend(affected)
+            for code in semantic_artifact_risk_codes(previous_artifact, current_artifact):
+                risks.setdefault(code, []).extend(affected)
             if (
                 previous_artifact["executableSha256"]
                 != current_artifact["executableSha256"]

@@ -114,6 +114,8 @@ def add_target_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def add_expected_build_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--mac-expected-build-manifest", type=Path,
+                        help="Sealed carried Mac artifact for the read-only publisher baseline")
     parser.add_argument(
         "--expected-build-manifest",
         action="append",
@@ -408,7 +410,10 @@ def collect_validation_report(args: argparse.Namespace):
             runtime_state, runtime_superseded = runtime_store.reconcile(session, observation)
     runner = SubprocessRunner()
     asc = collect_asc_evidence(runner, target, args.asc_env_file.expanduser())
-    mac = collect_mac_evidence(runner, target, getattr(args, "expected_build_manifests", None))
+    mac_arguments = {}
+    if getattr(args, "mac_expected_build_manifest", None) is not None:
+        mac_arguments["mac_expected_build_manifest"] = args.mac_expected_build_manifest
+    mac = collect_mac_evidence(runner, target, getattr(args, "expected_build_manifests", None), **mac_arguments)
     devices = collect_device_evidence(runner, target)
     report = build_report(
         target,

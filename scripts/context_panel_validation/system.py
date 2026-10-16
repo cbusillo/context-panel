@@ -72,7 +72,26 @@ def parse_key_values(output: str) -> dict[str, str]:
 
 def collect_mac_evidence(
     runner: Runner, target: Target, expected_build_manifests: list[Path] | None = None,
+    *, mac_expected_build_manifest: Path | None = None,
 ) -> MacEvidence:
+    expected_build_id = None
+    if mac_expected_build_manifest is not None:
+        from context_panel_expected_build import validate_expected_build_manifest
+        from .runtime_evidence import RuntimeEvidenceError
+        try:
+            manifest = json.loads(mac_expected_build_manifest.read_text())
+            source = manifest["source"]
+            validated = validate_expected_build_manifest(
+                manifest, version=source["marketingVersion"], build_number=source["buildNumber"],
+                error=RuntimeEvidenceError,
+            )
+            if manifest["layout"] != "macos" or "macos.app" not in {s["id"] for s in validated.surfaces}:
+                raise RuntimeEvidenceError("Mac baseline manifest must cover macOS")
+            target = Target(source["marketingVersion"], source["buildNumber"])
+            expected_build_manifests = [mac_expected_build_manifest]
+            expected_build_id = manifest["expectedBuildId"]
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise RuntimeEvidenceError("Mac baseline manifest is invalid") from error
     observed_version: str | None = None
     observed_build: str | None = None
     info_plist_exists = CANONICAL_INFO_PLIST.is_file()
@@ -165,6 +184,7 @@ def collect_mac_evidence(
         app_cloudkit,
         refresh_agent_cloudkit,
         reason,
+        expected_build_id,
     )
 
 

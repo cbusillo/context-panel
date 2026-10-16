@@ -29,11 +29,10 @@ from context_panel_release_gate import (
     release_evidence_report_blockers,
 )
 from context_panel_validation import (
-    RUNTIME_SURFACES,
     RuntimeEvidenceError,
     Target,
 )
-from context_panel_validation.runtime_evidence import expected_surface_identities_from_payloads
+from context_panel_release_gate.core import release_comparison_identities
 
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
@@ -1765,10 +1764,10 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
             load_json_object(Path(value), "expected signed build manifest")
             for value in manifest_values
         )
-        identities = expected_surface_identities_from_payloads(
+        identities = release_comparison_identities(
             list(expected_build_manifests),
             Target(args.version, args.build_number),
-            tuple(RUNTIME_SURFACES),
+            comparison,
         )
         previous_ledger = (
             load_json_object(

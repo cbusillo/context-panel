@@ -14,6 +14,7 @@
     "appStoreScreenshots": "Resources/AppStore/Screenshots/screenshot-matrix.md",
     "cloudKitPublicationCheck": "docs/cloudkit-publication-check.md",
     "validationAuthority": "docs/validation-authority.md",
+    "platformReleaseComparison": "docs/release.md#mixed-platform-release-records",
     "signedValidationFingerprints": "docs/signed-validation-fingerprints.md",
     "signedValidationRuntimeReceipts": "docs/signed-validation-runtime-receipts.md",
     "signedValidationOperatorFlow": "docs/signed-validation-operator-flow.md",

@@ -68,6 +68,11 @@ class MacEvidence:
     app_cloudkit: str
     refresh_agent_cloudkit: str
     reason: str | None = None
+    expected_build_id: str | None = None
+
+    def public_build_identity(self) -> dict[str, str | None]:
+        return {"version": self.observed_version, "buildNumber": self.observed_build,
+                "expectedBuildID": self.expected_build_id}
 
 
 @dataclass(frozen=True)

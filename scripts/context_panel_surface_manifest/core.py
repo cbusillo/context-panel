@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from context_panel_comparison_schema import (
-    CURRENT_COMPARISON_SCHEMA_VERSION,
+    V5_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
     artifact_runtime_escalation_surfaces,
@@ -19,7 +19,7 @@ from context_panel_comparison_schema import (
     derive_runtime_decision,
     derive_risk_fields,
     toolchain_changed,
-    validate_current_comparison,
+    validate_comparison_v5,
 )
 from context_panel_expected_build import (
     ARCHITECTURE_PATTERN,
@@ -1154,7 +1154,28 @@ def compare_manifests(
     train: str,
     previous_expected_build_manifests: list[dict[str, Any]] | None = None,
     current_expected_build_manifests: list[dict[str, Any]] | None = None,
+    release_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if release_record is not None:
+        from .comparison_v6 import build_release_comparison
+        if current_expected_build_manifests is not None:
+            raise SurfacePolicyError("use release record builds instead of current expected-build options")
+        try:
+            return build_release_comparison(
+                previous, current, train, previous_expected_build_manifests, release_record
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise SurfacePolicyError("platform release record is invalid") from error
+    return compare_manifests_v5(previous, current, train, previous_expected_build_manifests,
+                                current_expected_build_manifests)
+
+
+def compare_manifests_v5(
+    previous: dict[str, Any], current: dict[str, Any], train: str,
+    previous_expected_build_manifests: list[dict[str, Any]] | None = None,
+    current_expected_build_manifests: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    # Frozen v5 derivation, pinned by v6. New semantics need a new version.
     if previous.get("schemaVersion") != 1 or current.get("schemaVersion") != 1:
         raise SurfacePolicyError("surface manifest schema is unsupported")
     evidence_policy = validate_evidence_policy(current.get("evidencePolicy"))
@@ -1167,9 +1188,9 @@ def compare_manifests(
     current_surfaces = manifest_surface_map(current, "current")
     previous_contract_fingerprint = str(previous.get("contractFingerprint") or "")
     current_contract_fingerprint = str(current.get("contractFingerprint") or "")
-    if not SHA256_PATTERN.fullmatch(previous_contract_fingerprint) or not SHA256_PATTERN.fullmatch(
-        current_contract_fingerprint
-    ):
+    if not SHA256_PATTERN.fullmatch(
+        previous_contract_fingerprint
+    ) or not SHA256_PATTERN.fullmatch(current_contract_fingerprint):
         raise SurfacePolicyError("surface manifest contract fingerprint is invalid")
     contract_changed = previous_contract_fingerprint != current_contract_fingerprint
     previous_source = previous.get("source") or {}
@@ -1202,12 +1223,15 @@ def compare_manifests(
         else:
             previous_fingerprints = previous_surface.get("fingerprints") or {}
             current_fingerprints = surface.get("fingerprints") or {}
-            render_changed = previous_fingerprints.get("render") != current_fingerprints.get("render")
-            runtime_changed = previous_fingerprints.get("runtime") != current_fingerprints.get("runtime")
-            placement_changed = (
-                previous_fingerprints.get("placement")
-                != current_fingerprints.get("placement")
-            )
+            render_changed = previous_fingerprints.get(
+                "render"
+            ) != current_fingerprints.get("render")
+            runtime_changed = previous_fingerprints.get(
+                "runtime"
+            ) != current_fingerprints.get("runtime")
+            placement_changed = previous_fingerprints.get(
+                "placement"
+            ) != current_fingerprints.get("placement")
             if render_changed:
                 reason_codes.append("render-fingerprint-changed")
             if runtime_changed:
@@ -1251,21 +1275,27 @@ def compare_manifests(
         )
 
         carry_forward: dict[str, dict[str, Any]] = {}
-        for evidence_class in ordered_intersection(class_order, capabilities, class_order):
+        for evidence_class in ordered_intersection(
+            class_order, capabilities, class_order
+        ):
             eligible = False
             conditions: list[str] = []
             if previous_surface is not None:
                 if evidence_class == "shared-view":
                     eligible = not render_changed and not contract_changed
                 elif evidence_class == "actual-runtime":
-                    eligible = not runtime_changed and exact_build_same and not contract_changed
-                elif evidence_class == "os-composited-placement":
                     eligible = (
-                        not placement_changed
+                        not runtime_changed
+                        and exact_build_same
                         and not contract_changed
                     )
+                elif evidence_class == "os-composited-placement":
+                    eligible = not placement_changed and not contract_changed
                     if eligible:
-                        conditions = ["matching-host-os", "matching-current-runtime-receipt"]
+                        conditions = [
+                            "matching-host-os",
+                            "matching-current-runtime-receipt",
+                        ]
             if evidence_class in fresh_evidence:
                 eligible = False
                 conditions = []
@@ -1307,8 +1337,14 @@ def compare_manifests(
             current_manifest_id=str(current.get("manifestId") or ""),
             previous_contract_fingerprint=previous_contract_fingerprint,
             current_contract_fingerprint=current_contract_fingerprint,
-            previous_target=(str(previous_source.get("marketingVersion") or ""), str(previous_source.get("buildNumber") or "")),
-            current_target=(str(current_source.get("marketingVersion") or ""), str(current_source.get("buildNumber") or "")),
+            previous_target=(
+                str(previous_source.get("marketingVersion") or ""),
+                str(previous_source.get("buildNumber") or ""),
+            ),
+            current_target=(
+                str(current_source.get("marketingVersion") or ""),
+                str(current_source.get("buildNumber") or ""),
+            ),
             previous_surfaces=previous_surfaces,
             current_surfaces=current_surfaces,
             runtime_capable_surface_ids=runtime_capable_surface_ids,
@@ -1337,9 +1373,13 @@ def compare_manifests(
                 surface["requiredEvidence"] = [
                     evidence_class
                     for evidence_class in class_order
-                    if evidence_class in {*surface["requiredEvidence"], "actual-runtime"}
+                    if evidence_class
+                    in {*surface["requiredEvidence"], "actual-runtime"}
                 ]
-                surface["carryForward"]["actual-runtime"] = {"eligible": False, "conditions": []}
+                surface["carryForward"]["actual-runtime"] = {
+                    "eligible": False,
+                    "conditions": [],
+                }
     runtime_state, runtime_state_reasons = derive_runtime_decision(results)
     required_surfaces = {
         evidence_class: [
@@ -1357,7 +1397,7 @@ def compare_manifests(
     )
     comparison = {
         "kind": "context-panel-surface-comparison",
-        "schemaVersion": CURRENT_COMPARISON_SCHEMA_VERSION,
+        "schemaVersion": V5_COMPARISON_SCHEMA_VERSION,
         "train": train,
         "previousManifestId": previous.get("manifestId"),
         "currentManifestId": current.get("manifestId"),
@@ -1380,7 +1420,7 @@ def compare_manifests(
         ),
     }
     try:
-        return validate_current_comparison(
+        return validate_comparison_v5(
             comparison,
             runtime_capable_surface_ids=runtime_capable_surface_ids,
         )

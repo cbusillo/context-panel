@@ -12,6 +12,7 @@ from typing import Any
 import uuid
 
 from context_panel_comparison_schema import (
+    PLATFORM_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
     validate_current_comparison,
@@ -504,6 +505,16 @@ def load_visual_review_plan(
     if not identity_by_surface or any(item.manifest_id != current_manifest_id for item in identities):
         raise VisualApprovalError("visual review build identity does not match the surface comparison")
     allowed_surfaces = set(identity_by_surface)
+    platform_release = comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION
+    if platform_release:
+        if comparison["releaseSafety"]["state"] != "resolved":
+            raise VisualApprovalError("carried platform contract is unknown-fail-closed")
+        allowed_surfaces.update(
+            s["id"]
+            for entry in comparison["releaseContext"]["releaseRecord"]["platforms"].values()
+            if entry["state"] == "carried"
+            for s in entry["expectedBuildManifest"]["surfaces"]
+        )
     full_required_by_class = {
         evidence_class: tuple(required_surfaces[evidence_class])
         for evidence_class in EVIDENCE_CLASSES
@@ -526,7 +537,10 @@ def load_visual_review_plan(
             if evidence_class in VISUAL_REVIEW_CLASSES:
                 fresh_by_class[evidence_class].append(surface_id)
     required_by_class = {
-        "actual-runtime": full_required_by_class["actual-runtime"],
+        "actual-runtime": (
+            tuple(comparison["runtimeSessionSurfaces"]) if platform_release
+            else full_required_by_class["actual-runtime"]
+        ),
         "shared-view": tuple(fresh_by_class["shared-view"]),
         "os-composited-placement": tuple(fresh_by_class["os-composited-placement"]),
     }
@@ -574,6 +588,7 @@ def load_visual_review_plan(
         if (
             evidence_class not in VISUAL_REVIEW_CLASSES
             or surface not in full_required_by_class[evidence_class]
+            or surface not in identity_by_surface
         ):
             raise VisualApprovalError("visual review requirement is outside the required comparison scope")
         identity = identity_by_surface[str(surface)]

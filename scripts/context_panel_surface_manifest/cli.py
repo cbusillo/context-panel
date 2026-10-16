@@ -105,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare_parser.add_argument("--train", choices=("beta", "rc", "release"), required=True)
     compare_parser.add_argument("--output", type=Path)
+    compare_parser.add_argument("--release-record", type=Path)
 
     template_parser = subparsers.add_parser(
         "evidence-template", help="Emit the required signed-artifact evidence shape."
@@ -282,6 +283,10 @@ def run(arguments: argparse.Namespace) -> None:
                 arguments.train,
                 previous_expected,
                 current_expected,
+                release_record=(
+                    load_json_object(arguments.release_record, "platform release record")
+                    if getattr(arguments, "release_record", None) is not None else None
+                ),
             ),
             arguments.output,
             sort_keys=False,

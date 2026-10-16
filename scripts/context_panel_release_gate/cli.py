@@ -7,12 +7,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from context_panel_validation.runtime_evidence import (
-    RUNTIME_SURFACES,
-    expected_surface_identities_from_payloads,
-)
-
 from .core import (
+    release_comparison_identities,
     ReleaseEvidenceError,
     build_release_evidence_lineage,
     evaluate_release_evidence,
@@ -196,10 +192,10 @@ def run(argv: list[str] | None = None) -> int:
     historical_policy_archive = load_historical_policy_archive(
         tuple(arguments.historical_policy_archives or ())
     )
-    identities = expected_surface_identities_from_payloads(
+    identities = release_comparison_identities(
         list(expected_build_manifests),
         target,
-        tuple(RUNTIME_SURFACES),
+        comparison,
     )
     now = None
     if arguments.now:

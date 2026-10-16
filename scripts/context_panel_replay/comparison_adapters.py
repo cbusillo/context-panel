@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from context_panel_comparison_schema import (
+    PLATFORM_COMPARISON_SCHEMA_VERSION,
     CURRENT_COMPARISON_SCHEMA_VERSION,
     comparison_schema_v2,
     comparison_schema_v3,
@@ -23,6 +24,13 @@ V4_COMPARISON_SCHEMA_VERSION = comparison_schema_v4.CURRENT_COMPARISON_SCHEMA_VE
 validate_comparison_v2 = comparison_schema_v2.validate_comparison_v2
 validate_comparison_v3 = comparison_schema_v3.validate_comparison_v3
 validate_comparison_v4 = comparison_schema_v4.validate_comparison_v4
+SUPPORTED_ADAPTER_PAIRS = {
+    (1, V2_COMPARISON_SCHEMA_VERSION),
+    *((version, version) for version in (
+        V2_COMPARISON_SCHEMA_VERSION, V3_COMPARISON_SCHEMA_VERSION,
+        PLATFORM_COMPARISON_SCHEMA_VERSION,
+    )),
+}
 
 
 def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:
@@ -51,7 +59,7 @@ def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:
             return validate_comparison_v4(comparison)
         except RuntimeError as error:
             raise ComparisonAdapterError("retained v4 comparison is invalid") from error
-    if schema_version == CURRENT_COMPARISON_SCHEMA_VERSION:
+    if schema_version in {CURRENT_COMPARISON_SCHEMA_VERSION, PLATFORM_COMPARISON_SCHEMA_VERSION}:
         try:
             return validate_current_comparison(comparison)
         except RuntimeError as error:

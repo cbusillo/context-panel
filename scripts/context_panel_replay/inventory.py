@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from context_panel_expected_build import validate_expected_build_manifest
+from context_panel_comparison_schema import PLATFORM_COMPARISON_SCHEMA_VERSION, ComparisonSchemaError
 
 from .comparison_adapters import ComparisonAdapterError, adapt_comparison_for_replay
 
@@ -760,7 +761,17 @@ def _expected_surface_identities(
     expected_builds: list[dict[str, Any]],
     train: dict[str, Any],
     current: dict[str, Any],
+    comparison: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
+    if comparison is not None and comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION:
+        from context_panel_release_gate.core import release_comparison_identities, ReleaseEvidenceError
+        from context_panel_validation import Target, RuntimeEvidenceError
+        try:
+            return {identity.surface: identity.to_dict() for identity in release_comparison_identities(
+                expected_builds, Target(train["version"], train["buildNumber"]), comparison
+            )}
+        except (ReleaseEvidenceError, RuntimeEvidenceError, ComparisonSchemaError) as error:
+            raise InventoryError("mixed train expected-build identities are invalid") from error
     identities: dict[str, dict[str, Any]] = {}
     manifest_identity: tuple[str, str] | None = None
     for expected in expected_builds:
@@ -1043,6 +1054,8 @@ def _receipt_entry(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     required = comparison.get("requiredSurfaces")
     actual_runtime = required.get("actual-runtime") if isinstance(required, dict) else None
+    if comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION:
+        actual_runtime = comparison["runtimeSessionSurfaces"]
     if not isinstance(actual_runtime, list) or any(
         not isinstance(value, str) or SURFACE_PATTERN.fullmatch(value) is None
         for value in actual_runtime
@@ -1245,7 +1258,13 @@ def _validate_chain(
         raise InventoryError("lineage expected-build manifests are missing")
     if sorted(canonical_digest(item) for item in embedded_expected) != sorted(canonical_digest(item) for item in expected_builds):
         raise InventoryError("expected-build manifests diverge from lineage")
-    for expected in expected_builds:
+    platform_release = comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION
+    if platform_release and (
+        comparison["releaseContext"]["previousManifest"] != previous
+        or comparison["releaseContext"]["currentManifest"] != current
+    ):
+        raise InventoryError("mixed train source manifests diverge from comparison")
+    for expected in (() if platform_release else expected_builds):
         expected_source = expected.get("source")
         if (
             expected.get("sourceManifestId") != current_manifest_id
@@ -1304,6 +1323,7 @@ def _seal_train(train: dict[str, Any], policy: dict[str, Any], roots: dict[str, 
         expected_builds,
         train,
         current,
+        comparison,
     )
     comparison = _validate_chain(
         train,
