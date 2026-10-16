@@ -185,7 +185,7 @@ classification, and additional buckets keyed by `limit_id`.
 Historical Every Code investigation established that Codex percentage windows
 come from authenticated backend responses rather than local token counts.
 Context Panel now reads those live windows directly through Codex
-credentials. Every Code and Codex Lab are retired: it is not a fallback, setup option, or active
+credentials. Every Code and Codex Lab are retired: neither is a fallback, setup option, or active
 auth/telemetry source. Historical snapshots remain readable.
 
 ## Codex setup
@@ -248,23 +248,16 @@ session trees can undercount. Calendar folders are visited newest first within
 366 days (plus tomorrow for timezone boundaries), with at most 8,192 directory
 entries inspected. Sessions stored in older folders are outside this sample,
 even if resumed recently. Copied event fingerprints are counted once.
-An event found under both clients uses a deterministic source label; that label
-does not establish which client originally generated it.
 These measurements are local cache samples, not complete provider billing totals.
 
-Historical Codex Lab normalized snapshots and cache observations remain readable.
+Historical Codex Lab stored snapshots and history remain readable; temporary
+Lab mirrors are pruned on the next refresh, with their normal age-based retention
+still applying to observations already saved in snapshots.
 Lab auth and telemetry sources are no longer collected, even when a saved record
 has an explicit sessions path. Credentials, IDs, bookmarks and stored history
 are preserved. To resume collection, connect a Codex home as a Codex account.
 
-Explicit legacy Lab usage mirrors remain compatible with cumulative payloads:
-the first read establishes a baseline, later positive deltas produce **Since
-refresh** samples, and idle polls do not refresh observation timestamps. Counter
-resets, invalid/future data, and expired baselines cannot produce lifetime spikes.
-Normal setup reads native sessions only, so the two formats are not combined.
-Missing cached-token counts remain unknown in both formats.
-
-For Codex and Lab increments, the latest rate is a token-weighted 15-minute
+For Codex increments, the latest rate is a token-weighted 15-minute
 bucket for the same source account and measurement window. Fewer than three
 measured samples keep the comparison neutral. Incremental samples do not trigger
 the legacy cache-break warning; an ordinary cold session is not enough evidence
@@ -272,9 +265,8 @@ of a caching regression.
 
 The main app and refresh agent share the same mirror implementation. They read
 only user-authorized source folders and persist normalized counter observations
-(and hashed baseline keys for explicit legacy Lab mirrors) into the canonical app-group `PromptCache` folder.
-A per-source lock serializes baseline updates. Codex transcript text, raw Lab
-account identifiers, and auth data never enter these new mirrors. The widget
+into the canonical app-group `PromptCache` folder.
+A per-source lock serializes mirror updates. Codex transcript text and auth data never enter these new mirrors. The widget
 reads the app-owned mirror; it does not scan session logs. Unresolvable saved
 bookmarks preserve last-good mirrors, whose observations still expire normally.
 Turning off every OpenAI source clears its mirrored telemetry on refresh.

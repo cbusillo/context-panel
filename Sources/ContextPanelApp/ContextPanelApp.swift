@@ -2928,7 +2928,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard let path = account.promptCacheDirectory?.path else { return nil }
         let detail: String
         switch account.effectiveCodexClient {
-        case .codex, .codexLab: detail = "Recent session sample; account unknown"
+        case .codex: detail = "Recent session sample; account unknown"
         default: detail = "Cache stats source"
         }
         return "\(detail) · \(ConnectorRedactor.redactedPath(path))"

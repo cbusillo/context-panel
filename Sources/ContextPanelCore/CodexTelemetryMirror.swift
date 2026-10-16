@@ -3,7 +3,8 @@ import Darwin
 
 /// Only normalized counts are persisted here. Session text and provider IDs never
 /// enter the app group. Native Codex sessions use bounded JSONL reads.
-/// Historical normalized Lab mirrors remain decodable.
+/// Historical normalized snapshots remain decodable; temporary retired mirrors
+/// are pruned by the mirror service.
 struct CodexTelemetryMirror: Codable {
     var observations: [PromptCacheObservation]
     var baselines: [String: Baseline]

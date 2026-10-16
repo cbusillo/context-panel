@@ -130,3 +130,17 @@ private struct CodexMirrorFixture {
     )
     #expect(PromptCacheSummary(observations: [prior, sameAccount]).hasPossibleCacheBreak)
 }
+
+@Test func copiedCodexSessionDeduplicatesAcrossConfiguredSources() throws {
+    let fixture = try CodexMirrorFixture(sourceFolderName: "sessions")
+    defer { fixture.remove() }
+    try fixture.writeSession()
+    for sourceName in ["first", "second"] {
+        try CodexTelemetryMirror.write(source: fixture.source,
+            sourceIDPath: fixture.root.appending(path: sourceName + "/sessions").path,
+            client: .codex, target: fixture.destination.appending(path: sourceName + "/telemetry.json"),
+            now: fixture.start, fileManager: .default)
+    }
+    #expect(try fixture.mirrorFiles().count == 2)
+    #expect(fixture.observations(at: fixture.start).count == 1)
+}
