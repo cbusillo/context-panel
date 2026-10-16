@@ -55,14 +55,23 @@ that the current risk-policy cutover is complete.
 
 1. Read the owning plan and identify the exact previous/current source and
    signed build identities. Generate the full comparison with every archive
-   layout's expected-build manifests. Follow [the release procedure](release.md);
+   layout's expected-build manifests. For a partial-platform RC or release,
+   use the [explicit platform release record](release.md#mixed-platform-release-records):
+   each platform is submitted with its new artifact or carried with its actual
+   shipped artifact, source manifest and approved lineage. Carried platforms
+   remain in the full gate; changed dependencies or missing proof fail closed.
+   Follow [the release procedure](release.md);
    do not filter or rewrite `requiredEvidence` or `requiredSurfaces`.
 2. Prepare visual requirements from the canonical matrix and the comparison's
    fresh visual classes. The full release evaluator must resolve eligible
    carry-forward from valid lineage; a smaller current review queue does not
    waive the complete evidence requirements.
 3. Open an exact-build runtime session only when the comparison requires it,
-   using exactly `requiredSurfaces.actual-runtime`. Follow the canonical
+   using exactly `requiredSurfaces.actual-runtime` for full-fleet comparisons,
+   or `runtimeSessionSurfaces` for an explicit platform record. The latter
+   requests submitted builds only; the evaluator independently verifies each
+   carried platform's shipped proof, expiry and shared-contract compatibility.
+   Follow the canonical
    Production runtime/cache checks in [Validation](#validation). Observe normal
    install and receipt propagation through the coordinator before requesting
    manual recovery.

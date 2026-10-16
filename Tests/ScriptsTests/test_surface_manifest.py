@@ -200,6 +200,488 @@ class SurfaceManifestTests(unittest.TestCase):
                     f"{ignored} is ignored by the surface policy but compiled from {compiled_root}",
                 )
 
+    def platform_release(self, current=None, *, all_submitted=False):
+        previous = copy.deepcopy(self.baseline)
+        current = copy.deepcopy(current or previous)
+        current["source"]["buildNumber"] = "202608080418"
+        current["manifestId"] = core_module.hash_parts(
+            f"{current['digestDomain']}/manifest",
+            [
+                core_module.canonical_json(
+                    {k: v for k, v in current.items() if k != "manifestId"}
+                )
+            ],
+        )
+        previous_builds = [
+            self.expected_build(previous, layout=layout)
+            for layout in previous["archiveLayouts"]
+        ]
+        record = {"schemaVersion": 1, "platforms": {}}
+        for layout in current["archiveLayouts"]:
+            submitted = all_submitted or layout == "macos"
+            source = current if submitted else previous
+            entry = {
+                "state": "submitted" if submitted else "carried",
+                "expectedBuildManifest": self.expected_build(source, layout=layout),
+            }
+            if not submitted:
+                entry.update(sourceManifest=source, shippedLineage={})
+            record["platforms"][layout] = entry
+        return previous, current, previous_builds, record
+
+    @staticmethod
+    def signed_report(source, builds):
+        from Tests.ScriptsTests.test_release_evidence_gate import report
+        from context_panel_validation.runtime_evidence import (
+            expected_surface_identities_from_payloads,
+        )
+        from context_panel_validation import RUNTIME_SURFACES, Target
+
+        target = Target(
+            source["source"]["marketingVersion"], source["source"]["buildNumber"]
+        )
+        identities = expected_surface_identities_from_payloads(
+            builds, target, tuple(RUNTIME_SURFACES)
+        )
+        result = report(
+            "macos.app",
+            runtime=True,
+            visual_class="shared-view",
+            manifest_id=source["manifestId"],
+        )
+        result["target"] = {
+            "version": target.version,
+            "buildNumber": target.build_number,
+        }
+        result["session"]["requestedSurfaces"] = list(RUNTIME_SURFACES)
+        result["runtimeSurfaces"], result["visualApprovals"]["requirements"] = [], []
+        for item in identities:
+            piece = report(
+                item.surface,
+                runtime=True,
+                visual_class="shared-view",
+                manifest_id=item.manifest_id,
+            )
+            runtime = piece["runtimeSurfaces"][0]
+            runtime.update(
+                expectedBuildID=item.expected_build_id,
+                identityDigest=item.identity_digest(),
+                runtimeFingerprint=item.runtime_fingerprint,
+            )
+            result["runtimeSurfaces"].append(runtime)
+            if item.surface != "macos.refresh-agent":
+                visual = piece["visualApprovals"]["requirements"][0]
+                visual.update(
+                    expectedBuildID=item.expected_build_id,
+                    identityDigest=item.identity_digest(),
+                    contractFingerprint=item.contract_fingerprint,
+                    renderFingerprint=item.render_fingerprint,
+                )
+                result["visualApprovals"]["requirements"].append(visual)
+        return result, identities
+
+    def approved_shipped_lineage(self, source, builds):
+        from Tests.ScriptsTests.test_release_evidence_gate import NOW, policy
+        from context_panel_release_gate import (
+            evaluate_release_evidence,
+            build_release_evidence_lineage,
+        )
+
+        configured = json.loads(
+            (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+        )
+        report, identities = self.signed_report(source, builds)
+        runs = []
+        for train in ("beta", "rc"):
+            comparison = compare_manifests(source, source, train, [], builds)
+            ledger = evaluate_release_evidence(
+                train=train,
+                mode="shadow",
+                comparison=comparison,
+                validation_report=report,
+                identities=identities,
+                expected_build_manifests=tuple(builds),
+                policy=policy(),
+                surface_policy=configured,
+                now=NOW,
+            )
+            self.assertEqual(ledger["blockers"], [])
+            lineage = build_release_evidence_lineage(
+                ledger,
+                comparison=comparison,
+                validation_report=report,
+                expected_build_manifests=tuple(builds),
+            )
+            runs.append(
+                {
+                    "train": train,
+                    "target": ledger["target"],
+                    "manifestID": source["manifestId"],
+                    "expectedBuildIdentityDigest": ledger[
+                        "expectedBuildIdentityDigest"
+                    ],
+                    "ledgerID": ledger["ledgerID"],
+                    "observedAt": ledger["generatedAt"],
+                    "runbookState": "approved",
+                    "ledgerState": "approved",
+                    "disagreements": [],
+                    "ledger": ledger,
+                    "generation": lineage["generation"],
+                }
+            )
+        shadow = {
+            "schemaVersion": 1,
+            "kind": "context-panel-shadow-comparison",
+            "runs": runs,
+        }
+        comparison = compare_manifests(source, source, "rc", [], builds)
+        ledger = evaluate_release_evidence(
+            train="rc",
+            mode="enforce",
+            comparison=comparison,
+            validation_report=report,
+            identities=identities,
+            expected_build_manifests=tuple(builds),
+            policy=policy(),
+            surface_policy=configured,
+            shadow_evidence=shadow,
+            now=NOW,
+        )
+        self.assertEqual(ledger["state"], "approved")
+        return build_release_evidence_lineage(
+            ledger,
+            comparison=comparison,
+            validation_report=report,
+            expected_build_manifests=tuple(builds),
+            shadow_evidence=shadow,
+        ), shadow
+
+    def test_platform_release_evaluator_lineage_and_report_reconstruct_real_builds(
+        self,
+    ):
+        from Tests.ScriptsTests.test_release_evidence_gate import NOW, policy
+        from context_panel_validation import Target
+        from context_panel_release_gate import (
+            evaluate_release_evidence,
+            build_release_evidence_lineage,
+            release_evidence_report_blockers,
+        )
+        from context_panel_release_gate.core import (
+            release_comparison_identities,
+            _verified_lineage_ledger,
+            HistoricalPolicyArchive,
+        )
+        from context_panel_replay.comparison_adapters import adapt_comparison_for_replay
+
+        previous, current, builds, record = self.platform_release()
+        lineage, shadow = self.approved_shipped_lineage(previous, builds)
+        for entry in record["platforms"].values():
+            if entry["state"] == "carried":
+                entry["shippedLineage"] = lineage
+        expected = tuple(
+            entry["expectedBuildManifest"] for entry in record["platforms"].values()
+        )
+        report, _ = self.signed_report(
+            current, [record["platforms"]["macos"]["expectedBuildManifest"]]
+        )
+        report["session"]["requestedSurfaces"] = [
+            s["surface"] for s in report["runtimeSurfaces"]
+        ]
+        configured = json.loads(
+            (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+        )
+        comparison = compare_manifests(
+            previous, current, "rc", builds, release_record=record
+        )
+        identities = release_comparison_identities(
+            expected,
+            Target(report["target"]["version"], report["target"]["buildNumber"]),
+            comparison,
+        )
+        arguments = dict(
+            train="rc",
+            mode="enforce",
+            comparison=comparison,
+            validation_report=report,
+            identities=identities,
+            expected_build_manifests=expected,
+            policy=policy(),
+            surface_policy=configured,
+            shadow_evidence=shadow,
+            previous_ledger=lineage,
+            now=NOW,
+        )
+        ledger = evaluate_release_evidence(**arguments)
+        self.assertEqual(ledger["blockers"], [])
+        self.assertEqual(ledger["state"], "approved")
+        self.assertLessEqual(ledger["expiresAt"], lineage["ledger"]["expiresAt"])
+        for surface in ledger["surfaces"]:
+            if not surface["surface"].startswith("macos."):
+                self.assertTrue(
+                    all(
+                        e["source"] == "carry-forward"
+                        for e in surface["evidence"].values()
+                    )
+                )
+        blockers = release_evidence_report_blockers(
+            ledger,
+            version=report["target"]["version"],
+            build_number=report["target"]["buildNumber"],
+            train="rc",
+            enforce=True,
+            **{k: v for k, v in arguments.items() if k not in {"train", "mode"}},
+        )
+        self.assertEqual(blockers, [])
+        mixed_lineage = build_release_evidence_lineage(
+            ledger,
+            comparison=comparison,
+            validation_report=report,
+            expected_build_manifests=expected,
+            shadow_evidence=shadow,
+            previous_ledger=lineage,
+        )
+        restored = json.loads(json.dumps(mixed_lineage))
+        self.assertEqual(
+            _verified_lineage_ledger(
+                restored,
+                label="mixed release",
+                policy=policy(),
+                surface_policy=configured,
+                historical_policy_archive=HistoricalPolicyArchive(),
+                lineage_depth=0,
+                lineage_seen=frozenset(),
+            ),
+            ledger,
+        )
+        self.assertEqual(adapt_comparison_for_replay(comparison), comparison)
+        release_comparison = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        release = evaluate_release_evidence(
+            **{
+                **arguments,
+                "train": "release",
+                "comparison": release_comparison,
+                "selected_rc_ledger": mixed_lineage,
+            }
+        )
+        self.assertEqual(release["state"], "approved")
+        from Tests.ScriptsTests.test_release_evidence_gate import watchlist_entry
+
+        watched_policy = policy(watchlist_entries=(watchlist_entry("ios.app"),))
+        archive = HistoricalPolicyArchive(
+            release_policies={
+                release_gate_module.canonical_payload_digest(policy()): policy()
+            }
+        )
+        watched = evaluate_release_evidence(
+            **{
+                **arguments,
+                "policy": watched_policy,
+                "historical_policy_archive": archive,
+            }
+        )
+        self.assertIn("ios.app:carried-platform-active-watchlist", watched["blockers"])
+        with self.assertRaisesRegex(ReleaseEvidenceError, "previous artifact lineage"):
+            evaluate_release_evidence(**{**arguments, "previous_ledger": None})
+        tampered = copy.deepcopy(ledger)
+        tampered["surfaces"] = [
+            item
+            for item in tampered["surfaces"]
+            if item["surface"].startswith("macos.")
+        ]
+        self.assertTrue(
+            release_evidence_report_blockers(
+                tampered,
+                version=report["target"]["version"],
+                build_number=report["target"]["buildNumber"],
+                train="rc",
+                enforce=True,
+                **{k: v for k, v in arguments.items() if k not in {"train", "mode"}},
+            )
+        )
+        from context_panel_release_gate.cli import run as run_gate
+        from context_panel_validation.visual_approvals import load_visual_review_plan
+        from context_panel_validation.runtime_evidence import (
+            expected_surface_identities_from_payloads,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files = {
+                "comparison": comparison,
+                "validation-report": report,
+                "policy": policy(),
+                "surface-policy": configured,
+                "previous-ledger": lineage,
+                "shadow-evidence": shadow,
+            }
+            argv = [
+                "enforce",
+                "--train",
+                "rc",
+                "--now",
+                NOW.isoformat(),
+                "--output",
+                str(root / "ledger.json"),
+            ]
+            for name, payload in files.items():
+                path = root / f"{name}.json"
+                path.write_text(json.dumps(payload))
+                argv.extend([f"--{name}", str(path)])
+            for index, manifest in enumerate(expected):
+                path = root / f"build-{index}.json"
+                path.write_text(json.dumps(manifest))
+                argv.extend(["--expected-build-manifest", str(path)])
+            self.assertEqual(run_gate(argv), 0)
+            self.assertEqual(json.loads((root / "ledger.json").read_text()), ledger)
+            requirements = root / "requirements.json"
+            requirements.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "kind": "context-panel-visual-review-requirements",
+                        "currentManifestID": current["manifestId"],
+                        "requirements": [],
+                    }
+                )
+            )
+            submitted = expected_surface_identities_from_payloads(
+                [record["platforms"]["macos"]["expectedBuildManifest"]],
+                Target(report["target"]["version"], report["target"]["buildNumber"]),
+                tuple(s["surface"] for s in report["runtimeSurfaces"]),
+            )
+            requested, _, _ = load_visual_review_plan(
+                root / "comparison.json", requirements, submitted
+            )
+            self.assertEqual(list(requested), comparison["runtimeSessionSurfaces"])
+        record["platforms"]["ios"]["shippedLineage"] = {}
+        damaged = compare_manifests(
+            previous, current, "rc", builds, release_record=record
+        )
+        with self.assertRaises(ReleaseEvidenceError):
+            evaluate_release_evidence(**{**arguments, "comparison": damaged})
+
+    def test_platform_release_compares_shipped_companions_without_new_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(temporary)
+            self.append(next((root / "Sources/ContextPanelApp").glob("*.swift")))
+            previous, current, builds, record = self.platform_release(
+                self.manifest(root)
+            )
+        result = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        self.assertEqual(result["releaseSafety"]["state"], "resolved")
+        self.assertEqual(
+            {s["surfaceId"] for s in result["surfaces"]}, set(self.surfaces(current))
+        )
+        self.assertTrue(
+            all(s.startswith("macos.") for s in result["runtimeSessionSurfaces"])
+        )
+        self.assertEqual(
+            validate_current_comparison(json.loads(json.dumps(result))), result
+        )
+        validate_release_comparison(
+            result,
+            "release",
+            json.loads(
+                (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+            ),
+        )
+
+    def test_platform_release_shared_dependencies_fail_closed(self):
+        mutations = (
+            ("CloudKit/ContextPanelCompanionSchema.json", "schema"),
+            (
+                "Sources/ContextPanelCloudKitSync/CompanionCloudKitStore.swift",
+                "cloudkit",
+            ),
+            ("Config/ContextPanel.entitlements", "app-group"),
+        )
+        for path, label in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                root = self.fixture(temporary)
+                candidates = list(root.glob(path))
+                if not candidates:
+                    pattern = {
+                        "schema": "CloudKit/**/*.json",
+                        "cloudkit": "Sources/ContextPanelCloudKitSync/*.swift",
+                        "app-group": "Config/*.entitlements",
+                    }[label]
+                    candidates = list(root.glob(pattern))
+                target = candidates[0]
+                if target.suffix == ".json":
+                    payload = json.loads(target.read_text())
+                    payload["releaseTest"] = True
+                    target.write_text(json.dumps(payload))
+                elif target.suffix == ".entitlements":
+                    payload = plistlib.loads(target.read_bytes())
+                    payload["com.apple.security.application-groups"] = [
+                        "group.example.changed"
+                    ]
+                    target.write_bytes(plistlib.dumps(payload))
+                else:
+                    self.append(target, "\n// shared contract change\n")
+                previous, current, builds, record = self.platform_release(
+                    self.manifest(root)
+                )
+                result = compare_manifests(
+                    previous, current, "release", builds, release_record=record
+                )
+                self.assertEqual(
+                    result["releaseSafety"]["state"], "unknown-fail-closed"
+                )
+                self.assertTrue(result["releaseSafety"]["blockers"])
+
+    def test_platform_release_missing_or_relabelled_shipped_build_is_rejected(self):
+        for mutation in ("missing", "relabelled", "omitted-platform"):
+            previous, current, builds, record = self.platform_release()
+            if mutation == "missing":
+                record["platforms"]["ios"]["expectedBuildManifest"] = None
+            elif mutation == "relabelled":
+                record["platforms"]["ios"]["expectedBuildManifest"]["source"] = current[
+                    "source"
+                ]
+            else:
+                del record["platforms"]["ios"]
+            with self.subTest(mutation=mutation), self.assertRaises(SurfacePolicyError):
+                compare_manifests(
+                    previous, current, "release", builds, release_record=record
+                )
+
+    def test_platform_release_all_submitted_preserves_full_fleet_requirements(self):
+        previous, current, builds, record = self.platform_release(all_submitted=True)
+        expected = compare_manifests(
+            previous,
+            current,
+            "release",
+            builds,
+            [entry["expectedBuildManifest"] for entry in record["platforms"].values()],
+        )
+        result = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        for field in (
+            "surfaces",
+            "requiredSurfaces",
+            "runtimeState",
+            "artifactRiskCodes",
+            "artifactRiskSurfaces",
+        ):
+            self.assertEqual(result[field], expected[field], field)
+
+    def test_platform_release_cannot_edit_carried_scope_or_contract_result(self):
+        previous, current, builds, record = self.platform_release()
+        result = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        result["surfaces"] = [
+            s for s in result["surfaces"] if s["surfaceId"].startswith("macos.")
+        ]
+        with self.assertRaises(ComparisonSchemaError):
+            validate_current_comparison(result)
+
     def test_manifest_is_deterministic_and_contains_no_checkout_path(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             relocated_root = self.fixture(temporary_directory)

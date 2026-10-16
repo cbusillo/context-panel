@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from context_panel_comparison_schema import (
+    PLATFORM_COMPARISON_SCHEMA_VERSION,
     CURRENT_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
@@ -19,7 +20,7 @@ from context_panel_comparison_schema import (
     validate_legacy_v3_comparison_for_reconstruction,
     validate_comparison_v4,
 )
-from context_panel_expected_build import ExpectedBuildSchemaError
+from context_panel_expected_build import ExpectedBuildSchemaError, canonical_json
 from context_panel_validation.models import Target
 from context_panel_validation.operator_flow import (
     OperatorFlowError,
@@ -961,7 +962,7 @@ def _validate_comparison(
         schema_version = comparison.get("schemaVersion")
         if (
             not allow_legacy_reconstruction
-            and schema_version != CURRENT_COMPARISON_SCHEMA_VERSION
+            and schema_version not in {CURRENT_COMPARISON_SCHEMA_VERSION, PLATFORM_COMPARISON_SCHEMA_VERSION}
         ):
             raise ComparisonSchemaError("surface comparison schema is not current")
         if allow_legacy_reconstruction and schema_version == 1:
@@ -982,6 +983,10 @@ def _validate_comparison(
         raise ReleaseEvidenceError("surface comparison release RC requirement is invalid")
     surface_map = {item["surfaceId"]: item for item in validated["surfaces"]}
     if surface_policy is not None:
+        if schema_version == PLATFORM_COMPARISON_SCHEMA_VERSION:
+            for platform_comparison in validated["platformComparisons"].values():
+                _validate_comparison(platform_comparison, train, surface_policy)
+            return surface_map
         _validate_surface_policy(
             surface_policy,
             train=train,
@@ -1557,6 +1562,47 @@ def _carried_evidence(
     return carried
 
 
+def release_comparison_identities(
+    manifests: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    target: Target,
+    comparison: dict[str, Any],
+) -> tuple[ExpectedSurfaceIdentity, ...]:
+    """Read each sealed build at its real target; never relabel shipped builds."""
+    if comparison.get("schemaVersion") != PLATFORM_COMPARISON_SCHEMA_VERSION:
+        return expected_surface_identities_from_payloads(
+            manifests, target, tuple(RUNTIME_SURFACES)
+        )
+    validate_current_comparison(comparison)
+    entries = comparison["releaseContext"]["releaseRecord"]["platforms"]
+    recorded = [entry["expectedBuildManifest"] for entry in entries.values()]
+    if sorted(canonical_json(m) for m in manifests) != sorted(
+        canonical_json(m) for m in recorded
+    ):
+        raise ReleaseEvidenceError(
+            "platform release record does not bind expected builds"
+        )
+    identities = []
+    for entry in entries.values():
+        manifest = entry["expectedBuildManifest"]
+        build_target = (
+            target
+            if entry["state"] == "submitted"
+            else _target(
+                {
+                    "version": manifest["source"]["marketingVersion"],
+                    "buildNumber": manifest["source"]["buildNumber"],
+                },
+                "carried platform",
+            )
+        )
+        identities.extend(
+            expected_surface_identities_from_payloads(
+                [manifest], build_target, tuple(RUNTIME_SURFACES)
+            )
+        )
+    return tuple(sorted(identities, key=lambda identity: identity.surface))
+
+
 def _generation_identities(
     payload: object,
     *,
@@ -1575,11 +1621,7 @@ def _generation_identities(
         manifests = payload["expectedBuildManifests"]
         if any(not isinstance(item, dict) for item in manifests):
             raise RuntimeEvidenceError("expected signed build manifest is invalid")
-        return expected_surface_identities_from_payloads(
-            manifests,
-            target,
-            tuple(RUNTIME_SURFACES),
-        )
+        return release_comparison_identities(manifests, target, payload["comparison"])
     except (KeyError, TypeError, ValueError, RuntimeEvidenceError) as error:
         raise ReleaseEvidenceError(
             f"{label} expected-build identities are invalid"
@@ -1926,12 +1968,18 @@ def evaluate_release_evidence(
     if not required_scope:
         raise ReleaseEvidenceError("release evidence requires a non-empty authoritative scope")
     identity_by_surface = {item.surface: item for item in identities}
-    if not identity_by_surface or any(
+    platform_release = comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION
+    if platform_release:
+        if comparison["releaseSafety"]["state"] != "resolved":
+            raise ReleaseEvidenceError("carried platform contract is unknown-fail-closed")
+        if identities != release_comparison_identities(expected_build_manifests, target, comparison):
+            raise ReleaseEvidenceError("platform release expected-build identity is invalid")
+    if not identity_by_surface or (not platform_release and any(
         item.manifest_id != current_manifest_id
         or item.marketing_version != target.version
         or item.build_number != target.build_number
         for item in identities
-    ):
+    )):
         raise ReleaseEvidenceError("expected signed-build identity does not match the comparison")
     if set(identity_by_surface) != set(RUNTIME_SURFACES):
         raise ReleaseEvidenceError("expected signed-build manifests do not cover every shipping surface")
@@ -1944,7 +1992,7 @@ def evaluate_release_evidence(
     if len(contract_fingerprints) != 1:
         raise ReleaseEvidenceError("expected signed-build identities do not share one contract")
     expected_identity_digest = _expected_identity_digest(identities)
-    if comparison.get("schemaVersion") == 5 and comparison["artifactEvidence"].get(
+    if comparison.get("schemaVersion") in {CURRENT_COMPARISON_SCHEMA_VERSION, PLATFORM_COMPARISON_SCHEMA_VERSION} and comparison["artifactEvidence"].get(
         "currentExpectedBuildIds"
     ) != sorted({item.expected_build_id for item in identities}):
         raise ReleaseEvidenceError("comparison artifact evidence does not bind current builds")
@@ -1997,6 +2045,13 @@ def evaluate_release_evidence(
             current_manifests=expected_build_manifests,
             previous_lineage=previous_ledger,
         )
+    elif platform_release:
+        retained_builds = comparison["releaseContext"]["previousExpectedBuildManifests"]
+        if retained_builds and (
+            previous_ledger is None
+            or retained_builds != previous_ledger["generation"]["expectedBuildManifests"]
+        ):
+            raise ReleaseEvidenceError("platform comparison requires its exact previous artifact lineage")
     selected_rc_surfaces: dict[str, dict[str, Any]] = {}
     selected_rc_expires_at: datetime | None = None
     if selected_rc_ledger is not None:
@@ -2076,6 +2131,43 @@ def evaluate_release_evidence(
     )
     patch_sensitive = set(policy["hostOSCompatibility"]["patchSensitiveSurfaces"])
     blockers: list[str] = []
+    shipped_surfaces = {}
+    shipped_expiries = []
+    if platform_release:
+        entries = comparison["releaseContext"]["releaseRecord"]["platforms"]
+        for entry in entries.values():
+            if entry["state"] != "carried":
+                continue
+            manifest = entry["expectedBuildManifest"]
+            lineage = entry["shippedLineage"]
+            shipped = _verified_lineage_ledger(
+                lineage, label="shipped platform", policy=policy, surface_policy=surface_policy,
+                historical_policy_archive=historical_policy_archive,
+                lineage_depth=_lineage_depth, lineage_seen=lineage_seen,
+            )
+            if (
+                shipped["mode"] != "enforce" or shipped["state"] != "approved"
+                or manifest not in lineage["generation"]["expectedBuildManifests"]
+            ):
+                raise ReleaseEvidenceError("carried platform requires its exact approved shipped lineage")
+            shipped_policy = historical_policy_archive.resolve(
+                "release", shipped["policyDigest"], current_policy=policy, label="shipped platform"
+            )
+            verified = _validate_ledger(
+                shipped, expected_manifest_id=manifest["sourceManifestId"], now=now,
+                label="shipped platform", maximum_age_days=shipped_policy["maximumEvidenceAgeDays"],
+                required_shadow_train_count=shipped_policy["requiredShadowTrainCount"],
+            )
+            shipped_expiries.append(parse_iso8601(shipped["expiresAt"]))
+            for surface in manifest["surfaces"]:
+                surface_id = surface["id"]
+                if verified.get(surface_id, {}).get("identityDigest") != identity_by_surface[surface_id].identity_digest():
+                    raise ReleaseEvidenceError("carried platform shipped identity does not match")
+                shipped_surfaces[surface_id] = verified[surface_id]
+        for entry in policy.get("runtimeRegressionWatchlist", {}).get("entries", []):
+            expiry = entry["extensions"][-1]["expiresAt"] if entry["extensions"] else entry["expiresAt"]
+            if entry["surfaceId"] in shipped_surfaces and parse_iso8601(entry["enteredAt"]) <= now < parse_iso8601(expiry):
+                blockers.append(f"{entry['surfaceId']}:carried-platform-active-watchlist")
     output_surfaces: list[dict[str, Any]] = []
     for surface in sorted(required_scope):
         identity = identity_by_surface[surface]
@@ -2094,6 +2186,18 @@ def evaluate_release_evidence(
                 now,
                 policy["maximumEvidenceAgeDays"],
             )
+            if surface in shipped_surfaces:
+                # A watchlist or another fresh requirement cannot be met by old proof.
+                if evidence_class in comparison_surface["freshEvidence"] or evidence_class not in comparison_surface["requiredEvidence"]:
+                    evidence = None
+                else:
+                    evidence = _carried_evidence(
+                        prior_surface=shipped_surfaces[surface], surface=surface,
+                        evidence_class=evidence_class, fingerprint=fingerprint,
+                        current_runtime=runtime_surfaces, current_host_os=current_host_os,
+                        patch_sensitive=patch_sensitive, source="carry-forward",
+                        require_current_runtime=False, expected_identity_digest=identity.identity_digest(),
+                    )
             if evidence is None and selected_rc_surfaces:
                 evidence = _carried_evidence(
                     prior_surface=selected_rc_surfaces.get(surface),
@@ -2171,6 +2275,8 @@ def evaluate_release_evidence(
     if mode == "shadow" and state == "approved" and shadow["state"] != "passed":
         state = "shadow-approved"
     expires_at = now + timedelta(days=policy["maximumEvidenceAgeDays"])
+    if shipped_expiries:
+        expires_at = min(expires_at, *shipped_expiries)
     evidence_sources = {
         evidence.get("source")
         for surface in output_surfaces
@@ -2303,15 +2409,24 @@ def release_evidence_report_blockers(
         expected_target = Target(version, build_number)
         manifest_ids = {identity.manifest_id for identity in identities}
         contract_fingerprints = {identity.contract_fingerprint for identity in identities}
+        platform_release = comparison is not None and comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION
+        platform_binding_valid = False
+        if platform_release and expected_build_manifests is not None:
+            try:
+                platform_binding_valid = identities == release_comparison_identities(
+                    expected_build_manifests, expected_target, comparison
+                )
+            except (ReleaseEvidenceError, RuntimeEvidenceError, ComparisonSchemaError):
+                pass
         if (
-            any(
+            (not platform_binding_valid and (any(
                 identity.marketing_version != expected_target.version
                 or identity.build_number != expected_target.build_number
                 for identity in identities
             )
             or len(manifest_ids) != 1
             or len(contract_fingerprints) != 1
-            or payload.get("currentManifestID") not in manifest_ids
+            or payload.get("currentManifestID") not in manifest_ids))
             or payload.get("contractFingerprint") not in contract_fingerprints
             or payload.get("expectedBuildIdentityDigest")
             != _expected_identity_digest(identities)
@@ -2350,7 +2465,10 @@ def release_evidence_report_blockers(
         blockers.append("configured surface evidence policy is required")
     else:
         try:
-            _validate_surface_policy(
+            if comparison is not None and comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION:
+                _validate_comparison(comparison, train, surface_policy)
+            else:
+                _validate_surface_policy(
                 surface_policy,
                 train=train,
                 comparison_surfaces=(
@@ -2426,9 +2544,13 @@ def release_evidence_report_blockers(
                                 f"{surface}:{evidence_class}:validation-report-lineage-mismatch"
                             )
                     elif evidence_class == "actual-runtime" and source == "carry-forward":
-                        blockers.append(
-                            f"{surface}:actual-runtime:carry-forward-without-fresh-receipt"
-                        )
+                        if not (comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION and any(
+                            entry["state"] == "carried" and any(s["id"] == surface for s in entry["expectedBuildManifest"]["surfaces"])
+                            for entry in comparison["releaseContext"]["releaseRecord"]["platforms"].values()
+                        )):
+                            blockers.append(
+                                f"{surface}:actual-runtime:carry-forward-without-fresh-receipt"
+                            )
                     elif evidence_class == "os-composited-placement" and source == "carry-forward":
                         runtime = current_runtime.get(surface)
                         current_receipts = set(runtime.get("receiptIDs") or []) if runtime else set()

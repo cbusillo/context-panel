@@ -1154,7 +1154,18 @@ def compare_manifests(
     train: str,
     previous_expected_build_manifests: list[dict[str, Any]] | None = None,
     current_expected_build_manifests: list[dict[str, Any]] | None = None,
+    release_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if release_record is not None:
+        from .release_comparison import build_release_comparison
+        if current_expected_build_manifests is not None:
+            raise SurfacePolicyError("use release record builds instead of current expected-build options")
+        try:
+            return build_release_comparison(
+                previous, current, train, previous_expected_build_manifests, release_record
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise SurfacePolicyError("platform release record is invalid") from error
     if previous.get("schemaVersion") != 1 or current.get("schemaVersion") != 1:
         raise SurfacePolicyError("surface manifest schema is unsupported")
     evidence_policy = validate_evidence_policy(current.get("evidencePolicy"))

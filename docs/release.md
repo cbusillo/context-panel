@@ -1323,6 +1323,50 @@ shipping surface manifest. Partial layout coverage is recorded as missing
 artifact evidence and escalates fail-closed; it is useful for diagnostics but
 is not a complete signed-train comparison.
 
+### Mixed-platform release records
+
+For an RC or release that submits only some archive platforms, pass
+`--release-record <record.json>` instead of the current expected-build options.
+Keep the complete previous/current source manifests and the previous artifact
+options. The record has `schemaVersion: 1` and a `platforms` object with exactly
+the archive layout names from the current source manifest. Each entry contains:
+
+- `state: "submitted"` and `expectedBuildManifest`: the complete sealed new
+  artifact JSON for that layout, at the candidate source and target.
+- `state: "carried"`, `expectedBuildManifest`, `sourceManifest` and
+  `shippedLineage`: the actual currently shipped artifact, its full original
+  source manifest, and its replayable enforced approved lineage. These are JSON
+  objects, not paths. Record the currently shipped build explicitly; never
+  relabel an older artifact as the new version or infer shipment from an upload.
+
+The schema-v6 comparison retains every surface and records each platform's
+schema-v5 comparison. Carried platforms use their shipped artifact at its real
+identity. The candidate's dependency fingerprints and shared contract must agree
+with the shipped source. Shared data/code, CloudKit schema/records, App Group and
+entitlement changes fail closed; uncertain semantic artifact evidence also
+blocks a mixed release. The check is conservative and makes no compatibility
+guess for changed dependencies. A missing, partial, legacy-incomplete or
+contradictory artifact cannot silently remove a platform. Full-fleet comparisons
+without a release record retain schema-v5 behavior.
+
+Pass all record artifacts, submitted and carried, to the release evaluator and
+report/submission verifier as repeated `--expected-build-manifest` arguments
+(or the submission command's corresponding release-evidence option). Also pass
+the exact previous lineage used by the record. The evaluator reconstructs the
+comparison from its embedded source/artifact inputs, verifies each shipped
+lineage, and preserves original evidence times and expiry. Active regression
+watchlist entries on carried surfaces block reuse. No new companion build is
+needed only when these checks pass. Missing or expired lineage remains a gate.
+
+For the coordinator, pass only submitted-build manifests. Its runtime scope is
+the comparison's `runtimeSessionSurfaces`; `requiredSurfaces` still describes the
+complete evaluator scope including carried proof. Visual capture continues to
+use fresh visual requirements only. Do not filter either scope by hand.
+RC and release must use the same platform record and complete identity set:
+release still requires its exact enforced approved selected RC, resolved shadow
+qualification, normal CloudKit publication proof and human visual decisions.
+This source capability does not qualify or run a release by itself.
+
 ### Release Evidence Carry-Forward Gate
 
 Before replaying historical signed trains, validate the committed public-safe
@@ -1536,7 +1580,8 @@ scripts/context-panel-validation.py start-session \
 ```
 
 When comparison and visual requirements are supplied, the coordinator derives
-the runtime scope from `requiredSurfaces.actual-runtime`; an explicit repeated
+the runtime scope from `requiredSurfaces.actual-runtime`, or from
+`runtimeSessionSurfaces` for an explicit platform record; an explicit repeated
 `--surface` list must match that set exactly. Without those files, omitting
 `--surface` still requests every shipping surface and remains the legacy
 RC/release floor. Beta automation must use the comparison output instead of

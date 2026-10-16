@@ -14,11 +14,10 @@ from context_panel_release_gate import (
     release_evidence_report_blockers,
 )
 from context_panel_validation import (
-    RUNTIME_SURFACES,
     RuntimeEvidenceError,
     Target,
 )
-from context_panel_validation.runtime_evidence import expected_surface_identities_from_payloads
+from context_panel_release_gate.core import release_comparison_identities
 
 
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
@@ -89,10 +88,10 @@ def main() -> None:
             load_json_object(path, "expected signed build manifest")
             for path in arguments.expected_build_manifests
         )
-        identities = expected_surface_identities_from_payloads(
+        identities = release_comparison_identities(
             list(expected_build_manifests),
             Target(arguments.version, arguments.build_number),
-            tuple(RUNTIME_SURFACES),
+            comparison,
         )
     except (ComparisonSchemaError, ReleaseEvidenceError, RuntimeEvidenceError) as error:
         raise SystemExit(f"release evidence binding is invalid: {error}") from error
