@@ -146,7 +146,7 @@ no new entitlement for local networking, but it does need a prototype.
 - Recovery is per home. Siblings keep their reports, and the stale account
   keeps its last limits marked stale until a genuine successful read
   ([Current Codex homes](provider-usage-access.md#current-codex-homes-and-openai-recovery)).
-- Follow-up scope: drop the Codex Lab wording, and name the affected home's
+- Follow-up scope ([#864](https://github.com/cbusillo/context-panel/issues/864)): drop the Codex Lab wording, and name the affected home's
   local nickname so the user knows which home to open. Optionally, check the
   access token's own expiry locally, without logging it, so that "expired"
   can be said separately from "rejected". Retry on the next scheduled refresh.
