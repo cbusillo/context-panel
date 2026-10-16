@@ -150,6 +150,27 @@ scripts/context-panel-companion-cache.sh preflight
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
+When the approved signed candidate predates the validator checkout, select its
+recorded identity with the sealed expected-build manifest from that release's
+archive/upload artifacts:
+
+```sh
+scripts/context-panel-runtime-baseline.sh check --require-production-runtime \
+  --candidate-manifest <ExpectedBuildManifest-macos.json>
+```
+
+This runs the current validator's checks against the candidate's recorded
+fingerprint. It verifies the installed signature, version/build and embedded
+manifest/contract identity, and requires all three macOS surfaces to match the
+record. Missing or invalid manifests, different builds and unrecorded source
+identities fail; there is no fallback to the installed stamp. Repeat
+`--candidate-manifest` for multiple archive layouts from the same candidate.
+The coordinator forwards its existing repeated `--expected-build-manifest`
+inputs to this path for status, final reports and Mac launch verification.
+These inputs select candidate identity; the release gate still owns approved
+RC lineage and human approval. Without a candidate manifest, the baseline
+continues to compare against its checkout. The candidate option is check-only.
+
 The baseline verifies each running refresh agent's loaded executable path and
 vnode (device/inode) against the canonical installed helper. It reads launchd's
 PID even when the process command is only the bundle identifier. A moved,
@@ -201,7 +222,8 @@ Do not claim readiness unless the receipt shows `baseline=OK`, the running app
 process in `Active Processes`, PluginKit widget registration, the refresh agent,
 and the `contextpanel://` URL handler all point to
 `/Applications/Context Panel.app`, and the build fingerprint in that app matches
-the current source tree. A receipt that says `OK: no Context Panel processes are
+the selected recorded candidate (or the current source tree without a candidate
+manifest). A receipt that says `OK: no Context Panel processes are
 running` is acceptable only for passive cleanup checks; it is not enough before
 asking Chris to test app, widget, provider, sandbox, storage, or login-item
 behavior. If the app was closed, launch the canonical app with

@@ -408,7 +408,7 @@ def collect_validation_report(args: argparse.Namespace):
             runtime_state, runtime_superseded = runtime_store.reconcile(session, observation)
     runner = SubprocessRunner()
     asc = collect_asc_evidence(runner, target, args.asc_env_file.expanduser())
-    mac = collect_mac_evidence(runner, target)
+    mac = collect_mac_evidence(runner, target, getattr(args, "expected_build_manifests", None))
     devices = collect_device_evidence(runner, target)
     report = build_report(
         target,
@@ -758,11 +758,12 @@ def _advance_macos_app_launch(
     automation_state: AutomationState | None,
     runner: SubprocessRunner,
     now: datetime,
+    expected_build_manifests: list[Path] | None = None,
 ) -> tuple[AutomationState | None, bool]:
     if not any(surface.startswith("macos.") for surface in session.requested_surfaces):
         return automation_state, False
 
-    observed_mac = collect_mac_evidence(runner, session.target)
+    observed_mac = collect_mac_evidence(runner, session.target, expected_build_manifests)
     window_digest = macos_app_window_digest(observed_mac)
     launch_identity_ready = (
         observed_mac.install_state == "current"
@@ -816,7 +817,7 @@ def _advance_macos_app_launch(
     launch_result = launch_canonical_mac_app(runner)
     post_launch_mac = observed_mac
     if launch_result.returncode == 0 and not launch_result.timed_out:
-        post_launch_mac = collect_mac_evidence(runner, session.target)
+        post_launch_mac = collect_mac_evidence(runner, session.target, expected_build_manifests)
         for _ in range(MACOS_LAUNCH_VERIFY_ATTEMPTS - 1):
             if (
                 post_launch_mac.baseline_state == "proven"
@@ -824,7 +825,7 @@ def _advance_macos_app_launch(
             ):
                 break
             time.sleep(MACOS_LAUNCH_VERIFY_DELAY_SECONDS)
-            post_launch_mac = collect_mac_evidence(runner, session.target)
+            post_launch_mac = collect_mac_evidence(runner, session.target, expected_build_manifests)
     if launch_result.returncode == 127:
         result, reason_code = "unsupported", "macos-app-launch-unavailable"
     elif launch_result.returncode != 0 or launch_result.timed_out:
@@ -1064,6 +1065,7 @@ def _run_advance_automation_locked(
         automation_state,
         runner,
         now,
+        getattr(args, "expected_build_manifests", None),
     )
 
     runtime_attempts = attempts_for_kind(automation_state, "runtime.receipt.sync")

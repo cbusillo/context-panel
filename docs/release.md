@@ -1850,6 +1850,12 @@ Panel.app`.
    scripts/context-panel-runtime-baseline.sh check --require-production-runtime
    ```
 
+   If the validator checkout has advanced past the approved candidate, use its
+   sealed `ExpectedBuildManifest-macos.json` with `--candidate-manifest` as
+   described in [the candidate validation route](validation-authority.md#validation).
+   Keep running the current validator; do not switch to the candidate's older
+   validation code or substitute another build.
+
    Require `baseline=OK`, `app-cloudkit=Production`, and
    `refresh-agent-cloudkit=Production`. Do not run `install` or `reset`; those
    modes build a local Development-CloudKit runtime and refuse to replace the
