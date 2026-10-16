@@ -6,6 +6,7 @@
 - [Design Direction](design-direction.md)
 - [Local Limit Probe Design](local-limit-probe.md)
 - [Provider Usage Access Research](provider-usage-access.md)
+- [Codex Credential Recovery](codex-credential-recovery.md)
 - [Validation Authority and Operator Route](validation-authority.md)
 - [Release Path](release.md)
 - [Signed Validation Fingerprints](signed-validation-fingerprints.md)

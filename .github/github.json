@@ -26,6 +26,7 @@
     "multiAccountSetup": "docs/provider-usage-access.md#multiple-local-account-entries",
     "codexSessionQuota": "docs/provider-usage-access.md#per-account-codex-session-quota",
     "currentCodexHomes": "docs/provider-usage-access.md#current-codex-homes-and-openai-recovery",
+    "codexCredentialRecovery": "docs/codex-credential-recovery.md",
     "agentAccountSnapshot": "docs/provider-usage-access.md#agent-readable-account-snapshot",
     "repoSettings": "docs/repo-settings.md",
     "sharedAccountIdentity": "docs/shared-account-identity.md",
@@ -43,7 +44,8 @@
       "fastPython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane fast-local-python",
       "routinePython": "uv run --no-project --with cryptography --with PyYAML python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
       "routineSwift": "uv run --no-project python scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test",
-      "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)"
+      "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)",
+      "changeDetectorWarnings": ".github/workflows/ci.yml swift-tests (warning-only shared scanner checked out from cbusillo/codex-skills; annotates all tracked tests on every run; https://github.com/cbusillo/codex-skills/blob/main/skills/references/test-quality.md)"
     },
     "inspection": {
       "ide": "PyCharm",
