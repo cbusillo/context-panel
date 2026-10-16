@@ -210,6 +210,8 @@ configured client/auth sources remain supported
 and the same ChatGPT account across sources is deduplicated. Context Panel does
 not rotate client refresh tokens. A usage-service 401/403 means credentials were
 rejected, not proof that the subscription or account access was revoked.
+[Codex credential recovery](codex-credential-recovery.md) records the
+recommended recovery route and the options that were set aside.
 
 Encrypted-only catalogs need a readable client auth file;
 Context Panel does not bypass client credential encryption.
