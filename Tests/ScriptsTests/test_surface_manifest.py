@@ -609,6 +609,11 @@ class SurfaceManifestTests(unittest.TestCase):
                 if entry["state"] == "submitted"
             ]
             next_report, _ = self.signed_report(next_source, submitted_builds)
+            if next_record["platforms"]["macos"]["state"] == "carried":
+                _, mac = self.carried_mac_proof(Target(next_report["target"]["version"], next_report["target"]["buildNumber"]),
+                    next_record["platforms"]["macos"]["expectedBuildManifest"])
+                next_report["obtainedEvidenceClasses"] = {"canonicalMacProductionRuntime": mac.baseline_state,
+                    "canonicalMacBuild": mac.public_build_identity()}
             next_identities = release_comparison_identities(
                 next_builds,
                 Target(
@@ -628,6 +633,14 @@ class SurfaceManifestTests(unittest.TestCase):
                 }
             )
             self.assertEqual(next_ledger["state"], "approved", next_ledger["blockers"])
+            if not all_submitted:
+                damaged_report = copy.deepcopy(next_report)
+                damaged_report["obtainedEvidenceClasses"]["canonicalMacBuild"]["expectedBuildID"] = "0" * 64
+                with self.assertRaises(ReleaseEvidenceError):
+                    evaluate_release_evidence(**{**arguments, "comparison": next_comparison,
+                        "validation_report": damaged_report, "identities": next_identities,
+                        "expected_build_manifests": next_builds, "previous_ledger": mixed_lineage})
+
 
         watched_policy = policy(watchlist_entries=(watchlist_entry("ios.app"),))
         archive = HistoricalPolicyArchive(
@@ -716,6 +729,45 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         with self.assertRaises(ReleaseEvidenceError):
             evaluate_release_evidence(**{**arguments, "comparison": damaged})
+
+    @staticmethod
+    def carried_mac_proof(target, manifest):
+        from context_panel_validation import system
+        from context_panel_validation.models import CommandResult
+        from context_panel_validation.cli import parse_args
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            expected_path = root / "mac.json"; expected_path.write_text(json.dumps(manifest))
+            info = root / "Info.plist"
+            info.write_bytes(plistlib.dumps({"CFBundleShortVersionString": manifest["source"]["marketingVersion"],
+                "CFBundleVersion": manifest["source"]["buildNumber"]}))
+            output = "app-cloudkit=Production\nrefresh-agent-cloudkit=Production\ndistribution=testflight\nOK: app process is running from installed runtime app\nbaseline=OK\n"
+            runner = SimpleNamespace(run=mock.Mock(return_value=CommandResult(0, output, "")))
+            args = parse_args(["status", "--version", target.version, "--build-number", target.build_number,
+                "--mac-expected-build-manifest", str(expected_path)])
+            with mock.patch.object(system, "CANONICAL_INFO_PLIST", info):
+                before = system.collect_mac_evidence(runner, target)
+                proof = system.collect_mac_evidence(runner, target, mac_expected_build_manifest=args.mac_expected_build_manifest)
+            return before, proof
+
+    def test_platform_release_coordinator_proves_the_carried_mac_target(self):
+        previous, current, _, record = self.platform_release()
+        manifest = record["platforms"]["macos"]["expectedBuildManifest"]
+        old_mac = self.expected_build(previous, layout="macos")
+        target = Target(current["source"]["marketingVersion"], current["source"]["buildNumber"])
+        before, proof = self.carried_mac_proof(target, old_mac)
+        self.assertNotEqual(before.baseline_state, "proven")
+        self.assertEqual(proof.baseline_state, "proven")
+        self.assertEqual(proof.expected_build_id, old_mac["expectedBuildId"])
+        self.assertNotEqual(proof.expected_build_id, manifest["expectedBuildId"])
+
+    def test_platform_release_exact_xcode_build_change_fails_closed(self):
+        current = copy.deepcopy(self.baseline)
+        current["source"]["xcodeBuild"] = "17B000"
+        previous, current, builds, record = self.platform_release(current)
+        result = compare_manifests(previous, current, "release", builds, release_record=record)
+        self.assertEqual(result["releaseSafety"]["state"], "unknown-fail-closed")
+        self.assertIn(platform_blocker("ios", PRODUCER_CONTRACT_CHANGED), result["releaseSafety"]["blockers"])
 
     def test_platform_release_compares_shipped_companions_without_new_runtime(self):
         previous, current, builds, record = self.platform_release()
@@ -874,7 +926,7 @@ class SurfaceManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.fixture(temporary)
             self.append(
-                root / "scripts/context_panel_comparison_schema.py",
+                root / next(path for path in resolve_policy(root).contract_files if path.endswith(".py")),
                 "\n# tooling-only change\n",
             )
             previous, current, builds, record = self.platform_release(

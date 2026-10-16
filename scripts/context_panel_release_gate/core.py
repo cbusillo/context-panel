@@ -1987,6 +1987,14 @@ def evaluate_release_evidence(
         raise ReleaseEvidenceError("expected signed-build identity does not match the comparison")
     if set(identity_by_surface) != set(RUNTIME_SURFACES):
         raise ReleaseEvidenceError("expected signed-build manifests do not cover every shipping surface")
+    obtained = validation_report.get("obtainedEvidenceClasses", {})
+    carried_mac = platform_release and comparison["releaseContext"]["releaseRecord"]["platforms"]["macos"]["state"] == "carried"
+    if carried_mac or (isinstance(obtained, dict) and "canonicalMacBuild" in obtained):
+        mac = identity_by_surface["macos.app"]
+        expected_mac = {"version": mac.marketing_version, "buildNumber": mac.build_number,
+                        "expectedBuildID": mac.expected_build_id}
+        if not isinstance(obtained, dict) or obtained.get("canonicalMacProductionRuntime") != "proven" or obtained.get("canonicalMacBuild") != expected_mac:
+            raise ReleaseEvidenceError("Mac publisher baseline does not match the release artifact")
     if any(
         identity_by_surface[surface].artifact_id != comparison_surface["artifactId"]
         for surface, comparison_surface in surface_comparison.items()
@@ -2378,6 +2386,7 @@ def release_evidence_report_blockers(
     authoritative_required: dict[str, list[str]] | None = None
     authoritative_scope: set[str] = set()
     validated_comparison_surfaces: dict[str, dict[str, Any]] = {}
+    carried_surface_ids: set[str] = set()
     try:
         if policy is None:
             raise ReleaseEvidenceError("configured release evidence policy is required")
@@ -2394,6 +2403,11 @@ def release_evidence_report_blockers(
             train,
             surface_policy,
         )
+        if comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION:
+            carried_surface_ids = {
+                s["id"] for entry in comparison["releaseContext"]["releaseRecord"]["platforms"].values()
+                if entry["state"] == "carried" for s in entry["expectedBuildManifest"]["surfaces"]
+            }
         if set(validated_comparison_surfaces) != set(RUNTIME_SURFACES):
             blockers.append("surface comparison does not cover every shipping surface")
         authoritative_required = comparison["requiredSurfaces"]
@@ -2565,10 +2579,7 @@ def release_evidence_report_blockers(
                                 f"{surface}:{evidence_class}:validation-report-lineage-mismatch"
                             )
                     elif evidence_class == "actual-runtime" and source == "carry-forward":
-                        if not (comparison is not None and comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION and any(
-                            entry["state"] == "carried" and any(s["id"] == surface for s in entry["expectedBuildManifest"]["surfaces"])
-                            for entry in comparison["releaseContext"]["releaseRecord"]["platforms"].values()
-                        )):
+                        if surface not in carried_surface_ids:
                             blockers.append(
                                 f"{surface}:actual-runtime:carry-forward-without-fresh-receipt"
                             )

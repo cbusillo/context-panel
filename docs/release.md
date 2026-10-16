@@ -1367,7 +1367,7 @@ their own sealed fingerprints and dependencies remain authoritative. The check
 makes no compatibility guess for changed dependencies. A missing, partial, legacy-incomplete or
 contradictory artifact cannot silently remove a platform. Full-fleet comparisons
 without a release record retain schema-v5 behavior.
-An Xcode/SDK or toolchain change changes carried fingerprints and therefore needs
+An Xcode/SDK or toolchain change is checked explicitly and needs
 fresh artifacts and proof for every affected platform; it is not a pure build
 number change. Retained lineage depth limits and evidence expiry still apply to
 successive mixed releases. The record embeds retained inputs, so operators should
@@ -1392,6 +1392,11 @@ For the coordinator, pass only submitted-build manifests. Its runtime scope is
 the comparison's `runtimeSessionSurfaces`; `requiredSurfaces` still describes the
 complete evaluator scope including carried proof. Visual capture continues to
 use fresh visual requirements only. Do not filter either scope by hand.
+When macOS is carried, also pass `--mac-expected-build-manifest <shipped-macos.json>`
+to coordinator status/final-report collection. This keeps the canonical Mac
+Production baseline mandatory while verifying its actual shipped target and
+sealed source, rather than the new companion target. The report binds that Mac
+artifact ID; the evaluator rejects a baseline for any other Mac artifact.
 RC and release must use the same platform record and complete identity set:
 release still requires its exact enforced approved selected RC, resolved shadow
 qualification, normal CloudKit publication proof and human visual decisions.

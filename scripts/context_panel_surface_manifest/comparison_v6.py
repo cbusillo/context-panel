@@ -12,6 +12,7 @@ from context_panel_comparison_schema import (
     V6_COMPARISON_SCHEMA_VERSION,
     derive_risk_fields,
     derive_runtime_decision,
+    toolchain_changed,
 )
 from context_panel_expected_build import validate_expected_build_manifest
 from .artifact_comparison import semantic_artifact_risk_codes
@@ -193,7 +194,7 @@ def build_release_comparison(
                 != value["fingerprints"]["runtime"]
                 for s, value in current_surfaces.items()
                 if value["artifactId"] in submitted_artifacts
-            ) or producer_artifacts_changed(entry, record["platforms"]):
+            ) or producer_artifacts_changed(entry, record["platforms"]) or toolchain_changed(source, current):
                 blockers.append(platform_blocker(platform, PRODUCER_CONTRACT_CHANGED))
             source_files, current_files = (
                 source.get("files", {}),

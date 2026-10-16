@@ -1939,6 +1939,8 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         ),
         "visualApproval": visual_approvals["state"],
     }
+    if report.mac.expected_build_id is not None:
+        obtained_classes["canonicalMacBuild"] = report.mac.public_build_identity()
     blockers = []
     if report.state == "blocked":
         blockers.append("coordinator-state-blocked")
