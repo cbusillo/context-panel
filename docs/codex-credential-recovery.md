@@ -47,8 +47,9 @@ The source shows how a renewed credential reaches the connector:
   into Context Panel's Keychain (`importConfiguredAuthFiles` in
   [`SnapshotRefreshService.swift`](../Sources/ContextPanelCore/SnapshotRefreshService.swift)).
   The connector then reads that copy. A file that Codex has rewritten is
-  therefore used on the next refresh. A stale copy is kept only while the
-  bookmarked file cannot be read, and in that case the user rebinds the home.
+  therefore used on the next refresh, provided the import succeeds. A stale
+  copy remains in use when the bookmarked file cannot be read (the user rebinds
+  the home) or when the Keychain save fails, which the import ignores silently.
 - A usage-service 401/403 with a refresh token present is reported as
   `foregroundRefreshRequired`. Without one, it is `invalidAuth`
   ([`CodexRateLimits.swift`](../Sources/ContextPanelCore/CodexRateLimits.swift)).
@@ -94,9 +95,10 @@ registration would be an external message, and that is the Director's call.
   use. Two writers rotating the same refresh token can leave one side holding a
   rejected token. Avoiding that needs a lock that Codex does not offer to other
   processes.
-- Homes that use `keyring` or `auto` credential storage
-  ([Codex authentication](https://learn.chatgpt.com/docs/auth)) keep no readable
-  `auth.json`. Another app's Keychain items are out of reach either way.
+- A home whose credentials live in the OS credential store (`keyring`, or
+  `auto` when the store is available;
+  [Codex authentication](https://learn.chatgpt.com/docs/auth)) keeps no
+  readable `auth.json`. Another app's Keychain items are out of reach either way.
 - Launching the Codex binary from the app inherits the app's sandbox
   ([Apple](https://developer.apple.com/documentation/security/discovering-and-diagnosing-app-sandbox-violations)),
   so that is not a route around the read-only grant.
@@ -111,8 +113,10 @@ Stock Codex app-server (`openai/codex` at
 exposes `account/read` with `refreshToken: true`, which "requests a proactive
 token refresh before returning" in managed auth mode, and
 `account/rateLimits/read`. The app-server stays the credential writer for its
-home. With Codex Lab retired, one home holds one account, so a per-home refresh
-targets the account without switching anything.
+home. A stock home holds one login, so a per-home refresh targets that account
+without switching anything. A retained Codex Lab catalog holds several members
+in one file, so this route does not cover them (see
+[Credential sources](#credential-sources)).
 
 - **Reachability.** The app cannot spawn the server with useful access, since a
   child process inherits the sandbox. It could connect to a server the user
@@ -123,8 +127,11 @@ targets the account without switching anything.
 - **Authentication.** A local listener must prove which home it serves and
   refuse other local callers. That design does not exist yet.
 - **Optionality.** Without a running server, Context Panel falls back to
-  recommendation 1. This keeps it self-contained under App Review guidelines
-  [2.4.5 and 4.2.3](https://developer.apple.com/app-store/review/guidelines/).
+  recommendation 1. Whether an optional integration like this satisfies App
+  Review guidelines
+  [2.4.5 and 4.2.3](https://developer.apple.com/app-store/review/guidelines/)
+  is unverified, since renewal would still depend on a separately installed
+  Codex. It stays an open App Review question, not an assurance.
 - **Evidence still owed.** A matching signed, sandboxed prototype must reach
   the server, refresh an expired home, and read limits before anyone claims
   this works in Context Panel.
@@ -148,13 +155,20 @@ no new entitlement for local networking, but it does need a prototype.
 
 ## Credential sources
 
-| Source | Recovery path |
-| --- | --- |
-| File-backed home (`auth.json`) | D now; C later. |
-| `keyring` or `auto` storage without a file | Not readable by Context Panel. Settings should say so; no recovery from the app. |
-| Encrypted-only catalog | Unchanged: needs a readable client auth file. |
-| Retired Codex Lab catalog | Historical entries keep reading. Recovery is a stock login into the current home. |
-| Session-quota folder | Reads no credentials; nothing to recover. |
+What Context Panel can read from each source is documented in
+[Codex and Codex Lab setup](provider-usage-access.md#codex-and-codex-lab-setup)
+and [Per-account Codex session quota](provider-usage-access.md#per-account-codex-session-quota).
+This record decides only the recovery route for each one:
+
+- **Stock file-backed home:** D now, C later.
+- **Credentials only in the OS credential store:** nothing the app can recover.
+  Settings should say why the home cannot be read.
+- **Retained Codex Lab catalog with several members:** not covered. Neither D
+  nor C renews one member without a Lab client, and a stock login into a new
+  home is a migration, not a recovery. That migration must keep the existing
+  catalog and its readable siblings monitored until the user moves each
+  member. Its design is follow-up work, not part of this recommendation.
+- **Session-quota folder:** reads no credentials, so there is nothing to recover.
 
 ## Unresolved grants
 
