@@ -43,6 +43,21 @@ ComparisonSchemaError = comparison_schema_module.ComparisonSchemaError
 derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
 ReleaseEvidenceError = release_gate_module.ReleaseEvidenceError
+from Tests.ScriptsTests.test_release_evidence_gate import (NOW, policy, report, watchlist_entry)
+from Tests.ScriptsTests import test_replay_inventory as inventory_test_fixtures
+from Tests.ScriptsTests.test_shared_view_capture_workflow import (workflow)
+from context_panel_release_gate import (build_release_evidence_lineage, evaluate_release_evidence, release_evidence_report_blockers)
+from context_panel_release_gate.cli import (run as run_gate)
+from context_panel_release_gate.core import (HistoricalPolicyArchive, _verified_lineage_ledger, release_comparison_identities)
+from context_panel_replay.comparison_adapters import (adapt_comparison_for_replay)
+from context_panel_replay.inventory import (render_json, seal_inventory, verify_inventory)
+from context_panel_replay.replay import (reconstruct_bundle)
+from context_panel_validation import (RUNTIME_SURFACES, Target)
+from context_panel_validation.runtime_evidence import (expected_surface_identities_from_payloads)
+from context_panel_validation.visual_approvals import (load_visual_review_plan)
+from context_panel_surface_manifest.comparison_v6 import (
+    platform_blocker, CARRIED_CONTRACT_CHANGED, SHARED_ENTITLEMENTS_CHANGED, PRODUCER_CONTRACT_CHANGED,
+)
 validate_release_comparison = release_gate_module._validate_comparison
 validate_artifact_comparison_inputs = (
     release_gate_module._validate_artifact_comparison_inputs
@@ -225,17 +240,12 @@ class SurfaceManifestTests(unittest.TestCase):
                 "expectedBuildManifest": self.expected_build(source, layout=layout),
             }
             if not submitted:
-                entry.update(sourceManifest=source, shippedLineage={})
+                entry.update(sourceManifest=source, shippedLineage={"generation": {"expectedBuildManifests": previous_builds}})
             record["platforms"][layout] = entry
         return previous, current, previous_builds, record
 
     @staticmethod
     def signed_report(source, builds):
-        from Tests.ScriptsTests.test_release_evidence_gate import report
-        from context_panel_validation.runtime_evidence import (
-            expected_surface_identities_from_payloads,
-        )
-        from context_panel_validation import RUNTIME_SURFACES, Target
 
         target = Target(
             source["source"]["marketingVersion"], source["source"]["buildNumber"]
@@ -303,11 +313,6 @@ class SurfaceManifestTests(unittest.TestCase):
         return result, identities
 
     def approved_shipped_lineage(self, source, builds):
-        from Tests.ScriptsTests.test_release_evidence_gate import NOW, policy
-        from context_panel_release_gate import (
-            evaluate_release_evidence,
-            build_release_evidence_lineage,
-        )
 
         configured = json.loads(
             (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
@@ -381,19 +386,6 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_platform_release_evaluator_lineage_and_report_reconstruct_real_builds(
         self,
     ):
-        from Tests.ScriptsTests.test_release_evidence_gate import NOW, policy
-        from context_panel_validation import Target
-        from context_panel_release_gate import (
-            evaluate_release_evidence,
-            build_release_evidence_lineage,
-            release_evidence_report_blockers,
-        )
-        from context_panel_release_gate.core import (
-            release_comparison_identities,
-            _verified_lineage_ledger,
-            HistoricalPolicyArchive,
-        )
-        from context_panel_replay.comparison_adapters import adapt_comparison_for_replay
 
         previous, current, builds, record = self.platform_release()
         lineage, shadow = self.approved_shipped_lineage(previous, builds)
@@ -477,17 +469,10 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         self.assertEqual(adapt_comparison_for_replay(comparison), comparison)
         # Seal and reconstruct a real mixed train through the inventory consumer.
-        from Tests.ScriptsTests.test_replay_inventory import ReplayInventoryTests
-        from context_panel_replay.inventory import (
-            seal_inventory,
-            render_json,
-            verify_inventory,
-        )
-        from context_panel_replay.replay import reconstruct_bundle
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            inventory_policy, roots = ReplayInventoryTests().fixture(root)
+            inventory_policy, roots = inventory_test_fixtures.ReplayInventoryTests().fixture(root)
             train_root = roots["archive"] / "train"
             for name, payload in {
                 "current": current,
@@ -643,7 +628,6 @@ class SurfaceManifestTests(unittest.TestCase):
                 }
             )
             self.assertEqual(next_ledger["state"], "approved", next_ledger["blockers"])
-        from Tests.ScriptsTests.test_release_evidence_gate import watchlist_entry
 
         watched_policy = policy(watchlist_entries=(watchlist_entry("ios.app"),))
         archive = HistoricalPolicyArchive(
@@ -660,7 +644,7 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         self.assertEqual(watched["state"], "blocked")
         self.assertTrue(
-            any(blocker.startswith("ios.app:") for blocker in watched["blockers"])
+            release_gate_module.carried_watchlist_blocker("ios.app") in watched["blockers"]
         )
         with self.assertRaises(ReleaseEvidenceError):
             evaluate_release_evidence(**{**arguments, "previous_ledger": None})
@@ -679,11 +663,6 @@ class SurfaceManifestTests(unittest.TestCase):
                 enforce=True,
                 **{k: v for k, v in arguments.items() if k not in {"train", "mode"}},
             )
-        )
-        from context_panel_release_gate.cli import run as run_gate
-        from context_panel_validation.visual_approvals import load_visual_review_plan
-        from context_panel_validation.runtime_evidence import (
-            expected_surface_identities_from_payloads,
         )
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -716,7 +695,6 @@ class SurfaceManifestTests(unittest.TestCase):
             self.assertEqual(run_gate(argv), 0)
             self.assertEqual(json.loads((root / "ledger.json").read_text()), ledger)
             requirements = root / "requirements.json"
-            from Tests.ScriptsTests.test_shared_view_capture_workflow import workflow
 
             requirements.write_text(
                 json.dumps(
@@ -806,7 +784,15 @@ class SurfaceManifestTests(unittest.TestCase):
                 self.assertEqual(
                     result["releaseSafety"]["state"], "unknown-fail-closed"
                 )
-                self.assertTrue(result["releaseSafety"]["blockers"])
+                reason = {
+                    "schema": CARRIED_CONTRACT_CHANGED,
+                    "cloudkit": CARRIED_CONTRACT_CHANGED,
+                    "app-group": SHARED_ENTITLEMENTS_CHANGED,
+                    "mac-producer": PRODUCER_CONTRACT_CHANGED,
+                }[label]
+                self.assertIn(
+                    platform_blocker("ios", reason), result["releaseSafety"]["blockers"]
+                )
 
     def test_platform_release_carried_dependency_check_is_independent_of_producer(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -819,17 +805,69 @@ class SurfaceManifestTests(unittest.TestCase):
             previous, current, "release", builds, release_record=record
         )
         self.assertEqual(result["releaseSafety"]["state"], "unknown-fail-closed")
-        self.assertTrue(
-            any(
-                blocker.startswith("ios:")
-                for blocker in result["releaseSafety"]["blockers"]
-            )
+        self.assertIn(
+            platform_blocker("ios", CARRIED_CONTRACT_CHANGED),
+            result["releaseSafety"]["blockers"],
         )
-        self.assertFalse(
-            any(
-                blocker.startswith("macos:")
-                for blocker in result["releaseSafety"]["blockers"]
+        self.assertNotIn(
+            platform_blocker("macos", PRODUCER_CONTRACT_CHANGED),
+            result["releaseSafety"]["blockers"],
+        )
+
+    def test_platform_release_checks_producers_against_carried_shipped_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(temporary)
+            self.append(next((root / "Sources/ContextPanelApp").glob("*.swift")))
+            _, current, _, record = self.platform_release(self.manifest(root))
+        # The newer approval includes a producer change, but companions actually
+        # shipped before it. An identical previous/candidate runtime cannot hide it.
+        previous = copy.deepcopy(current)
+        previous["source"]["buildNumber"] = "202608080417"
+        previous["manifestId"] = core_module.hash_parts(
+            f"{previous['digestDomain']}/manifest",
+            [
+                core_module.canonical_json(
+                    {k: v for k, v in previous.items() if k != "manifestId"}
+                )
+            ],
+        )
+        builds = [
+            self.expected_build(previous, layout=layout)
+            for layout in previous["archiveLayouts"]
+        ]
+        result = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        self.assertEqual(result["releaseSafety"]["state"], "unknown-fail-closed")
+        self.assertIn(
+            platform_blocker("ios", PRODUCER_CONTRACT_CHANGED),
+            result["releaseSafety"]["blockers"],
+        )
+
+    def test_platform_release_checks_signed_producers_against_shipped_proof(self):
+        previous, current, _, record = self.platform_release()
+
+        def signing_change(template):
+            template["artifacts"][0]["entitlementContractSha256"] = "f" * 64
+
+        record["platforms"]["macos"]["expectedBuildManifest"] = self.expected_build(
+            current, signing_change, "macos"
+        )
+        # A newer approval already has that signed contract, so only the
+        # consumer's older co-validated writer artifact exposes the change.
+        builds = [
+            self.expected_build(
+                previous, signing_change if layout == "macos" else None, layout
             )
+            for layout in previous["archiveLayouts"]
+        ]
+        result = compare_manifests(
+            previous, current, "release", builds, release_record=record
+        )
+        self.assertEqual(result["releaseSafety"]["state"], "unknown-fail-closed")
+        self.assertIn(
+            platform_blocker("ios", PRODUCER_CONTRACT_CHANGED),
+            result["releaseSafety"]["blockers"],
         )
 
     def test_platform_release_tooling_changes_preserve_binary_contract_checks(self):
@@ -850,10 +888,6 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         self.assertEqual(result["releaseSafety"]["state"], "resolved")
         validate_current_comparison(result)
-        from Tests.ScriptsTests.test_release_evidence_gate import NOW, policy
-        from context_panel_release_gate import evaluate_release_evidence
-        from context_panel_release_gate.core import release_comparison_identities
-        from context_panel_validation import Target
 
         lineage, shadow = self.approved_shipped_lineage(previous, builds)
         for entry in record["platforms"].values():
@@ -892,7 +926,6 @@ class SurfaceManifestTests(unittest.TestCase):
             now=NOW,
         )
         self.assertEqual(ledger["state"], "approved", ledger["blockers"])
-        from Tests.ScriptsTests.test_shared_view_capture_workflow import workflow
 
         with tempfile.TemporaryDirectory() as temporary:
             comparison_path = Path(temporary) / "comparison.json"

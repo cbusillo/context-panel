@@ -1371,8 +1371,12 @@ An Xcode/SDK or toolchain change changes carried fingerprints and therefore need
 fresh artifacts and proof for every affected platform; it is not a pure build
 number change. Retained lineage depth limits and evidence expiry still apply to
 successive mixed releases. The record embeds retained inputs, so operators should
-expect larger evidence bundles as those chains grow.
-The v5 and v6 derivations are versioned modules. Future comparison semantics must
+expect larger evidence bundles and longer verification as those chains grow.
+Evidence-policy edits require fresh artifacts under the new rules; the tooling-only
+allowance requires unchanged evidence rules. Producer checks use each carried
+artifact's original complete source, even when a newer approval exists that did
+not ship to every platform.
+The v6 derivation pins the frozen v5 function. Future comparison semantics must
 use a new schema and preserve those derivations for retained lineage and replay.
 
 Pass all record artifacts, submitted and carried, to the release evaluator and

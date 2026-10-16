@@ -41,6 +41,10 @@ HOST_OS_EVIDENCE_KIND = "context-panel-host-os-evidence"
 SHADOW_EVIDENCE_KIND = "context-panel-shadow-comparison"
 MAX_LINEAGE_DEPTH = 8
 TRAINS = {"beta", "rc", "release"}
+
+
+def carried_watchlist_blocker(surface: str) -> str:
+    return f"{surface}:carried-platform-active-watchlist"
 MODES = {"shadow", "enforce"}
 LEDGER_KEYS = {
     "schemaVersion",
@@ -2184,7 +2188,7 @@ def evaluate_release_evidence(
         for entry in policy.get("runtimeRegressionWatchlist", {}).get("entries", []):
             expiry = entry["extensions"][-1]["expiresAt"] if entry["extensions"] else entry["expiresAt"]
             if entry["surfaceId"] in shipped_surfaces and parse_iso8601(entry["enteredAt"]) <= now < parse_iso8601(expiry):
-                blockers.append(f"{entry['surfaceId']}:carried-platform-active-watchlist")
+                blockers.append(carried_watchlist_blocker(entry["surfaceId"]))
     output_surfaces: list[dict[str, Any]] = []
     for surface in sorted(required_scope):
         identity = identity_by_surface[surface]

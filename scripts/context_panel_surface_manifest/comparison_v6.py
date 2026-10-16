@@ -1,5 +1,5 @@
 # Frozen comparison-v6 derivation. Introduce a new schema/module for semantic
-# changes; retained lineages must keep using this version and comparison_v5.
+# changes; retained lineages must keep using this version and compare_manifests_v5.
 """Explicit mixed-build releases; retained artifacts never become candidate artifacts."""
 
 from __future__ import annotations
@@ -14,6 +14,51 @@ from context_panel_comparison_schema import (
     derive_runtime_decision,
 )
 from context_panel_expected_build import validate_expected_build_manifest
+from .artifact_comparison import semantic_artifact_risk_codes
+
+CARRIED_CONTRACT_CHANGED = "carried-platform-contract-changed"
+SHARED_ENTITLEMENTS_CHANGED = "shared-entitlements-changed"
+PRODUCER_CONTRACT_CHANGED = "submitted-producer-contract-changed"
+
+
+def platform_blocker(platform: str, reason: str) -> str:
+    return f"{platform}:{reason}"
+
+
+def producer_artifacts_changed(
+    entry: dict[str, Any], platforms: dict[str, Any]
+) -> bool:
+    """Use the signed writers co-validated with this shipped consumer."""
+    lineage = entry.get("shippedLineage")
+    generation = lineage.get("generation") if isinstance(lineage, dict) else None
+    builds = (
+        generation.get("expectedBuildManifests")
+        if isinstance(generation, dict)
+        else None
+    )
+    if not isinstance(builds, list) or not builds:
+        return True
+    try:
+        artifacts = {}
+        for build in builds:
+            validated = validate_expected_build_manifest(
+                build,
+                version=build["source"]["marketingVersion"],
+                build_number=build["source"]["buildNumber"],
+            )
+            if artifacts.keys() & validated.artifacts.keys():
+                return True
+            artifacts.update(validated.artifacts)
+        for platform in platforms.values():
+            if platform["state"] != "submitted":
+                continue
+            for current in platform["expectedBuildManifest"]["artifacts"]:
+                before = artifacts.get(current["artifactId"], {})
+                if semantic_artifact_risk_codes(before, current):
+                    return True
+    except (KeyError, TypeError, ValueError):
+        return True
+    return False
 
 
 def build_release_comparison(
@@ -23,7 +68,7 @@ def build_release_comparison(
     previous_builds: list[dict[str, Any]] | None,
     record: dict[str, Any],
 ) -> dict[str, Any]:
-    from .comparison_v5 import compare_manifests
+    from .core import compare_manifests_v5 as compare_manifests
     from .core import (
         SurfacePolicyError,
         canonical_json,
@@ -61,6 +106,7 @@ def build_release_comparison(
         or not layouts
         or not isinstance(record["platforms"], dict)
         or set(record["platforms"]) != set(layouts)
+        or any(not isinstance(entry, dict) for entry in record["platforms"].values())
         or not isinstance(previous_builds, list)
     ):
         fail("release record must name every archive platform exactly once")
@@ -133,7 +179,22 @@ def build_release_comparison(
                 )
                 for s in scope
             ):
-                blockers.append(f"{platform}:carried-platform-contract-changed")
+                blockers.append(platform_blocker(platform, CARRIED_CONTRACT_CHANGED))
+            # A newer approval need not be what this consumer shipped with.
+            submitted_artifacts = {
+                artifact
+                for layout_name, value in record["platforms"].items()
+                if value.get("state") == "submitted"
+                for artifact in layouts[layout_name]
+            }
+            if any(
+                s not in surfaces
+                or surfaces[s]["fingerprints"]["runtime"]
+                != value["fingerprints"]["runtime"]
+                for s, value in current_surfaces.items()
+                if value["artifactId"] in submitted_artifacts
+            ) or producer_artifacts_changed(entry, record["platforms"]):
+                blockers.append(platform_blocker(platform, PRODUCER_CONTRACT_CHANGED))
             source_files, current_files = (
                 source.get("files", {}),
                 current.get("files", {}),
@@ -143,7 +204,7 @@ def build_release_comparison(
                 for path in set(source_files) | set(current_files)
                 if path.endswith(".entitlements")
             ):
-                blockers.append(f"{platform}:shared-entitlements-changed")
+                blockers.append(platform_blocker(platform, SHARED_ENTITLEMENTS_CHANGED))
             before, before_builds = source, [expected]
         else:
             before = previous_sources.get(platform, previous)
@@ -180,11 +241,11 @@ def build_release_comparison(
         for platform, comparison in comparisons.items():
             if comparison["escalationState"] != "resolved":
                 blockers.append(f"{platform}:artifact-evidence-unknown")
-            if record["platforms"][platform]["state"] == "submitted" and (
-                comparison["artifactRiskCodes"]
-                or any(s["changes"]["runtime"] for s in comparison["surfaces"])
+            if (
+                record["platforms"][platform]["state"] == "submitted"
+                and comparison["artifactRiskCodes"]
             ):
-                blockers.append(f"{platform}:submitted-producer-contract-changed")
+                blockers.append(platform_blocker(platform, PRODUCER_CONTRACT_CHANGED))
     result = copy.deepcopy(next(iter(comparisons.values())))
     result.update(
         {
