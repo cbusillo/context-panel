@@ -21,8 +21,6 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
 FIXTURE_SIGNING_FINGERPRINT = hashlib.sha1(FIXTURE_SIGNING_CERTIFICATE).hexdigest().upper()
@@ -2150,6 +2148,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(output, "")
 
     def test_app_store_review_dry_run_receives_credentials_without_evidence_preparation(self) -> None:
+        import yaml
+
         from Tests.ScriptsTests.test_submit_app_store_review import MODULE_PATH
 
         workflow = yaml.safe_load(self.read(".github/workflows/submit-app-store-review.yml"))
