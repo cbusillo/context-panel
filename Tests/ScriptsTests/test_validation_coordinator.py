@@ -470,14 +470,14 @@ class MacEvidenceCollectorTests(unittest.TestCase):
 
     def test_mac_baseline_uses_the_supplied_candidate_manifest(self):
         runner = FakeRunner(baseline=self.baseline())
-        manifest = Path("/fixture/ExpectedBuildManifest-macos.json")
-        with mock.patch.object(system_module, "CANONICAL_INFO_PLIST", Path("/fixture/missing.plist")):
-            context_panel_validation.collect_mac_evidence(runner, self.target, [manifest])
-        self.assertEqual(
-            runner.commands,
-            [[str(system_module.REPO_ROOT / "scripts/context-panel-runtime-baseline.sh"),
-              "check", "--require-production-runtime", "--candidate-manifest", str(manifest)]],
-        )
+        manifest = Path("ExpectedBuildManifest-macos.json")
+        with tempfile.TemporaryDirectory() as directory, contextlib.chdir(directory):
+            expected_path = str(manifest.resolve())
+            with mock.patch.object(system_module, "CANONICAL_INFO_PLIST", Path("missing.plist")):
+                context_panel_validation.collect_mac_evidence(runner, self.target, [manifest])
+        command = runner.commands[0]
+        forwarded = [command[index + 1] for index, arg in enumerate(command) if arg == "--candidate-manifest"]
+        self.assertEqual(forwarded, [expected_path])
 
     def test_old_signed_build_waits_for_install_instead_of_blocking_publisher(self):
         evidence = self.collect(

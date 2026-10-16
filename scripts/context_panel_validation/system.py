@@ -95,7 +95,7 @@ def collect_mac_evidence(
         "--require-production-runtime",
     ]
     for manifest in expected_build_manifests or []:
-        baseline_args.extend(["--candidate-manifest", str(manifest.expanduser())])
+        baseline_args.extend(["--candidate-manifest", str(manifest.expanduser().resolve())])
     result = runner.run(
         baseline_args,
         timeout=180,

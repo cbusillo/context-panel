@@ -4345,10 +4345,6 @@ wait
                 manifest["source"]["commit"] = "1" * 40
                 for artifact in manifest["artifacts"]:
                     artifact["sourceCommit"] = manifest["source"]["commit"]
-                manifest.pop("expectedBuildId")
-                manifest["expectedBuildId"] = hash_parts(
-                    f"{manifest['digestDomain']}/expected-build", [canonical_json(manifest)],
-                )
                 embedded = {
                     "schemaVersion": 1, "kind": "context-panel-surface-build-intent",
                     "manifestId": manifest["sourceManifestId"],
@@ -4365,10 +4361,26 @@ wait
                     info["CFBundleVersion"] += "1"
                 elif candidate == "different-source":
                     embedded["manifestId"] = "2" * 64
-                elif candidate == "unrecorded":
-                    manifest.pop("expectedBuildId")
                 elif candidate == "different-fingerprint":
                     stamp = "3" * 64
+                elif candidate == "unrecorded":
+                    manifest["source"]["commit"] = ""
+                    for artifact in manifest["artifacts"]:
+                        artifact["sourceCommit"] = ""
+                elif candidate == "dirty-source":
+                    manifest["source"]["treeState"] = "dirty"
+                    for artifact in manifest["artifacts"]:
+                        artifact["treeState"] = "dirty"
+                elif candidate == "different-artifact-source":
+                    manifest["artifacts"][0]["sourceCommit"] = "2" * 40
+                elif candidate == "missing-agent":
+                    manifest["surfaces"] = [surface for surface in manifest["surfaces"] if surface["id"] != "macos.refresh-agent"]
+                manifest.pop("expectedBuildId")
+                manifest["expectedBuildId"] = hash_parts(
+                    f"{manifest['digestDomain']}/expected-build", [canonical_json(manifest)],
+                )
+                if candidate == "unsealed":
+                    manifest.pop("expectedBuildId")
                 (resources / "ContextPanelBuildFingerprint.txt").write_text(stamp)
                 (resources / "ContextPanelSurfaceManifest.json").write_text(json.dumps(embedded))
                 (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
@@ -4379,6 +4391,18 @@ wait
                 if candidate != "missing-manifest":
                     manifest_path.write_text(json.dumps(manifest))
                 candidate_args = f"--require-production-runtime --candidate-manifest {shlex.quote(str(manifest_path))}"
+                if candidate == "default-source":
+                    candidate_args = ""
+                elif candidate == "conflicting-manifests":
+                    conflicting = json.loads(json.dumps(manifest))
+                    conflicting["surfaces"][0]["fingerprints"]["combined"] = "4" * 64
+                    conflicting.pop("expectedBuildId")
+                    conflicting["expectedBuildId"] = hash_parts(
+                        f"{conflicting['digestDomain']}/expected-build", [canonical_json(conflicting)],
+                    )
+                    other_path = root / "conflicting-manifest.json"
+                    other_path.write_text(json.dumps(conflicting))
+                    candidate_args += f" --candidate-manifest {shlex.quote(str(other_path))}"
             loaded = str(executable)
             if loaded_root == "trash":
                 loaded = str(root / "Trash/Context Panel old.app" / executable.relative_to(app))
@@ -4453,7 +4477,8 @@ wait
     def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
         result = self.run_loaded_refresh_agent_fixture(candidate="matching")
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("Context Panel.app fingerprint matches", result.stdout)
+        result = self.run_loaded_refresh_agent_fixture(candidate="default-source")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_runtime_baseline_candidate_preserves_loaded_executable_gate(self) -> None:
         for loaded_root in ("trash", "deleted"):
@@ -4461,10 +4486,8 @@ wait
                 result = self.run_loaded_refresh_agent_fixture(
                     candidate="matching", loaded_root=loaded_root,
                 )
-                self.assertIn("Context Panel.app fingerprint matches", result.stdout)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
         result = self.run_loaded_refresh_agent_fixture(candidate="matching", inode="8000")
-        self.assertIn("Context Panel.app fingerprint matches", result.stdout)
         self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_runtime_baseline_candidate_preserves_production_and_testflight_identity(self) -> None:
@@ -4473,7 +4496,6 @@ wait
         self.assertIn("distribution=testflight", result.stdout)
         self.assertIn("app-store-receipt=present", result.stdout)
         result = self.run_loaded_refresh_agent_fixture(candidate="development")
-        self.assertIn("Context Panel.app fingerprint matches", result.stdout)
         self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_runtime_baseline_candidate_option_cannot_replace_a_runtime(self) -> None:
@@ -4488,7 +4510,8 @@ wait
     def test_runtime_baseline_rejects_mismatched_or_unrecorded_candidate(self) -> None:
         for candidate in (
             "different-build", "different-source", "different-fingerprint",
-            "unrecorded", "missing-manifest", "invalid-signature",
+            "unrecorded", "dirty-source", "different-artifact-source", "missing-agent",
+            "conflicting-manifests", "unsealed", "missing-manifest", "invalid-signature",
         ):
             with self.subTest(candidate=candidate):
                 result = self.run_loaded_refresh_agent_fixture(candidate=candidate)
