@@ -4342,18 +4342,22 @@ wait
             elif loaded_root == "deleted":
                 loaded += " (deleted)"
             process_command = (
-                "com.shinycomputers.contextpanel.refresh-agent"
+                "@AGENT_LABEL@"
                 if command_name == "bundle-id" else str(executable)
             )
             process = f"4321 {process_command}" if command_name != "hidden" else ""
+            if command_name == "argument":
+                process = "4321 defaults read @AGENT_LABEL@"
             launch = launch_output if launch_output is not None else (
-                "gui/501/com.shinycomputers.contextpanel.refresh-agent = {\n"
+                "gui/501/@AGENT_LABEL@ = {\n"
                 f"    state = running\n    pid = {launch_pid}\n}}"
             )
             loaded_files = "" if lsof_empty else (
                 f"p{lsof_pid}\nftxt\nD{device}\ni{inode}\nn{loaded}\n"
                 "ftxt\nD0x100000f\ni7\nn/usr/lib/dyld\n"
             )
+            if command_name == "argument":
+                loaded_files = "p4321\nftxt\nD0x100000f\ni99\nn/usr/bin/defaults\n"
             if duplicate_executable:
                 loaded_files += f"ftxt\nD{device}\ni{inode}\nn{loaded}\n"
             command = f"""
@@ -4370,10 +4374,14 @@ wait
             expected_fingerprint=fixture
             plugin_paths() {{ printf '%s\\n' "$widget_path"; }}
             url_handler_paths() {{ printf '%s\\n' "$app_path"; }}
-            ps() {{ printf '%s\\n' {shlex.quote(process)}; }}
+            fixture_process={shlex.quote(process)}
+            fixture_launch={shlex.quote(launch)}
+            fixture_process="${{fixture_process//@AGENT_LABEL@/$refresh_agent_label}}"
+            fixture_launch="${{fixture_launch//@AGENT_LABEL@/$refresh_agent_label}}"
+            ps() {{ printf '%s\\n' "$fixture_process"; }}
             launchctl() {{
               [[ "$1" == print ]] || exit 98
-              printf '%s\\n' {shlex.quote(launch)}
+              printf '%s\\n' "$fixture_launch"
               return {launch_status}
             }}
             lsof() {{
@@ -4420,14 +4428,22 @@ wait
             with self.subTest(loaded_root=loaded_root):
                 result = self.run_loaded_refresh_agent_fixture(
                     loaded_root=loaded_root, launch_status=113,
-                    launch_output='Could not find service "com.shinycomputers.contextpanel.refresh-agent" in domain for user gui: 501',
+                    launch_output='Could not find service "@AGENT_LABEL@" in domain for user gui: 501',
                 )
                 self.assertEqual(result.returncode == 0, loaded_root == "canonical", result.stdout)
 
+    def test_runtime_baseline_loaded_agent_ignores_bundle_id_in_another_commands_arguments(self) -> None:
+        result = self.run_loaded_refresh_agent_fixture(
+            command_name="argument", launch_status=113,
+            launch_output='Could not find service "@AGENT_LABEL@" in domain for user gui: 501',
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_runtime_baseline_loaded_agent_preserves_unloaded_and_failed_states(self) -> None:
         cases = (
-            (113, 'Could not find service "com.shinycomputers.contextpanel.refresh-agent" in domain for user gui: 501', True),
-            (0, "state = not running", True),
+            (113, 'Could not find service "@AGENT_LABEL@" in domain for user gui: 501', True),
+            (0, "state = not running\nlast exit code = 0", True),
+            (0, "state = not running\nlast exit code = 78", False),
             (0, "state = spawn failed\nlast exit code = 78", False),
         )
         for status, output, accepted in cases:

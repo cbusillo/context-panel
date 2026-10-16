@@ -128,6 +128,7 @@ companion_derived_data_root="${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}"
 app_path="/Applications/Context Panel.app"
 widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+refresh_agent_label="com.shinycomputers.contextpanel.refresh-agent"
 lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
 user_id="$(id -u)"
 expected_fingerprint="$("${repo_root}/scripts/context-panel-build-fingerprint.sh" 2>/dev/null || true)"
@@ -216,10 +217,10 @@ plist_value() {
 
 active_context_processes() {
 	ps axww -o pid=,command= |
-		awk '
+		awk -v refresh_agent_label="$refresh_agent_label" '
 				$0 ~ /\/Context Panel\.app\/Contents\/MacOS\/Context Panel$/ ||
 				$0 ~ /\/ContextPanelRefreshAgent\.app\/Contents\/MacOS\/ContextPanelRefreshAgent$/ ||
-				$0 ~ /[[:space:]]com\.shinycomputers\.contextpanel\.refresh-agent([[:space:]]|$)/ ||
+				$2 == refresh_agent_label ||
 				$0 ~ /\/ContextPanelWidgetExtension\.appex\/Contents\/MacOS\/ContextPanelWidgetExtension$/ ||
 				$0 ~ /\/ContextPanelApp$/ ||
 				$0 ~ /\/ContextPanelPreview$/ {
@@ -279,9 +280,9 @@ check_refresh_agent_process() {
 }
 
 check_refresh_agent_login_item() {
-	local launch_entry pid state
-	if ! launch_entry="$(launchctl print "gui/$user_id/com.shinycomputers.contextpanel.refresh-agent" 2>&1)"; then
-		if [[ "$launch_entry" == *'Could not find service "com.shinycomputers.contextpanel.refresh-agent"'* ]]; then
+	local launch_entry pid state last_exit
+	if ! launch_entry="$(launchctl print "gui/$user_id/$refresh_agent_label" 2>&1)"; then
+		if [[ "$launch_entry" == *"Could not find service \"$refresh_agent_label\""* ]]; then
 			ok "refresh login item is not loaded"
 		else
 			fail "could not read refresh login item identity"
@@ -291,9 +292,11 @@ check_refresh_agent_login_item() {
 	printf '%s\n' "$launch_entry" | sed -n '1,80p'
 	pid="$(awk '$1 == "pid" && $2 == "=" { print $3 }' <<<"$launch_entry")"
 	state="$(awk '$1 == "state" && $2 == "=" { print $3 }' <<<"$launch_entry")"
+	last_exit="$(awk '$1 == "last" && $2 == "exit" && $3 == "code" && $4 == "=" { print $5 }' <<<"$launch_entry")"
 	if [[ "$launch_entry" == *"job state = running"* || "$launch_entry" == *"state = running"* || -n "$pid" ]]; then
 		check_refresh_agent_process "$pid"
-	elif [[ "$launch_entry" == *"spawn failed"* || "$launch_entry" == *"last exit code"* ]]; then
+	elif [[ "$launch_entry" == *"spawn failed"* ]] ||
+		[[ "$launch_entry" == *"last exit code"* && "$last_exit" != "0" ]]; then
 		fail "refresh login item is registered but failed to launch"
 	elif [[ -n "$state" ]]; then
 		ok "refresh login item is registered; no running PID reported"
@@ -1226,7 +1229,7 @@ check_provisioning_profile() {
 }
 
 bootout_refresh_agent() {
-	launchctl bootout "gui/$user_id/com.shinycomputers.contextpanel.refresh-agent" >/dev/null 2>&1 || true
+	launchctl bootout "gui/$user_id/$refresh_agent_label" >/dev/null 2>&1 || true
 	pkill -x ContextPanelRefreshAgent >/dev/null 2>&1 || true
 }
 
@@ -1673,7 +1676,7 @@ check_runtime() {
 			*"Context Panel.app/Contents/MacOS/Context Panel"*)
 				fail "app process is running from unexpected bundle: $line"
 				;;
-			*"ContextPanelRefreshAgent"* | *"com.shinycomputers.contextpanel.refresh-agent"*)
+			*"ContextPanelRefreshAgent"* | *"$refresh_agent_label"*)
 				check_refresh_agent_process "${line%% *}"
 				;;
 			*) fail "unexpected Context Panel process: $line" ;;
