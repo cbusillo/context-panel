@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import plistlib
 import re
 import selectors
 import shlex
@@ -4320,6 +4321,7 @@ wait
         lsof_empty: bool = False,
         launch_status: int = 0,
         launch_output: str | None = None,
+        candidate: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Exercise the acting baseline's process/login-item checks with inert records."""
         with tempfile.TemporaryDirectory() as directory:
@@ -4334,6 +4336,73 @@ wait
             resources = app / "Contents/Resources"
             resources.mkdir()
             (resources / "ContextPanelBuildFingerprint.txt").write_text("fixture")
+            candidate_args = ""
+            if candidate is not None:
+                from Tests.ScriptsTests.test_runtime_receipt_ingestion import expected_manifest
+                from context_panel_expected_build import canonical_json, hash_parts
+
+                manifest = expected_manifest(("macos.app", "macos.widget", "macos.refresh-agent"))
+                manifest["source"]["commit"] = "1" * 40
+                for artifact in manifest["artifacts"]:
+                    artifact["sourceCommit"] = manifest["source"]["commit"]
+                embedded = {
+                    "schemaVersion": 1, "kind": "context-panel-surface-build-intent",
+                    "manifestId": manifest["sourceManifestId"],
+                    "contractFingerprint": manifest["contractFingerprint"],
+                    "surfaces": manifest["surfaces"],
+                }
+                info = {
+                    "CFBundleIdentifier": manifest["surfaces"][0]["bundleIdentifier"],
+                    "CFBundleShortVersionString": manifest["source"]["marketingVersion"],
+                    "CFBundleVersion": manifest["source"]["buildNumber"],
+                }
+                stamp = manifest["surfaces"][0]["fingerprints"]["combined"]
+                if candidate == "different-build":
+                    info["CFBundleVersion"] += "1"
+                elif candidate == "different-source":
+                    embedded["manifestId"] = "2" * 64
+                elif candidate == "different-fingerprint":
+                    stamp = "3" * 64
+                elif candidate == "unrecorded":
+                    manifest["source"]["commit"] = ""
+                    for artifact in manifest["artifacts"]:
+                        artifact["sourceCommit"] = ""
+                elif candidate == "dirty-source":
+                    manifest["source"]["treeState"] = "dirty"
+                    for artifact in manifest["artifacts"]:
+                        artifact["treeState"] = "dirty"
+                elif candidate == "different-artifact-source":
+                    manifest["artifacts"][0]["sourceCommit"] = "2" * 40
+                elif candidate == "missing-agent":
+                    manifest["surfaces"] = [surface for surface in manifest["surfaces"] if surface["id"] != "macos.refresh-agent"]
+                manifest.pop("expectedBuildId")
+                manifest["expectedBuildId"] = hash_parts(
+                    f"{manifest['digestDomain']}/expected-build", [canonical_json(manifest)],
+                )
+                if candidate == "unsealed":
+                    manifest.pop("expectedBuildId")
+                (resources / "ContextPanelBuildFingerprint.txt").write_text(stamp)
+                (resources / "ContextPanelSurfaceManifest.json").write_text(json.dumps(embedded))
+                (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+                receipt = app / "Contents/_MASReceipt/receipt"
+                receipt.parent.mkdir()
+                receipt.write_text("inert fixture receipt")
+                manifest_path = root / "ExpectedBuildManifest-macos.json"
+                if candidate != "missing-manifest":
+                    manifest_path.write_text(json.dumps(manifest))
+                candidate_args = f"--require-production-runtime --candidate-manifest {shlex.quote(str(manifest_path))}"
+                if candidate == "default-source":
+                    candidate_args = ""
+                elif candidate == "conflicting-manifests":
+                    conflicting = json.loads(json.dumps(manifest))
+                    conflicting["surfaces"][0]["fingerprints"]["combined"] = "4" * 64
+                    conflicting.pop("expectedBuildId")
+                    conflicting["expectedBuildId"] = hash_parts(
+                        f"{conflicting['digestDomain']}/expected-build", [canonical_json(conflicting)],
+                    )
+                    other_path = root / "conflicting-manifest.json"
+                    other_path.write_text(json.dumps(conflicting))
+                    candidate_args += f" --candidate-manifest {shlex.quote(str(other_path))}"
             loaded = str(executable)
             if loaded_root == "trash":
                 loaded = str(root / "Trash/Context Panel old.app" / executable.relative_to(app))
@@ -4361,9 +4430,9 @@ wait
             if duplicate_executable:
                 loaded_files += f"ftxt\nD{device}\ni{inode}\nn{loaded}\n"
             command = f"""
-            source scripts/context-panel-runtime-baseline.sh --source-only
+            source scripts/context-panel-runtime-baseline.sh --source-only {candidate_args}
             # Stub unrelated baseline reads; no host runtime or credential read runs.
-            keep=" check_runtime active_context_processes check_refresh_agent_process check_refresh_agent_login_item fail ok note section "
+            keep=" check_runtime candidate_build_fingerprint check_runtime_identity runtime_distribution_identity bundle_store_receipt_status plist_value active_context_processes check_refresh_agent_process check_refresh_agent_login_item fail ok note section "
             for name in $(declare -F | awk '{{print $3}}'); do
               [[ "$keep" == *" $name "* ]] && continue
               eval "$name() {{ :; }}"
@@ -4372,6 +4441,9 @@ wait
             widget_path={shlex.quote(str(widget))}
             refresh_agent_path={shlex.quote(str(agent))}
             expected_fingerprint=fixture
+            codesign() {{ return {1 if candidate == 'invalid-signature' else 0}; }}
+            bundle_cloudkit_environment() {{ printf '%s\n' {'Development' if candidate == 'development' else 'Production'}; }}
+            bundle_beta_reports_active() {{ printf '%s\n' true; }}
             plugin_paths() {{ printf '%s\\n' "$widget_path"; }}
             url_handler_paths() {{ printf '%s\\n' "$app_path"; }}
             fixture_process={shlex.quote(process)}
@@ -4401,6 +4473,49 @@ wait
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 check=False,
             )
+
+    def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
+        result = self.run_loaded_refresh_agent_fixture(candidate="matching")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        result = self.run_loaded_refresh_agent_fixture(candidate="default-source")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_baseline_candidate_preserves_loaded_executable_gate(self) -> None:
+        for loaded_root in ("trash", "deleted"):
+            with self.subTest(loaded_root=loaded_root):
+                result = self.run_loaded_refresh_agent_fixture(
+                    candidate="matching", loaded_root=loaded_root,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+        result = self.run_loaded_refresh_agent_fixture(candidate="matching", inode="8000")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_baseline_candidate_preserves_production_and_testflight_identity(self) -> None:
+        result = self.run_loaded_refresh_agent_fixture(candidate="matching")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("distribution=testflight", result.stdout)
+        self.assertIn("app-store-receipt=present", result.stdout)
+        result = self.run_loaded_refresh_agent_fixture(candidate="development")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_baseline_candidate_option_cannot_replace_a_runtime(self) -> None:
+        for mode in ("install", "reset"):
+            result = subprocess.run(
+                ["/bin/bash", str(REPO_ROOT / "scripts/context-panel-runtime-baseline.sh"),
+                 mode, "--source-only", "--candidate-manifest", "/fixture/candidate.json"],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_runtime_baseline_rejects_mismatched_or_unrecorded_candidate(self) -> None:
+        for candidate in (
+            "different-build", "different-source", "different-fingerprint",
+            "unrecorded", "dirty-source", "different-artifact-source", "missing-agent",
+            "conflicting-manifests", "unsealed", "missing-manifest", "invalid-signature",
+        ):
+            with self.subTest(candidate=candidate):
+                result = self.run_loaded_refresh_agent_fixture(candidate=candidate)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_runtime_baseline_loaded_agent_rejects_moved_executable(self) -> None:
         for loaded_root in ("trash", "other", "deleted"):

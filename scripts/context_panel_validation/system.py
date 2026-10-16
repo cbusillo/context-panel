@@ -70,7 +70,9 @@ def parse_key_values(output: str) -> dict[str, str]:
     return result
 
 
-def collect_mac_evidence(runner: Runner, target: Target) -> MacEvidence:
+def collect_mac_evidence(
+    runner: Runner, target: Target, expected_build_manifests: list[Path] | None = None,
+) -> MacEvidence:
     observed_version: str | None = None
     observed_build: str | None = None
     info_plist_exists = CANONICAL_INFO_PLIST.is_file()
@@ -87,12 +89,15 @@ def collect_mac_evidence(runner: Runner, target: Target) -> MacEvidence:
         if info_plist_exists
         else "not_installed"
     )
+    baseline_args = [
+        str(REPO_ROOT / "scripts/context-panel-runtime-baseline.sh"),
+        "check",
+        "--require-production-runtime",
+    ]
+    for manifest in expected_build_manifests or []:
+        baseline_args.extend(["--candidate-manifest", str(manifest.expanduser().resolve())])
     result = runner.run(
-        [
-            str(REPO_ROOT / "scripts/context-panel-runtime-baseline.sh"),
-            "check",
-            "--require-production-runtime",
-        ],
+        baseline_args,
         timeout=180,
         environment=os.environ.copy(),
     )

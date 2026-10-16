@@ -8,15 +8,16 @@ open_url_after_reset=0
 reset_widget_placement=0
 include_btm_diagnostics=0
 require_production_runtime=0
+candidate_manifests=()
 expected_bookmark_current=""
 expected_bookmark_resolvable=""
 source_only=0
 
 usage() {
 	cat <<'USAGE'
-Usage: scripts/context-panel-runtime-baseline.sh [check|install|reset] [--launch] [--open-url] [--reset-widget-placement] [--require-production-runtime] [--expect-bookmark-current <count>] [--expect-bookmark-resolvable <count>]
+Usage: scripts/context-panel-runtime-baseline.sh [check|install|reset] [--launch] [--open-url] [--reset-widget-placement] [--require-production-runtime] [--candidate-manifest <ExpectedBuildManifest.json>] [--expect-bookmark-current <count>] [--expect-bookmark-resolvable <count>]
 
-check  Print a runtime receipt and fail if Context Panel is not isolated to this checkout.
+check  Print a runtime receipt for the selected candidate (this checkout by default).
 install
        Build this checkout and update /Applications/Context Panel.app in place while preserving
        the user's placed widget and runtime storage. Refuses to replace a Production, TestFlight,
@@ -33,6 +34,10 @@ reset  Build this checkout, clear Context Panel storage, quarantine conflicting 
             Include sfltool Background Task Management diagnostics. macOS may prompt for a password.
 --require-production-runtime
             With check, require Production CloudKit entitlements for the app and refresh agent.
+--candidate-manifest <path>
+            With check, verify the exact recorded signed candidate instead of this checkout's
+            source fingerprint. Use the release's sealed ExpectedBuildManifest; repeat for
+            multiple archive layouts. All runtime checks still run with this validator's code.
 --expect-bookmark-current <count>
             With check, require the refresh agent to report exactly this many current bookmarks.
 --expect-bookmark-resolvable <count>
@@ -68,6 +73,14 @@ while [[ $# -gt 0 ]]; do
 		require_production_runtime=1
 		shift
 		;;
+	--candidate-manifest)
+		if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+			echo "--candidate-manifest requires an expected signed build manifest path" >&2
+			exit 2
+		fi
+		candidate_manifests+=("$2")
+		shift 2
+		;;
 	--expect-bookmark-current)
 		if [[ $# -lt 2 || ! "${2:-}" =~ ^[0-9]+$ ]]; then
 			echo "--expect-bookmark-current requires a non-negative integer" >&2
@@ -100,6 +113,11 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+if [[ ${#candidate_manifests[@]} -gt 0 && "$mode" != "check" ]]; then
+	echo "--candidate-manifest is only valid with check" >&2
+	exit 2
+fi
+
 if [[ "$require_production_runtime" == "1" && "$mode" != "check" ]]; then
 	echo "--require-production-runtime is only valid with check" >&2
 	usage >&2
@@ -131,7 +149,10 @@ refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAge
 refresh_agent_label="com.shinycomputers.contextpanel.refresh-agent"
 lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
 user_id="$(id -u)"
-expected_fingerprint="$("${repo_root}/scripts/context-panel-build-fingerprint.sh" 2>/dev/null || true)"
+expected_fingerprint=""
+if [[ ${#candidate_manifests[@]} -eq 0 ]]; then
+	expected_fingerprint="$("${repo_root}/scripts/context-panel-build-fingerprint.sh" 2>/dev/null || true)"
+fi
 canonical_app_group="MM5YXC7T6E.group.com.shinycomputers.contextpanel"
 legacy_app_group="group.com.shinycomputers.contextpanel"
 developer_team_id="MM5YXC7T6E"
@@ -1594,6 +1615,62 @@ reset_runtime() {
 	fi
 }
 
+candidate_build_fingerprint() {
+	# Trust the embedded intent only while sealed by the installed signature.
+	codesign --verify --deep --strict "$app_path" >/dev/null 2>&1 || return 1
+	python3 - "$repo_root/scripts" "$app_path" "${candidate_manifests[@]}" <<'PY'
+import json
+import plistlib
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from context_panel_expected_build import validate_expected_build_manifest
+
+try:
+    app = Path(sys.argv[2])
+    with (app / "Contents/Info.plist").open("rb") as handle:
+        info = plistlib.load(handle)
+    embedded = json.loads((app / "Contents/Resources/ContextPanelSurfaceManifest.json").read_text())
+    if embedded.get("schemaVersion") != 1 or embedded.get("kind") != "context-panel-surface-build-intent":
+        raise ValueError("installed candidate intent is invalid")
+    recorded = {}
+    for path in sys.argv[3:]:
+        payload = json.loads(Path(path).read_text())
+        validated = validate_expected_build_manifest(
+            payload,
+            version=info.get("CFBundleShortVersionString"),
+            build_number=info.get("CFBundleVersion"),
+            current_manifest_id=embedded.get("manifestId") or "missing",
+            contract_fingerprint=embedded.get("contractFingerprint") or "missing",
+        )
+        source = payload["source"]
+        if source.get("treeState") != "clean" or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", ""))):
+            raise ValueError("candidate source identity is unrecorded or not clean")
+        for artifact in validated.artifacts.values():
+            if any(artifact.get(key) != source.get(source_key) for key, source_key in (
+                ("sourceCommit", "commit"), ("treeState", "treeState"),
+                ("configuration", "configuration"), ("xcodeBuild", "xcodeBuild"),
+            )):
+                raise ValueError("candidate artifact source identity differs")
+        for surface in validated.surfaces:
+            surface_id = surface["id"]
+            if surface_id in recorded and recorded[surface_id] != surface:
+                raise ValueError("candidate manifests disagree")
+            recorded[surface_id] = surface
+    for surface_id in ("macos.app", "macos.widget", "macos.refresh-agent"):
+        surface = recorded.get(surface_id)
+        if surface is None or embedded["surfaces"].count(surface) != 1:
+            raise ValueError("installed candidate does not match recorded macOS surfaces")
+    if recorded["macos.app"]["bundleIdentifier"] != info.get("CFBundleIdentifier"):
+        raise ValueError("installed candidate bundle identity differs")
+    print(recorded["macos.app"]["fingerprints"]["combined"])
+except (OSError, ValueError, KeyError, TypeError, AttributeError, plistlib.InvalidFileException) as error:
+    raise SystemExit("candidate identity verification failed") from error
+PY
+}
+
 check_runtime() {
 	section "Expected Build"
 	if [[ -d "$app_path" ]]; then
@@ -1640,6 +1717,13 @@ check_runtime() {
 	check_provisioning_profile "$refresh_agent_path" "refresh agent"
 
 	section "Build Fingerprint"
+	if [[ ${#candidate_manifests[@]} -gt 0 ]]; then
+		if expected_fingerprint="$(candidate_build_fingerprint)"; then
+			ok "signed candidate identity matches recorded build manifests"
+		else
+			fail "could not verify recorded signed candidate identity"
+		fi
+	fi
 	if [[ -z "$expected_fingerprint" ]]; then
 		fail "could not compute expected source fingerprint"
 	else
