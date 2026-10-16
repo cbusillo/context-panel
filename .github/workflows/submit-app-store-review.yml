@@ -362,10 +362,6 @@ jobs:
             ${{ inputs.release_evidence_shadow_evidence_base64 }}
           INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
             ${{ inputs.release_evidence_historical_policy_archive_base64 }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
-            ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
           if [[ -z "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" || \
