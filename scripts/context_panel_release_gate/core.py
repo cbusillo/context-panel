@@ -1622,7 +1622,7 @@ def _generation_identities(
         if any(not isinstance(item, dict) for item in manifests):
             raise RuntimeEvidenceError("expected signed build manifest is invalid")
         return release_comparison_identities(manifests, target, payload["comparison"])
-    except (KeyError, TypeError, ValueError, RuntimeEvidenceError) as error:
+    except (KeyError, TypeError, ValueError, RuntimeEvidenceError, ComparisonSchemaError) as error:
         raise ReleaseEvidenceError(
             f"{label} expected-build identities are invalid"
         ) from error
@@ -1989,8 +1989,12 @@ def evaluate_release_evidence(
     ):
         raise ReleaseEvidenceError("expected signed-build artifact does not match the comparison")
     contract_fingerprints = {item.contract_fingerprint for item in identities}
-    if len(contract_fingerprints) != 1:
+    if not platform_release and len(contract_fingerprints) != 1:
         raise ReleaseEvidenceError("expected signed-build identities do not share one contract")
+    ledger_contract = (
+        comparison["releaseContext"]["currentManifest"]["contractFingerprint"]
+        if platform_release else identities[0].contract_fingerprint
+    )
     expected_identity_digest = _expected_identity_digest(identities)
     if comparison.get("schemaVersion") in {CURRENT_COMPARISON_SCHEMA_VERSION, PLATFORM_COMPARISON_SCHEMA_VERSION} and comparison["artifactEvidence"].get(
         "currentExpectedBuildIds"
@@ -2049,9 +2053,20 @@ def evaluate_release_evidence(
         retained_builds = comparison["releaseContext"]["previousExpectedBuildManifests"]
         if retained_builds and (
             previous_ledger is None
-            or retained_builds != previous_ledger["generation"]["expectedBuildManifests"]
+            or sorted(canonical_json(m) for m in retained_builds) != sorted(canonical_json(m) for m in previous_ledger["generation"]["expectedBuildManifests"])
         ):
             raise ReleaseEvidenceError("platform comparison requires its exact previous artifact lineage")
+        previous_sources = comparison["releaseContext"]["releaseRecord"].get("previousSourceManifests")
+        if previous_sources:
+            prior_comparison = previous_ledger["generation"]["comparison"]
+            if prior_comparison.get("schemaVersion") != PLATFORM_COMPARISON_SCHEMA_VERSION:
+                raise ReleaseEvidenceError("previous platform sources require platform lineage")
+            prior_context = prior_comparison["releaseContext"]
+            for platform, source in previous_sources.items():
+                entry = prior_context["releaseRecord"]["platforms"][platform]
+                expected_source = entry["sourceManifest"] if entry["state"] == "carried" else prior_context["currentManifest"]
+                if source != expected_source:
+                    raise ReleaseEvidenceError("previous platform source does not match approved lineage")
     selected_rc_surfaces: dict[str, dict[str, Any]] = {}
     selected_rc_expires_at: datetime | None = None
     if selected_rc_ledger is not None:
@@ -2102,7 +2117,7 @@ def evaluate_release_evidence(
             verified_selected_rc_ledger.get("train") != "rc"
             or verified_selected_rc_ledger.get("mode") != "enforce"
             or verified_selected_rc_ledger.get("contractFingerprint")
-            != next(iter(contract_fingerprints))
+            != ledger_contract
             or verified_selected_rc_ledger.get("expectedBuildIdentityDigest")
             != expected_identity_digest
             or verified_selected_rc_ledger.get("requiredEvidence")
@@ -2298,7 +2313,7 @@ def evaluate_release_evidence(
         },
         "previousManifestID": comparison["previousManifestId"],
         "currentManifestID": current_manifest_id,
-        "contractFingerprint": identities[0].contract_fingerprint,
+        "contractFingerprint": ledger_contract,
         "comparisonDigest": comparison_digest,
         "surfacePolicyDigest": surface_policy_digest,
         "policyDigest": policy_digest,
@@ -2427,7 +2442,7 @@ def release_evidence_report_blockers(
             or len(manifest_ids) != 1
             or len(contract_fingerprints) != 1
             or payload.get("currentManifestID") not in manifest_ids))
-            or payload.get("contractFingerprint") not in contract_fingerprints
+            or (not platform_binding_valid and payload.get("contractFingerprint") not in contract_fingerprints)
             or payload.get("expectedBuildIdentityDigest")
             != _expected_identity_digest(identities)
         ):

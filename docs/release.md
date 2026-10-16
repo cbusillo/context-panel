@@ -1339,15 +1339,36 @@ the archive layout names from the current source manifest. Each entry contains:
   objects, not paths. Record the currently shipped build explicitly; never
   relabel an older artifact as the new version or infer shipment from an upload.
 
+The operator must verify the currently distributed build before constructing this
+record. An approved ledger proves validation, not distribution: neither an RC nor
+a release approval by itself establishes that a build reached users. TestFlight
+distribution and public App Store distribution are distinct; use the shipment
+the owning release decision names.
+
+After a mixed release, also include `previousSourceManifests`, an object mapping
+every layout to its effective full source from the previous approved record
+(the prior candidate source for submitted entries, the original shipped source
+for carried entries). The evaluator binds these sources to that previous lineage.
+This allows the next release to submit a formerly carried platform, including a
+return to submitting every platform. Use the explicit record on that transition;
+one global previous source cannot describe heterogeneous previous artifacts.
+
 The schema-v6 comparison retains every surface and records each platform's
 schema-v5 comparison. Carried platforms use their shipped artifact at its real
 identity. The candidate's dependency fingerprints and shared contract must agree
 with the shipped source. Shared data/code, CloudKit schema/records, App Group and
 entitlement changes fail closed; uncertain semantic artifact evidence also
-blocks a mixed release. The check is conservative and makes no compatibility
-guess for changed dependencies. A missing, partial, legacy-incomplete or
+blocks a mixed release. Any submitted runtime fingerprint change also blocks
+carrying consumers, because platform-specific producer code can change shared
+records even when consumer code is unchanged. Pure build changes can pass;
+runtime/producer changes require new consumer builds and proof. A tooling-only
+contract fingerprint change does not reclassify unchanged shipped binaries:
+their own sealed fingerprints and dependencies remain authoritative. The check
+makes no compatibility guess for changed dependencies. A missing, partial, legacy-incomplete or
 contradictory artifact cannot silently remove a platform. Full-fleet comparisons
 without a release record retain schema-v5 behavior.
+The v5 and v6 derivations are versioned modules. Future comparison semantics must
+use a new schema and preserve those derivations for retained lineage and replay.
 
 Pass all record artifacts, submitted and carried, to the release evaluator and
 report/submission verifier as repeated `--expected-build-manifest` arguments

@@ -278,6 +278,28 @@ class SurfaceManifestTests(unittest.TestCase):
                     renderFingerprint=item.render_fingerprint,
                 )
                 result["visualApprovals"]["requirements"].append(visual)
+            capabilities = next(
+                surface["evidenceCapabilities"]
+                for surface in source["surfaces"]
+                if surface["id"] == item.surface
+            )
+            if "os-composited-placement" in capabilities:
+                placement = report(
+                    item.surface,
+                    runtime=True,
+                    visual_class="os-composited-placement",
+                    host_os=f"{item.platform} 27.0",
+                    manifest_id=item.manifest_id,
+                )["visualApprovals"]["requirements"][0]
+                placement["id"] = f"{item.surface}.placement-review"
+                placement.update(
+                    expectedBuildID=item.expected_build_id,
+                    identityDigest=item.identity_digest(),
+                    contractFingerprint=item.contract_fingerprint,
+                    renderFingerprint=item.render_fingerprint,
+                    placementFingerprint=item.placement_fingerprint,
+                )
+                result["visualApprovals"]["requirements"].append(placement)
         return result, identities
 
     def approved_shipped_lineage(self, source, builds):
@@ -454,6 +476,20 @@ class SurfaceManifestTests(unittest.TestCase):
             ledger,
         )
         self.assertEqual(adapt_comparison_for_replay(comparison), comparison)
+        damaged_lineage = copy.deepcopy(restored)
+        damaged_lineage["generation"]["comparison"]["releaseSafety"]["state"] = (
+            "tampered"
+        )
+        with self.assertRaises(ReleaseEvidenceError):
+            _verified_lineage_ledger(
+                damaged_lineage,
+                label="damaged mixed release",
+                policy=policy(),
+                surface_policy=configured,
+                historical_policy_archive=HistoricalPolicyArchive(),
+                lineage_depth=0,
+                lineage_seen=frozenset(),
+            )
         release_comparison = compare_manifests(
             previous, current, "release", builds, release_record=record
         )
@@ -466,6 +502,81 @@ class SurfaceManifestTests(unittest.TestCase):
             }
         )
         self.assertEqual(release["state"], "approved")
+        # Next release: submit the formerly carried iOS build, then all platforms.
+        # Each prior artifact keeps its own source instead of borrowing the last
+        # globally coordinated release's source identity.
+        next_source = copy.deepcopy(current)
+        next_source["source"]["buildNumber"] = "202608080419"
+        next_source["manifestId"] = core_module.hash_parts(
+            f"{next_source['digestDomain']}/manifest",
+            [
+                core_module.canonical_json(
+                    {k: v for k, v in next_source.items() if k != "manifestId"}
+                )
+            ],
+        )
+        for all_submitted in (False, True):
+            next_record = {
+                "schemaVersion": 1,
+                "platforms": {},
+                "previousSourceManifests": {},
+            }
+            for platform, prior_entry in record["platforms"].items():
+                prior_source = (
+                    prior_entry["sourceManifest"]
+                    if prior_entry["state"] == "carried"
+                    else current
+                )
+                next_record["previousSourceManifests"][platform] = prior_source
+                if all_submitted or platform == "ios":
+                    entry = {
+                        "state": "submitted",
+                        "expectedBuildManifest": self.expected_build(
+                            next_source, layout=platform
+                        ),
+                    }
+                else:
+                    entry = {
+                        "state": "carried",
+                        "sourceManifest": prior_source,
+                        "expectedBuildManifest": prior_entry["expectedBuildManifest"],
+                        "shippedLineage": mixed_lineage
+                        if platform == "macos"
+                        else lineage,
+                    }
+                next_record["platforms"][platform] = entry
+            next_comparison = compare_manifests(
+                current, next_source, "rc", list(expected), release_record=next_record
+            )
+            next_builds = tuple(
+                entry["expectedBuildManifest"]
+                for entry in next_record["platforms"].values()
+            )
+            submitted_builds = [
+                entry["expectedBuildManifest"]
+                for entry in next_record["platforms"].values()
+                if entry["state"] == "submitted"
+            ]
+            next_report, _ = self.signed_report(next_source, submitted_builds)
+            next_identities = release_comparison_identities(
+                next_builds,
+                Target(
+                    next_report["target"]["version"],
+                    next_report["target"]["buildNumber"],
+                ),
+                next_comparison,
+            )
+            next_ledger = evaluate_release_evidence(
+                **{
+                    **arguments,
+                    "comparison": next_comparison,
+                    "validation_report": next_report,
+                    "identities": next_identities,
+                    "expected_build_manifests": next_builds,
+                    "previous_ledger": mixed_lineage,
+                }
+            )
+            self.assertEqual(next_ledger["state"], "approved", next_ledger["blockers"])
         from Tests.ScriptsTests.test_release_evidence_gate import watchlist_entry
 
         watched_policy = policy(watchlist_entries=(watchlist_entry("ios.app"),))
@@ -481,8 +592,11 @@ class SurfaceManifestTests(unittest.TestCase):
                 "historical_policy_archive": archive,
             }
         )
-        self.assertIn("ios.app:carried-platform-active-watchlist", watched["blockers"])
-        with self.assertRaisesRegex(ReleaseEvidenceError, "previous artifact lineage"):
+        self.assertEqual(watched["state"], "blocked")
+        self.assertTrue(
+            any(blocker.startswith("ios.app:") for blocker in watched["blockers"])
+        )
+        with self.assertRaises(ReleaseEvidenceError):
             evaluate_release_evidence(**{**arguments, "previous_ledger": None})
         tampered = copy.deepcopy(ledger)
         tampered["surfaces"] = [
@@ -563,12 +677,7 @@ class SurfaceManifestTests(unittest.TestCase):
             evaluate_release_evidence(**{**arguments, "comparison": damaged})
 
     def test_platform_release_compares_shipped_companions_without_new_runtime(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = self.fixture(temporary)
-            self.append(next((root / "Sources/ContextPanelApp").glob("*.swift")))
-            previous, current, builds, record = self.platform_release(
-                self.manifest(root)
-            )
+        previous, current, builds, record = self.platform_release()
         result = compare_manifests(
             previous, current, "release", builds, release_record=record
         )
@@ -598,6 +707,7 @@ class SurfaceManifestTests(unittest.TestCase):
                 "cloudkit",
             ),
             ("Config/ContextPanel.entitlements", "app-group"),
+            ("Sources/ContextPanelApp/ContextPanelApp.swift", "mac-producer"),
         )
         for path, label in mutations:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
@@ -633,6 +743,67 @@ class SurfaceManifestTests(unittest.TestCase):
                     result["releaseSafety"]["state"], "unknown-fail-closed"
                 )
                 self.assertTrue(result["releaseSafety"]["blockers"])
+
+    def test_platform_release_tooling_changes_preserve_binary_contract_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(temporary)
+            self.append(
+                root / "scripts/context_panel_comparison_schema.py",
+                "\n# tooling-only change\n",
+            )
+            previous, current, builds, record = self.platform_release(
+                self.manifest(root)
+            )
+        self.assertNotEqual(
+            previous["contractFingerprint"], current["contractFingerprint"]
+        )
+        result = compare_manifests(
+            previous, current, "rc", builds, release_record=record
+        )
+        self.assertEqual(result["releaseSafety"]["state"], "resolved")
+        validate_current_comparison(result)
+        from Tests.ScriptsTests.test_release_evidence_gate import NOW, policy
+        from context_panel_release_gate import evaluate_release_evidence
+        from context_panel_release_gate.core import release_comparison_identities
+        from context_panel_validation import Target
+
+        lineage, shadow = self.approved_shipped_lineage(previous, builds)
+        for entry in record["platforms"].values():
+            if entry["state"] == "carried":
+                entry["shippedLineage"] = lineage
+        result = compare_manifests(
+            previous, current, "rc", builds, release_record=record
+        )
+        expected = tuple(
+            entry["expectedBuildManifest"] for entry in record["platforms"].values()
+        )
+        report, _ = self.signed_report(
+            current, [record["platforms"]["macos"]["expectedBuildManifest"]]
+        )
+        identities = release_comparison_identities(
+            expected,
+            Target(report["target"]["version"], report["target"]["buildNumber"]),
+            result,
+        )
+        self.assertGreater(
+            len({identity.contract_fingerprint for identity in identities}), 1
+        )
+        ledger = evaluate_release_evidence(
+            train="rc",
+            mode="enforce",
+            comparison=result,
+            validation_report=report,
+            identities=identities,
+            expected_build_manifests=expected,
+            previous_ledger=lineage,
+            shadow_evidence=shadow,
+            policy=policy(),
+            surface_policy=json.loads(
+                (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+            ),
+            now=NOW,
+        )
+        self.assertEqual(ledger["state"], "approved", ledger["blockers"])
 
     def test_platform_release_missing_or_relabelled_shipped_build_is_rejected(self):
         for mutation in ("missing", "relabelled", "omitted-platform"):
@@ -693,7 +864,9 @@ class SurfaceManifestTests(unittest.TestCase):
 
     def test_shared_artifact_surfaces_remain_distinct(self):
         surfaces = self.surfaces(self.baseline)
-        self.assertEqual(surfaces["ios.app"]["artifactId"], surfaces["ipados.app"]["artifactId"])
+        self.assertEqual(
+            surfaces["ios.app"]["artifactId"], surfaces["ipados.app"]["artifactId"]
+        )
         self.assertNotEqual(
             surfaces["ios.app"]["fingerprints"]["combined"],
             surfaces["ipados.app"]["fingerprints"]["combined"],

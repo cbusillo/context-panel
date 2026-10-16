@@ -47,8 +47,10 @@ COMPARISON_KIND = _v4.COMPARISON_KIND
 V2_COMPARISON_SCHEMA_VERSION = _v4.V2_COMPARISON_SCHEMA_VERSION
 V3_COMPARISON_SCHEMA_VERSION = _v4.V3_COMPARISON_SCHEMA_VERSION
 V4_COMPARISON_SCHEMA_VERSION = _v4.CURRENT_COMPARISON_SCHEMA_VERSION
-CURRENT_COMPARISON_SCHEMA_VERSION = 5
-PLATFORM_COMPARISON_SCHEMA_VERSION = 6
+V5_COMPARISON_SCHEMA_VERSION = 5
+CURRENT_COMPARISON_SCHEMA_VERSION = V5_COMPARISON_SCHEMA_VERSION
+V6_COMPARISON_SCHEMA_VERSION = 6
+PLATFORM_COMPARISON_SCHEMA_VERSION = V6_COMPARISON_SCHEMA_VERSION
 EVIDENCE_CLASSES = _v4.EVIDENCE_CLASSES
 TRAIN_NAMES = _v4.TRAIN_NAMES
 V3_ROOT_KEYS = _v4.V3_ROOT_KEYS
@@ -214,8 +216,8 @@ def validate_current_comparison(
     *,
     runtime_capable_surface_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    if isinstance(comparison, dict) and comparison.get("schemaVersion") == PLATFORM_COMPARISON_SCHEMA_VERSION:
-        from context_panel_surface_manifest.release_comparison import validate_platform_comparison
+    if isinstance(comparison, dict) and comparison.get("schemaVersion") == V6_COMPARISON_SCHEMA_VERSION:
+        from context_panel_surface_manifest.comparison_v6 import validate_platform_comparison
         return validate_platform_comparison(comparison)
     return validate_comparison_v5(
         comparison, runtime_capable_surface_ids=runtime_capable_surface_ids

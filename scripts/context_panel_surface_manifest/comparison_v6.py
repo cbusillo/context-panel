@@ -1,3 +1,5 @@
+# Frozen comparison-v6 derivation. Introduce a new schema/module for semantic
+# changes; retained lineages must keep using this version and comparison_v5.
 """Explicit mixed-build releases; retained artifacts never become candidate artifacts."""
 
 from __future__ import annotations
@@ -7,7 +9,7 @@ from typing import Any
 
 from context_panel_comparison_schema import (
     EVIDENCE_CLASSES,
-    PLATFORM_COMPARISON_SCHEMA_VERSION,
+    V6_COMPARISON_SCHEMA_VERSION,
     derive_risk_fields,
     derive_runtime_decision,
 )
@@ -21,10 +23,10 @@ def build_release_comparison(
     previous_builds: list[dict[str, Any]] | None,
     record: dict[str, Any],
 ) -> dict[str, Any]:
+    from .comparison_v5 import compare_manifests
     from .core import (
         SurfacePolicyError,
         canonical_json,
-        compare_manifests,
         hash_parts,
         manifest_surface_map,
     )
@@ -48,7 +50,11 @@ def build_release_comparison(
     layouts = current.get("archiveLayouts")
     if (
         not isinstance(record, dict)
-        or set(record) != {"schemaVersion", "platforms"}
+        or set(record)
+        not in (
+            {"schemaVersion", "platforms"},
+            {"schemaVersion", "platforms", "previousSourceManifests"},
+        )
         or type(record["schemaVersion"]) is not int
         or record["schemaVersion"] != 1
         or not isinstance(layouts, dict)
@@ -58,6 +64,11 @@ def build_release_comparison(
         or not isinstance(previous_builds, list)
     ):
         fail("release record must name every archive platform exactly once")
+    previous_sources = record.get("previousSourceManifests", {})
+    if not isinstance(previous_sources, dict) or (
+        previous_sources and set(previous_sources) != set(layouts)
+    ):
+        fail("previous platform sources must cover every archive layout")
     comparisons, blockers, current_ids = {}, [], []
     covered = set()
     for platform in sorted(layouts):
@@ -109,7 +120,7 @@ def build_release_comparison(
             # These fingerprints include shared inputs and project/entitlement contracts.
             # Comparing the candidate source against the shipped source is deliberately
             # conservative: no inference that a changed dependency is compatible.
-            if source["contractFingerprint"] != current["contractFingerprint"] or any(
+            if any(
                 s not in surfaces
                 or any(
                     surfaces[s].get(k) != current_surfaces[s].get(k)
@@ -135,7 +146,8 @@ def build_release_comparison(
                 blockers.append(f"{platform}:shared-entitlements-changed")
             before, before_builds = source, [expected]
         else:
-            before = previous
+            before = previous_sources.get(platform, previous)
+            source_map(before)
             before_builds = [
                 build
                 for build in previous_builds
@@ -168,15 +180,15 @@ def build_release_comparison(
         for platform, comparison in comparisons.items():
             if comparison["escalationState"] != "resolved":
                 blockers.append(f"{platform}:artifact-evidence-unknown")
-            if (
-                record["platforms"][platform]["state"] == "submitted"
-                and comparison["artifactRiskCodes"]
+            if record["platforms"][platform]["state"] == "submitted" and (
+                comparison["artifactRiskCodes"]
+                or any(s["changes"]["runtime"] for s in comparison["surfaces"])
             ):
-                blockers.append(f"{platform}:submitted-artifact-contract-changed")
+                blockers.append(f"{platform}:submitted-producer-contract-changed")
     result = copy.deepcopy(next(iter(comparisons.values())))
     result.update(
         {
-            "schemaVersion": PLATFORM_COMPARISON_SCHEMA_VERSION,
+            "schemaVersion": V6_COMPARISON_SCHEMA_VERSION,
             "previousManifestId": previous["manifestId"],
             "currentManifestId": current["manifestId"],
             "contractChanged": any(c["contractChanged"] for c in comparisons.values()),
