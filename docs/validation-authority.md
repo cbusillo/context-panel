@@ -150,6 +150,14 @@ scripts/context-panel-companion-cache.sh preflight
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
+The baseline verifies each running refresh agent's loaded executable path and
+vnode (device/inode) against the canonical installed helper. It reads launchd's
+PID even when the process command is only the bundle identifier. A moved,
+trashed, replaced, or unreadable loaded executable fails the receipt; installed
+bundle entitlements and a running launchd job alone do not prove its identity.
+After a normal TestFlight install and background-update recovery, rerun the
+same read-only check once the loaded helper belongs to that installation.
+
 Require the companion cache preflight to report `preflight=OK` before opening a
 signed validation coordinator session or judging physical-device behavior. If it
 fails, inspect the exact `companion-build-validation` root and use only the

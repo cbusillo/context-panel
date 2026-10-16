@@ -128,6 +128,7 @@ companion_derived_data_root="${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}"
 app_path="/Applications/Context Panel.app"
 widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+refresh_agent_label="com.shinycomputers.contextpanel.refresh-agent"
 lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
 user_id="$(id -u)"
 expected_fingerprint="$("${repo_root}/scripts/context-panel-build-fingerprint.sh" 2>/dev/null || true)"
@@ -216,9 +217,10 @@ plist_value() {
 
 active_context_processes() {
 	ps axww -o pid=,command= |
-		awk '
+		awk -v refresh_agent_label="$refresh_agent_label" '
 				$0 ~ /\/Context Panel\.app\/Contents\/MacOS\/Context Panel$/ ||
 				$0 ~ /\/ContextPanelRefreshAgent\.app\/Contents\/MacOS\/ContextPanelRefreshAgent$/ ||
+				$2 == refresh_agent_label ||
 				$0 ~ /\/ContextPanelWidgetExtension\.appex\/Contents\/MacOS\/ContextPanelWidgetExtension$/ ||
 				$0 ~ /\/ContextPanelApp$/ ||
 				$0 ~ /\/ContextPanelPreview$/ {
@@ -226,6 +228,81 @@ active_context_processes() {
 				print
 			}
 		' || true
+}
+
+# The command name can be the bundle identifier, and survives an app move.
+# Read the mapped executable vnode instead of trusting argv or launchd's program.
+check_refresh_agent_process() {
+	local pid="$1"
+	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
+	local mapped record loaded_pid device inode path disk_device disk_inode
+	if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
+		fail "could not verify refresh-agent PID: $pid"
+		return
+	fi
+	if ! mapped="$(lsof -a -p "$pid" -d txt -F pfinD 2>/dev/null)"; then
+		fail "could not read loaded refresh-agent executable identity for PID $pid"
+		return
+	fi
+	record="$(awk '
+		/^p/ { pid = substr($0, 2) }
+		/^f/ { file = substr($0, 2); device = ""; inode = "" }
+		/^D/ { device = substr($0, 2) }
+		/^i/ { inode = substr($0, 2) }
+		/^n/ && file == "txt" && $0 ~ /\/ContextPanelRefreshAgent$/ {
+			printf "%s\t%s\t%s\t%s\n", pid, device, inode, substr($0, 2)
+		}
+	' <<<"$mapped")"
+	if [[ -z "$record" || "$record" == *$'\n'* ]]; then
+		fail "loaded refresh-agent executable identity is unavailable or ambiguous for PID $pid"
+		return
+	fi
+	IFS=$'\t' read -r loaded_pid device inode path <<<"$record"
+	if [[ "$loaded_pid" != "$pid" || ! "$device" =~ ^0x[[:xdigit:]]+$ || ! "$inode" =~ ^[0-9]+$ ]]; then
+		fail "loaded refresh-agent executable identity is incomplete for PID $pid"
+		return
+	fi
+	if [[ "$path" != "$executable" ]]; then
+		fail "refresh agent is running from unexpected loaded executable: $path (PID $pid)"
+		return
+	fi
+	if ! record="$(stat -f '%d %i' "$executable" 2>/dev/null)"; then
+		fail "could not read installed refresh-agent executable identity"
+		return
+	fi
+	read -r disk_device disk_inode <<<"$record"
+	if [[ ! "$disk_device" =~ ^[0-9]+$ || ! "$disk_inode" =~ ^[0-9]+$ ]] ||
+		[[ "$((device))" != "$disk_device" || "$inode" != "$disk_inode" ]]; then
+		fail "loaded refresh-agent executable differs from installed file (PID $pid)"
+		return
+	fi
+	ok "refresh agent process is running from installed runtime app (loaded executable verified, PID $pid)"
+}
+
+check_refresh_agent_login_item() {
+	local launch_entry pid state last_exit
+	if ! launch_entry="$(launchctl print "gui/$user_id/$refresh_agent_label" 2>&1)"; then
+		if [[ "$launch_entry" == *"Could not find service \"$refresh_agent_label\""* ]]; then
+			ok "refresh login item is not loaded"
+		else
+			fail "could not read refresh login item identity"
+		fi
+		return
+	fi
+	printf '%s\n' "$launch_entry" | sed -n '1,80p'
+	pid="$(awk '$1 == "pid" && $2 == "=" { print $3 }' <<<"$launch_entry")"
+	state="$(awk '$1 == "state" && $2 == "=" { print $3 }' <<<"$launch_entry")"
+	last_exit="$(awk '$1 == "last" && $2 == "exit" && $3 == "code" && $4 == "=" { print $5 }' <<<"$launch_entry")"
+	if [[ "$launch_entry" == *"job state = running"* || "$launch_entry" == *"state = running"* || -n "$pid" ]]; then
+		check_refresh_agent_process "$pid"
+	elif [[ "$launch_entry" == *"spawn failed"* ]] ||
+		[[ "$launch_entry" == *"last exit code"* && "$last_exit" != "0" ]]; then
+		fail "refresh login item is registered but failed to launch"
+	elif [[ -n "$state" ]]; then
+		ok "refresh login item is registered; no running PID reported"
+	else
+		fail "refresh login item state is unavailable"
+	fi
 }
 
 context_files() {
@@ -1152,7 +1229,7 @@ check_provisioning_profile() {
 }
 
 bootout_refresh_agent() {
-	launchctl bootout "gui/$user_id/com.shinycomputers.contextpanel.refresh-agent" >/dev/null 2>&1 || true
+	launchctl bootout "gui/$user_id/$refresh_agent_label" >/dev/null 2>&1 || true
 	pkill -x ContextPanelRefreshAgent >/dev/null 2>&1 || true
 }
 
@@ -1599,11 +1676,8 @@ check_runtime() {
 			*"Context Panel.app/Contents/MacOS/Context Panel"*)
 				fail "app process is running from unexpected bundle: $line"
 				;;
-			*"$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"*)
-				ok "refresh agent process is running from installed runtime app"
-				;;
-			*"ContextPanelRefreshAgent"*)
-				fail "refresh agent is running from unexpected bundle: $line"
+			*"ContextPanelRefreshAgent"* | *"$refresh_agent_label"*)
+				check_refresh_agent_process "${line%% *}"
 				;;
 			*) fail "unexpected Context Panel process: $line" ;;
 			esac
@@ -1674,20 +1748,8 @@ check_runtime() {
 	fi
 
 	section "Login Items"
-	local launch_entry btm
-	launch_entry="$(launchctl print "gui/$user_id/com.shinycomputers.contextpanel.refresh-agent" 2>/dev/null || true)"
-	if [[ -z "$launch_entry" ]]; then
-		ok "refresh login item is not loaded"
-	elif [[ "$launch_entry" == *"job state = running"* || "$launch_entry" == *"state = running"* ]]; then
-		printf '%s\n' "$launch_entry" | sed -n '1,80p'
-		ok "refresh login item is running from installed runtime app"
-	elif [[ "$launch_entry" == *"spawn failed"* || "$launch_entry" == *"last exit code"* ]]; then
-		printf '%s\n' "$launch_entry" | sed -n '1,80p'
-		fail "refresh login item is registered but failed to launch"
-	else
-		printf '%s\n' "$launch_entry" | sed -n '1,80p'
-		ok "refresh login item is registered from installed runtime app"
-	fi
+	local btm
+	check_refresh_agent_login_item
 	btm="$(btm_context_entries)"
 	if [[ -n "$btm" ]]; then
 		printf '%s\n' "$btm"
