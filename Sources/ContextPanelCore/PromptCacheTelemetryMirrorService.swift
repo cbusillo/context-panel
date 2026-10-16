@@ -94,7 +94,7 @@ public enum PromptCacheTelemetryMirrorService {
             } ?? CodexClient.inferred(fromAuthPath: source.deletingLastPathComponent().appending(path: "auth.json").path)
         }
         // Filter before bookmark resolution, file access, and last-good preservation.
-        let sourceDirectories = sourceDirectories.filter { client(for: $0) != .everyCode }
+        let sourceDirectories = sourceDirectories.filter { client(for: $0)?.isRetired != true }
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
         var copied = 0
         var removed = 0
@@ -163,7 +163,7 @@ public enum PromptCacheTelemetryMirrorService {
             path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourceIDPath),
             directoryHint: .isDirectory
         )
-        if client == .codex || client == .codexLab || source.lastPathComponent == "sessions" {
+        if client == .codex || source.lastPathComponent == "sessions" {
             // Resolve only the explicitly configured root. The session reader
             // still rejects symlinked descendants, and source identity stays logical.
             let resolvedSource = source.resolvingSymlinksInPath()

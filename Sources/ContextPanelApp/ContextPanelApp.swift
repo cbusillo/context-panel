@@ -2949,9 +2949,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if account.codexQuotaPath != nil { return "Quota from the selected account's token_count events; run Codex on that account for a fresh observation" }
         switch account.connectorKind {
         case .codexRateLimits:
-            if account.effectiveCodexClient == .codexLab {
-                return "Select auth_accounts.json for \(account.effectiveCodexClient?.displayName ?? account.displayName). ChatGPT accounts are read from this file"
-            }
             if account.effectiveCodexClient == .codex {
                 return "Select auth.json for Codex"
             }
@@ -4027,7 +4024,7 @@ private struct ReconnectAccountRow: View {
         }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .codexRateLimits, refreshSummary?.status == .failure {
-            return "Sign in again with the configured Codex or Codex Lab client, then reselect its auth file."
+            return "Sign in again with the configured Codex client, then reselect its auth file."
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .googleAntigravityQuota {
