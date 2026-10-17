@@ -208,7 +208,7 @@ func accountConfigurationStoreAddsDisabledClientChoicesWithoutRepointingLegacyAc
 
 @Test(arguments: [
     ("openai-code-default", "/Users/example/custom/auth_accounts.json"),
-    ("openai-code-default", "/Users/example/.codex-lab/auth_accounts.json"),
+    ("openai-code-default", "/Users/example/.codex-work/auth_accounts.json"),
 ])
 func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: String, authPath: String) throws {
     let root = try temporaryDirectory()
@@ -477,7 +477,7 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
 @Test func codexAccountConnectorFactoryPreservesCustomClientDisplayName() async throws {
     let account = LocalProviderAccountConfiguration(
         id: "custom-lab", provider: .openAI, connectorKind: .codexRateLimits,
-        displayName: "Work Lab", authPath: "/missing-test-client/auth.json", codexClient: .codexLab
+        displayName: "Work Codex", authPath: "/missing-test-client/auth.json", codexClient: .codex
     )
     let connectors = AccountConnectorFactory.connectors(
         from: AccountConfigurationDocument(updatedAt: Date(), accounts: [account]),
@@ -485,7 +485,7 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
         requiresBookmarkedAuthFiles: true
     )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date())
-    #expect(result.reports.map(\.accountName) == ["Work Lab"])
+    #expect(result.reports.map(\.accountName) == ["Work Codex"])
     #expect(result.reports.allSatisfy { $0.status == .failure })
 }
 
@@ -748,13 +748,14 @@ private struct ThrowingProviderCredentialStore: ProviderCredentialStoring {
     }
 }
 
-@Test func retiredCustomSourceIsDisabledAndPreservedThroughSettingsSave() throws {
+@Test(arguments: [CodexClient.everyCode, .codexLab])
+func retiredCustomSourceIsDisabledAndPreservedThroughSettingsSave(client: CodexClient) throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
     let retired = LocalProviderAccountConfiguration(
         id: "custom-retired", provider: .openAI, connectorKind: .codexRateLimits,
-        displayName: "Historical account", authPath: "/Users/example/custom/auth.json", codexClient: .everyCode
+        displayName: "Historical account", authPath: "/Users/example/custom/auth.json", codexClient: client
     )
     try store.save(AccountConfigurationDocument(updatedAt: .distantPast, accounts: [retired]))
     var document = store.load().document

@@ -43,26 +43,13 @@ private struct CodexSessionFixture {
     }
 }
 
-@Test func codexSessionUsesTypedClientIdentityWithoutChangingEventFingerprint() throws {
+@Test(arguments: [CodexClient.codexLab, .everyCode])
+func codexSessionReaderRejectsRetiredClient(client: CodexClient) throws {
     let fixture = try CodexSessionFixture()
     defer { fixture.remove() }
-    try fixture.write([
-        fixture.event(100, input: 100, cached: 80),
-        fixture.event(90, input: 200, cached: 160),
-    ])
-
-    let codex = try #require(fixture.observations(client: .codex).first)
-    let lab = try #require(fixture.observations(client: .codexLab).first)
-    #expect(codex.id == lab.id)
-    #expect(codex.accountID == "codex-session-unattributed")
-    #expect(codex.accountName == "Codex · Account unknown")
-    #expect(lab.accountID == "codex-lab-session-unattributed")
-    #expect(lab.accountName == "Codex Lab · Account unknown")
-    #expect(CodexSessionTelemetryReader.observations(
-        rootDirectory: fixture.root,
-        client: .everyCode,
-        now: fixture.now
-    ).isEmpty)
+    try fixture.write([fixture.event(100, input: 100, cached: 80), fixture.event(90, input: 200, cached: 160)])
+    #expect(fixture.observations(client: client).isEmpty)
+    #expect(!fixture.observations(client: .codex).isEmpty)
 }
 
 @Test func codexSessionDeltasExcludeRepeatedTotalsAndUseBoundaryBaseline() throws {

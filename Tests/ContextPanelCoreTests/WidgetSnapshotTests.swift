@@ -1203,7 +1203,7 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 
 @Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
     let root = try widgetSnapshotTemporaryDirectory()
-    let codeDirectory = root.appending(path: ".codex-lab-chris", directoryHint: .isDirectory)
+    let codeDirectory = root.appending(path: ".codex-chris", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: "sessions", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
@@ -1228,7 +1228,7 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 }
 
 @Test(arguments: ["usage", "sessions"])
-func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: String) throws {
+func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     let root = try widgetSnapshotTemporaryDirectory()
     let codeDirectory = root.appending(path: ".codex-lab", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: folder, directoryHint: .isDirectory)
@@ -1255,7 +1255,7 @@ func widgetSnapshotRequestsNewLabSessionsGrantAfterLegacyUsageBookmark(folder: S
         accountStore: accountStore,
         bookmarkStore: bookmarkStore,
         now: Date(timeIntervalSince1970: 110)
-    ) == (folder == "sessions" ? nil : .needsAuthorization))
+    ) == nil)
 }
 
 @Test func widgetSnapshotTrustsSavedPromptCacheBookmarkRecordWithoutResolvingIt() throws {

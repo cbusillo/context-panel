@@ -48,7 +48,7 @@ import Testing
 }
 
 @Test func explicitCodexClientMetadataSelectsTelemetryAtArbitraryAuthPaths() throws {
-    let cases: [(CodexClient, String)] = [(.codex, "sessions"), (.codexLab, "sessions")]
+    let cases: [(CodexClient, String)] = [(.codex, "sessions")]
     for (client, folder) in cases {
         let account = LocalProviderAccountConfiguration(
             id: "custom", provider: .openAI, connectorKind: .codexRateLimits,
@@ -68,7 +68,7 @@ import Testing
     )
 
     #expect(account.effectiveCodexClient == .codexLab)
-    #expect(account.promptCacheDirectory?.path == "/Users/example/.codex/sessions")
+    #expect(account.promptCacheDirectory == nil)
 }
 
 @Test func legacyConfigurationDecodesWithoutClientMetadataAndInfersTelemetry() throws {
@@ -80,7 +80,7 @@ import Testing
 
     #expect(account.codexClient == nil)
     #expect(account.effectiveCodexClient == .codexLab)
-    #expect(account.promptCacheDirectory?.path == "/Users/example/.codex-lab-work/sessions")
+    #expect(account.promptCacheDirectory == nil)
     #expect(!account.isEnabled)
 }
 
@@ -129,7 +129,7 @@ import Testing
 }
 
 @Test func codexClientExplicitModernMetadataAtLegacyPathStaysActive() {
-    for client in [CodexClient.codex, .codexLab] {
+    for client in [CodexClient.codex] {
         let account = LocalProviderAccountConfiguration(
             id: "openai-code-default", provider: .openAI, connectorKind: .codexRateLimits,
             displayName: "Repointed", authPath: "/Users/example/.code/auth.json", codexClient: client
@@ -148,6 +148,6 @@ import Testing
         account("codex", .codex), account("old", .everyCode), account("lab-work", .codexLab),
         account("codex-work", .codex), account("lab", .codexLab),
     ])
-    #expect(document.settingsAccounts.map(\.id) == ["codex", "lab-work", "codex-work", "lab"])
+    #expect(document.settingsAccounts.map(\.id) == ["codex", "codex-work"])
     #expect(document.accounts.map(\.id) == ["codex", "old", "lab-work", "codex-work", "lab"])
 }

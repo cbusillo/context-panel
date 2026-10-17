@@ -890,7 +890,7 @@ func promptCacheMirrorRejectsRetiredSourcesAndKeepsOriginalFiles(explicitClient:
     #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
 }
 
-@Test(arguments: [CodexClient.codex, .codexLab])
+@Test(arguments: [CodexClient.codex])
 func promptCacheBookmarkedMirrorPreservesExplicitModernClientAtLegacyPath(client: CodexClient) throws {
     let root = try promptCacheTemporaryDirectory()
     let source = root.appending(path: ".code/\(client.telemetryFolderName)")

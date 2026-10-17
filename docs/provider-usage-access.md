@@ -184,19 +184,19 @@ classification, and additional buckets keyed by `limit_id`.
 
 Historical Every Code investigation established that Codex percentage windows
 come from authenticated backend responses rather than local token counts.
-Context Panel now reads those live windows directly through Codex and Codex Lab
-credentials. Every Code is retired: it is not a fallback, setup option, or active
+Context Panel now reads those live windows directly through Codex
+credentials. Every Code and Codex Lab are retired: neither is a fallback, setup option, or active
 auth/telemetry source. Historical snapshots remain readable.
 
-## Codex and Codex Lab setup
+## Codex setup
 
 New installations offer Codex (`~/.codex/auth.json`, enabled), Claude, and
 Antigravity; they no longer add a Codex Lab source. Existing Codex Lab entries
-keep working. An explicit `CODEX_HOME` (or `CODEX_LAB_HOME` for an existing Lab
-entry) is respected when available to the process.
+are retained as disabled historical records. An explicit `CODEX_HOME` is
+respected when available to the process.
 Signed apps launched by macOS do not inherit arbitrary terminal environment
 variables; their saved account configuration and user-approved bookmarks are
-what determine access. Both sources use the existing live Codex limits connector.
+what determine access. Codex sources use the existing live Codex limits connector.
 A catalog monitors every readable ChatGPT account on each refresh.
 `active_account_id` selects the CLI login, not Context Panel membership; changing,
 clearing, or corrupting that selector does not hide readable sibling accounts.
@@ -216,14 +216,14 @@ recommended recovery route and the options that were set aside.
 Encrypted-only catalogs need a readable client auth file;
 Context Panel does not bypass client credential encryption.
 
-Existing Every Code configurations are retained as disabled migration records,
+Existing Every Code and Codex Lab configurations are retained as disabled migration records,
 with IDs, paths, imported credentials, bookmarks, and stored history preserved.
 They are excluded from settings, provider polling, credential import, and cache
-collection. When an Every Code record exists, a missing Codex setup choice is
+collection. When a retired client record exists, a missing Codex setup choice is
 added disabled unless it was explicitly removed; existing modern client settings
 remain unchanged. Account settings keep the saved configuration order.
-Explicit client metadata takes precedence over path inference, so a modern
-client using a custom path or a historical configured ID remains supported.
+Explicit client metadata takes precedence over path inference, so Codex
+using a custom path or a historical configured ID remains supported.
 The configuration stays schema 1. No automatic `CODE_HOME` or `.code/usage`
 discovery remains; old payload decoding is retained for archived app data only.
 
@@ -234,13 +234,12 @@ Cache telemetry needs a separate folder permission from auth-file access:
 | Client    | Folder                  | Recent cache measurement                                           |
 | --------- | ----------------------- | ------------------------------------------------------------------ |
 | Codex     | `~/.codex/sessions`     | Counter increments from a bounded sample of recent session records |
-| Codex Lab | `~/.codex-lab/sessions` | Counter increments from a bounded sample of recent session records |
 
 The picker accepts the matching folder before any usage records exist. If the
 configured folder is a symbolic link, selecting that folder or its resolved
 destination is supported. The bookmark stays keyed to the configured source;
 selecting its parent, a child, or an unrelated same-named folder is rejected.
-Codex and Codex Lab session logs do not reliably identify the account that
+Codex session logs do not reliably identify the account that
 produced each request,
 so these stats explicitly say **Account unknown** instead of assigning historical
 usage to the current login. The reader samples at most 64 files, 8 MiB total,
@@ -249,28 +248,16 @@ session trees can undercount. Calendar folders are visited newest first within
 366 days (plus tomorrow for timezone boundaries), with at most 8,192 directory
 entries inspected. Sessions stored in older folders are outside this sample,
 even if resumed recently. Copied event fingerprints are counted once.
-An event found under both clients uses a deterministic source label; that label
-does not establish which client originally generated it.
 These measurements are local cache samples, not complete provider billing totals.
 
-Current native Codex Lab writes token counts into session JSONL. Its older
-`usage/*.json` files may still receive rate-limit metadata, but native execution
-does not update their token totals. Existing usage-folder bookmarks remain
-stored; they do not authorize the sessions folder. Upgrading users must grant
-sessions-folder access separately. Auth configuration and logical limit accounts
-are unchanged.
-Old temporary usage mirrors are pruned when the source switches to sessions.
-Stored snapshots and history remain intact, but the current cache display can
-be empty until sessions access and fresh logs are available.
+Historical Codex Lab stored snapshots and history remain readable; temporary
+Lab mirrors are pruned on the next refresh, with their normal age-based retention
+still applying to observations already saved in snapshots.
+Lab auth and telemetry sources are no longer collected, even when a saved record
+has an explicit sessions path. Credentials, IDs, bookmarks and stored history
+are preserved. To resume collection, connect a Codex home as a Codex account.
 
-Explicit legacy Lab usage mirrors remain compatible with cumulative payloads:
-the first read establishes a baseline, later positive deltas produce **Since
-refresh** samples, and idle polls do not refresh observation timestamps. Counter
-resets, invalid/future data, and expired baselines cannot produce lifetime spikes.
-Normal setup reads native sessions only, so the two formats are not combined.
-Missing cached-token counts remain unknown in both formats.
-
-For Codex and Lab increments, the latest rate is a token-weighted 15-minute
+For Codex increments, the latest rate is a token-weighted 15-minute
 bucket for the same source account and measurement window. Fewer than three
 measured samples keep the comparison neutral. Incremental samples do not trigger
 the legacy cache-break warning; an ordinary cold session is not enough evidence
@@ -278,9 +265,8 @@ of a caching regression.
 
 The main app and refresh agent share the same mirror implementation. They read
 only user-authorized source folders and persist normalized counter observations
-(and hashed baseline keys for explicit legacy Lab mirrors) into the canonical app-group `PromptCache` folder.
-A per-source lock serializes baseline updates. Codex transcript text, raw Lab
-account identifiers, and auth data never enter these new mirrors. The widget
+into the canonical app-group `PromptCache` folder.
+A per-source lock serializes mirror updates. Codex transcript text and auth data never enter these new mirrors. The widget
 reads the app-owned mirror; it does not scan session logs. Unresolvable saved
 bookmarks preserve last-good mirrors, whose observations still expire normally.
 Turning off every OpenAI source clears its mirrored telemetry on refresh.
@@ -587,7 +573,8 @@ then reads quota and automatic banked resets through the existing API routes.
 Credentials are never displayed or logged, and CLI homes/logins are unchanged.
 
 New default configuration no longer adds a Codex Lab source. Historical entries
-remain recoverable in Settings; select their current home or turn them off.
+remain stored but are excluded from active Settings and collection. Connect a
+Codex home through a Codex entry to resume collection.
 Shared session history is not an account-attributed quota source; the three
 current homes were observed to resolve to one shared sessions directory.
 The sessions-only route remains available for genuinely separate histories,
