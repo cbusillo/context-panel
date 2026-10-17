@@ -30,7 +30,7 @@ public enum CodexSessionTelemetryReader {
         maximumAge: TimeInterval = PromptCacheSummary.defaultMaximumAge,
         fileManager: FileManager = .default
     ) -> [PromptCacheObservation] {
-        guard client != .everyCode else { return [] }
+        guard !client.isRetired else { return [] }
         guard maximumAge.isFinite, maximumAge >= 0 else { return [] }
         var remainingBytes = maximumTotalBytes
         var result: [PromptCacheObservation] = []
@@ -93,9 +93,7 @@ public enum CodexSessionTelemetryReader {
                 result.append(PromptCacheObservation(
                     id: id,
                     provider: .openAI,
-                    accountID: client == .codexLab
-                        ? "codex-lab-session-unattributed"
-                        : "codex-session-unattributed",
+                    accountID: "codex-session-unattributed",
                     accountName: "\(client.displayName) · Account unknown",
                     observedAt: timestamp,
                     windowLabel: "Session increment",

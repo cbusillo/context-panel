@@ -7,6 +7,8 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
     // Decode existing configurations and historical records only. Never collect this source.
     case everyCode
 
+    public var isRetired: Bool { self != .codex }
+
     public var displayName: String {
         switch self {
         case .codex: "Codex"
@@ -54,7 +56,7 @@ public enum CodexClient: String, Codable, Equatable, Sendable {
 }
 
 public extension LocalProviderAccountConfiguration {
-    var isRetiredSource: Bool { effectiveCodexClient == .everyCode }
+    var isRetiredSource: Bool { effectiveCodexClient?.isRetired == true }
 
     var supportsPromptCacheTelemetry: Bool { promptCacheDirectory != nil }
 
@@ -64,10 +66,11 @@ public extension LocalProviderAccountConfiguration {
     }
 
     var promptCacheDirectory: URL? {
+        guard !isRetiredSource else { return nil }
         if connectorKind == .codexRateLimits, let path = codexQuotaPath {
             return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true)
         }
-        guard let client = effectiveCodexClient, client != .everyCode, let path = effectiveAuthPath else { return nil }
+        guard let client = effectiveCodexClient, !client.isRetired, let path = effectiveAuthPath else { return nil }
         return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .deletingLastPathComponent()
             .appending(path: client.telemetryFolderName, directoryHint: .isDirectory)

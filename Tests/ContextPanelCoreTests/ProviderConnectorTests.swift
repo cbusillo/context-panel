@@ -1349,7 +1349,6 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("Codex or Codex Lab") == true)
     #expect(result.reports[0].errorMessage?.contains("credentials were rejected") == true)
     #expect(result.reports[0].errorMessage?.contains("no longer authorized") == false)
     #expect(result.reports[0].errorMessage?.contains("secret body") == false)

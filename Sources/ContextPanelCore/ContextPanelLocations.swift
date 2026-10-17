@@ -374,13 +374,13 @@ public enum ContextPanelLocations {
     }
 
     public static func codexTelemetryDirectories() -> [URL] {
-        [CodexClient.codex, .codexLab].map { client in
+        [CodexClient.codex].map { client in
             client.homeDirectory().appending(path: client.telemetryFolderName, directoryHint: .isDirectory)
         }
     }
 
     public static func promptCacheUsageDirectory(forAuthPath authPath: String?) -> URL? {
-        guard let authPath, let client = CodexClient.inferred(fromAuthPath: authPath), client != .everyCode else { return nil }
+        guard let authPath, let client = CodexClient.inferred(fromAuthPath: authPath), !client.isRetired else { return nil }
         let expanded = NSString(string: authPath).expandingTildeInPath
         let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
         return authDirectory.appending(path: client.telemetryFolderName, directoryHint: .isDirectory)

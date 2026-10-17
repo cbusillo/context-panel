@@ -563,9 +563,9 @@ public struct CodexRateLimitConnector: ProviderConnector {
 
     private func codexUsageAuthorizationError(auth: CodexAuthTokens) -> ConnectorError {
         if auth.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return ConnectorError.foregroundRefreshRequired("The configured Codex client's credentials were rejected by the usage service. They may have expired. Refresh your sign-in from Codex or Codex Lab, then refresh Context Panel.")
+            return ConnectorError.foregroundRefreshRequired("The configured Codex client's credentials were rejected by the usage service. They may have expired. Refresh your sign-in from Codex, then refresh Context Panel.")
         }
-        return ConnectorError.invalidAuth("Auth for this ChatGPT account cannot be refreshed. Sign in again from the configured Codex or Codex Lab client, then refresh Context Panel.")
+        return ConnectorError.invalidAuth("Auth for this ChatGPT account cannot be refreshed. Sign in again from the configured Codex client, then refresh Context Panel.")
     }
 
     private func fetchModelAvailability(endpoint: URL, auth: CodexAuthTokens) async throws -> CodexModelAvailability {

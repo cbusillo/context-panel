@@ -38,6 +38,15 @@ enum ContextPanelEntryPoint {
             }
             dispatchMain()
         }
+        if CommandLine.arguments.dropFirst().first == "--claude-profile-shape" {
+            Task {
+                guard let result = await profileShapeResult(arguments: Array(CommandLine.arguments.dropFirst())) else { exit(64) }
+                FileHandle.standardOutput.write(result.standardOutput)
+                FileHandle.standardError.write(result.standardError)
+                exit(result.exitCode)
+            }
+            dispatchMain()
+        }
         ContextPanelApp.main()
     }
 
@@ -45,6 +54,11 @@ enum ContextPanelEntryPoint {
     static func accountSnapshotResult(arguments: [String], now: Date = Date()) -> AgentAccountSnapshotCommand.Result? {
         guard arguments.first == "--account-snapshot" else { return nil }
         return AgentAccountSnapshotCommand.run(arguments: Array(arguments.dropFirst()), now: now)
+    }
+
+    static func profileShapeResult(arguments: [String]) async -> ClaudeOAuthProfileQualificationCommand.Result? {
+        guard arguments.first == "--claude-profile-shape" else { return nil }
+        return await ClaudeOAuthProfileQualificationCommand.run(arguments: Array(arguments.dropFirst()))
     }
 
     static func refreshNowResult(arguments: [String]) async -> AgentRefreshCommand.Result? {
@@ -2928,7 +2942,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard let path = account.promptCacheDirectory?.path else { return nil }
         let detail: String
         switch account.effectiveCodexClient {
-        case .codex, .codexLab: detail = "Recent session sample; account unknown"
+        case .codex: detail = "Recent session sample; account unknown"
         default: detail = "Cache stats source"
         }
         return "\(detail) · \(ConnectorRedactor.redactedPath(path))"
@@ -2949,9 +2963,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if account.codexQuotaPath != nil { return "Quota from the selected account's token_count events; run Codex on that account for a fresh observation" }
         switch account.connectorKind {
         case .codexRateLimits:
-            if account.effectiveCodexClient == .codexLab {
-                return "Select auth_accounts.json for \(account.effectiveCodexClient?.displayName ?? account.displayName). ChatGPT accounts are read from this file"
-            }
             if account.effectiveCodexClient == .codex {
                 return "Select auth.json for Codex"
             }
@@ -4027,7 +4038,7 @@ private struct ReconnectAccountRow: View {
         }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .codexRateLimits, refreshSummary?.status == .failure {
-            return "Sign in again with the configured Codex or Codex Lab client, then reselect its auth file."
+            return "Sign in again with the configured Codex client, then reselect its auth file."
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .googleAntigravityQuota {

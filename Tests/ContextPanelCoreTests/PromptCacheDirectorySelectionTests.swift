@@ -60,7 +60,7 @@ private struct PromptCacheDirectoryFixture {
 }
 
 #if os(macOS)
-@Test func promptCacheLabUpgradeRequiresSessionsGrantAndKeepsLegacyBookmark() throws {
+@Test func promptCacheRetiredLabKeepsLegacyBookmarksWithoutTelemetry() throws {
     let fixture = try PromptCacheDirectoryFixture()
     defer { fixture.remove() }
     let usage = try fixture.directory(".codex-lab/usage")
@@ -72,7 +72,7 @@ private struct PromptCacheDirectoryFixture {
     )
     let decoded = try JSONDecoder().decode(LocalProviderAccountConfiguration.self, from: JSONEncoder().encode(account))
     #expect(decoded == account)
-    #expect(decoded.promptCacheDirectory?.path == sessions.path)
+    #expect(decoded.promptCacheDirectory == nil)
     let store = SecureFileBookmarkStore(storeURL: fixture.root.appending(path: "bookmarks.json"))
     let oldKey = ContextPanelLocations.normalizedPath(usage.path)
     let newKey = ContextPanelLocations.normalizedPath(sessions.path)
