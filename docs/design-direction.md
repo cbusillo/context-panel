@@ -323,6 +323,8 @@ without suggesting that selecting a row performs an action.
 - tvOS card controls reserve horizontal and vertical focus clearance and draw
   their rings inside card bounds so outer cards and top edges remain fully
   visible.
+- tvOS screens draw edge to edge and inset content only by the television safe
+  area; About sits with the header controls rather than in a reserved bottom bar.
 - tvOS runway composition top-aligns the full-screen content and uses a compact,
   full-width forecast band so decision context does not strand the right side or
   push focused provider cards against the bottom edge.

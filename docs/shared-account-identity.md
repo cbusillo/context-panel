@@ -76,6 +76,15 @@ restore removed accounts. A
 newer removal wins. A pending re-add survives temporary first-read failures but
 never restores global quota before a successful authenticated read. Unverified feeds cannot claim global provider identity.
 
+An account without a verified identity belongs to the Mac that reports it. A
+publish carries forward from the shared record only verified accounts, so a
+retired lane or an old local membership leaves the document at the next publish,
+as it already leaves the Mac's own view. Another Mac's unverified accounts (for
+example a connector that exposes no identity) appear again when that Mac next
+publishes. Companions also hide rows published before identity existed (no
+identity status) once the same provider has verified accounts; current connectors
+always record why an account is unverified, so their rows remain visible.
+
 Macs receive the existing private companion usage document into a bounded,
 scope-validated cache. App, widget and credential-free agent projection consume the
 same canonical account IDs and account observations. Remote readings never enter

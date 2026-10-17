@@ -16,15 +16,8 @@ public extension CompanionSyncDocument {
             limits: snapshot.limits.filter { !isRemoved($0.provider, $0.companionAccountID) },
             providerStatuses: snapshot.providerStatuses.filter { !isRemoved($0.provider, $0.companionAccountID) },
             promptCacheSummaries: snapshot.promptCacheSummaries.filter { !isRemoved($0.provider, $0.companionAccountID) })
-        let oldPools = UsageSnapshot(generatedAt: snapshot.generatedAt, limits: snapshot.limits.map(\.usageLimit)).mainLimitSummaries
-        let newPools = UsageSnapshot(generatedAt: filtered.generatedAt, limits: filtered.limits.map(\.usageLimit)).mainLimitSummaries
-        let unchangedPools = Set(newPools.filter { pool in
-            oldPools.first { $0.id == pool.id }.map {
-                Set($0.liveLimits.map(\.id)) == Set(pool.liveLimits.map(\.id))
-            } == true
-        }.map(\.id))
         return CompanionSyncDocument(snapshot: filtered, widgetDisplayPreferences: widgetDisplayPreferences,
-            observedBurnRates: observedBurnRates.filter { unchangedPools.contains($0.key) },
+            observedBurnRates: observedBurnRates(unchangedIn: filtered),
             fastModeForecastSettings: fastModeForecastSettings,
             accountRetentionStates: accountRetentionStates?.filter { !isRemoved($0.provider, $0.companionAccountID) },
             cloudKitUserScope: cloudKitUserScope,
@@ -41,6 +34,18 @@ public extension CompanionSyncDocument {
                 return retained
             }, accountIdentityAliases: accountIdentityAliases,
             accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates)
+    }
+
+    /// Pool burn rates stay only for pools whose live windows the filtered snapshot leaves unchanged.
+    func observedBurnRates(unchangedIn filtered: CompanionSnapshot) -> [String: ObservedBurnRate] {
+        let oldPools = UsageSnapshot(generatedAt: snapshot.generatedAt, limits: snapshot.limits.map(\.usageLimit)).mainLimitSummaries
+        let newPools = UsageSnapshot(generatedAt: filtered.generatedAt, limits: filtered.limits.map(\.usageLimit)).mainLimitSummaries
+        let unchangedPools = Set(newPools.filter { pool in
+            oldPools.first { $0.id == pool.id }.map {
+                Set($0.liveLimits.map(\.id)) == Set(pool.liveLimits.map(\.id))
+            } == true
+        }.map(\.id))
+        return observedBurnRates.filter { unchangedPools.contains($0.key) }
     }
 }
 
