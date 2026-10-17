@@ -99,7 +99,7 @@ struct TVUseNextCard: View {
                     Text(AccountTerms.percentLeft).font(.system(size: 24)).foregroundStyle(TVTokens.color(.secondary))
                     Spacer(minLength: 8)
                     if let short = account.shortWindow, account.longWindow != short {
-                        Text(AccountTerms.fiveHour + " " + AccountNumbers.window(short) + " · " + AccountTerms.refill(short, now: now))
+                        Text(shortWindowSummary(short))
                             .font(.system(size: 20)).monospacedDigit().foregroundStyle(TVTokens.color(.secondary)).lineLimit(1)
                     }
                 }
@@ -119,8 +119,20 @@ struct TVUseNextCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(TVTokens.color(provider.surfaceToken), in: RoundedRectangle(cornerRadius: 20))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(provider.accountDisplayName + ", " + AccountTerms.useNext + ": "
-            + (account.map { $0.glanceAccessibilityText(now: now, isNext: true) } ?? AccountTerms.noEligibleAccount))
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private func shortWindowSummary(_ window: AccountOverview.Window) -> String {
+        let capacity = AccountNumbers.window(window)
+        let refill = AccountTerms.refill(window, now: now)
+        return [AccountTerms.fiveHour, capacity, "·", refill].joined(separator: " ")
+    }
+
+    private var accessibilitySummary: String {
+        let accountSummary = account.map { $0.glanceAccessibilityText(now: now, isNext: true) }
+            ?? AccountTerms.noEligibleAccount
+        let heading = provider.accountDisplayName + ", " + AccountTerms.useNext
+        return heading + ": " + accountSummary
     }
 }
 
@@ -441,10 +453,13 @@ struct TVHorizon: View {
                         .offset(x: min(width - 1.5, max(0, width * reset - 0.75)))
                 }
                 ForEach(Array(geometry.banked.enumerated()), id: \.offset) { _, mark in
-                    let size = min(12, height * 0.5)
+                    let size: CGFloat = min(12, height * 0.5)
+                    let x = width * CGFloat(mark.x) - size / 2
+                    let y = height * (1 - CGFloat(mark.level)) - size / 2
+                    let offsetX: CGFloat = min(width - size, max(0, x))
+                    let offsetY: CGFloat = min(height - size, max(0, y))
                     TVDiamond().fill(TVTokens.color(.banked)).frame(width: size, height: size)
-                        .offset(x: min(width - size, max(0, width * mark.x - size / 2)),
-                                y: min(height - size, max(0, height * (1 - mark.level) - size / 2)))
+                        .offset(x: offsetX, y: offsetY)
                 }
             }
         }
