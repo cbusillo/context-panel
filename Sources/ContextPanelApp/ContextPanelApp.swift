@@ -38,6 +38,15 @@ enum ContextPanelEntryPoint {
             }
             dispatchMain()
         }
+        if CommandLine.arguments.dropFirst().first == "--claude-profile-shape" {
+            Task {
+                guard let result = await profileShapeResult(arguments: Array(CommandLine.arguments.dropFirst())) else { exit(64) }
+                FileHandle.standardOutput.write(result.standardOutput)
+                FileHandle.standardError.write(result.standardError)
+                exit(result.exitCode)
+            }
+            dispatchMain()
+        }
         ContextPanelApp.main()
     }
 
@@ -45,6 +54,11 @@ enum ContextPanelEntryPoint {
     static func accountSnapshotResult(arguments: [String], now: Date = Date()) -> AgentAccountSnapshotCommand.Result? {
         guard arguments.first == "--account-snapshot" else { return nil }
         return AgentAccountSnapshotCommand.run(arguments: Array(arguments.dropFirst()), now: now)
+    }
+
+    static func profileShapeResult(arguments: [String]) async -> ClaudeOAuthProfileQualificationCommand.Result? {
+        guard arguments.first == "--claude-profile-shape" else { return nil }
+        return await ClaudeOAuthProfileQualificationCommand.run(arguments: Array(arguments.dropFirst()))
     }
 
     static func refreshNowResult(arguments: [String]) async -> AgentRefreshCommand.Result? {
