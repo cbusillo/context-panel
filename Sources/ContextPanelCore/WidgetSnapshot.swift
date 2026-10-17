@@ -262,7 +262,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         now: Date = Date(),
         stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
     ) -> WidgetSnapshot {
-        guard let document = result.document else {
+        guard let document = result.document?.retiringUnprovenMemberships() else {
             return WidgetSnapshot(
                 state: result.status == .failure ? .failure : .setupNeeded,
                 generatedAt: now,

@@ -146,7 +146,8 @@ import Testing
         accounts: [
             ("OpenAI A", "openai-a", 20),
             ("OpenAI B", "openai-b", 40),
-        ]
+        ],
+        verifiedAccountIDs: ["openai-b"]
     )
     record[CompanionRemoteSync.payloadFieldName] = try CompanionSyncPayloadCodec.encode(remoteDocument) as CKRecordValue
     let incomingDocument = cloudKitDocument(
@@ -165,9 +166,40 @@ import Testing
 
     #expect(pendingSave.record === record)
     #expect(pendingSave.document == mergedDocument)
-    #expect(mergedDocument.snapshot.limits.map(\.accountName) == ["OpenAI A", "OpenAI B"])
+    #expect(Set(mergedDocument.snapshot.limits.map(\.accountName)) == ["OpenAI A", "OpenAI B"])
     #expect(mergedDocument.snapshot.limits.first { $0.accountName == "OpenAI A" }?.used == 30)
     #expect(mergedDocument.snapshot.limits.first { $0.accountName == "OpenAI B" }?.used == 40)
+}
+
+@Test func companionCloudKitRecordBuilderDropsUnverifiedAccountsTheNewPublishNoLongerReports() throws {
+    let remoteDate = Date(timeIntervalSince1970: 72_000)
+    let incomingDate = remoteDate.addingTimeInterval(60)
+    let recordID = CKRecord.ID(recordName: CompanionRemoteSync.cloudKitRecordName)
+    let record = CKRecord(recordType: CompanionRemoteSync.cloudKitRecordType, recordID: recordID)
+    let remoteDocument = cloudKitDocument(
+        generatedAt: remoteDate,
+        accounts: [
+            ("OpenAI A", "openai-a", 20),
+            ("Codex Lab", "openai-lab", 10),
+            ("OpenAI B", "openai-b", 40),
+        ],
+        verifiedAccountIDs: ["openai-b"]
+    )
+    record[CompanionRemoteSync.payloadFieldName] = try CompanionSyncPayloadCodec.encode(remoteDocument) as CKRecordValue
+    let incomingDocument = cloudKitDocument(
+        generatedAt: incomingDate,
+        accounts: [("OpenAI A", "openai-a", 30)]
+    )
+
+    let pendingSave = try CompanionCloudKitRecordBuilder(recordID: recordID).makeRecord(
+        incomingDocument: incomingDocument,
+        existingRecord: record,
+        now: incomingDate,
+        userScope: cloudKitUserScope
+    )
+
+    #expect(Set(pendingSave.document.snapshot.limits.map(\.accountName)) == ["OpenAI A", "OpenAI B"])
+    #expect(Set(pendingSave.document.snapshot.providerStatuses.map(\.accountName)) == ["OpenAI A", "OpenAI B"])
 }
 
 @Test func companionCloudKitRecordBuilderCreatesLegacyWakeMirror() throws {
@@ -253,9 +285,12 @@ private let cloudKitUserScope = CompanionCloudKitUserScope.derive(
     userRecordName: "test-user"
 )
 
+private let cloudKitIdentityKey = ProviderAccountIdentityKey(keyID: UUID(), secret: Data(repeating: 23, count: 32))!
+
 private func cloudKitDocument(
     generatedAt: Date,
-    accounts: [(name: String, id: String, used: Int)]
+    accounts: [(name: String, id: String, used: Int)],
+    verifiedAccountIDs: Set<String> = []
 ) -> CompanionSyncDocument {
     let limits = accounts.map { account in
         UsageLimit(
@@ -279,7 +314,10 @@ private func cloudKitDocument(
             accountName: account.name,
             generatedAt: generatedAt,
             status: .healthy,
-            errorMessage: nil
+            errorMessage: nil,
+            sharedAccountIdentity: verifiedAccountIDs.contains(account.id)
+                ? ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID, identifier: account.id)
+                    .map { cloudKitIdentityKey.identity(for: $0).bound(toLocalAccountID: account.id) } : nil
         )
     }
     return CompanionSyncDocument(
