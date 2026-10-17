@@ -30,6 +30,40 @@ private let hostLocalIdentityKey = ProviderAccountIdentityKey(keyID: UUID(), sec
     #expect(hostLocalPresentedNames(document, now: now) == ["Older Mac A", "Older Mac B"])
 }
 
+@Test func aConfiguredAccountWhoseAuthCannotBeReadStaysVisibleBesideAVerifiedSibling() async throws {
+    let now = Date(timeIntervalSince1970: 2_400_000)
+    let missing = LocalProviderAccountConfiguration(id: "missing-login", provider: .openAI, connectorKind: .codexRateLimits,
+        displayName: "Missing login", authPath: "/synthetic/missing/auth.json")
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(configuredAccountID: missing.id, authPath: "/synthetic/missing/auth.json",
+                                             accountName: "Missing login")],
+        httpClient: HostLocalNoNetwork(), identityResolver: ProviderAccountIdentityResolver { _ in nil },
+        fileLoader: { _ in throw CocoaError(.fileReadNoSuchFile) })
+    // The real unreadable-auth failure report carries no identity status, like a pre-identity reading.
+    let failed = await connector.refresh(now: now).reports.map(StoredProviderReport.init(report:))
+    let current = LocalProviderAccountConfiguration(id: "current-login", provider: .openAI, connectorKind: .codexRateLimits,
+        displayName: "Current", authPath: "/synthetic/current/auth.json")
+    let identity = ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID, identifier: "current")
+        .map { hostLocalIdentityKey.identity(for: $0).bound(toLocalAccountID: "openai-current") }
+    let limit = UsageLimit(provider: .openAI, accountID: "openai-current", configuredAccountID: current.id,
+        accountName: "Current", label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 20, limit: 100, lastUpdatedAt: now)
+    let verified = StoredProviderReport(provider: .openAI, accountID: "openai-current", configuredAccountID: current.id,
+        accountName: "Current", generatedAt: now, status: .healthy, errorMessage: nil, sharedAccountIdentity: identity)
+    let stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: [limit]),
+                                     reports: [verified] + failed)
+
+    let presented = MacSharedAccountPresentation.make(stored: stored, configuration: [current, missing], now: now)
+        .accountOverview(now: now).accounts.map(\.metadata.label).sorted()
+
+    #expect(presented == ["Current", "Missing login"])
+}
+
+private struct HostLocalNoNetwork: ConnectorHTTPClient {
+    func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
+        throw URLError(.notConnectedToInternet)
+    }
+}
+
 private struct HostLocalAccount {
     let name: String
     let provider: Provider

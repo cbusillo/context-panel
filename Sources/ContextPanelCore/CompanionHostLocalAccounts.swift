@@ -11,15 +11,16 @@ public extension CompanionSyncDocument {
         }
     }
 
-    /// Rows published before shared identity existed carry no identity status. Once the same
-    /// provider has verified accounts, such a row is an old membership and is not shown.
-    /// Current connectors always record why an account is unverified, so their rows remain.
+    /// Readings published before shared identity existed carry no identity status. Once the same
+    /// provider has verified accounts, such a reading is an old membership and is not shown.
+    /// Current connectors record why a reading is unverified; failures are never treated as retirement.
     func retiringUnprovenMemberships() -> Self {
         let verifiedProviders = Set((snapshot.limits.map { ($0.provider, $0.companionAccountID) }
             + snapshot.providerStatuses.map { ($0.provider, $0.companionAccountID) })
             .filter { SharedProviderAccountIdentity.isSharedAccountID($0.1, provider: $0.0) }.map(\.0))
         let unproven = Set(snapshot.providerStatuses.filter {
             verifiedProviders.contains($0.provider) && $0.accountIdentityStatus == .unverified
+                && $0.status.isCompanionObservationStatus
                 && !SharedProviderAccountIdentity.isSharedAccountID($0.companionAccountID, provider: $0.provider)
         }.map { AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID) })
         guard !unproven.isEmpty else { return self }
