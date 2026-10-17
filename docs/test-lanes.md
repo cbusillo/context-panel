@@ -94,6 +94,20 @@ and bounded runner metadata such as OS, architecture, and image version; they do
 not contain arbitrary environment values, credentials, command output, machine
 names, or absolute checkout paths.
 
+The timed Swift command has a five-minute deadline. On expiry it kills its own
+process group (including renderer children), bounds the cleanup wait, records a
+failed timing report and exits 124. A process stuck in the kernel may survive
+SIGKILL; `cleanupTimedOut` records that condition for host diagnosis. The CI job
+also has a 15-minute ceiling covering build and other steps. A hang must fail
+the gate rather than occupy the runner until GitHub's default timeout.
+
+For a deliberately slower local diagnostic, choose a finite positive deadline:
+
+```sh
+python3 scripts/context-panel-test-lanes.py time-command \
+  --lane routine-ci-swift --timeout-seconds 600 -- swift test
+```
+
 ## JetBrains Inspection Preparation
 
 The repository declares PyCharm as its preferred inspection IDE and defines its

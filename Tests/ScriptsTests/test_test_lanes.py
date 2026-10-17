@@ -1,7 +1,10 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
+import sys
 import tempfile
 from typing import Any
 import unittest
@@ -316,6 +319,135 @@ class TestLaneTests(unittest.TestCase):
                     Path(directory) / "report.json",
                     ["true"],
                 )
+
+    def timed_command(self, process, directory):
+        report_path = Path(directory) / "report.json"
+        with (
+            mock.patch.object(module, "files_for_lane", return_value=["Tests/CoreTests/FirstTests.swift"]),
+            mock.patch.object(module.subprocess, "Popen", return_value=process) as spawn,
+            mock.patch.object(module, "source_commit", return_value="fixture-source"),
+            mock.patch.object(module, "command_version", return_value="fixture-tool"),
+            mock.patch.object(module, "append_summary"),
+        ):
+            status = module.time_command(
+                self.manifest(), "routine-ci-swift", report_path, ["fixture-swift", "test"],
+                timeout_seconds=17,
+            )
+        return status, json.loads(report_path.read_text()), spawn
+
+    def test_timed_command_preserves_success_and_test_failure(self):
+        for returncode in (0, 7):
+            with self.subTest(returncode=returncode), tempfile.TemporaryDirectory() as directory:
+                process = mock.Mock()
+                process.wait.return_value = returncode
+                status, report, spawn = self.timed_command(process, directory)
+                self.assertEqual(status, returncode)
+                self.assertEqual(report["exitCode"], status)
+                self.assertFalse(report["timedOut"])
+                process.wait.assert_called_once_with(timeout=17)
+                self.assertTrue(spawn.call_args.kwargs["start_new_session"])
+
+    def test_timed_command_kills_its_group_and_records_a_hang_as_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = mock.Mock(pid=12345)
+            process.wait.side_effect = [subprocess.TimeoutExpired("fixture-swift", 17), -signal.SIGKILL]
+            with mock.patch.object(os, "killpg") as kill:
+                status, report, _ = self.timed_command(process, directory)
+            kill.assert_called_once_with(process.pid, signal.SIGKILL)
+            self.assertNotEqual(status, 0)
+            self.assertEqual(report["exitCode"], status)
+            self.assertTrue(report["timedOut"])
+            self.assertEqual(report["timeoutSeconds"], process.wait.call_args_list[0].kwargs["timeout"])
+            self.assertFalse(report["cleanupTimedOut"])
+
+    def test_timed_command_never_waits_forever_for_a_kernel_stuck_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = mock.Mock(pid=12345)
+            process.wait.side_effect = subprocess.TimeoutExpired("fixture-swift", 17)
+            with mock.patch.object(os, "killpg"):
+                status, report, _ = self.timed_command(process, directory)
+            self.assertNotEqual(status, 0)
+            self.assertTrue(report["timedOut"])
+            self.assertTrue(report["cleanupTimedOut"])
+            self.assertEqual(process.wait.call_count, 2)
+            self.assertTrue(all(call.kwargs["timeout"] > 0 for call in process.wait.call_args_list))
+
+    def test_timed_command_interrupt_cleans_up_only_its_own_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = mock.Mock(pid=12345)
+            process.wait.side_effect = [KeyboardInterrupt(), -signal.SIGKILL]
+            with mock.patch.object(os, "killpg") as kill:
+                status, report, spawn = self.timed_command(process, directory)
+            self.assertNotEqual(status, 0)
+            self.assertFalse(report["timedOut"])
+            self.assertTrue(spawn.call_args.kwargs["start_new_session"])
+            kill.assert_called_once_with(process.pid, signal.SIGKILL)
+
+    def test_timed_command_reaps_a_real_group_including_a_pipe_holding_grandchild(self):
+        # Inject the expired deadline after a readiness handshake, without sleeping.
+        real_spawn = subprocess.Popen
+        real_killpg = os.killpg
+        process = real_spawn(
+            [sys.executable, "-c", "import os, signal\n"
+             "if os.fork() == 0:\n"
+             "    os.write(1, b'ready\\n')\n"
+             "signal.pause()\n"],
+            stdout=subprocess.PIPE, start_new_session=True,
+        )
+        real_wait = process.wait
+        try:
+            self.assertEqual(process.stdout.readline(), b"ready\n")
+            def wait(*, timeout):
+                if not killed:
+                    raise subprocess.TimeoutExpired("fixture-swift", timeout)
+                return real_wait(timeout=timeout)
+            killed = []
+            def kill(pid, sig):
+                killed.append(pid)
+                real_killpg(pid, sig)
+            process.wait = wait
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(os, "killpg", side_effect=kill):
+                status, report, _ = self.timed_command(process, directory)
+            self.assertEqual(killed, [process.pid])
+            self.assertNotEqual(status, 0)
+            self.assertFalse(report["cleanupTimedOut"])
+            # EOF proves the forked child has also released its inherited pipe.
+            self.assertEqual(process.stdout.read(), b"")
+        finally:
+            try:
+                real_killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait = real_wait
+            process.wait(timeout=5)
+            process.stdout.close()
+
+    def test_invalid_deadline_cannot_disable_the_guard(self):
+        for timeout in (0, -1, float("inf"), float("nan")):
+            with self.subTest(timeout=timeout), mock.patch.object(module.subprocess, "Popen") as spawn:
+                with self.assertRaises(module.TestLaneError):
+                    module.time_command(self.manifest(), "routine-ci-swift", Path("unused"), ["fixture"],
+                                        timeout_seconds=timeout)
+                spawn.assert_not_called()
+
+    def test_missing_timing_metadata_does_not_hide_a_test_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            process = mock.Mock()
+            process.wait.return_value = 7
+            with (
+                mock.patch.object(module, "files_for_lane", return_value=[]),
+                mock.patch.object(module.subprocess, "Popen", return_value=process),
+                mock.patch.object(module.subprocess, "run", side_effect=subprocess.TimeoutExpired("metadata", 1)),
+                mock.patch.object(module, "append_summary"),
+            ):
+                status = module.time_command(self.manifest(), "routine-ci-swift", report_path, ["fixture-swift"])
+            report = json.loads(report_path.read_text())
+            self.assertEqual(status, 7)
+            self.assertEqual(report["exitCode"], status)
+            self.assertIsNone(report["sourceCommit"])
+            self.assertIsNone(report["toolVersion"])
+            process.wait.assert_called_once_with(timeout=module.DEFAULT_COMMAND_TIMEOUT_SECONDS)
 
     def test_python_lane_propagates_a_failing_test_exit_code(self):
         completed = module.subprocess.CompletedProcess(
