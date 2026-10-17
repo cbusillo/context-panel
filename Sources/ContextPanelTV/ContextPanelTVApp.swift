@@ -122,7 +122,8 @@ private struct TVRootView: View {
                             onRefresh: { model.reload() },
                             openAccount: { navigationPath.append("account:" + $0) },
                             openDeadlines: { navigationPath.append("deadlines") },
-                            openDetails: { navigationPath.append("details") })
+                            openDetails: { navigationPath.append("details") },
+                            openAbout: { showsAbout = true })
                     }
                 } else {
             TVRunwayContent(
@@ -135,17 +136,10 @@ private struct TVRootView: View {
                 presentationDate: nil,
                 detailActionMode: .navigation,
                 onRefresh: { model.reload() },
-                snapshotReports: model.snapshot.reports
+                snapshotReports: model.snapshot.reports,
+                onAbout: { showsAbout = true }
             )
                 }
-            }
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    Spacer()
-                    Button("About") { showsAbout = true }
-                }
-                .padding(.horizontal, 80)
-                .padding(.vertical, 12)
             }
             .alert("Context Panel", isPresented: $showsAbout) {
                 Button("Done", role: .cancel) {}
@@ -253,6 +247,7 @@ struct TVAccountOverviewContent: View {
     let openAccount: (String) -> Void
     let openDeadlines: () -> Void
     let openDetails: () -> Void
+    var openAbout: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -271,6 +266,7 @@ struct TVAccountOverviewContent: View {
                     }
                 }
                 Button("Details", action: openDetails)
+                if let openAbout { Button("About", action: openAbout) }
             }
             if let notice {
                 Label(notice, systemImage: "exclamationmark.triangle")
@@ -316,7 +312,6 @@ struct TVAccountOverviewContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.horizontal, 72).padding(.vertical, 32)
         .background(TVTokens.color(.surface).ignoresSafeArea())
     }
 }
@@ -397,6 +392,7 @@ struct TVRunwayContent: View {
     let detailActionMode: TVDetailActionMode
     let onRefresh: () -> Void
     var snapshotReports: [StoredProviderReport] = []
+    var onAbout: (() -> Void)? = nil
 
     private var presentationMode: TVPresentationMode {
         TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
@@ -413,7 +409,8 @@ struct TVRunwayContent: View {
                     isRefreshing: isRefreshing,
                     presentationModeRawValue: $presentationModeRawValue,
                     presentationDate: presentationDate,
-                    onRefresh: onRefresh
+                    onRefresh: onRefresh,
+                    onAbout: onAbout
                 )
 
                 if let keepWorkingForecast {
@@ -438,13 +435,10 @@ struct TVRunwayContent: View {
                     .padding(.bottom, noticeMessage == nil ? 48 : 160)
                 }
             }
-            .padding(.horizontal, 72)
-            .safeAreaPadding(.top, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             if let noticeMessage {
                 TVSyncAlert(message: noticeMessage)
-                    .padding(.horizontal, 72)
                     .padding(.bottom, 28)
             }
         }
@@ -1065,6 +1059,7 @@ private struct TVHeaderView: View {
     @Binding var presentationModeRawValue: String
     let presentationDate: Date?
     let onRefresh: () -> Void
+    var onAbout: (() -> Void)? = nil
 
     private var presentationMode: TVPresentationMode {
         TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
@@ -1140,6 +1135,8 @@ private struct TVHeaderView: View {
                         Label(presentationMode.displayName, systemImage: "slider.horizontal.3")
                     }
                     .accessibilityHint(presentationMode.detail)
+
+                    if let onAbout { Button("About", action: onAbout) }
                 }
             }
         }

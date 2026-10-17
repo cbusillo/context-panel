@@ -114,9 +114,10 @@ struct CompanionCloudKitRecordBuilder {
         now: Date,
         userScope: CompanionCloudKitUserScope
     ) throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
+        // Another publish carries forward only verified accounts; unverified ones belong to the Mac that reports them.
         let existingDocument = try existingRecord
             .map(decodeDocument(from:))
-            .map { try scopedDocument($0, userScope: userScope) }
+            .map { try scopedDocument($0, userScope: userScope).keepingVerifiedAccounts() }
         let document = try scopedDocument(
             incomingDocument,
             userScope: userScope
@@ -245,7 +246,7 @@ private actor CompanionCloudKitClient {
                 userScope: userScope
             )
             guard let migrationDocument = CompanionCloudKitDocumentSet.merged(
-                legacyDocuments + [incomingDocument],
+                legacyDocuments.map { $0.keepingVerifiedAccounts() } + [incomingDocument],
                 now: now
             ) else {
                 throw SnapshotStoreError.corruptStore("CloudKit companion sync migration produced no document.")
