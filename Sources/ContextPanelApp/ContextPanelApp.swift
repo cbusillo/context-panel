@@ -27,6 +27,13 @@ enum ContextPanelEntryPoint {
             FileHandle.standardError.write(result.standardError)
             exit(result.exitCode)
         }
+        if let result = recordLaunchResult(arguments: Array(CommandLine.arguments.dropFirst()), input: {
+            FileHandle.standardInput.readData(ofLength: LaunchReceiptCommand.inputLimit)
+        }) {
+            FileHandle.standardOutput.write(result.standardOutput)
+            FileHandle.standardError.write(result.standardError)
+            exit(result.exitCode)
+        }
         if CommandLine.arguments.dropFirst().first == "--refresh-now" {
             Task {
                 guard let result = await refreshNowResult(arguments: Array(CommandLine.arguments.dropFirst())) else {
@@ -54,6 +61,14 @@ enum ContextPanelEntryPoint {
     static func accountSnapshotResult(arguments: [String], now: Date = Date()) -> AgentAccountSnapshotCommand.Result? {
         guard arguments.first == "--account-snapshot" else { return nil }
         return AgentAccountSnapshotCommand.run(arguments: Array(arguments.dropFirst()), now: now)
+    }
+
+    /// Writes into the App Group store only; it takes no storage-root override.
+    static func recordLaunchResult(arguments: [String], input: () -> Data, now: Date = Date(),
+                                   rootDirectory: URL = AgentAccountSnapshotCommand.defaultStorageRoot()) -> LaunchReceiptCommand.Result? {
+        guard arguments.first == "--record-launch" else { return nil }
+        return LaunchReceiptCommand.run(arguments: Array(arguments.dropFirst()), input: input,
+            rootDirectory: rootDirectory, now: now)
     }
 
     static func profileShapeResult(arguments: [String]) async -> ClaudeOAuthProfileQualificationCommand.Result? {
