@@ -77,10 +77,13 @@ private func recordLaunch(_ arguments: [String], input: Data, root: URL) throws 
     wrongProvider["provider"] = "anthropic"
     var schemaTwo = validReceipt()
     schemaTwo["schemaVersion"] = 2
+    var newlineAccount = validReceipt()
+    newlineAccount["accountID"] = receiptAccount + "\n"
     var padded = validReceipt()
     padded["accountID"] = receiptAccount + String(repeating: " ", count: 1_100)
     let inputs: [Data] = [
         try receiptJSON(extra), try receiptJSON(wrongProvider), try receiptJSON(schemaTwo), try receiptJSON(padded),
+        try receiptJSON(newlineAccount),
         try receiptJSON(validReceipt(launchedAt: receiptNow.addingTimeInterval(-2 * LaunchReceiptStore.lookback))),
         try receiptJSON(validReceipt(launchedAt: receiptNow.addingTimeInterval(3_600))),
         Data("private-secret".utf8), Data(),
@@ -91,7 +94,7 @@ private func recordLaunch(_ arguments: [String], input: Data, root: URL) throws 
         #expect(result.standardOutput.isEmpty)
         #expect(!String(decoding: result.standardError, as: UTF8.self).contains("private-secret"))
     }
-    for arguments in [[], ["--launcher"], ["--launcher", "Super/visor"], ["--launcher", "supervisor", "--storage-root", "/tmp"]] {
+    for arguments in [[], ["--launcher"], ["--launcher", "Super/visor"], ["--launcher", "supervisor\n"], ["--launcher", "supervisor", "--storage-root", "/tmp"]] {
         let result = try #require(ContextPanelEntryPoint.recordLaunchResult(arguments: ["--record-launch"] + arguments,
             input: { Issue.record("stdin read for invalid arguments"); return Data() }, now: receiptNow, rootDirectory: root))
         #expect(result.exitCode == 64)
