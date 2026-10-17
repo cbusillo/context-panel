@@ -994,9 +994,11 @@ not establish a display contract until observed in the matching signed build.
 Unknown keys, names, email values, identifiers, tokens and provider error bodies
 are discarded. The command does not save a profile, add fields to snapshots,
 refresh tokens, change accounts, request consent or read Claude Code storage.
-Expired/missing credentials or missing existing `user:profile` consent produce
-an explicit unavailable result. Normal Context Panel sign-in is the recovery
-path; no new access is implied. Exit 0 means all selected profile checks passed,
+Expired credentials ask for a normal app refresh before retrying; an unreadable
+saved sign-in is distinct from a missing sign-in or missing existing `user:profile`
+consent. Only missing sign-in calls for normal Context Panel sign-in; no new
+access is implied. The diagnostic reads legacy account files without migrating
+them or changing credential keys. Exit 0 means all selected profile checks passed,
 1 means unavailable/partial, and 64 means invalid arguments.
 
 Use the signed-runtime baseline and exact-build release gates before qualifying

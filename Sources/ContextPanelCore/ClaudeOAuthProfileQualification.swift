@@ -53,12 +53,14 @@ public struct ClaudeOAuthProfileShape: Equatable, Sendable {
 /// Uses only Context Panel's saved OAuth credential. Never refreshes a token,
 /// persists a profile, logs a response or reads another client's storage.
 public struct ClaudeOAuthProfileQualification: Sendable {
-    public enum Failure: Error, LocalizedError, Sendable {
-        case signInRequired, profileConsentRequired, requestFailed, invalidResponse
+    public enum Failure: Error, LocalizedError, Equatable, Sendable {
+        case signInRequired, credentialUnavailable, refreshRequired, profileConsentRequired, requestFailed, invalidResponse
 
         public var errorDescription: String? {
             switch self {
             case .signInRequired: "Sign in to Claude in Context Panel before checking profile fields."
+            case .credentialUnavailable: "Saved Claude sign-in could not be read. Open the signed Context Panel app and retry."
+            case .refreshRequired: "Open Context Panel or run --refresh-now, then retry the profile check."
             case .profileConsentRequired: "The saved Claude sign-in does not include profile consent."
             case .requestFailed: "Claude profile fields could not be checked. Try again later."
             case .invalidResponse: "Claude returned an unsupported profile response."
@@ -76,13 +78,12 @@ public struct ClaudeOAuthProfileQualification: Sendable {
     }
 
     public func check(accountID: String, now: Date = Date()) async throws -> ClaudeOAuthProfileShape {
-        let credentials: ClaudeOAuthCredentials
-        do {
-            guard let data = try credentialStore.load(accountID: accountID) else { throw Failure.signInRequired }
-            credentials = try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: data)
-        } catch { throw Failure.signInRequired }
-        guard let token = credentials.accessToken, !token.isEmpty,
-              let expiresAt = credentials.expiresAt, expiresAt > now else { throw Failure.signInRequired }
+        let data: Data?
+        do { data = try credentialStore.load(accountID: accountID) }
+        catch { throw Failure.credentialUnavailable }
+        guard let data, let credentials = try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: data),
+              let token = credentials.accessToken, !token.isEmpty else { throw Failure.signInRequired }
+        guard let expiresAt = credentials.expiresAt, expiresAt > now else { throw Failure.refreshRequired }
         guard credentials.scopes.contains("user:profile") else { throw Failure.profileConsentRequired }
         let response: ConnectorHTTPResponse
         do {

@@ -23,9 +23,16 @@ public enum ClaudeOAuthProfileQualificationCommand {
         guard FileManager.default.fileExists(atPath: accountStore.configurationURL.path)
                 || accountStore.fallbackConfigurationURL.map({ FileManager.default.fileExists(atPath: $0.path) }) == true
         else { return result(1, error: "Account setup is missing; configure Claude in Context Panel first.") }
-        let configuration = accountStore.load()
-        guard configuration.status == .healthy else { return result(1, error: "Account setup could not be read.") }
-        let accounts = configuration.document.accounts.filter { $0.isEnabled && $0.connectorKind == .claudeOAuthUsage }
+        // Decode the saved document without load()'s migration/write side effects.
+        let configuration: AccountConfigurationDocument
+        do {
+            guard let source = FileManager.default.fileExists(atPath: accountStore.configurationURL.path)
+                ? accountStore.configurationURL : accountStore.fallbackConfigurationURL
+            else { return result(1, error: "Account setup is missing.") }
+            configuration = try JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: Data(contentsOf: source))
+            guard configuration.schemaVersion == 1 else { return result(1, error: "Account setup is unsupported.") }
+        } catch { return result(1, error: "Account setup could not be read.") }
+        let accounts = configuration.accounts.filter { $0.isEnabled && $0.connectorKind == .claudeOAuthUsage }
         guard !accounts.isEmpty else { return result(1, error: "No enabled Claude accounts.") }
         var output: [String] = []
         var errors: [String] = []

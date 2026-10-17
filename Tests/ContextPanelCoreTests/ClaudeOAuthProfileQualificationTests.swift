@@ -37,7 +37,7 @@ private func profileCredentials(scopes: [String] = ["user:profile"], expiry: Dat
     #expect(!shape.summary.contains(secret))
     #expect(try ClaudeOAuthProfileShape.parse(Data("{}".utf8)).fields.values.allSatisfy { $0 == .missing })
     #expect(throws: ClaudeOAuthProfileQualification.Failure.self) { try ClaudeOAuthProfileShape.parse(Data("[]".utf8)) }
-    #expect(throws: ClaudeOAuthProfileQualification.Failure.self) { try ClaudeOAuthProfileShape.parse(Data(repeating: 32, count: 300_000)) }
+    #expect(throws: ClaudeOAuthProfileQualification.Failure.self) { try ClaudeOAuthProfileShape.parse(JSONSerialization.data(withJSONObject: ["account": ["email": String(repeating: "x", count: 300_000)]])) }
 }
 
 @Test func claudeProfileCheckUsesExistingAppCredentialAndReturnsOnlyShape() async throws {
@@ -55,10 +55,16 @@ private func profileCredentials(scopes: [String] = ["user:profile"], expiry: Dat
 }
 
 @Test func claudeProfileCheckRefusesMissingExpiredOrUnconsentedCredentialWithoutHTTP() async throws {
-    for data in [nil, Data("bad credential".utf8), try profileCredentials(expiry: .distantPast), try profileCredentials(expiry: nil), try profileCredentials(scopes: [])] {
+    let cases: [(Data?, ClaudeOAuthProfileQualification.Failure)] = [
+        (nil, .signInRequired), (Data("bad credential".utf8), .signInRequired),
+        (try profileCredentials(expiry: .distantPast), .refreshRequired),
+        (try profileCredentials(expiry: nil), .refreshRequired),
+        (try profileCredentials(scopes: []), .profileConsentRequired)]
+    for (data, expected) in cases {
         let http = ProfileHTTP(data: Data())
         let service = ClaudeOAuthProfileQualification(credentialStore: ProfileCredentials(data: data), httpClient: http)
-        await #expect(throws: ClaudeOAuthProfileQualification.Failure.self) { try await service.check(accountID: "configured") }
+        do { _ = try await service.check(accountID: "configured"); Issue.record("Expected failure") }
+        catch let failure as ClaudeOAuthProfileQualification.Failure { #expect(failure == expected) }
         #expect(await http.requests.isEmpty)
     }
 }
@@ -119,10 +125,41 @@ private actor ProfileAccountRecorder {
     #expect(!result.standardError.isEmpty)
 }
 
-@Test func claudeProfileCommandDispatchesBeforeGUIWithoutOpeningAccounts() async throws {
+@Test func claudeProfileCommandRoutesHelpWithoutOpeningAccounts() async throws {
     #expect(await ContextPanelEntryPoint.profileShapeResult(arguments: []) == nil)
     #expect(await ContextPanelEntryPoint.profileShapeResult(arguments: ["--refresh-now"]) == nil)
     let help = try #require(await ContextPanelEntryPoint.profileShapeResult(arguments: ["--claude-profile-shape", "--help"]))
     #expect(help.exitCode == 0)
     #expect(!help.standardOutput.isEmpty)
+}
+
+private struct UnavailableProfileCredentials: ProviderCredentialLoading {
+    func load(accountID: String) throws -> Data? { throw CocoaError(.fileReadNoPermission) }
+}
+
+@Test func claudeProfileCredentialReadFailureDoesNotRequestNewConsent() async throws {
+    let http = ProfileHTTP(data: Data())
+    let service = ClaudeOAuthProfileQualification(credentialStore: UnavailableProfileCredentials(), httpClient: http)
+    do { _ = try await service.check(accountID: "configured"); Issue.record("Expected failure") }
+    catch let failure as ClaudeOAuthProfileQualification.Failure { #expect(failure == .credentialUnavailable) }
+    #expect(await http.requests.isEmpty)
+}
+
+@Test func claudeProfileCommandReadsLegacyConfigurationWithoutMigratingIt() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let legacy = root.appending(path: "legacy.json")
+    let canonical = root.appending(path: "current.json")
+    let data = Data(#"{"schemaVersion":1,"updatedAt":"2026-10-01T00:00:00Z","accounts":[{"id":"claude-local-default","provider":"anthropic","connectorKind":"claudeLocalStatus","displayName":"Private","isEnabled":true}]}"#.utf8)
+    try data.write(to: legacy)
+    let recorder = ProfileAccountRecorder()
+    let result = await ClaudeOAuthProfileQualificationCommand.run(arguments: [], accountStore: AccountConfigurationStore(configurationURL: canonical, fallbackConfigurationURL: legacy)) { id in
+        await recorder.record(id)
+        return try ClaudeOAuthProfileShape.parse(Data("{}".utf8))
+    }
+    #expect(result.exitCode == 0)
+    #expect(await recorder.ids == ["claude-local-default"])
+    #expect(!FileManager.default.fileExists(atPath: canonical.path))
+    #expect(try Data(contentsOf: legacy) == data)
 }
