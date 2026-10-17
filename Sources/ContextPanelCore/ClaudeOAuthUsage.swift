@@ -422,7 +422,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         guard identityResolver != nil else { return nil }
         do {
             let profile = try await httpClient.data(for: ConnectorHTTPRequest(
-                url: URL(string: "https://api.anthropic.com/api/oauth/profile")!, method: "GET",
+                url: ClaudeOAuthMetadata.profileEndpoint, method: "GET",
                 headers: ["Authorization": "Bearer \(accessToken)", "Accept": "application/json",
                     "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
                     "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader]))
@@ -569,6 +569,7 @@ private func encodeClaudeOAuthCredentials(_ credentials: ClaudeOAuthCredentials)
 }
 
 public enum ClaudeOAuthMetadata {
+    public static let profileEndpoint = URL(string: "https://api.anthropic.com/api/oauth/profile")!
     public static let usageUserAgent = "claude-code/2.1.141"
     public static let optionalResetUserAgent = "claude-cli/2.1.286 (external, cli)"
     public static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"

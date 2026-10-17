@@ -978,3 +978,28 @@ agent data. It is not a prediction of the next reset: future reset selection
 continues to exclude dates at or before the presentation time. Unknown historical
 reset dates remain unknown. Banked offer expiry is separate and never applies
 a reset or changes utilization.
+
+### Claude profile-field qualification
+
+Before implementing API-backed login/plan display, an operator can qualify the
+candidate fields from the signed installed app's own existing OAuth consent:
+
+```sh
+"/Applications/Context Panel.app/Contents/MacOS/Context Panel" --claude-profile-shape
+```
+
+This checks enabled Claude entries in saved order and prints only their ordinals
+and allowlisted candidate field types (including missing/null). These probes do
+not establish a display contract until observed in the matching signed build.
+Unknown keys, names, email values, identifiers, tokens and provider error bodies
+are discarded. The command does not save a profile, add fields to snapshots,
+refresh tokens, change accounts, request consent or read Claude Code storage.
+Expired/missing credentials or missing existing `user:profile` consent produce
+an explicit unavailable result. Normal Context Panel sign-in is the recovery
+path; no new access is implied. Exit 0 means all selected profile checks passed,
+1 means unavailable/partial, and 64 means invalid arguments.
+
+Use the signed-runtime baseline and exact-build release gates before qualifying
+live fields. Development command tests with synthetic credentials prove routing
+and privacy only. Actual profile values remain unqualified until that step;
+typed account names remain the display fallback.
