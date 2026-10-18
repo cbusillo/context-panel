@@ -30,6 +30,12 @@ The policy owns:
 - evidence floors and escalation rules
 - explicit developer-only inputs that do not ship
 
+Shared-library presentation code, the `core-presentation` group, is render
+input. The rest of `ContextPanelCore`, including any file not yet classified,
+stays a shared input and moves both render and runtime fingerprints. A group
+marked `forbidRuntimeAPIs` fails validation when a file uses storage, transport,
+sync, or OS-integration APIs.
+
 The generator also reads a normalized `project.yml` representation. Target
 settings and dependency closure therefore affect only the relevant surfaces,
 while global project settings remain conservatively shared.
@@ -106,9 +112,10 @@ Escalation rules:
 
 Every train re-checks only what changed. Runtime receipts are requested only
 for surfaces whose runtime or placement fingerprints changed, plus the
-toolchain and signed-artifact risks below for RC and release; a rebuild alone
-needs no new runtime proof, and unchanged surfaces carry forward their approved
-evidence. Comparison output includes `requiredEvidence` per surface,
+toolchain and signed-artifact risks below for RC and release. A new build adds
+`actual-runtime` only where the train minimum above includes it, so a rebuild
+alone needs no new runtime proof; unchanged surfaces carry forward their
+approved evidence. Comparison output includes `requiredEvidence` per surface,
 class-indexed `requiredSurfaces`, `requiresRuntimeSession`, and
 `requiresPlacementReview`; automation must use those fields instead of opening
 an all-surface device session by default. `requiredEvidence` and
@@ -161,7 +168,9 @@ the comparison only records that the observation risk exists.
 
 ## Carry-Forward
 
-Carry-forward is derived, never written back into prior evidence:
+Carry-forward is derived, never written back into prior evidence. It only
+decides whether prior evidence satisfies a class already in `requiredEvidence`;
+it never adds one:
 
 - shared-view evidence is eligible only when the render fingerprint is equal
 - actual-runtime evidence is eligible only when the runtime fingerprint and

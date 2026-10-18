@@ -106,7 +106,26 @@
       ]
     },
     "core": {
-      "include": ["Sources/ContextPanelCore/**/*.swift"]
+      "include": ["Sources/ContextPanelCore/**/*.swift"],
+      "exclude": [
+        "Sources/ContextPanelCore/AccountOverviewText.swift",
+        "Sources/ContextPanelCore/AccountPace.swift",
+        "Sources/ContextPanelCore/AccountPresentation.swift",
+        "Sources/ContextPanelCore/AccountWidgetSelection.swift",
+        "Sources/ContextPanelCore/KeepWorkingForecast.swift",
+        "Sources/ContextPanelCore/MetricProgress.swift"
+      ]
+    },
+    "core-presentation": {
+      "include": [
+        "Sources/ContextPanelCore/AccountOverviewText.swift",
+        "Sources/ContextPanelCore/AccountPace.swift",
+        "Sources/ContextPanelCore/AccountPresentation.swift",
+        "Sources/ContextPanelCore/AccountWidgetSelection.swift",
+        "Sources/ContextPanelCore/KeepWorkingForecast.swift",
+        "Sources/ContextPanelCore/MetricProgress.swift"
+      ],
+      "forbidRuntimeAPIs": true
     },
     "cloudkit-sync": {
       "include": ["Sources/ContextPanelCloudKitSync/**/*.swift"],
@@ -326,6 +345,7 @@
       "inputs": {
         "shared": ["core", "mac-app"],
         "render": [
+          "core-presentation",
           "widget-ui",
           "settings-ui",
           "validation-fixtures",
@@ -355,7 +375,7 @@
       ],
       "inputs": {
         "shared": ["core", "mac-widget"],
-        "render": ["widget-ui"],
+        "render": ["core-presentation", "widget-ui"],
         "runtime": ["config-macos-widget", "mac-widget-host"],
         "placement": ["placement-macos-widget"]
       }
@@ -375,7 +395,7 @@
       "evidenceCapabilities": ["actual-runtime"],
       "inputs": {
         "shared": [],
-        "render": [],
+        "render": ["core-presentation"],
         "runtime": [
           "core",
           "cloudkit-sync",
@@ -403,6 +423,7 @@
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
         "render": [
+          "core-presentation",
           "widget-ui",
           "settings-ui",
           "validation-fixtures",
@@ -433,6 +454,7 @@
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
         "render": [
+          "core-presentation",
           "widget-ui",
           "settings-ui",
           "validation-fixtures",
@@ -466,7 +488,7 @@
       ],
       "inputs": {
         "shared": ["core", "companion-widget", "companion-support"],
-        "render": ["widget-ui"],
+        "render": ["core-presentation", "widget-ui"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
@@ -495,7 +517,7 @@
       ],
       "inputs": {
         "shared": ["core", "companion-widget", "companion-support"],
-        "render": ["widget-ui"],
+        "render": ["core-presentation", "widget-ui"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
@@ -521,6 +543,7 @@
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
         "render": [
+          "core-presentation",
           "widget-ui",
           "settings-ui",
           "validation-fixtures",
@@ -554,7 +577,7 @@
       ],
       "inputs": {
         "shared": ["core", "companion-widget", "companion-support"],
-        "render": ["widget-ui"],
+        "render": ["core-presentation", "widget-ui"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
@@ -584,6 +607,7 @@
           "watch-support-app"
         ],
         "render": [
+          "core-presentation",
           "shared-assets",
           "validation-fixtures",
           "watch-validation-gallery",
@@ -612,7 +636,7 @@
       ],
       "inputs": {
         "shared": ["core", "watch-widget", "watch-support-widget"],
-        "render": [],
+        "render": ["core-presentation"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
@@ -638,6 +662,7 @@
       "inputs": {
         "shared": ["core", "tv-app", "tv-support"],
         "render": [
+          "core-presentation",
           "tv-assets",
           "validation-fixtures",
           "tv-validation-gallery",
@@ -666,7 +691,7 @@
       ],
       "inputs": {
         "shared": ["core", "tv-top-shelf", "tv-support"],
-        "render": ["tv-assets"],
+        "render": ["core-presentation", "tv-assets"],
         "runtime": ["config-tv-top-shelf", "tv-top-shelf-host"],
         "placement": ["placement-tv-top-shelf"]
       }
