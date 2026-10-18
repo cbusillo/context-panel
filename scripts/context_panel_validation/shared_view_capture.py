@@ -303,7 +303,7 @@ SUPPORTED_PROFILES = tuple(SIMULATOR_CAPTURE_PROFILES)
 # competing LaunchServices and PlugInKit bundles. macOS widget cells are rendered by
 # a SwiftPM tool that the executor builds itself from the verified source root.
 HOST_RENDERER_PROFILE = "macos"
-HOST_RENDERER_SURFACES = frozenset({"macos.widget"})
+HOST_RENDERER_SURFACES = frozenset({"macos.app", "macos.widget"})
 HOST_RENDERER_PRODUCT = "ContextPanelSharedViewRenderer"
 HOST_RENDERER_MECHANISM = "swiftpm-shared-view-renderer"
 HOST_RENDERER_APPEARANCE_MECHANISM = "renderer-argument"
