@@ -81,6 +81,24 @@ do not expose the exact build number, so this alone cannot close the issue or
 prove the release definition above. The check does not automatically submit,
 approve, release, or alter submission evidence policy.
 
+## Release cadence
+
+TestFlight and App Store releases run on different clocks.
+
+- **TestFlight (internal):** ship whenever a change is worth trying on a
+  device. A TestFlight build needs no device proof round, only the one Ship
+  run. Chris installs on the Mac from TestFlight when a check needs the
+  installed app.
+- **App Store:** bundle finished work into fewer releases. Each App Store
+  release pays for one proof round covering whatever changed since the last
+  App Store release. Any `ContextPanelCore` change means every device. Agents
+  suggest an App Store release when user-facing changes have built up, or when
+  a fix matters to users. Chris decides. Time alone is no reason, per the
+  overall DIRECTION.
+- **Fixes users are waiting for** go to the App Store promptly, even alone.
+- **One release at a time per platform:** don't start the next App Store round
+  while one is in review, unless it replaces a rejected build.
+
 ## Before starting a release
 
 Follow the overall [release direction](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md).
