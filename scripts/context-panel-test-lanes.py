@@ -528,6 +528,10 @@ def time_command(
         )
         write_report(report_path, report)
         append_summary(report)
+        if interrupted_signal and not timed_out and exit_code != 128 + interrupted_signal:
+            exit_code = 128 + interrupted_signal
+            report["exitCode"] = exit_code
+            write_report(report_path, report)
         return exit_code
     finally:
         for sig, handler in previous_handlers.items():

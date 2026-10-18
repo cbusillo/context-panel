@@ -328,7 +328,8 @@ class TestLaneTests(unittest.TestCase):
             mock.patch.object(module, "source_commit", return_value="fixture-source"),
             mock.patch.object(module, "command_version", return_value="fixture-tool"),
             mock.patch.object(module, "append_summary"),
-            mock.patch.object(module.time, "monotonic", side_effect=[0, 0, 18, 18]),
+            mock.patch.object(process, "wait", wraps=process.wait) as wait,
+            mock.patch.object(module.time, "monotonic", side_effect=lambda: 18 if wait.called else 0),
         ):
             status = module.time_command(
                 self.manifest(), "routine-ci-swift", report_path, ["fixture-swift", "test"],
@@ -549,6 +550,34 @@ class TestLaneTests(unittest.TestCase):
             report = json.loads(report_path.read_text())
             self.assertEqual(status, 128 + signal.SIGTERM)
             self.assertEqual(report["exitCode"], status)
+
+    def test_cancellation_during_reporting_preserves_a_failing_status_and_report(self):
+        for stage in ("write_report", "append_summary"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                report_path = Path(directory) / "report.json"
+                process = mock.Mock(returncode=0)
+                process.wait.return_value = 0
+                real_write = module.write_report
+                def write(path, report):
+                    if stage == "write_report":
+                        signal.raise_signal(signal.SIGTERM)
+                    real_write(path, report)
+                def summary(_report):
+                    if stage == "append_summary":
+                        signal.raise_signal(signal.SIGTERM)
+                with (
+                    mock.patch.object(module, "files_for_lane", return_value=[]),
+                    mock.patch.object(module.subprocess, "Popen", return_value=process),
+                    mock.patch.object(module, "source_commit", return_value="fixture"),
+                    mock.patch.object(module, "command_version", return_value="fixture"),
+                    mock.patch.object(module, "write_report", side_effect=write),
+                    mock.patch.object(module, "append_summary", side_effect=summary),
+                    mock.patch.object(os, "killpg") as kill,
+                ):
+                    status = module.time_command(self.manifest(), "routine-ci-swift", report_path, ["fixture"])
+                self.assertEqual(status, 128 + signal.SIGTERM)
+                self.assertEqual(json.loads(report_path.read_text())["exitCode"], status)
+                kill.assert_not_called()
 
     def test_python_lane_propagates_a_failing_test_exit_code(self):
         completed = module.subprocess.CompletedProcess(

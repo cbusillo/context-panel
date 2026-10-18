@@ -38,12 +38,11 @@
       "macOSReleaseCI": ".github/workflows/ci.yml macos-release (Ship hosted runner and Xcode guard; optimized universal native app build; required swift check joins release compilation and product tests)"
     },
     "test": {
-      "default": "swift test",
+      "default": "scripts/commit-gate.sh",
       "lanesManifest": "Config/ContextPanelTestLanes.json",
       "lanesValidate": "uv run --no-project python scripts/context-panel-test-lanes.py validate",
       "fastPython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane fast-local-python",
       "routinePython": "uv run --no-project --with cryptography --with PyYAML python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
-      "routineSwift": "scripts/commit-gate.sh",
       "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)",
       "changeDetectorWarnings": ".github/workflows/ci.yml swift-tests (warning-only shared scanner checked out from cbusillo/codex-skills; annotates all tracked tests on every run; https://github.com/cbusillo/codex-skills/blob/main/skills/references/test-quality.md)"
     },
