@@ -110,10 +110,6 @@ name: Submit App Store Review
         description: Base64 bounded host-OS evidence used by placement carry-forward.
         required: false
         type: string
-      release_evidence_shadow_evidence_base64:
-        description: Base64 signed shadow-train comparison evidence.
-        required: false
-        type: string
       release_evidence_historical_policy_archive_base64:
         description: Base64 optional digest-verified historical policy archive JSON.
         required: false
@@ -243,10 +239,6 @@ name: Submit App Store Review
         description: Base64 bounded host-OS evidence used by placement carry-forward.
         required: false
         type: string
-      release_evidence_shadow_evidence_base64:
-        description: Base64 signed shadow-train comparison evidence.
-        required: false
-        type: string
       release_evidence_historical_policy_archive_base64:
         description: Base64 optional digest-verified historical policy archive JSON.
         required: false
@@ -358,8 +350,6 @@ jobs:
             ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
           INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
             ${{ inputs.release_evidence_host_os_evidence_base64 }}
-          INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
-            ${{ inputs.release_evidence_shadow_evidence_base64 }}
           INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
             ${{ inputs.release_evidence_historical_policy_archive_base64 }}
         run: |
@@ -410,8 +400,6 @@ jobs:
             .build/release-evidence-selected-rc-ledger.json
           decode_optional_json "${INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64}" \
             .build/release-evidence-host-os.json
-          decode_optional_json "${INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64}" \
-            .build/release-evidence-shadow.json
           decode_optional_json "${INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64}" \
             .build/release-evidence-policy-archive.json
 
@@ -462,8 +450,6 @@ jobs:
             ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
           INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
             ${{ inputs.release_evidence_host_os_evidence_base64 }}
-          INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
-            ${{ inputs.release_evidence_shadow_evidence_base64 }}
           INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
             ${{ inputs.release_evidence_historical_policy_archive_base64 }}
         run: |
@@ -585,10 +571,6 @@ jobs:
             if [[ -f .build/release-evidence-host-os.json ]]; then
               args+=(--release-evidence-host-os-evidence \
                 .build/release-evidence-host-os.json)
-            fi
-            if [[ -f .build/release-evidence-shadow.json ]]; then
-              args+=(--release-evidence-shadow-evidence \
-                .build/release-evidence-shadow.json)
             fi
             if [[ -f .build/release-evidence-policy-archive.json ]]; then
               args+=(--release-evidence-historical-policy-archive \

@@ -1441,7 +1441,7 @@ class SurfaceManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(SurfacePolicyError, "imports a presentation framework"):
                 resolve_policy(root)
 
-    def test_version_only_change_preserves_source_fingerprints_but_requires_runtime(self):
+    def test_version_only_change_preserves_source_fingerprints_and_carries_proof(self) -> None:
         next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
         baseline_surfaces = self.surfaces(self.baseline)
         next_surfaces = self.surfaces(next_build)
@@ -1455,7 +1455,8 @@ class SurfaceManifestTests(unittest.TestCase):
             "macos.widget"
         ]
         self.assertEqual(mac_widget["reasonCodes"], ["exact-build-changed"])
-        self.assertEqual(mac_widget["freshEvidence"], ["actual-runtime"])
+        self.assertEqual(mac_widget["freshEvidence"], [])
+        self.assertEqual(mac_widget["requiredEvidence"], ["shared-view"])
         self.assertTrue(mac_widget["carryForward"]["shared-view"]["eligible"])
         self.assertFalse(mac_widget["carryForward"]["actual-runtime"]["eligible"])
         self.assertTrue(
@@ -1711,8 +1712,7 @@ class SurfaceManifestTests(unittest.TestCase):
             )
         self.assertEqual(release_runtime["runtimeState"], "required-with-session")
         self.assertEqual(
-            release_runtime["runtimeStateReasons"],
-            ["train-minimum-required", "runtime-fingerprint-changed"],
+            release_runtime["runtimeStateReasons"], ["runtime-fingerprint-changed"]
         )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -2156,29 +2156,44 @@ class SurfaceManifestTests(unittest.TestCase):
                         ]["eligible"]
                     )
 
-    def test_rc_exact_build_requires_runtime_for_every_capable_surface(self):
+    def test_rc_and_release_rebuild_alone_needs_no_new_runtime_proof(self) -> None:
         next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
-        comparison = compare_manifests(self.baseline, next_build, "rc")
-        expected = sorted(
+        for train in ("rc", "release"):
+            with self.subTest(train=train):
+                comparison = compare_manifests(self.baseline, next_build, train)
+
+                self.assertFalse(comparison["requiresRuntimeSession"])
+                self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
+
+    def test_rc_and_release_recheck_runtime_only_where_it_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
+            changed = self.manifest(root, version="1.0.54", build="2026073002")
+        baseline_surfaces = self.surfaces(self.baseline)
+        changed_surfaces = self.surfaces(changed)
+        runtime_changed = sorted(
             surface_id
-            for surface_id, surface in self.surfaces(next_build).items()
+            for surface_id, surface in changed_surfaces.items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+            and surface["fingerprints"]["runtime"]
+            != baseline_surfaces[surface_id]["fingerprints"]["runtime"]
+        )
+        runtime_capable = sorted(
+            surface_id
+            for surface_id, surface in changed_surfaces.items()
             if "actual-runtime" in surface["evidenceCapabilities"]
         )
+        self.assertTrue(runtime_changed)
+        self.assertNotEqual(runtime_changed, runtime_capable)
+        for train in ("rc", "release"):
+            with self.subTest(train=train):
+                comparison = compare_manifests(self.baseline, changed, train)
 
-        self.assertTrue(comparison["requiresRuntimeSession"])
-        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], expected)
-
-    def test_release_exact_build_requires_runtime_for_every_capable_surface(self):
-        next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
-        comparison = compare_manifests(self.baseline, next_build, "release")
-        expected = sorted(
-            surface_id
-            for surface_id, surface in self.surfaces(next_build).items()
-            if "actual-runtime" in surface["evidenceCapabilities"]
-        )
-
-        self.assertTrue(comparison["requiresRuntimeSession"])
-        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], expected)
+                self.assertTrue(comparison["requiresRuntimeSession"])
+                self.assertEqual(
+                    comparison["requiredSurfaces"]["actual-runtime"], runtime_changed
+                )
 
     def test_expected_build_seal_requires_complete_exact_artifact_evidence(self):
         template = evidence_template(self.baseline)
@@ -2426,7 +2441,11 @@ class SurfaceManifestTests(unittest.TestCase):
                         [previous],
                         [current],
                     )
-                    expected_runtime = [] if train == "beta" else runtime_capable
+                    expected_runtime = (
+                        []
+                        if train == "beta"
+                        else [s for s in affected_surfaces if s in runtime_capable]
+                    )
                     self.assertEqual(comparison["artifactRiskCodes"], [risk_code])
                     self.assertEqual(
                         comparison["artifactRiskSurfaces"],

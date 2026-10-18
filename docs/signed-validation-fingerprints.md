@@ -90,11 +90,11 @@ The three evidence classes are:
 
 Train floors never lower change-driven requirements:
 
-| Train   | Minimum evidence                                                 |
-| ------- | ---------------------------------------------------------------- |
-| Beta    | Shared view                                                      |
-| RC      | Shared view and actual runtime                                   |
-| Release | Shared view and actual runtime from the approved exact RC target |
+| Train   | Minimum evidence                               |
+| ------- | ---------------------------------------------- |
+| Beta    | Shared view                                    |
+| RC      | Shared view                                    |
+| Release | Shared view, from the approved exact RC target |
 
 Escalation rules:
 
@@ -104,9 +104,11 @@ Escalation rules:
 - placement change: actual-runtime and OS-composited placement are fresh
 - unknown or unmapped change: all supported evidence classes are fresh
 
-Exact-build runtime proof remains mandatory for RC and release trains. Beta
-trains request runtime receipts only for surfaces whose runtime or placement
-fingerprints changed. Comparison output includes `requiredEvidence` per surface,
+Every train re-checks only what changed. Runtime receipts are requested only
+for surfaces whose runtime or placement fingerprints changed, plus the
+toolchain and signed-artifact risks below for RC and release; a rebuild alone
+needs no new runtime proof, and unchanged surfaces carry forward their approved
+evidence. Comparison output includes `requiredEvidence` per surface,
 class-indexed `requiredSurfaces`, `requiresRuntimeSession`, and
 `requiresPlacementReview`; automation must use those fields instead of opening
 an all-surface device session by default. `requiredEvidence` and

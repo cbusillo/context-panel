@@ -2080,6 +2080,44 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertEqual(payload["state"], "blocked")
         self.assertIn("shadow-comparison:pending", payload["blockers"])
 
+    def test_enforcement_without_required_shadow_trains_needs_no_shadow_evidence(self) -> None:
+        surface = "watchos.app"
+        no_shadow_policy = policy()
+        no_shadow_policy["requiredShadowTrainCount"] = 0
+        validation_report = report(surface, runtime=True)
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            mode="enforce",
+            validation_report=validation_report,
+            policy_payload=no_shadow_policy,
+        )
+        self.assertEqual(payload["state"], "approved", payload["blockers"])
+        self.assertEqual(payload["shadow"]["state"], "passed")
+        self.assertEqual(
+            self.report_blockers(
+                payload,
+                surface,
+                "actual-runtime",
+                enforce=True,
+                validation_report=validation_report,
+                policy_payload=no_shadow_policy,
+            ),
+            [],
+        )
+
+    def test_enforcement_without_required_shadow_trains_still_needs_runtime(self) -> None:
+        no_shadow_policy = policy()
+        no_shadow_policy["requiredShadowTrainCount"] = 0
+        payload = self.evaluate(
+            "watchos.app",
+            "actual-runtime",
+            mode="enforce",
+            policy_payload=no_shadow_policy,
+        )
+        self.assertEqual(payload["state"], "blocked")
+        self.assertEqual(payload["blockers"], ["watchos.app:actual-runtime:missing"])
+
     def test_comparison_required_surfaces_cannot_omit_surface_requirements(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "shared-view")

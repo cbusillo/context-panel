@@ -2256,7 +2256,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     ".build/release-evidence-report.json",
                     ".build/release-evidence-comparison.json",
                     ".build/release-evidence-selected-rc-ledger.json",
-                    ".build/release-evidence-shadow.json",
                     ".build/release-evidence-policy-archive.json",
                 ):
                     path = root / relative_path
@@ -2297,7 +2296,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                         "INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64": "",
                         "INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64": "",
-                        "INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64": "present",
                     }
                 )
