@@ -96,6 +96,12 @@ class DecodeTests(unittest.TestCase):
         palette[len(references.PNG_SIGNATURE) + 8 + 9] = 3  # IHDR color type: palette
         with self.assertRaises(references.ReferenceImageError):
             references.decode_png(bytes(palette))
+        # Colour-key transparency would let a fully transparent image match an opaque one.
+        opaque = encode_png(1, 1, [(255, 0, 0, 255)], color_type=2)
+        header_end = len(references.PNG_SIGNATURE) + 8 + 13 + 4
+        transparent = opaque[:header_end] + struct.pack(">I", 6) + b"tRNS" + bytes(6) + bytes(4) + opaque[header_end:]
+        with self.assertRaises(references.ReferenceImageError):
+            references.decode_png(transparent)
 
 
 class CompareTests(unittest.TestCase):

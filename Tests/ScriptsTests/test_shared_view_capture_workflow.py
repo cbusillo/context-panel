@@ -550,10 +550,10 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 },
                 {
                     "requirementID": "shared-view.macos-app.baseline",
-                    "status": "blocked",
-                    "hostMechanism": "unsupported-host-mechanism",
-                    "appearanceMechanism": None,
-                    "errorCode": "unsupported-host-mechanism",
+                    "status": "captured",
+                    "hostMechanism": workflow.HOST_RENDERER_MECHANISM,
+                    "appearanceMechanism": workflow.HOST_RENDERER_APPEARANCE_MECHANISM,
+                    "errorCode": None,
                 },
                 {
                     "requirementID": "shared-view.tvos-app.baseline",
@@ -573,40 +573,39 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         }
         return requirements, receipt
 
-    def test_receipt_qualification_accepts_only_supported_captures_and_explicit_unsupported_hosts(self) -> None:
+    def test_receipt_qualification_accepts_only_complete_captures(self) -> None:
         requirements, receipt = self.capture_receipt_fixture()
         workflow.qualify_capture_receipt(receipt, requirements)
         receipt["captures"][0]["hostMechanism"] = "simctl-gallery"
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
         receipt["captures"][0]["hostMechanism"] = "xcuitest-shared-view-renderer"
-        receipt["captures"][2]["errorCode"] = "profile-not-configured"
+        receipt["captures"][1].update(status="blocked", errorCode="profile-not-configured")
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
-        receipt["captures"][2]["errorCode"] = "unsupported-host-mechanism"
+        receipt["captures"][1].update(status="captured", errorCode=None)
         receipt["evidenceClass"] = "actual-runtime"
         with self.assertRaises(workflow.WorkflowEvidenceError):
             workflow.qualify_capture_receipt(receipt, requirements)
 
-    def test_mac_widget_must_be_rendered_by_the_host_renderer_to_qualify(self) -> None:
+    def test_mac_cells_must_be_rendered_by_the_host_renderer_to_qualify(self) -> None:
         requirements, valid = self.capture_receipt_fixture()
         workflow.qualify_capture_receipt(valid, requirements)
         substitutions = (
             {"status": "blocked", "hostMechanism": "unsupported-host-mechanism",
              "appearanceMechanism": None, "errorCode": "unsupported-host-mechanism"},
+            {"status": "blocked", "errorCode": "host-renderer-presentation-unsupported"},
             {"hostMechanism": "simctl-gallery", "appearanceMechanism": None},
             {"status": "unknown", "errorCode": "host-renderer-failed"},
         )
-        for substitution in substitutions:
-            with self.subTest(substitution=substitution):
-                _, receipt = self.capture_receipt_fixture()
-                widget = next(
-                    item for item in receipt["captures"]
-                    if item["requirementID"] == "shared-view.macos-widget.baseline"
-                )
-                widget.update(substitution)
-                with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "macOS widget"):
-                    workflow.qualify_capture_receipt(receipt, requirements)
+        for requirement_id in ("shared-view.macos-app.baseline", "shared-view.macos-widget.baseline"):
+            for substitution in substitutions:
+                with self.subTest(requirement_id=requirement_id, substitution=substitution):
+                    _, receipt = self.capture_receipt_fixture()
+                    cell = next(item for item in receipt["captures"] if item["requirementID"] == requirement_id)
+                    cell.update(substitution)
+                    with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "macOS shared-view"):
+                        workflow.qualify_capture_receipt(receipt, requirements)
 
     def test_rendered_mac_widget_cells_need_a_matching_renderer_identity_in_the_receipt(self) -> None:
         requirements, _ = self.capture_receipt_fixture()
@@ -641,14 +640,14 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "renderer identity"):
                     workflow.qualify_capture_receipt(receipt, requirements)
 
-    def test_a_plan_without_mac_widget_cells_needs_no_renderer_identity(self) -> None:
+    def test_a_plan_without_mac_cells_needs_no_renderer_identity(self) -> None:
         requirements, receipt = self.capture_receipt_fixture()
         requirements["requirements"] = [
-            item for item in requirements["requirements"] if item["surface"] != "macos.widget"
+            item for item in requirements["requirements"] if not item["surface"].startswith("macos.")
         ]
         receipt["captures"] = [
             item for item in receipt["captures"]
-            if item["requirementID"] != "shared-view.macos-widget.baseline"
+            if not item["requirementID"].startswith("shared-view.macos-")
         ]
         receipt["profiles"] = []
 
@@ -681,22 +680,17 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
                 ]
             )
 
-    def test_blocked_capture_still_qualifies_when_only_unsupported_hosts_are_blocked(self) -> None:
+    def test_a_complete_capture_is_qualified(self) -> None:
         _, receipt = self.capture_receipt_fixture()
-
         self.assertEqual(self.run_capture_and_qualify(0, receipt), 0)
-        self.assertEqual(self.run_capture_and_qualify(20, receipt), 0)
 
-    def test_blocked_capture_fails_when_a_supported_surface_was_not_captured(self) -> None:
-        _, receipt = self.capture_receipt_fixture()
         receipt["captures"][0]["status"] = "blocked"
-
         with self.assertRaises(SystemExit) as context, contextlib.redirect_stderr(io.StringIO()):
-            self.run_capture_and_qualify(20, receipt)
+            self.run_capture_and_qualify(0, receipt)
         self.assertNotEqual(context.exception.code, 0)
 
     def test_other_capture_failures_propagate_without_qualification(self) -> None:
-        for capture_status in (1, 30):
+        for capture_status in (1, 20, 30):
             with self.subTest(capture_status=capture_status):
                 self.assertEqual(self.run_capture_and_qualify(capture_status, None), capture_status)
 

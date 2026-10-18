@@ -358,9 +358,7 @@ substitute. The `Shared-View Capture Evidence` workflow may prepare the complete
 mixed visual requirements file, but it records only simulator and host-renderer
 shared-view output.
 It retains every fresh placement requirement for the coordinator and fails
-closed if one cannot be represented. `macos.app` executor records remain
-`unsupported-host-mechanism`; they are never converted into shared-view,
-actual-runtime, or OS-composited-placement proof. The public hosted receipt and
+closed if one cannot be represented. The public hosted receipt and
 short-retention synthetic PNGs contain no coordinator state, runtime receipt,
 device ID, or private capture path. The artifacts upload only after the hosted
 receipt passes the shared-view-only qualification boundary.

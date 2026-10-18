@@ -1292,7 +1292,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             grouped[item["surface"]].append(item)
         return grouped
 
-    def test_mac_widget_cells_are_rendered_on_the_host_and_mac_app_cells_stay_unsupported(self) -> None:
+    def test_mac_app_and_widget_cells_are_rendered_on_the_host(self) -> None:
         self.write_plan(["macos.app", "macos.widget"])
         self.write_host_renderer_config()
         runner = HostRendererRunner()
@@ -1300,10 +1300,13 @@ class SharedViewCaptureTests(unittest.TestCase):
         exit_code, receipt = self.execute_host_renderer(runner)
 
         captures = self.macos_captures(receipt)
-        widget_cells = next(
-            surface.cells for surface in self.matrix.surfaces if surface.id == "macos.widget"
-        )
-        self.assertEqual(EXIT_BLOCKED, exit_code)  # macos.app keeps the run from being complete
+        mac_cells = [
+            cell
+            for surface in self.matrix.surfaces
+            if surface.id in ("macos.app", "macos.widget")
+            for cell in surface.cells
+        ]
+        self.assertEqual(EXIT_OK, exit_code)
         self.assertEqual(
             [
                 (
@@ -1313,22 +1316,18 @@ class SharedViewCaptureTests(unittest.TestCase):
                     None,
                 )
             ]
-            * len(widget_cells),
+            * len(mac_cells),
             [
                 (item["status"], item["hostMechanism"], item["appearanceMechanism"], item["errorCode"])
-                for item in captures["macos.widget"]
+                for item in captures["macos.app"] + captures["macos.widget"]
             ],
-        )
-        self.assertEqual(
-            {("blocked", "unsupported-host-mechanism")},
-            {(item["status"], item["errorCode"]) for item in captures["macos.app"]},
         )
         renders = [call for call in runner.calls if Path(call[0]).name == capture_module.HOST_RENDERER_PRODUCT]
         self.assertEqual(
             [
                 ["--fixture", cell.fixture_id, "--family", cell.family, "--appearance", cell.appearance,
                  "--presentation", cell.presentation]
-                for cell in widget_cells
+                for cell in mac_cells
             ],
             [call[1:9] for call in renders],
         )
@@ -3149,7 +3148,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(SharedViewCaptureError, "requirements identity"):
             self.execute(FakeRunner())
 
-    def test_unsupported_and_unconfigured_requirements_are_blocked_without_simctl(self) -> None:
+    def test_unconfigured_requirements_are_blocked_without_simctl(self) -> None:
         self.write_plan(["macos.app", "watchos.app", "tvos.app", "ios.app"])
         self.write_config(())
         runner = FakeRunner()
@@ -3163,11 +3162,8 @@ class SharedViewCaptureTests(unittest.TestCase):
             (item["surface"], item["errorCode"], item["hostMechanism"])
             for item in receipt["captures"]
         ]
-        unsupported = "unsupported-host-mechanism"
-        self.assertEqual(2, summary.count(("ios.app", "profile-not-configured", "unconfigured-profile")))
-        self.assertEqual(2, summary.count(("watchos.app", "profile-not-configured", "unconfigured-profile")))
-        self.assertEqual(2, summary.count(("tvos.app", "profile-not-configured", "unconfigured-profile")))
-        self.assertEqual(2, summary.count(("macos.app", unsupported, unsupported)))
+        for surface in ("ios.app", "watchos.app", "tvos.app", "macos.app"):
+            self.assertEqual(2, summary.count((surface, "profile-not-configured", "unconfigured-profile")))
 
     def test_command_stderr_privacy_assertion_is_non_vacuous(self) -> None:
         self.write_plan(["ios.app"])

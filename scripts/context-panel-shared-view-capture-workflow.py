@@ -44,7 +44,6 @@ MAX_ARTIFACT_FILES = 256
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 SOURCE_IDENTITY_KIND = "context-panel-source-manifest-identity"
 SUPPORTED_CAPTURE_SURFACES = ("ios", "ipados", "visionos", "watchos", "tvos")
-UNSUPPORTED_CAPTURE_SURFACES = ("macos",)
 EXPECTED_CAPTURE_MECHANISMS = {
     "ios": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
     "ipados": ("xcuitest-shared-view-renderer", "xcuitest-render-route"),
@@ -422,19 +421,19 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
             or renderer_profiles[0]["rendererSourceManifestID"] != receipt.get("currentManifestID")
             or renderer_profiles[0]["rendererSourceManifestID"] != requirements.get("currentManifestID")
         ):
-            raise WorkflowEvidenceError("macOS widget renderer identity is missing or does not match")
+            raise WorkflowEvidenceError("macOS renderer identity is missing or does not match")
     for requirement_id, surface in expected.items():
         capture = actual[requirement_id]
         prefix = surface.split(".", 1)[0]
         if surface in HOST_RENDERER_SURFACES:
-            # macOS widget cells are drawn on the host by the SwiftPM renderer.
+            # macOS cells are drawn on the host by the SwiftPM renderer.
             if (
                 capture.get("status") != "captured"
                 or capture.get("hostMechanism") != HOST_RENDERER_MECHANISM
                 or capture.get("appearanceMechanism") != HOST_RENDERER_APPEARANCE_MECHANISM
                 or capture.get("errorCode") is not None
             ):
-                raise WorkflowEvidenceError("macOS widget shared-view requirement was not rendered")
+                raise WorkflowEvidenceError("macOS shared-view requirement was not rendered")
         elif prefix in SUPPORTED_CAPTURE_SURFACES:
             if capture.get("status") != "captured":
                 raise WorkflowEvidenceError("supported shared-view requirement was not captured")
@@ -447,14 +446,6 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
                 raise WorkflowEvidenceError(
                     "supported shared-view requirement used an invalid capture mechanism"
                 )
-        elif prefix in UNSUPPORTED_CAPTURE_SURFACES:
-            if (
-                capture.get("status") != "blocked"
-                or capture.get("hostMechanism") != "unsupported-host-mechanism"
-                or capture.get("appearanceMechanism") is not None
-                or capture.get("errorCode") != "unsupported-host-mechanism"
-            ):
-                raise WorkflowEvidenceError("unsupported shared-view requirement is not an explicit host limitation")
         else:
             raise WorkflowEvidenceError("capture receipt contains an unknown platform")
 
@@ -462,9 +453,8 @@ def qualify_capture_receipt(receipt: dict[str, Any], requirements: dict[str, Any
 def capture_and_qualify(command: list[str], receipt_path: Path, requirements_path: Path) -> int:
     """Run the capture command, then qualify its receipt.
 
-    A blocked capture is expected while some hosts have no capture mechanism: the
-    receipt must still be qualified so that only explicit host limitations pass.
-    Any other capture failure is returned unchanged without qualification.
+    Every shared-view cell has a capture mechanism, so only a complete capture is
+    qualified. Any capture failure is returned unchanged without qualification.
     """
     if not command:
         raise WorkflowEvidenceError("capture command is required")
@@ -474,7 +464,7 @@ def capture_and_qualify(command: list[str], receipt_path: Path, requirements_pat
         raise WorkflowEvidenceError(f"capture command could not be started: {error}") from error
     if capture_status < 0:
         capture_status = 128 - capture_status
-    if capture_status not in (EXIT_OK, EXIT_BLOCKED):
+    if capture_status != EXIT_OK:
         return capture_status
     qualify_capture_receipt(
         _read_json(receipt_path, "capture receipt"),

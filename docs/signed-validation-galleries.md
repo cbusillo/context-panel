@@ -74,9 +74,9 @@ coordinator plan.
 Each fixture contract ID is a deterministic hash over the versioned matrix
 domain, complete matrix digest, relevant surface-policy contract, and canonical
 cell contract. `pixelDiffPolicy` is explicitly
-`advisory-only`: Stage 1 does not compare pixels or make automated approval
-decisions. Private simulator capture, artifact handling, and any later capture
-or approval integration remain a Stage 2 boundary.
+`advisory-only`: capture never compares pixels or approves. Approval against
+committed reference images is a separate step; see
+[reference images](validation-authority.md#reference-images).
 
 ## Private Simulator Capture
 
@@ -87,8 +87,8 @@ exactly match the matrix planner output; placement entries are ignored by
 capture and remain structurally unable to satisfy shared-view work.
 
 The executor captures `ios`, `ipados`, `visionos`, `watchos`, and `tvos` shared
-app/widget-gallery requirements on throwaway simulators, and `macos.widget`
-through the host renderer described below. It never builds the app,
+app/widget-gallery requirements on throwaway simulators, and `macos.app` and
+`macos.widget` through the host renderer described below. It never builds the app,
 starts a coordinator session, records a visual decision, reads runtime receipts,
 or claims runtime or placement evidence.
 
@@ -313,13 +313,12 @@ working tree with untracked files there will not match. The binary hash
 identifies what ran but is not reproducible. Unlike the simulator profiles there is no app bundle with an
 embedded manifest; the link between binary and source is that the executor built
 it from the verified root. Product source older than the tool is
-`blocked/host-renderer-unavailable` and fails qualification by design.
+`blocked/host-renderer-unavailable`, and source whose renderer cannot draw the
+Mac app's presentations is `blocked/host-renderer-presentation-unsupported`;
+both fail qualification by design.
 
-`macos.app` remains an explicit `unsupported-host-mechanism` result in this
-executor, although the renderer can now draw its presentations for
-[reference images](validation-authority.md#reference-images). Missing
-profiles are blocked and command, image, stability, identity, cleanup, or
-publication faults are unknown. A zero exit means every requested capture was
+Missing profiles are blocked and command, image, stability, identity, cleanup,
+or publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an
 approval, runtime claim, placement claim, or pixel gate.
 
@@ -366,10 +365,8 @@ deliberately fail-closed: an uncovered placement surface blocks the lane rather
 than being omitted. It builds unsigned fresh Release simulator bundles only for
 iOS/iPadOS, visionOS, standalone watchOS, and tvOS, embeds the current manifest, then
 invokes `capture-shared-view-evidence` unchanged. The qualification boundary is
-strict: all supported requirements must be captured, `macos.widget`
-requirements must be captured by `swiftpm-shared-view-renderer`, and any
-uncaptured requirements must be `macos.app` records with exactly
-`unsupported-host-mechanism`.
+strict: every requirement must be captured, and `macos.app` and `macos.widget`
+requirements must be captured by `swiftpm-shared-view-renderer`.
 
 Only a qualified run uploads public evidence. The public artifact contains the
 receipt, comparison, source manifests, and complete visual requirements. Private
@@ -544,6 +541,7 @@ gallery sources for iOS and visionOS.
 
 Gallery output becomes a coordinator approval record only when an explicit
 shared-view requirement binds the fixture/gallery contract digest, presentation
-context, exact render fingerprint, and human decision. The ledger never upgrades
-gallery output into OS-composited placement proof. Risk-triggered carry-forward
-remains separate release-integration work.
+context, exact render fingerprint, and a decision: Chris's, or a
+[reference approval](validation-authority.md#reference-images). The ledger
+never upgrades gallery output into OS-composited placement proof.
+Risk-triggered carry-forward remains separate release-integration work.

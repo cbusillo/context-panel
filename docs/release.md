@@ -1448,9 +1448,10 @@ documented in [Signed Validation Galleries](signed-validation-galleries.md).
 Normal product UI does not expose gallery navigation; signed-validation
 operators use the allowlisted routes and Watch launch argument documented there.
 Gallery and deterministic render outputs are shared-view evidence. They can
-satisfy render-only beta requirements only after an explicit matching approval
-is recorded. They do not satisfy exact-build runtime receipts or
-OS-composited placement approval.
+satisfy render-only beta requirements only after a matching approval is
+recorded: Chris's, or a
+[reference approval](validation-authority.md#reference-images). They do not
+satisfy exact-build runtime receipts or OS-composited placement approval.
 
 After opening the bounded runtime receipt window described in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),
