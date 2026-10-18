@@ -1,4 +1,5 @@
 import AppKit
+import ContextPanelApp
 import ContextPanelCore
 import ContextPanelSettingsUI
 import ContextPanelTVSupport
@@ -10,15 +11,16 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-// Renders one macOS Validation Gallery cell to a PNG without launching the app.
+// Renders one macOS Validation Gallery cell (widget or Mac app presentation) to a
+// PNG without launching the app.
 // Operator and CI tooling only: it links no app or widget bundle, registers
 // nothing with LaunchServices or PlugInKit, and reads only synthetic fixtures.
 //
 //   ContextPanelSharedViewRenderer --fixture healthy --family systemSmall \
 //     --appearance light --presentation widget --output cell.png
 //
-// Exit codes: EX_USAGE for bad arguments, 3 when the cell needs views this tool
-// cannot draw, EX_SOFTWARE when rendering fails, EX_CANTCREAT when writing fails.
+// Exit codes: EX_USAGE for bad arguments, 3 for a presentation the Mac gallery
+// does not offer, EX_SOFTWARE when rendering fails, EX_CANTCREAT when writing fails.
 
 private let canvas = CGSize(width: 1_024, height: 768)
 private let interactive = CommandLine.arguments.contains("--interactive")
@@ -31,6 +33,9 @@ private let appStoreScenario: Bool = {
 private var presentationWindow: NSWindow?
 
 private let unsupportedPresentationStatus: Int32 = 3
+private let macPresentations: Set<ValidationGalleryPresentation> = [.overview, .detail, .reconnect, .diagnostics, .widget]
+// The Mac app's presentations need more room than a widget tile.
+private let applicationCanvas = CGSize(width: 1_120, height: 900)
 
 // Default review sizes, plus App Store draft canvases selected by the app-store scenario.
 private let accountPresentationSizes: [String: CGSize] = [
@@ -93,11 +98,11 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
     else {
         fail("--fixture, --family, --appearance (light|dark), --presentation, and --output are required")
     }
-    // Application presentations are drawn by views that live in the Mac app target.
-    // Without them the gallery falls back to the widget, which would be the wrong image.
-    guard presentation == .widget else {
+    // Settings is a companion presentation. The Mac gallery does not offer it and would
+    // fall back to another presentation, which would be the wrong image.
+    guard macPresentations.contains(presentation) else {
         fail(
-            "only the widget presentation can be rendered headlessly; \(presentation.rawValue) needs the Mac app's views",
+            "the Mac gallery has no \(presentation.rawValue) presentation",
             status: unsupportedPresentationStatus
         )
     }
@@ -118,7 +123,10 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
 
 @MainActor
 private func renderSize(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bool) -> CGSize {
-    scenario ? (deadlines ? CGSize(width: 760, height: 320) : CGSize(width: route.family.width, height: route.family.height)) : canvas
+    if scenario {
+        return deadlines ? CGSize(width: 760, height: 320) : CGSize(width: route.family.width, height: route.family.height)
+    }
+    return route.presentation == .widget ? canvas : applicationCanvas
 }
 
 @MainActor
@@ -216,7 +224,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
                 .clipShape(RoundedRectangle(cornerRadius: 18)))
         }
     } else {
-        view = AnyView(ValidationGalleryView(route: route))
+        view = AnyView(MacValidationGallery.view(route: route))
     }
     func tokenColor(_ token: AccountColorToken, dark: Bool) -> Color {
         let value = token.rgb(dark: dark)

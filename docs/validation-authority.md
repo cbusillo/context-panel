@@ -72,10 +72,40 @@ The executor currently supports iOS, iPadOS, visionOS, watchOS, and tvOS
 simulator capture. tvOS capture requires current product source that contains
 the tvOS validation launch route; older source fails qualification by design.
 `macos.widget` is rendered on the host by a SwiftPM tool the executor builds from
-the verified source root, with no app or extension bundle. `macos.app` remains
-an explicit `unsupported-host-mechanism` result;
+the verified source root, with no app or extension bundle. The same tool draws
+`macos.app` cells for [reference images](#reference-images), but the release
+capture executor still records `macos.app` as `unsupported-host-mechanism`;
 see [the capture contract](signed-validation-galleries.md#private-simulator-capture).
 There is no macOS simulator adapter hidden behind a missing config value.
+
+## Reference images
+
+Each host-rendered shared-view cell (`macos.app` and `macos.widget`) has a
+committed reference PNG at `Tests/SharedViewReferences/<surface>/<cell>.png`.
+The CI job `shared-view-references` renders those cells and compares them with
+[`scripts/context-panel-shared-view-references.py`](../scripts/context-panel-shared-view-references.py);
+a cell matches when its size is the same and only a few pixels differ beyond a
+small per-channel tolerance (the constants live in
+[`scripts/context_panel_shared_view_references.py`](../scripts/context_panel_shared_view_references.py)).
+A changed or missing reference fails the job.
+
+References are valid only for the runner image and Xcode that job selects,
+which are the ones the Shared-View Capture Evidence workflow uses. When a PR
+changes how a cell looks on purpose, or that image or Xcode changes, re-record:
+
+1. Download the `shared-view-rendered-*` artifact from the PR's CI run. Its
+   `report.json` lists each cell as matched, changed or missing-reference.
+2. Look at every changed cell.
+3. Copy them over the references and commit:
+
+   ```sh
+   scripts/context-panel-shared-view-references.py compare \
+     --rendered <downloaded-artifact> \
+     --surface macos.app --surface macos.widget --update
+   ```
+
+Do not record references on a local Mac; its OS and fonts differ from the
+pinned runner.
 
 Existing Mac render tests can export host-rendered PNGs, but those test outputs
 are not formal build/requirement-bound capture receipts. The default-text matrix

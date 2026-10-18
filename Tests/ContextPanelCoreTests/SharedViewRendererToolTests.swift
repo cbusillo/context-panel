@@ -109,43 +109,38 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     }
 }
 
-@Test func rendererDrawsEveryMacWidgetCellInTheSharedViewMatrix() throws {
+@Test func rendererDrawsEveryMacCellInTheSharedViewMatrix() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let widgetCells = try macOSMatrixCells().filter { $0.cell["presentation"] == "widget" }
-    #expect(!widgetCells.isEmpty)
+    let cells = try macOSMatrixCells()
+    #expect(Set(cells.map(\.surface)) == ["macos.app", "macos.widget"])
 
     var images: Set<Data> = []
-    for (index, entry) in widgetCells.enumerated() {
+    for (index, entry) in cells.enumerated() {
         let output = directory.appending(path: "cell-\(index).png")
         let run = try runRenderer(try rendererArguments(cell: entry.cell, output: output))
 
         #expect(run.status == 0, "\(entry.surface): \(run.output)")
         let png = try Data(contentsOf: output)
-        let bitmap = try #require(NSBitmapImageRep(data: png))
-        #expect(bitmap.pixelsWide == 1_024)
-        #expect(bitmap.pixelsHigh == 768)
+        #expect(NSBitmapImageRep(data: png) != nil)
         images.insert(png)
     }
-    #expect(images.count == widgetCells.count, "different cells must not render to the same image")
+    #expect(images.count == cells.count, "different cells must not render to the same image")
 }
 
-@Test func rendererRefusesApplicationPresentationsInsteadOfFallingBackToTheWidget() throws {
+@Test func rendererRefusesAPresentationTheMacGalleryDoesNotOffer() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let applicationCells = try macOSMatrixCells().filter { $0.cell["presentation"] != "widget" }
+    let output = directory.appending(path: "settings.png")
+    let run = try runRenderer(["--fixture", "healthy", "--family", "systemLarge", "--appearance", "light",
+                               "--presentation", "settings", "--output", output.path])
 
-    for (index, entry) in applicationCells.enumerated() {
-        let output = directory.appending(path: "app-\(index).png")
-        let run = try runRenderer(try rendererArguments(cell: entry.cell, output: output))
-
-        // 3 is the tool's dedicated "needs the Mac app's views" status, so a crash or an
-        // argument error cannot satisfy this test.
-        #expect(run.status == 3, "\(entry.surface): \(run.output)")
-        #expect(!FileManager.default.fileExists(atPath: output.path))
-    }
+    // 3 is the tool's dedicated "no such Mac presentation" status, so a crash or an
+    // argument error cannot satisfy this test, and the gallery's fallback is never drawn.
+    #expect(run.status == 3, "\(run.output)")
+    #expect(!FileManager.default.fileExists(atPath: output.path))
 }
 
 @Test func rendererFailsClosedOnBadArgumentsAndNeverOverwrites() throws {
