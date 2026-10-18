@@ -54,10 +54,6 @@ name: Ship
         required: true
         default: true
         type: boolean
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -138,8 +134,6 @@ jobs:
           INPUT_TESTFLIGHT_BETA: ${{ inputs.testflight_beta }}
           INPUT_TESTFLIGHT_BETA_GROUPS: ${{ inputs.testflight_beta_groups }}
           INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS: ${{ inputs.include_internal_testflight_groups }}
-          INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
@@ -160,7 +154,6 @@ jobs:
       build_number: ${{ needs.validate.outputs.build_number }}
       create_github_release: true
       notarize: ${{ inputs.notarize_github_release }}
-      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   app-store-upload:
     name: Mac App Store Connect Build Upload Channel
@@ -175,7 +168,6 @@ jobs:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}
       upload: ${{ inputs.app_store_channel == 'upload' }}
-      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   companion-app-store-upload:
     name: Companion App Store Connect Build Upload Channel (${{ matrix.platform }})
@@ -198,7 +190,6 @@ jobs:
       build_number: ${{ needs.validate.outputs.build_number }}
       platform: ${{ matrix.platform }}
       upload: ${{ inputs.companion_app_store_channel == 'upload' }}
-      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   testflight-beta:
     name: TestFlight Beta Distribution Channel (${{ matrix.platform }})
@@ -230,7 +221,6 @@ jobs:
       beta_groups: ${{ inputs.testflight_beta_groups }}
       include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
       dry_run: false
-      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   summary:
     name: Upload and TestFlight Summary (App Store pending)

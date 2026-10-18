@@ -365,20 +365,43 @@ private func makeRegistrar(
 }
 
 // Compare constructed records with the schema consumed by the Production schema gate.
-// Adding a field to both sources remains an intended change; undeployed fields fail.
+// Adding a field to both sources remains an intended change; undeployed fields,
+// unwritten contract fields and mismatched value types fail.
 func expectCloudKitRecordFitsProductionSchema(_ record: CKRecord, identityDigest: String? = nil) throws {
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let data = try Data(contentsOf: root.appending(path: "CloudKit/companion-sync.schema.json"))
     let schema = try JSONDecoder().decode(RecordSchemaContract.self, from: data)
     #expect(schema.containerIdentifier == ContextPanelLocations.iCloudContainerID)
     let declaration = try #require(schema.recordTypes.first { $0.name == record.recordType })
-    let declaredFields = Set(declaration.fields.map(\.name))
-    #expect(Set(record.allKeys()).isSubset(of: declaredFields), "Undeployed fields in \(record.recordType)")
+    let encryptedFields = Set(declaration.fields.filter { $0.type == "ENCRYPTED_BYTES" }.map(\.name))
+    let plainFields = Set(declaration.fields.map(\.name)).subtracting(encryptedFields)
+    #expect(Set(record.allKeys()).subtracting(encryptedFields) == plainFields,
+            "Record fields differ from the contract for \(record.recordType)")
+    #expect(Set(record.encryptedValues.allKeys()) == encryptedFields,
+            "Encrypted fields differ from the contract for \(record.recordType)")
+    for field in declaration.fields {
+        if field.type == "ENCRYPTED_BYTES" {
+            #expect(record.encryptedValues[field.name] is Data, "\(record.recordType).\(field.name) must be encrypted bytes")
+        } else {
+            #expect(cloudKitValue(record[field.name], hasContractType: field.type),
+                    "\(record.recordType).\(field.name) does not hold \(field.type)")
+        }
+    }
     if let expectedName = declaration.recordName {
         #expect(record.recordID.recordName == expectedName)
     } else if let pattern = declaration.recordNamePattern {
         let digest = try #require(identityDigest)
         #expect(record.recordID.recordName == pattern.replacingOccurrences(of: "<sha256>", with: digest))
+    }
+}
+
+private func cloudKitValue(_ value: (any CKRecordValueProtocol)?, hasContractType type: String) -> Bool {
+    switch type {
+    case "BYTES": value is Data
+    case "STRING": value is String
+    case "TIMESTAMP": value is Date
+    case "INT64": (value as? NSNumber).map { !CFNumberIsFloatType($0) } ?? false
+    default: false
     }
 }
 
@@ -395,5 +418,6 @@ private struct RecordSchemaContract: Decodable {
 
     struct Field: Decodable {
         let name: String
+        let type: String
     }
 }

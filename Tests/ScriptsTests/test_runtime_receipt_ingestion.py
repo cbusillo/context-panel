@@ -609,32 +609,15 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
 
         state, _ = runtime_store.reconcile(
             session,
-            RuntimeSessionAdapter(
-                runner,
-                cloudkit_schema_receipt=Path("cloudkit-schema-receipt.json"),
-            ).sync_and_collect(NOW),
+            RuntimeSessionAdapter(runner).sync_and_collect(NOW),
         )
 
-        self.assertEqual(
-            runner.commands[0][-2:],
-            ["--cloudkit-schema-receipt", "cloudkit-schema-receipt.json"],
-        )
+        self.assertEqual(runner.commands[0][-1], "sync")
         self.assertEqual(runner.commands[1][-1], "status")
         persisted = store.runtime_evidence_path(session.id).read_text()
         self.assertNotIn("/Users/example", persisted)
         self.assertNotIn("token-secret", persisted)
         self.assertTrue(state.last_observation.sync_healthy)
-
-    def test_explicit_sync_requires_production_schema_receipt(self):
-        runner = QueueRunner([])
-
-        with self.assertRaisesRegex(
-            RuntimeEvidenceError,
-            "Production CloudKit schema receipt is required",
-        ):
-            RuntimeSessionAdapter(runner).sync_and_collect(NOW)
-
-        self.assertEqual(runner.commands, [])
 
     def test_sync_usage_error_is_invalid_instead_of_unavailable(self):
         surfaces = ("macos.app",)
@@ -648,10 +631,7 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             ]
         )
 
-        observation = RuntimeSessionAdapter(
-            runner,
-            cloudkit_schema_receipt=Path("cloudkit-schema-receipt.json"),
-        ).sync_and_collect(NOW)
+        observation = RuntimeSessionAdapter(runner).sync_and_collect(NOW)
 
         self.assertIn("sync-invalid", observation.diagnostics)
         self.assertNotIn("sync-unavailable", observation.diagnostics)
