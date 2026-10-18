@@ -17,10 +17,6 @@ name: App Store Connect Build Upload
         required: false
         default: true
         type: boolean
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
     outputs:
       build_number:
         description: Resolved CFBundleVersion build number.
@@ -40,10 +36,6 @@ name: App Store Connect Build Upload
         required: true
         default: true
         type: boolean
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -120,6 +112,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -239,21 +233,15 @@ jobs:
           fi
           scripts/upload-app-store-connect-macos-app.sh --archive-only "${args[@]}"
 
-      - name: Check Production CloudKit at Publication
+      - name: Check Production CloudKit Schema
         if: ${{ inputs.upload }}
-        uses: ./.github/actions/cloudkit-publication-check
-        with:
-          channel: macos
-          receipt: ${{ inputs.cloudkit_schema_receipt_base64 }}
-          receipt-key: ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+        env:
+          CLOUDKIT_MANAGEMENT_TOKEN: ${{ secrets.CLOUDKIT_MANAGEMENT_TOKEN }}
+        run: python3 scripts/cloudkit-schema-gate.py check
 
       - name: Upload Verified Archive
         shell: bash
         env:
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
-            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_UPLOAD: ${{ inputs.upload }}
           BUILD_NUMBER: ${{ steps.build.outputs.build_number }}

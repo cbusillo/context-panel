@@ -172,11 +172,6 @@ if [[ "$archive_only" == "true" && "$skip_archive" == "true" ]]; then
 	exit 2
 fi
 
-# Uploading is a live App Store Connect mutation; export-only is not.
-if [[ "$upload" == "true" && "$archive_only" != "true" ]]; then
-	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
-fi
-
 require_command() {
 	if ! command -v "$1" >/dev/null 2>&1; then
 		echo "required command not found: $1" >&2
@@ -1284,10 +1279,6 @@ if [[ "$archive_only" == "true" ]]; then
 	echo "Archive verified; no export or upload performed."
 	exit 0
 fi
-if [[ "$upload" == "true" ]]; then
-	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
-fi
-
 rm -rf "$export_path"
 run_xcodebuild \
 	-exportArchive \

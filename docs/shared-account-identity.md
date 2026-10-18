@@ -29,8 +29,7 @@ still wins. The local Keychain cache is scoped to the verified iCloud user.
 The encrypted payload also binds its key to that iCloud user scope; a foreign-scope payload is rejected. Every resolution rechecks the remote key and user scope. No rotation or deletion
 UI is implemented.
 
-The existing schema receipt binds both complete schema files, so the new
-encrypted contract changes its digest. No entitlements or container are widened.
+No entitlements or container are widened.
 Static validation and fake-server tests do not prove Apple's live schema or
 encrypted record access. Chris approved the Production promotion
 ([#722](https://github.com/cbusillo/context-panel/issues/722#issuecomment-5964341341))

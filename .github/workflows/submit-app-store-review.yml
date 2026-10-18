@@ -114,10 +114,6 @@ name: Submit App Store Review
         description: Base64 optional digest-verified historical policy archive JSON.
         required: false
         type: string
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -243,10 +239,6 @@ name: Submit App Store Review
         description: Base64 optional digest-verified historical policy archive JSON.
         required: false
         type: string
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -315,6 +307,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Install Python Dependencies
         run: |
@@ -403,13 +397,11 @@ jobs:
           decode_optional_json "${INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64}" \
             .build/release-evidence-policy-archive.json
 
-      - name: Check Production CloudKit at Publication
+      - name: Check Production CloudKit Schema
         if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}
-        uses: ./.github/actions/cloudkit-publication-check
-        with:
-          channel: review
-          receipt: ${{ inputs.cloudkit_schema_receipt_base64 }}
-          receipt-key: ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+        env:
+          CLOUDKIT_MANAGEMENT_TOKEN: ${{ secrets.CLOUDKIT_MANAGEMENT_TOKEN }}
+        run: python3 scripts/cloudkit-schema-gate.py check
 
       - name: Submit Review
         shell: bash
@@ -418,10 +410,6 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
             ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
-            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_PLATFORM: ${{ inputs.platform }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}

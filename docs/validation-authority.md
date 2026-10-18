@@ -280,26 +280,15 @@ acceptable.
   Store Connect object IDs into public repo docs, issues, PRs, or agent
   summaries.
 - CloudKit live Production schema validation uses Apple's `cktool`, not the App
-  Store Connect API credentials. Before GitHub Release publication, companion
-  TestFlight or App Store Review submission, App Store build upload, or signed
-  runtime-receipt relay, run the live schema gate documented in `docs/release.md`
-  under "CloudKit Production Schema Gate" and issue a fresh sealed receipt bound
-  to the exact source commit. The release entrypoints
-  (`publish-github-release.py`, the App Store Connect upload scripts in upload
-  mode, `distribute-testflight-beta.py`, `submit-app-store-review.py`) and
-  `context-panel-runtime-session.py sync` verify that receipt themselves before
-  mutation and refuse without it, in Actions and on an operator machine alike;
-  use `scripts/with-cloudkit-schema-receipt.sh -- <command>` for a local live
-  run. Do not add an override. The receipt gates operations that put a build
-  in front of people; do not extend it to App Store Connect writes that are
-  independent of the build and schema, such as screenshot upload. The local
-  operator machine should have a
-  CloudKit management token saved by `xcrun cktool save-token` with
-  `--type management --method keychain --force`, or a
-  `CLOUDKIT_MANAGEMENT_TOKEN` provided only to
-  the command process. Keep the separate
-  `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY` in operator Keychain and the GitHub
-  `release` environment; never commit, print, or summarize either secret value.
+  Store Connect API credentials. `scripts/cloudkit-schema-gate.py check` runs
+  it only when `CloudKit/` changed since the last release; see "CloudKit
+  Production Schema Gate" in `docs/release.md`. Publication workflow steps and
+  `context-panel-runtime-session.py sync` run the gate. It gates operations
+  that put a build in front of people; do not extend it to App Store Connect
+  writes that are independent of the build and schema, such as screenshot
+  upload. The operator machine keeps the management token saved by
+  `xcrun cktool save-token`; CI reads `CLOUDKIT_MANAGEMENT_TOKEN` from the
+  `release` environment. Never commit, print, or summarize the token.
 - Physical companion dogfood installs should clean stale Context Panel
   development provisioning profiles from the target device while preserving the
   profile embedded in the newly installed build and preserving App

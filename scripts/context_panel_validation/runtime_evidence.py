@@ -1010,11 +1010,9 @@ class RuntimeSessionAdapter:
         self,
         runner: Runner,
         script: Path = RUNTIME_SESSION_SCRIPT,
-        cloudkit_schema_receipt: Path | None = None,
     ):
         self.runner = runner
         self.script = script
-        self.cloudkit_schema_receipt = cloudkit_schema_receipt
 
     def collect(self, now: datetime) -> RuntimeSessionObservation:
         return self._collect(now, sync=False)
@@ -1026,19 +1024,9 @@ class RuntimeSessionAdapter:
         diagnostics: set[str] = set()
         sync_payload: dict[str, object] | None = None
         if sync:
-            if self.cloudkit_schema_receipt is None:
-                raise RuntimeEvidenceError(
-                    "Production CloudKit schema receipt is required for runtime sync"
-                )
             sync_result = self.runner.run(
-                [
-                    sys.executable,
-                    str(self.script),
-                    "sync",
-                    "--cloudkit-schema-receipt",
-                    str(self.cloudkit_schema_receipt),
-                ],
-                timeout=130,
+                [sys.executable, str(self.script), "sync"],
+                timeout=260,
             )
             parsed_sync = self._parse_json_object(sync_result.stdout)
             if sync_result.timed_out:

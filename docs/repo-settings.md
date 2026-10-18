@@ -36,10 +36,10 @@ Expected GitHub settings:
 - Force pushes and branch deletion: blocked for `main`.
 - Release environments, activation and owner setup: follow the single authority
   in [the release guide](release.md#one-time-no-click-setup-owner-only).
-- Release environment secret: `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`, at
-  least 32 bytes of high-entropy key material shared with the operator Keychain
-  entry that seals Production CloudKit schema receipts. Its sole GitHub copy
-  belongs in `release`; never store its value in repository files.
+- Release environment secret: `CLOUDKIT_MANAGEMENT_TOKEN`, the CloudKit
+  management token the schema gate uses when `CloudKit/` changed since the last
+  release. Its sole GitHub copy belongs in `release`; never store its value in
+  repository files.
 - Immutable Releases: enabled so newly published GitHub Releases lock their tag,
   title, notes, and assets after publication.
 
