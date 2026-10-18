@@ -843,11 +843,32 @@ that directory, then rename it). The content is:
 
 `accountID` is the opaque `id` of the snapshot row the launch used; `provider`
 is `openai`, `anthropic` or `google`. Receipts carry no session cost, prompt,
-path or credential. Context Panel only reads them and ignores files that are
-malformed, over 1 KB, or older than 24 hours; the launcher deletes its own files
-once they are a day old. A single launch uses `answers.useNext`; a batch of
-_k_ launches uses the first _k_ of `launchOrder`, and the receipts carry the
-count into the next read.
+path or credential. The reader ignores files that are malformed, over 1 KB, or
+older than 24 hours; the launcher deletes its own files once they are a day old.
+A single launch uses `answers.useNext`; a batch of _k_ launches uses the first
+_k_ of `launchOrder`, and the receipts carry the count into the next read.
+
+**Launchers macOS refuses the App Group.** A process with no app behind it to
+carry a grant, such as a shell under a launchd-started tmux server, gets
+`Operation not permitted` on the App Group store. It writes through the
+installed app instead, which needs no new grant
+([#873](https://github.com/cbusillo/context-panel/issues/873)):
+
+```bash
+"/Applications/Context Panel.app/Contents/MacOS/Context Panel" --record-launch --launcher supervisor < receipt.json
+```
+
+Stdin holds one receipt in the format above, with exactly those four keys; the
+mode adds nothing to it. `--launcher` is a token of at most 32 lowercase
+letters and digits. The mode writes `<launch time>-<launcher>-<random>.json`
+atomically, deletes only that launcher's own receipts and temporary files left
+by interrupted writes once they are a day old, prints the file name (not the
+path) and exits 0. A receipt that is malformed,
+over 1 KB, not current, or has other keys exits 64, as do invalid arguments or
+unreadable stdin; a storage failure exits 1 with the reason on stderr. It writes
+only to the App Group store, accepts no storage-root override, and exits before the app
+interface, provider services or refresh-agent registration start. Launchers
+that can write the store directly keep using the directory.
 
 ## Sources
 
