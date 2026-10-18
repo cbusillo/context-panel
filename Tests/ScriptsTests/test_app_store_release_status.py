@@ -123,12 +123,11 @@ class StoreReleaseStatusTests(unittest.TestCase):
     def test_successful_upload_is_recorded_when_other_channels_fail(self) -> None:
         env = {
             "VALIDATE_RESULT": "success", "INPUT_VERSION": "2.0.10", "GITHUB_SHA": "a" * 40,
-            "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "123",
-            "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success", "MAC_BUILD_NUMBER": "900",
+            "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "123", "BUILD_NUMBER": "900",
+            "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success",
             "INPUT_COMPANION_APP_STORE_CHANNEL": "upload", "COMPANION_APP_STORE_UPLOAD_RESULT": "failure",
-            "COMPANION_PLATFORM": "TV_OS", "COMPANION_BUILD_NUMBER": "900",
-            "GITHUB_RELEASE_RESULT": "failure", "TESTFLIGHT_BETA_RESULT": "failure",
-            "INPUT_TESTFLIGHT_BETA_SOURCE": "macos",
+            "GITHUB_RELEASE_RESULT": "failure", "INPUT_TESTFLIGHT_BETA": "true",
+            "TESTFLIGHT_BETA_RESULT": "skipped",
         }
         records = status.ship_records(env, NOW)
         self.assertEqual(len(records), 1)
@@ -139,18 +138,24 @@ class StoreReleaseStatusTests(unittest.TestCase):
         env["VALIDATE_RESULT"] = "failure"
         self.assertEqual(status.ship_records(env, NOW), [])
 
-    def test_companion_testflight_is_not_attributed_to_mac(self) -> None:
+    def test_one_ship_records_every_platform_at_one_build(self) -> None:
         env = {
             "VALIDATE_RESULT": "success", "INPUT_VERSION": "2.0.10", "GITHUB_SHA": "a" * 40,
-            "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "123",
-            "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success", "MAC_BUILD_NUMBER": "900",
+            "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "123", "BUILD_NUMBER": "901",
+            "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success",
             "INPUT_COMPANION_APP_STORE_CHANNEL": "upload", "COMPANION_APP_STORE_UPLOAD_RESULT": "success",
-            "COMPANION_PLATFORM": "VISION_OS", "COMPANION_BUILD_NUMBER": "901",
-            "INPUT_TESTFLIGHT_BETA_SOURCE": "companion", "TESTFLIGHT_BETA_RESULT": "success",
+            "INPUT_TESTFLIGHT_BETA": "true", "TESTFLIGHT_BETA_RESULT": "success",
         }
         records = status.ship_records(env, NOW)
-        self.assertEqual(records[0]["testflight"], "not selected")
-        self.assertEqual(records[1]["testflight"], env["TESTFLIGHT_BETA_RESULT"])
+        self.assertEqual(
+            sorted(item["platform"] for item in records), sorted(status.PLATFORMS)
+        )
+        self.assertEqual({item["buildNumber"] for item in records}, {"901"})
+        self.assertEqual({item["testflight"] for item in records}, {"success"})
+        env["INPUT_TESTFLIGHT_BETA"] = "false"
+        self.assertEqual(
+            {item["testflight"] for item in status.ship_records(env, NOW)}, {"not selected"}
+        )
         command = shlex.split(status.next_command("example/panel", records[1]))
         for key, value in (("platform", records[1]["platform"]), ("version", records[1]["version"]),
                            ("build_number", records[1]["buildNumber"]), ("dry_run", "true")):
@@ -178,7 +183,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
         env = {
             "GITHUB_REPOSITORY": "example/panel", "VALIDATE_RESULT": "success",
             "INPUT_VERSION": "2.0.10", "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123",
-            "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success", "MAC_BUILD_NUMBER": "900",
+            "INPUT_APP_STORE_CHANNEL": "upload", "APP_STORE_UPLOAD_RESULT": "success", "BUILD_NUMBER": "900",
         }
         client = mock.Mock(spec=status.GitHub, repository=env["GITHUB_REPOSITORY"])
         client.issues.return_value = []

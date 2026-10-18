@@ -155,9 +155,14 @@ jobs:
               workflow_args+=(--expected-workflow "${workflow_path}")
             done
             mkdir -p "${destination}"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" >"${destination}/artifacts.json"
+            if ! jq -e --arg name "${artifact_name}" '.artifacts[] | select(.name == $name)' \
+              "${destination}/artifacts.json" >/dev/null; then
+              # Companion runs before one-run Ship named the artifact without its platform.
+              artifact_name="${artifact_name/-${layout}-/-}"
+            fi
             gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" --name "${artifact_name}" --dir "${destination}"
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" >"${destination}/run.json"
-            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" >"${destination}/artifacts.json"
             python3 scripts/context-panel-shared-view-capture-workflow.py validate-artifact \
               --artifact-root "${destination}" --layout "${layout}" \
               --source-commit "${source_commit}" --version "${version}" --build-number "${build_number}" \
@@ -169,12 +174,12 @@ jobs:
           mkdir -p .build
           download_and_validate previous-macos macos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_MACOS_ARTIFACT_RUN_ID}" "app-store-connect-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-upload.yml
           download_and_validate current-macos macos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_MACOS_ARTIFACT_RUN_ID}" "app-store-connect-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-upload.yml
-          download_and_validate previous-ios ios "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_IOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
-          download_and_validate current-ios ios "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_IOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
-          download_and_validate previous-visionos visionos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_VISIONOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
-          download_and_validate current-visionos visionos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_VISIONOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
-          download_and_validate previous-tvos tvos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_TVOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
-          download_and_validate current-tvos tvos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_TVOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
+          download_and_validate previous-ios ios "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_IOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-ios-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
+          download_and_validate current-ios ios "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_IOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-ios-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
+          download_and_validate previous-visionos visionos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_VISIONOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-visionos-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
+          download_and_validate current-visionos visionos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_VISIONOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-visionos-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
+          download_and_validate previous-tvos tvos "${PREVIOUS_SOURCE_COMMIT}" "${PREVIOUS_VERSION}" "${PREVIOUS_BUILD_NUMBER}" "${PREVIOUS_TVOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-tvos-${PREVIOUS_VERSION}-${PREVIOUS_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
+          download_and_validate current-tvos tvos "${CURRENT_SOURCE_COMMIT}" "${CURRENT_VERSION}" "${CURRENT_BUILD_NUMBER}" "${CURRENT_TVOS_ARTIFACT_RUN_ID}" "app-store-connect-companion-tvos-${CURRENT_VERSION}-${CURRENT_BUILD_NUMBER}" .github/workflows/ship.yml .github/workflows/app-store-connect-companion-upload.yml
 
       - name: Generate and Compare Source Manifests
         shell: bash

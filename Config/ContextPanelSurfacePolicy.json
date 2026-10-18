@@ -35,8 +35,8 @@
     "classes": ["shared-view", "actual-runtime", "os-composited-placement"],
     "trainMinimumEvidence": {
       "beta": ["shared-view"],
-      "rc": ["shared-view", "actual-runtime"],
-      "release": ["shared-view", "actual-runtime"]
+      "rc": ["shared-view"],
+      "release": ["shared-view"]
     },
     "changeRequirements": {
       "render": ["shared-view"],

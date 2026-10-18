@@ -374,7 +374,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: app-store-connect-companion-${{ inputs.version }}-${{ steps.build.outputs.build_number }}
+          name: app-store-connect-companion-${{ inputs.platform }}-${{ inputs.version }}-${{ steps.build.outputs.build_number }}
           path: |
             .build/app-store-connect-companion/UploadOptions-*.plist
             .build/app-store-connect-companion/WatchArchiveReceipt-*.txt

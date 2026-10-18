@@ -22,36 +22,23 @@ fi
 app_store_channel="${INPUT_APP_STORE_CHANNEL}"
 companion_app_store_channel="${INPUT_COMPANION_APP_STORE_CHANNEL}"
 testflight_beta_selected="${INPUT_TESTFLIGHT_BETA}"
-testflight_beta_source="${INPUT_TESTFLIGHT_BETA_SOURCE}"
 if [[ "${github_release_selected}" != "true" ]]; then
   if [[ "${app_store_channel}" == "skip" && "${companion_app_store_channel}" == "skip" ]]; then
     echo "select at least one release channel" >&2
     exit 1
   fi
 fi
-if [[ "${testflight_beta_selected}" == "true" ]]; then
-  if [[ "${companion_app_store_channel}" == "upload" && "${testflight_beta_source}" != "companion" ]]; then
-    echo "companion_app_store_channel=upload with testflight_beta=true requires testflight_beta_source=companion" >&2
-    exit 1
-  fi
-  case "${testflight_beta_source}" in
-    macos)
-      if [[ "${app_store_channel}" != "upload" ]]; then
-        echo "testflight_beta_source=macos requires app_store_channel=upload" >&2
-        exit 1
-      fi
-      ;;
-    companion)
-      if [[ "${companion_app_store_channel}" != "upload" ]]; then
-        echo "testflight_beta_source=companion requires companion_app_store_channel=upload" >&2
-        exit 1
-      fi
-      ;;
-    *)
-      echo "unsupported testflight_beta_source: ${testflight_beta_source}" >&2
-      exit 2
-    ;;
-  esac
+# Every uploaded platform is distributed together; TestFlight needs an upload.
+testflight_platforms=()
+if [[ "${app_store_channel}" == "upload" ]]; then
+  testflight_platforms+=(MAC_OS)
+fi
+if [[ "${companion_app_store_channel}" == "upload" ]]; then
+  testflight_platforms+=(IOS VISION_OS TV_OS)
+fi
+if [[ "${testflight_beta_selected}" == "true" && ${#testflight_platforms[@]} -eq 0 ]]; then
+  echo "testflight_beta=true requires app_store_channel=upload or companion_app_store_channel=upload" >&2
+  exit 1
 fi
 preflight_app_store_version() {
   local platform="$1"
@@ -68,27 +55,23 @@ if [[ "${app_store_channel}" == "upload" ]]; then
   preflight_app_store_version MAC_OS
 fi
 if [[ "${companion_app_store_channel}" == "upload" ]]; then
-  case "${INPUT_COMPANION_PLATFORM}" in
-    ios)
-      preflight_app_store_version IOS
-      ;;
-    visionos)
-      preflight_app_store_version VISION_OS
-      ;;
-    tvos)
-      preflight_app_store_version TV_OS
-      ;;
-    *)
-      echo "unsupported companion_platform: ${INPUT_COMPANION_PLATFORM}" >&2
-      exit 2
-      ;;
-  esac
+  preflight_app_store_version IOS
+  preflight_app_store_version VISION_OS
+  preflight_app_store_version TV_OS
 fi
 build_number="${INPUT_BUILD_NUMBER}"
 if [[ -z "${build_number}" ]]; then
   build_number="$(date -u +%Y%m%d%H%M)"
 fi
-echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
+testflight_platforms_json="[]"
+if ((${#testflight_platforms[@]})); then
+  printf -v quoted_platforms '"%s",' "${testflight_platforms[@]}"
+  testflight_platforms_json="[${quoted_platforms%,}]"
+fi
+{
+  echo "build_number=${build_number}"
+  echo "testflight_platforms=${testflight_platforms_json}"
+} >>"${GITHUB_OUTPUT}"
 {
   echo "### Release Intent"
   echo
@@ -98,10 +81,8 @@ echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
   echo "- GitHub Release: ${INPUT_GITHUB_RELEASE}"
   echo "- GitHub notarization: ${INPUT_NOTARIZE_GITHUB_RELEASE}"
   echo "- Mac App Store channel: ${INPUT_APP_STORE_CHANNEL}"
-  echo "- Companion App Store channel: ${INPUT_COMPANION_APP_STORE_CHANNEL}"
-  echo "- Companion platform: ${INPUT_COMPANION_PLATFORM}"
-  echo "- TestFlight beta: ${INPUT_TESTFLIGHT_BETA}"
-  echo "- TestFlight source: ${INPUT_TESTFLIGHT_BETA_SOURCE}"
+  echo "- Companion App Store channel (iPhone/iPad/Watch, Vision Pro, Apple TV): ${INPUT_COMPANION_APP_STORE_CHANNEL}"
+  echo "- TestFlight beta: ${INPUT_TESTFLIGHT_BETA} (${testflight_platforms_json})"
   echo "- TestFlight groups: ${INPUT_TESTFLIGHT_BETA_GROUPS}"
   echo "- Include internal TestFlight groups: ${INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS}"
 } >>"${GITHUB_STEP_SUMMARY}"

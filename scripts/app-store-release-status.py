@@ -35,6 +35,7 @@ publication = load_script("release_status_publication", "publish-github-release.
 # Apple's iPad public page binds its intent explicitly; the phone route omits it.
 # Both represent the IOS App Store version, including the embedded Watch app.
 PLATFORMS = {"MAC_OS": "mac", "IOS": "ipad", "VISION_OS": "vision", "TV_OS": "tv"}
+COMPANION_PLATFORMS = ("IOS", "VISION_OS", "TV_OS")
 RECORD = "context-panel-store-release:v1"
 OBSERVATION = "context-panel-store-observation:v1"
 CHANNELS = "context-panel-store-channels:v1"
@@ -80,13 +81,21 @@ def next_command(repository: str, record: dict) -> str:
 def ship_records(env: dict[str, str], now: datetime) -> list[dict]:
     if env.get("VALIDATE_RESULT") != "success":
         return []
+    # Ship uploads every platform with one shared build number. The companion
+    # matrix reports one result, so companions are recorded once all succeeded.
     selected = []
     if env.get("INPUT_APP_STORE_CHANNEL") == "upload" and env.get("APP_STORE_UPLOAD_RESULT") == "success":
-        selected.append(("MAC_OS", env.get("MAC_BUILD_NUMBER", "")))
+        selected.append("MAC_OS")
     if env.get("INPUT_COMPANION_APP_STORE_CHANNEL") == "upload" and env.get("COMPANION_APP_STORE_UPLOAD_RESULT") == "success":
-        selected.append((env.get("COMPANION_PLATFORM", ""), env.get("COMPANION_BUILD_NUMBER", "")))
+        selected.extend(COMPANION_PLATFORMS)
+    build = env.get("BUILD_NUMBER", "")
+    testflight = (
+        env.get("TESTFLIGHT_BETA_RESULT", "unknown")
+        if env.get("INPUT_TESTFLIGHT_BETA") == "true"
+        else "not selected"
+    )
     records = []
-    for platform, build in selected:
+    for platform in selected:
         version = env["INPUT_VERSION"]
         version_guard.version_components(version)
         if platform not in PLATFORMS or not version_guard.VERSION_PATTERN.fullmatch(build):
@@ -94,12 +103,11 @@ def ship_records(env: dict[str, str], now: datetime) -> list[dict]:
         source = env["GITHUB_SHA"]
         if not publication.COMMIT_PATTERN.fullmatch(source):
             raise StatusError("successful upload is missing its source commit")
-        beta_platform = "MAC_OS" if env.get("INPUT_TESTFLIGHT_BETA_SOURCE") == "macos" else env.get("COMPANION_PLATFORM")
         records.append({
             "platform": platform, "version": version, "buildNumber": build,
             "sourceCommit": source, "uploadedAt": now.isoformat(),
             "github": env.get("GITHUB_RELEASE_RESULT", "unknown"),
-            "testflight": env.get("TESTFLIGHT_BETA_RESULT", "unknown") if beta_platform == platform else "not selected",
+            "testflight": testflight,
             "appStore": "App Store submission pending",
             "runURL": f"https://github.com/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}",
         })

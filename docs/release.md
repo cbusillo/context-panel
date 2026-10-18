@@ -1,34 +1,32 @@
 # macOS And Companion Release Path
 
-Last verified: 2026-08-31.
-
 Start with [Validation Authority and Operator Route](validation-authority.md)
-for the agreed validation contract, supported capture path, and the distinction
-between policy qualification and live submission evidence enforcement.
+for the validation contract and supported capture path.
 
-Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
-It coordinates selected release channels from one commit and one marketing
-version:
+Context Panel's normal release path is the GitHub Actions `Ship` workflow.
+One run builds every platform from one commit with one marketing version and
+one build number:
 
 - GitHub Release zip artifact, signed and notarized
-- App Store Connect build upload, signed with Mac App Store profiles
-- TestFlight beta distribution for the uploaded build
+- Mac App Store Connect build upload, signed with Mac App Store profiles
+- iPhone/iPad (with the embedded Watch app), Vision Pro, and Apple TV App Store
+  Connect build uploads
+- TestFlight beta distribution for every uploaded build
 
-Companion iOS/iPadOS, visionOS, and tvOS distribution use the same App Store
-Connect and TestFlight building blocks, but each platform is deliberately
-opt-in from `Ship`. The native visionOS app is published and its signed physical
-Vision Pro path is proven. The first tvOS App Store version has complete
-metadata, screenshots, reviewer evidence, and signed physical Apple TV proof;
-it was submitted after the earlier rejected candidate was retired safely. Treat
-live review state as App Store Connect-owned operational data and verify it
-directly before release decisions. Fresh visionOS or tvOS trains still require
-the platform-specific signed device smoke gate described below.
+Treat live review state as App Store Connect-owned operational data and verify
+it directly before release decisions.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
 is explicit.
 
 ## Definition of released
+
+Every platform ships together as one release, with one version and build:
+Mac, iPhone and iPad with the embedded Watch app, Vision Pro, and Apple TV
+([Q451](https://github.com/cbusillo/context-panel/issues/835#issuecomment-6235390539)).
+Each release re-checks only what changed since the last one; unchanged
+surfaces carry forward their approved evidence.
 
 A release is complete only when every shipping channel is current for each
 shipping platform: the signed/notarized GitHub Mac artifact is published,
@@ -50,7 +48,8 @@ Merging source is separate from all of these channel results.
 ### Durable handoff and public drift
 
 Ship's summary creates an issue for each successful platform upload, even when
-another channel fails. The issue records **App Store submission pending**, the
+another channel fails; the three companion uploads report together, so their
+issues are created once all three succeeded. The issue records **App Store submission pending**, the
 exact uploaded identity, channel results, run link, and the `Submit App Store
 Review` workflow command with `dry_run=true`. Failure to record it fails Ship's
 summary job. Retries reuse the same platform/version/build/source record.
@@ -114,8 +113,8 @@ App Store Review submission and screenshots also record intent automatically.
 Callers grant `actions: read` and at least `contents: read`; GitHub Release
 publication requires `contents: write`. Channel jobs reject failed or cancelled
 guards and failed intent jobs. The skipped-intent path remains limited to the
-exact Ship caller. Ship's TestFlight join requires successful validation and the
-selected upload before distributing a build.
+exact Ship caller. Ship's TestFlight join requires successful validation and
+every selected upload before distributing any build.
 
 Ship passes repository secrets to each same-commit local channel workflow with
 `secrets: inherit`. GitHub does not automatically forward repository secrets to
@@ -323,14 +322,12 @@ Use `Ship` for normal releases. It accepts:
 - `github_release`: publish the GitHub release channel.
 - `notarize_github_release`: notarize the GitHub zip; defaults to true. With
   `github_release=true`, selecting false is refused before channel builds.
-- `app_store_channel`: `upload`, `export-only`, or `skip`.
-- `companion_app_store_channel`: `upload`, `export-only`, or `skip`.
-- `companion_platform`: `ios`, `visionos`, or `tvos`.
-- `testflight_beta`: distribute the uploaded build through TestFlight.
-- `testflight_beta_source`: `macos` distributes the Mac App Store build;
-  `companion` distributes the selected iOS/visionOS/tvOS build. If
-  `companion_app_store_channel=upload` and `testflight_beta=true`, `Ship`
-  requires `testflight_beta_source=companion`.
+- `app_store_channel`: Mac `upload` (default), `export-only`, or `skip`.
+- `companion_app_store_channel`: `upload` (default), `export-only`, or `skip`
+  for the iPhone/iPad/Watch, Vision Pro, and Apple TV builds together.
+- `testflight_beta`: distribute every uploaded build through TestFlight. It
+  runs only after every selected upload succeeded, so the platforms reach
+  testers together.
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
   names; internal groups are included by default.
 - `include_internal_testflight_groups`: include internal TestFlight beta groups.
@@ -341,10 +338,13 @@ Use `Ship` for normal releases. It accepts:
   Empty inputs instead use the publication-time check; see "CloudKit Production
   Schema Gate".
 
-For a normal release, run `Ship` from `main` with GitHub release, App Store
-Connect build upload, and TestFlight beta distribution enabled. That creates the
-friend-installable GitHub artifact and makes the App Store build available to
-the selected TestFlight testers without submitting it for App Review.
+For a normal release, run `Ship` from `main` with the defaults. That creates the
+friend-installable GitHub artifact and makes every platform's App Store build
+available to the selected TestFlight testers at the same version and build,
+without submitting it for App Review. The summary records an App Store
+submission issue for each uploaded platform; companion records are created once
+all three companion uploads in the run succeeded. Recover a single failed
+platform by re-running the failed jobs of the same run.
 
 The workflow summary records the selected channels, version, build number,
 target commit, notarization choice, App Store Connect upload state, and
@@ -587,41 +587,31 @@ uploaded build; neither should secretly invoke the other.
 
 Use this path for companion device dogfood and CloudKit sync regression
 validation. Issue #274 records the completed initial iOS/visionOS validation.
-This path is separate from the normal Mac TestFlight cut unless `Ship` is
-explicitly configured to use the companion channel.
+Normal `Ship` runs include every companion platform.
 
 ### Deliver current builds to all of Chris's devices
 
-Merging companion code, running the unsigned compiler gate, or publishing the
-Mac release does not update a companion device. Use three companion `Ship`
-runs from the same protected `main` commit, waiting for each to finish before
-dispatching the next. Ship's version-level concurrency group allows one pending
-run; dispatching all three at once can cancel a queued platform.
+Merging companion code or running the unsigned compiler gate does not update a
+companion device. One `Ship` run from protected `main` uploads and distributes
+every package:
 
-| `companion_platform` | Devices updated by that package |
-| --- | --- |
-| `ios` | iPhone and iPad; the embedded Watch app and complication extension |
-| `visionos` | Native Apple Vision Pro app and widget |
-| `tvos` | Apple TV app and Top Shelf extension |
+| Package  | Devices updated by that package                                     |
+| -------- | ------------------------------------------------------------------- |
+| iOS      | iPhone and iPad; the embedded Watch app and complication extension  |
+| visionOS | Native Apple Vision Pro app and widget                              |
+| tvOS     | Apple TV app and Top Shelf extension                                |
 
 Apply [Before starting a release](#before-starting-a-release) first. Record the
 source commit and finished-change list on the delivery issue, resolve existing
 release holds, and choose a marketing version/build through the
-[versioning flow](#normal-ship-workflow) and App Store version preflight. Keep the
-source commit fixed across the three runs; if `main` advances, reconcile the
-candidate rather than calling unlike builds one train.
+[versioning flow](#normal-ship-workflow) and App Store version preflight.
 
-For each platform, set these `Ship` inputs:
+Set these `Ship` inputs; the other inputs keep their defaults:
 
 ```text
 version=<selected marketing version>
-build_number=<selected build number>
-github_release=false
-app_store_channel=skip
-companion_app_store_channel=upload
-companion_platform=<ios|visionos|tvos>
+build_number=<selected build number, or blank for a UTC timestamp>
 testflight_beta=true
-testflight_beta_source=companion
 include_internal_testflight_groups=true
 ```
 
@@ -637,11 +627,11 @@ Use the configured CI signing route rather than retrieving Apple credentials or
 signing keys. A missing signing asset is an operator setup step, not permission
 to copy a key into a task worktree.
 
-After each run, record its source/version/build, platform, upload result,
-processing result and TestFlight distribution result on the delivery issue.
+After the run, record its source/version/build and each platform's upload,
+processing and TestFlight distribution result on the delivery issue.
 Export-only output and a successful upload alone do not establish that a build
 is available to its tester. The iOS package supplies both phone and tablet;
-there is no separate iPad upload. Watch has no separate `companion_platform`.
+there is no separate iPad or Watch upload.
 
 Chris's device steps, only when needed:
 
@@ -1264,34 +1254,16 @@ Distribution` using:
 - `platform=TV_OS` for tvOS builds.
 - the same `version` and resolved `build_number` from the upload summary.
 
-For a coordinated one-shot run through `Ship`, select:
+`Ship` runs this upload and distribution for all three companion platforms
+alongside the Mac build. Use the lower-level workflows directly only to recover
+one platform at the same version and build.
 
-- `companion_app_store_channel=upload`
-- `companion_platform=ios`, `visionos`, or `tvos`
-- `testflight_beta=true`
-- `testflight_beta_source=companion`
-- `app_store_channel=skip` unless the same run should also upload a Mac build
-
-`Ship` intentionally rejects `companion_app_store_channel=upload` together with
-`testflight_beta=true` unless `testflight_beta_source=companion`. If a future
-release needs to upload both Mac and companion builds while distributing only the
-Mac build to TestFlight, run that as separate `Ship` dispatches so the TestFlight
-source remains unambiguous.
-
-Use `companion_platform=visionos` for native visionOS validation. Completed
-issues #168, #230, and #231 record the initial packaging, profile, icon,
-metadata, App Store Connect, and signed-device proof. The normal companion
-dogfood path remains `ios` for iPhone/iPad.
-
-Use `companion_platform=tvos` for the signed tvOS lane recorded by #379. Both
-tvOS profile secrets remain required. The signed candidate includes Couch Mode,
+Completed issues #168, #230, and #231 record the initial visionOS packaging,
+profile, icon, metadata, App Store Connect, and signed-device proof. The signed
+tvOS lane is recorded by #379; both tvOS profile secrets remain required. The signed candidate includes Couch Mode,
 the dynamic Top Shelf extension, and upgrade cleanup for the retired provider
 badge; every fresh App Store submission still requires physical Apple TV,
 screenshot, metadata, privacy, and reviewer evidence.
-
-Do not set `testflight_beta_source=macos` when the intent is companion device
-validation; that distributes the Mac App Store build instead of the companion
-build.
 
 ### Signed Device Smoke Test
 
@@ -1323,85 +1295,6 @@ shipping surface manifest. Partial layout coverage is recorded as missing
 artifact evidence and escalates fail-closed; it is useful for diagnostics but
 is not a complete signed-train comparison.
 
-### Mixed-platform release records
-
-For an RC or release that submits only some archive platforms, pass
-`--release-record <record.json>` instead of the current expected-build options.
-Keep the complete previous/current source manifests and the previous artifact
-options. The record has `schemaVersion: 1` and a `platforms` object with exactly
-the archive layout names from the current source manifest. Each entry contains:
-
-- `state: "submitted"` and `expectedBuildManifest`: the complete sealed new
-  artifact JSON for that layout, at the candidate source and target.
-- `state: "carried"`, `expectedBuildManifest`, `sourceManifest` and
-  `shippedLineage`: the actual currently shipped artifact, its full original
-  source manifest, and its replayable enforced approved lineage. These are JSON
-  objects, not paths. Record the currently shipped build explicitly; never
-  relabel an older artifact as the new version or infer shipment from an upload.
-
-The operator must verify the currently distributed build before constructing this
-record. An approved ledger proves validation, not distribution: neither an RC nor
-a release approval by itself establishes that a build reached users. TestFlight
-distribution and public App Store distribution are distinct; use the shipment
-the owning release decision names.
-
-After a mixed release, also include `previousSourceManifests`, an object mapping
-every layout to its effective full source from the previous approved record
-(the prior candidate source for submitted entries, the original shipped source
-for carried entries). The evaluator binds these sources to that previous lineage.
-This allows the next release to submit a formerly carried platform, including a
-return to submitting every platform. Use the explicit record on that transition;
-one global previous source cannot describe heterogeneous previous artifacts.
-
-The schema-v6 comparison retains every surface and records each platform's
-schema-v5 comparison. Carried platforms use their shipped artifact at its real
-identity. The candidate's dependency fingerprints and shared contract must agree
-with the shipped source. Shared data/code, CloudKit schema/records, App Group and
-entitlement changes fail closed; uncertain semantic artifact evidence also
-blocks a mixed release. Any submitted runtime fingerprint change also blocks
-carrying consumers, because platform-specific producer code can change shared
-records even when consumer code is unchanged. Pure build changes can pass;
-runtime/producer changes require new consumer builds and proof. A tooling-only
-contract fingerprint change does not reclassify unchanged shipped binaries:
-their own sealed fingerprints and dependencies remain authoritative. The check
-makes no compatibility guess for changed dependencies. A missing, partial, legacy-incomplete or
-contradictory artifact cannot silently remove a platform. Full-fleet comparisons
-without a release record retain schema-v5 behavior.
-An Xcode/SDK or toolchain change is checked explicitly and needs
-fresh artifacts and proof for every affected platform; it is not a pure build
-number change. Retained lineage depth limits and evidence expiry still apply to
-successive mixed releases. The record embeds retained inputs, so operators should
-expect larger evidence bundles and longer verification as those chains grow.
-Evidence-policy edits require fresh artifacts under the new rules; the tooling-only
-allowance requires unchanged evidence rules. Producer checks use each carried
-artifact's original complete source, even when a newer approval exists that did
-not ship to every platform.
-The v6 derivation pins the frozen v5 function. Future comparison semantics must
-use a new schema and preserve those derivations for retained lineage and replay.
-
-Pass all record artifacts, submitted and carried, to the release evaluator and
-report/submission verifier as repeated `--expected-build-manifest` arguments
-(or the submission command's corresponding release-evidence option). Also pass
-the exact previous lineage used by the record. The evaluator reconstructs the
-comparison from its embedded source/artifact inputs, verifies each shipped
-lineage, and preserves original evidence times and expiry. Active regression
-watchlist entries on carried surfaces block reuse. No new companion build is
-needed only when these checks pass. Missing or expired lineage remains a gate.
-
-For the coordinator, pass only submitted-build manifests. Its runtime scope is
-the comparison's `runtimeSessionSurfaces`; `requiredSurfaces` still describes the
-complete evaluator scope including carried proof. Visual capture continues to
-use fresh visual requirements only. Do not filter either scope by hand.
-When macOS is carried, also pass `--mac-expected-build-manifest <shipped-macos.json>`
-to coordinator status/final-report collection. This keeps the canonical Mac
-Production baseline mandatory while verifying its actual shipped target and
-sealed source, rather than the new companion target. The report binds that Mac
-artifact ID; the evaluator rejects a baseline for any other Mac artifact.
-RC and release must use the same platform record and complete identity set:
-release still requires its exact enforced approved selected RC, resolved shadow
-qualification, normal CloudKit publication proof and human visual decisions.
-This source capability does not qualify or run a release by itself.
-
 ### Release Evidence Carry-Forward Gate
 
 Before replaying historical signed trains, validate the committed public-safe
@@ -1421,18 +1314,16 @@ evidence.
 
 Use the full source-manifest comparison without filtering or rewriting its
 `requiredSurfaces`. After the coordinator final report and sealed expected-build
-manifests are available, produce the privacy-safe release evidence ledger in
-shadow mode:
+manifests are available, produce the privacy-safe release evidence ledger:
 
 ```sh
-scripts/context-panel-release-gate.py shadow \
+scripts/context-panel-release-gate.py enforce \
   --train <beta|rc> \
   --comparison <comparison.json> \
   --validation-report <final-report.json> \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
   --previous-ledger <previous-approved-lineage.json> \
   --host-os-evidence <host-os-evidence.json> \
-  --shadow-evidence <shadow-evidence.json> \
   --output <release-evidence.json> \
   --lineage-output <release-evidence-lineage.json>
 ```
@@ -1453,35 +1344,12 @@ carried from. The host OS evidence object must bind its `target` and
 value to a `runtimeReceiptID` present in the current coordinator report. Future,
 expired, unrelated-build, or unrelated-receipt observations fail closed.
 
-Shadow evidence must describe distinct signed trains. Each run records its
-train, exact version/build target, source manifest, expected-build identity-set
-and ledger digests, embeds the privacy-safe ledger when the ledger outcome is
-approved, and includes the complete privacy-safe generation context needed to
-reconstruct that embedded ledger. The generation context includes the full
-comparison, exact coordinator report, complete content-sealed expected-build
-manifests, and any prior
-lineage, selected-RC lineage, or host-OS inputs used by generation. Approved
-shadow-run ledgers must be leaf evaluations: nested shadow evidence is rejected,
-and the run list cannot exceed the configured required train count.
-Submission validation reconstructs every approved embedded ledger before the
-run can count. It also records observation time and the old-runbook/ledger
-outcomes and includes any bounded disagreement records. A ledger ID cannot be
-reused across targets.
-Duplicate train identities, stale observations, unknown disagreement
-classifications, unresolved records, and arbitrary extra fields fail closed.
-The accepted disagreement classifications are `ledger-correct`,
-`runbook-correct`, `equivalent`, and `unresolved`. Resolution values are bounded
-lowercase codes rather than prose or paths. State mismatches, `runbook-correct`,
-and `unresolved` records do not qualify a train for enforcement; a corrected
-ledger must be proven by a later signed train whose outcomes agree.
-
 Release trains additionally require `--selected-rc-ledger` with the replayable
 lineage bundle for the exact same version, build, and manifest. Raw or
 self-authored ledger JSON is not accepted. Prior and selected-RC lineage is
 replayed transitively with a fixed depth limit before any evidence can be
 carried. A changed selected build must return to RC
-validation. `enforce` mode also requires the configured number of shadow trains
-and resolved classifications for every old-runbook disagreement:
+validation. Release enforcement uses the same inputs:
 
 ```sh
 scripts/context-panel-release-gate.py enforce \
@@ -1491,7 +1359,6 @@ scripts/context-panel-release-gate.py enforce \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
   --selected-rc-ledger <approved-rc-lineage.json> \
   --host-os-evidence <host-os-evidence.json> \
-  --shadow-evidence <shadow-evidence.json> \
   [--historical-policy-archive Config/ContextPanelHistoricalPolicyArchive.json] \
   --output <release-evidence.json> \
   --lineage-output <release-evidence-lineage.json>
@@ -1502,7 +1369,7 @@ generated each retained ledger. Current train comparison, required scope,
 watchlist expansion, carry-forward admission, expiry, and output digests always
 use the currently configured `Config/ContextPanelReleaseEvidencePolicy.json` and
 `Config/ContextPanelSurfacePolicy.json`. Previous-ledger, selected-RC, and
-embedded shadow subtrees instead resolve their `policyDigest` and
+any retained embedded shadow subtrees instead resolve their `policyDigest` and
 `surfacePolicyDigest` through an explicit historical policy archive, validate
 those preimages, verify their canonical JSON digests, and reconstruct the old
 ledger bytes exactly. Missing, malformed, mismatched, duplicate, or unused
@@ -1534,24 +1401,9 @@ coordinator report. Every live build attachment or submission requires the
 `enforce` mode, plus the exact selected-RC lineage bundle, the full
 comparison and a JSON array containing every sealed expected-build manifest
 needed by its required scope. The submission workflow defaults to
-`release_evidence_mode=enforce`. That submission evidence control and exact-RC
-reuse were introduced before later simulator-first policy revisions; their
-existence does not establish qualification of the current policy. The mode
-controls report acceptance, not policy selection: both modes bind the current
-configured policy and surface-policy digests. There is no implicit legacy-policy
-selection in `enforce` mode.
-
-Use `context-panel-release-gate.py shadow` for candidate-policy evaluation and
-disagreement classification. Current qualification and cutover evidence belong
-to [#616](https://github.com/cbusillo/context-panel/issues/616) and
-[#612](https://github.com/cbusillo/context-panel/issues/612). Shadow evaluation
-does not authorize weakening the live submission default or bypassing a pending
-qualification gate. An unqualified current-policy candidate remains blocked by
-submission evidence enforcement. See the
-[evaluation and submission distinction](validation-authority.md#evaluation-and-submission).
-Enforce mode requires an approved ledger with passed shadow evidence; missing,
-expired,
-host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
+`release_evidence_mode=enforce`; both modes bind the current configured policy
+and surface-policy digests. Enforce mode requires an approved ledger; missing,
+expired, host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
 blocks submission. Dry runs, cancel-only operations, and prepare-only operations
 without a build remain exempt. The ledger binds the canonical configured policy,
 full comparison, expected-build identity set, and exact coordinator report;
@@ -1579,16 +1431,14 @@ scripts/validate-release-evidence-report.py \
   --train <beta|rc>
 ```
 
-Release shadow validation uses the same command with `--train release` and the
-mandatory `--selected-rc-ledger <approved-rc-lineage.json>` argument. Release
-enforcement additionally requires `--enforce` and
-`--shadow-evidence <shadow-evidence.json>`.
+Release validation uses the same command with `--train release` and the
+mandatory `--selected-rc-ledger <approved-rc-lineage.json>` argument.
 
 Add `--enforce` when validating an enforcement ledger. Repeat
 `--expected-build-manifest` until every shipping surface is covered, including
 surfaces that are unchanged and do not require fresh evidence. Supply the same
 optional replayable prior lineage and evidence artifacts used to generate the
-ledger with `--previous-ledger`, `--host-os-evidence`, and `--shadow-evidence`.
+ledger with `--previous-ledger` and `--host-os-evidence`.
 Supply `--historical-policy-archive` only when a retained lineage subtree binds
 non-current release or surface policy digests. The selected-RC lineage is
 mandatory for release validation. Final validation
@@ -1615,12 +1465,10 @@ scripts/context-panel-validation.py start-session \
 ```
 
 When comparison and visual requirements are supplied, the coordinator derives
-the runtime scope from `requiredSurfaces.actual-runtime`, or from
-`runtimeSessionSurfaces` for an explicit platform record; an explicit repeated
+the runtime scope from `requiredSurfaces.actual-runtime`; an explicit repeated
 `--surface` list must match that set exactly. Without those files, omitting
-`--surface` still requests every shipping surface and remains the legacy
-RC/release floor. Beta automation must use the comparison output instead of
-defaulting to an all-surface session. A matching existing session is recovered
+`--surface` requests every shipping surface; release automation uses the
+comparison output instead. A matching existing session is recovered
 unchanged; replacing it requires `--replace`, and a different active target is
 rejected by both lifecycle and status commands.
 Visual review requirements cover only each surface's `freshEvidence` visual
@@ -1671,8 +1519,7 @@ operators use the allowlisted routes and Watch launch argument documented there.
 Gallery and deterministic render outputs are shared-view evidence. They can
 satisfy render-only beta requirements only after an explicit matching approval
 is recorded. They do not satisfy exact-build runtime receipts or
-OS-composited placement approval. Release carry-forward remains separate work,
-so RC/release safeguards remain authoritative.
+OS-composited placement approval.
 
 After opening the bounded runtime receipt window described in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),
@@ -1836,7 +1683,6 @@ scripts/submit-app-store-review.py \
     .build/ExpectedBuildManifest-platform.json \
   --release-evidence-selected-rc-ledger \
     .build/release-evidence-rc-lineage.json \
-  --release-evidence-shadow-evidence .build/shadow-evidence.json \
   --validate-report-only
 ```
 
@@ -1846,20 +1692,21 @@ surface set. Also supply `--release-evidence-previous-ledger` or
 the ledger. The preflight reconstructs the enforced ledger and fails closed if
 any authoritative generation input is omitted or changed.
 
-The platform minimums are explicit:
+Each platform's runtime surfaces are:
 
 - `MAC_OS`: Mac app, widget, and refresh agent.
 - `IOS`: iPhone app/widget, iPad app/widget, Watch app, and complication.
 - `VISION_OS`: Vision Pro app and widget.
 - `TV_OS`: Apple TV app and Top Shelf extension.
 
-Every requested session surface must appear exactly once and be proven; the
-platform minimum must be included in that set. RC/release sessions that omit
-`--surface` therefore remain all-surface gates, while a scoped session can prove
-one platform minimum. All platform submissions also require the canonical Mac
-Production runtime because it is the companion data publisher. `IOS` review
-evidence additionally requires the documented physical Watch restart
-attestation. This release gate is stricter than the routine companion product
+The check requires exact-build proof for the platform's surfaces listed in the
+comparison's `requiredSurfaces.actual-runtime`, which are the ones whose runtime
+changed. A platform with no runtime change needs no runtime session. Without a
+comparison, every runtime surface of the platform is required. Every requested
+session surface must appear exactly once and be proven. All platform
+submissions also require the canonical Mac Production runtime because it is
+the companion data publisher. `IOS` review evidence requires the documented
+physical Watch restart attestation when a Watch surface needs proof. This release gate is stricter than the routine companion product
 check below, where one iPhone or iPad may be sufficient for a targeted smoke
 test.
 
@@ -1871,8 +1718,8 @@ or exact-RC reuse. The full release evaluator in
 implements those checks through `_carried_evidence`, `_host_os_compatible`,
 `evaluate_release_evidence`, and `release_evidence_report_blockers`.
 [`submit-app-store-review.py`](../scripts/submit-app-store-review.py) supplies the
-current policies, complete build manifests, lineage, host-OS evidence, and shadow
-evidence to reconstruct the release verdict. Implemented checks still require
+current policies, complete build manifests, lineage, and host-OS evidence to
+reconstruct the release verdict. Implemented checks still require
 valid candidate evidence; neither coordinator success nor implemented integration
 establishes that a particular train is approved.
 

@@ -1550,9 +1550,18 @@ def validation_report_blockers(
     version: str,
     build_number: str,
     platform: str,
+    comparison_runtime_surfaces: frozenset[str] | None = None,
 ) -> list[str]:
+    """Check the exact-build report for the platform's runtime surfaces that need proof.
+
+    The release comparison decides which surfaces changed and need fresh runtime
+    proof. Without a comparison, every runtime surface of the platform is required.
+    """
     if not isinstance(payload, dict):
         return ["the validation report root must be a JSON object"]
+    required_surfaces = REQUIRED_RUNTIME_SURFACES_BY_PLATFORM[platform]
+    if comparison_runtime_surfaces is not None:
+        required_surfaces = required_surfaces & comparison_runtime_surfaces
 
     blockers: list[str] = []
     if payload.get("schemaVersion") != 1:
@@ -1594,17 +1603,24 @@ def validation_report_blockers(
             required = runtime_receipts.get("required")
             if runtime_receipts.get("state") != "proven":
                 blockers.append("exact-build runtime receipt state must be proven")
-            if not isinstance(required, int) or required <= 0:
-                blockers.append("at least one exact-build runtime surface must be required")
+            if not isinstance(required, int) or isinstance(required, bool) or required < 0:
+                blockers.append("exact-build runtime receipt count is missing or malformed")
             if proven != required:
                 blockers.append("every requested runtime surface must be proven")
-            if runtime_receipts.get("runtimeSessionResult") != "healthy":
+            if (
+                isinstance(required, int)
+                and required > 0
+                and runtime_receipts.get("runtimeSessionResult") != "healthy"
+            ):
                 blockers.append("the runtime receipt session result must be healthy")
             diagnostics = runtime_receipts.get("diagnostics")
             if not isinstance(diagnostics, list) or diagnostics:
                 blockers.append("runtime receipt diagnostics must be empty")
 
-        if platform == "IOS" and obtained.get("watchRestartAttestation") != "recorded":
+        watch_runtime_required = any(
+            surface.startswith("watchos.") for surface in required_surfaces
+        )
+        if watch_runtime_required and obtained.get("watchRestartAttestation") != "recorded":
             blockers.append("the physical Watch restart attestation must be recorded")
 
     session = payload.get("session")
@@ -1645,7 +1661,6 @@ def validation_report_blockers(
         if runtime_receipts.get("required") != len(observed_surfaces):
             blockers.append("runtime surface count does not match the receipt summary")
 
-    required_surfaces = REQUIRED_RUNTIME_SURFACES_BY_PLATFORM[platform]
     missing_surfaces = sorted(required_surfaces - requested_surfaces)
     if missing_surfaces:
         blockers.append(
@@ -1682,6 +1697,18 @@ def validation_report_blockers(
     return blockers
 
 
+def comparison_runtime_scope(args: argparse.Namespace) -> frozenset[str] | None:
+    comparison_value = getattr(args, "release_evidence_comparison", None)
+    if not comparison_value:
+        return None
+    try:
+        comparison = load_json_object(Path(comparison_value), "surface comparison")
+        validate_current_comparison(comparison)
+    except (ComparisonSchemaError, ReleaseEvidenceError) as error:
+        raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error
+    return frozenset(comparison["requiredSurfaces"]["actual-runtime"])
+
+
 def validate_validation_report(args: argparse.Namespace) -> None:
     report_path = Path(args.validation_report)
     try:
@@ -1698,6 +1725,7 @@ def validate_validation_report(args: argparse.Namespace) -> None:
         version=args.version,
         build_number=args.build_number,
         platform=args.platform,
+        comparison_runtime_surfaces=comparison_runtime_scope(args),
     )
     if blockers:
         details = "\n".join(f"- {blocker}" for blocker in blockers)
@@ -1793,14 +1821,6 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
             if getattr(args, "release_evidence_host_os_evidence", None)
             else None
         )
-        shadow_evidence = (
-            load_json_object(
-                Path(args.release_evidence_shadow_evidence),
-                "shadow evidence",
-            )
-            if getattr(args, "release_evidence_shadow_evidence", None)
-            else None
-        )
     except (ComparisonSchemaError, ReleaseEvidenceError, RuntimeEvidenceError) as error:
         raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error
     blockers = release_evidence_report_blockers(
@@ -1818,7 +1838,6 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         previous_ledger=previous_ledger,
         selected_rc_ledger=selected_rc_ledger,
         host_os_evidence=host_os_evidence,
-        shadow_evidence=shadow_evidence,
         historical_policy_archive=historical_policy_archive,
     )
     if blockers:
@@ -1916,7 +1935,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-evidence-previous-ledger")
     parser.add_argument("--release-evidence-selected-rc-ledger")
     parser.add_argument("--release-evidence-host-os-evidence")
-    parser.add_argument("--release-evidence-shadow-evidence")
     parser.add_argument(
         "--release-evidence-historical-policy-archive",
         dest="release_evidence_historical_policy_archives",
@@ -2009,14 +2027,6 @@ def validate_args(args: argparse.Namespace) -> None:
     ):
         raise AppStoreConnectError(
             "release-train evidence requires --release-evidence-selected-rc-ledger"
-        )
-    if (
-        release_evidence_report
-        and release_evidence_mode == "enforce"
-        and not getattr(args, "release_evidence_shadow_evidence", None)
-    ):
-        raise AppStoreConnectError(
-            "enforced release evidence requires --release-evidence-shadow-evidence"
         )
     if validation_report_required(args):
         if not release_evidence_report:

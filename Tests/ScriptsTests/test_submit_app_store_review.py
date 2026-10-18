@@ -168,7 +168,6 @@ class ValidationReportGateTests(unittest.TestCase):
             "release_evidence_previous_ledger": None,
             "release_evidence_selected_rc_ledger": "selected-rc.json",
             "release_evidence_host_os_evidence": None,
-            "release_evidence_shadow_evidence": None,
             "release_evidence_historical_policy_archives": None,
         }
         values.update(overrides)
@@ -211,6 +210,81 @@ class ValidationReportGateTests(unittest.TestCase):
 
         self.assertTrue(any("IOS validation is missing required surfaces" in item for item in blockers))
         self.assertIn("the physical Watch restart attestation must be recorded", blockers)
+
+    @staticmethod
+    def scoped_report(platform: str, surfaces: set[str]) -> dict:
+        report = exact_build_validation_report(platform)
+        report["session"]["requestedSurfaces"] = sorted(surfaces)
+        report["runtimeSurfaces"] = [
+            {"surface": surface, "state": "proven", "reason": "exact-build-runtime-receipt"}
+            for surface in sorted(surfaces)
+        ]
+        receipts = report["obtainedEvidenceClasses"]["exactBuildRuntimeReceipts"]
+        receipts["proven"] = receipts["required"] = len(surfaces)
+        if not surfaces:
+            receipts["runtimeSessionResult"] = None
+        if not any(surface.startswith("watchos.") for surface in surfaces):
+            report["obtainedEvidenceClasses"]["watchRestartAttestation"] = "not-required"
+        return report
+
+    def test_comparison_limits_runtime_proof_to_changed_surfaces(self) -> None:
+        changed = frozenset({"ios.app", "ipados.app", "macos.app"})
+        blockers = submit_app_store_review.validation_report_blockers(
+            self.scoped_report("IOS", {"ios.app", "ipados.app", "macos.app"}),
+            version="1.0.39",
+            build_number="202608050001",
+            platform="IOS",
+            comparison_runtime_surfaces=changed,
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_comparison_scope_still_requires_every_changed_platform_surface(self) -> None:
+        blockers = submit_app_store_review.validation_report_blockers(
+            self.scoped_report("IOS", {"ios.app"}),
+            version="1.0.39",
+            build_number="202608050001",
+            platform="IOS",
+            comparison_runtime_surfaces=frozenset({"ios.app", "watchos.app"}),
+        )
+
+        self.assertTrue(any("missing required surfaces: watchos.app" in item for item in blockers))
+        self.assertIn("the physical Watch restart attestation must be recorded", blockers)
+
+    def test_platform_with_no_runtime_change_needs_no_runtime_session(self) -> None:
+        blockers = submit_app_store_review.validation_report_blockers(
+            self.scoped_report("TV_OS", set()),
+            version="1.0.39",
+            build_number="202608050001",
+            platform="TV_OS",
+            comparison_runtime_surfaces=frozenset(),
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_validation_report_reads_runtime_scope_from_the_release_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            report_path.write_text(json.dumps(self.scoped_report("TV_OS", {"tvos.app"})))
+            comparison_path = Path(directory) / "comparison.json"
+            comparison_path.write_text(
+                json.dumps({"requiredSurfaces": {"actual-runtime": ["tvos.app"]}})
+            )
+            args = SimpleNamespace(
+                validation_report=str(report_path),
+                release_evidence_comparison=str(comparison_path),
+                version="1.0.39",
+                build_number="202608050001",
+                platform="TV_OS",
+            )
+            with patch.object(submit_app_store_review, "validate_current_comparison"):
+                submit_app_store_review.validate_validation_report(args)
+                args.release_evidence_comparison = None
+                with self.assertRaisesRegex(
+                    submit_app_store_review.AppStoreConnectError,
+                    "missing required surfaces: tvos.top-shelf",
+                ):
+                    submit_app_store_review.validate_validation_report(args)
 
     def test_rejects_active_deferrals_even_when_runtime_receipts_are_proven(self):
         report = exact_build_validation_report("MAC_OS")
