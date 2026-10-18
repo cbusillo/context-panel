@@ -47,20 +47,16 @@ diagnostics; it does not approve a submission.
    install and receipt propagation through the coordinator before requesting
    manual recovery.
 4. For shared views, supply all required capture inputs to the
-   [supported simulator capture path](signed-validation-galleries.md).
-   If inputs are missing, correct the invocation as machine work. A terminal
-   `unsupported` attempt can expose a review action without producing an image;
-   inspect the capture result rather than treating that action as proof that
-   capture succeeded or as an instruction to navigate a signed gallery.
-5. An unsupported adapter is an explicit collection gap. Preserve its diagnostic
-   result, identify the missing mechanism, and continue independent supported
-   capture or receipt work. Do not turn this result into a live-gallery
-   walkthrough unless the user explicitly requests that diagnostic route.
-   Do not narrow the plan, fabricate evidence, or label the gap a product bug.
-6. Present captured shared views in a consolidated review batch. Keep explicit
-   human decisions bound to their exact required contexts. Automation collects
-   artifacts; it does not approve them. OS-composited placement remains a
-   separate physical review with its own exact-runtime prerequisites.
+   [supported capture path](signed-validation-galleries.md). If inputs are
+   missing, correct the invocation as machine work. Every shared-view surface
+   has a capture mechanism; a cell that was not captured is a failed capture,
+   not a reason to navigate a signed gallery.
+5. Run `record-reference-approvals` (see [reference images](#reference-images)).
+   It approves each captured cell that matches an unchanged reference.
+6. Send Chris only the remaining cells, in one batch, and record his decision
+   for each. When he accepts a changed cell, commit that captured image as its
+   reference. OS-composited placement remains a separate physical review with
+   its own exact-runtime prerequisites.
 7. Evaluate the complete evidence with the full release gate and validate its
    reconstruction using the same authoritative inputs. Release must bind the
    selected approved RC. Neither a successful capture nor a completed
@@ -68,15 +64,12 @@ diagnostics; it does not approve a submission.
 
 ## Implemented capture limits
 
-The executor currently supports iOS, iPadOS, visionOS, watchOS, and tvOS
-simulator capture. tvOS capture requires current product source that contains
-the tvOS validation launch route; older source fails qualification by design.
-`macos.widget` is rendered on the host by a SwiftPM tool the executor builds from
-the verified source root, with no app or extension bundle. The same tool draws
-`macos.app` cells for [reference images](#reference-images), but the release
-capture executor still records `macos.app` as `unsupported-host-mechanism`;
+The executor captures iOS, iPadOS, visionOS, watchOS, and tvOS cells on
+simulators. tvOS capture requires current product source that contains the
+tvOS validation launch route; older source fails qualification by design.
+`macos.app` and `macos.widget` are rendered on the host by a SwiftPM tool the
+executor builds from the verified source root, with no app or extension bundle;
 see [the capture contract](signed-validation-galleries.md#private-simulator-capture).
-There is no macOS simulator adapter hidden behind a missing config value.
 
 ## Reference images
 
@@ -107,6 +100,26 @@ changes how a cell looks on purpose, or that image or Xcode changes, re-record:
 Do not record references on a local Mac; its OS and fonts differ from the
 pinned runner.
 
+At release, after a qualified capture, approve the unchanged cells:
+
+```sh
+scripts/context-panel-validation.py record-reference-approvals \
+  --version <version> --build-number <build-number> \
+  --surface-comparison <comparison.json> \
+  --current-manifest <current-source-manifest.json> \
+  --previous-manifest <previous-source-manifest.json> \
+  --capture-receipt <shared-view-capture-receipt.json> \
+  --captures <directory-with-captured-pngs>
+```
+
+The inputs are the capture run's public evidence and its private PNGs. The
+command reads both references from Git at the source commits those manifests
+name. It approves a cell only when the captured image matches the candidate's
+reference and that reference matches the previous release's. A missing, new or
+changed reference, a changed image, or a capture that does not match the receipt
+leaves the cell for Chris. It never replaces a recorded decision and never
+touches actual-runtime or placement requirements.
+
 Existing Mac render tests can export host-rendered PNGs, but those test outputs
 are not formal build/requirement-bound capture receipts. The default-text matrix
 case and an enlarged-text stress test are distinct valid scenarios. Preserve the
@@ -121,8 +134,8 @@ without silently upgrading diagnostic or reference-only evidence.
 
 Start with [Validation Authority and Operator Route](#sources-of-truth)
 to distinguish the agreed simulator-first contract, implemented capture support,
-and qualification evidence. Missing capture inputs or an unsupported adapter
-do not by themselves justify asking Chris to navigate a signed gallery.
+and qualification evidence. Missing capture inputs do not by themselves justify
+asking Chris to navigate a signed gallery.
 
 Before changing or validating app/widget/provider behavior, identify the active
 runtime. Mixed runtimes caused repeated false positives during App Store release

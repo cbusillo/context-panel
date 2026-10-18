@@ -84,11 +84,13 @@ from .session import (
     parse_iso8601,
 )
 from .system import (
+    REPO_ROOT,
     SubprocessRunner,
     collect_device_evidence,
     collect_mac_evidence,
     launch_canonical_mac_app,
 )
+from .reference_approvals import reference_sources, review_against_references
 from .visual_approvals import (
     VISUAL_DECISIONS,
     VisualApprovalError,
@@ -263,6 +265,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--artifact",
         type=Path,
         help="Optional private artifact to hash; its path and contents are never persisted",
+    )
+    record_reference_approvals = subparsers.add_parser(
+        "record-reference-approvals",
+        help="Approve captured shared-view cells that match unchanged committed reference images",
+    )
+    add_target_arguments(record_reference_approvals)
+    record_reference_approvals.add_argument("--surface-comparison", type=Path, required=True)
+    record_reference_approvals.add_argument("--current-manifest", type=Path, required=True)
+    record_reference_approvals.add_argument("--previous-manifest", type=Path, required=True)
+    record_reference_approvals.add_argument("--capture-receipt", type=Path, required=True)
+    record_reference_approvals.add_argument(
+        "--captures",
+        type=Path,
+        required=True,
+        help="Directory holding the receipt's <requirement-id>.png captures",
+    )
+    record_reference_approvals.add_argument(
+        "--repository",
+        type=Path,
+        default=REPO_ROOT,
+        help="Git repository containing both source commits",
     )
     export_visual_reviews = subparsers.add_parser(
         "export-visual-reviews",
@@ -1346,6 +1369,60 @@ def run_record_visual_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_json_object(path: Path, label: str) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise VisualApprovalError(f"{label} is unreadable") from error
+    if not isinstance(payload, dict):
+        raise VisualApprovalError(f"{label} is invalid")
+    return payload
+
+
+def run_record_reference_approvals(args: argparse.Namespace) -> int:
+    target = Target(args.version, args.build_number)
+    now = utc_now()
+    store = SessionStateStore()
+    session = store.load(target, now=now)
+    if session is None:
+        raise VisualApprovalError("signed validation session does not exist")
+    approvals = VisualApprovalStore(store)
+    state = approvals.load(session)
+    if state is None:
+        raise VisualApprovalError("visual review requirements are not configured")
+    sources = reference_sources(
+        _read_json_object(args.surface_comparison, "surface comparison"),
+        _read_json_object(args.current_manifest, "current source manifest"),
+        _read_json_object(args.previous_manifest, "previous source manifest"),
+        state.current_manifest_id,
+        args.repository,
+    )
+    outcomes = review_against_references(
+        state.requirements,
+        state.decisions,
+        _read_json_object(args.capture_receipt, "capture receipt"),
+        args.captures,
+        sources,
+        state.current_manifest_id,
+    )
+    runtime_state = RuntimeEvidenceStore(store).load(session)
+    for outcome in outcomes:
+        if outcome.approved:
+            approvals.record(
+                session, outcome.requirement_id, "approved", now, runtime_state,
+                artifact_digest=outcome.artifact_digest,
+            )
+    approved = [outcome.requirement_id for outcome in outcomes if outcome.approved]
+    review = {outcome.requirement_id: outcome.reason for outcome in outcomes if not outcome.approved}
+    if args.json:
+        print(json.dumps({"approved": approved, "needsReview": review}, indent=2, sort_keys=True))
+    else:
+        print(f"Approved {len(approved)} shared-view cells that match their unchanged references.")
+        for requirement_id, reason in review.items():
+            print(f"Review: {requirement_id} ({reason})")
+    return 0
+
+
 def run_export_visual_reviews(args: argparse.Namespace) -> int:
     target = Target(args.version, args.build_number)
     now = utc_now()
@@ -1469,6 +1546,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_clear_deferral(args)
         if args.command == "record-visual-review":
             return run_record_visual_review(args)
+        if args.command == "record-reference-approvals":
+            return run_record_reference_approvals(args)
         if args.command == "export-visual-reviews":
             return run_export_visual_reviews(args)
         raise RuntimeError(f"unsupported command: {args.command}")
