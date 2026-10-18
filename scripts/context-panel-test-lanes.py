@@ -27,6 +27,7 @@ ALLOWED_ROLES = {"test", "support"}
 COMMIT_GATE_SWIFT_LANE = "routine-ci-swift"
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
 COMMAND_CLEANUP_TIMEOUT_SECONDS = 5
+COMMAND_POLL_SECONDS = 0.1
 # Lanes whose membership may be claimed by a glob. SwiftPM runs every file in the
 # test target whatever this manifest says, and support files never run, so a
 # list of them records nothing a pattern does not. Python and manual lanes stay
@@ -37,11 +38,6 @@ PATTERN_RUNNERS = {"none", "swiftpm"}
 
 class TestLaneError(RuntimeError):
     pass
-
-
-class CommandInterrupted(Exception):
-    def __init__(self, signum: int):
-        self.signum = signum
 
 
 def display_path(path: Path) -> str:
@@ -465,17 +461,13 @@ def time_command(
     command_started = time.monotonic()
     timed_out = False
     interrupted_signal = 0
-    waiting = False
     cleanup_timed_out = False
 
     def interrupt(signum, _frame):
-        nonlocal interrupted_signal, waiting
+        nonlocal interrupted_signal
+        # Never throw from a signal handler into spawn, timeout handling or
+        # cleanup. The bounded wait loop observes this flag promptly.
         interrupted_signal = interrupted_signal or signum
-        # Defer signals during spawn and cleanup. Raising during Popen could
-        # lose the child PID; a repeated interrupt must not abandon cleanup.
-        if waiting:
-            waiting = False
-            raise CommandInterrupted(interrupted_signal)
 
     previous_handlers = {
         sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -488,16 +480,20 @@ def time_command(
             process = subprocess.Popen(command, cwd=REPO_ROOT, start_new_session=True)
         except FileNotFoundError as error:
             raise TestLaneError(f"test lane command not found: {command[0]}") from error
-        try:
-            waiting = True
+        deadline = command_started + timeout_seconds
+        while True:
             if interrupted_signal:
-                raise CommandInterrupted(interrupted_signal)
-            exit_code = process.wait(timeout=timeout_seconds)
-        except (subprocess.TimeoutExpired, KeyboardInterrupt, CommandInterrupted) as error:
-            waiting = False
-            timed_out = isinstance(error, subprocess.TimeoutExpired)
-            if not timed_out:
-                interrupted_signal = error.signum if isinstance(error, CommandInterrupted) else signal.SIGINT
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                exit_code = process.wait(timeout=min(remaining, COMMAND_POLL_SECONDS))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if timed_out or interrupted_signal:
             exit_code = 124 if timed_out else 128 + interrupted_signal
             reason = f"timed out after {timeout_seconds:g}s" if timed_out else "was interrupted"
             print(f"test lane {lane_name} {reason}; killing its process group", file=sys.stderr)
@@ -513,9 +509,10 @@ def time_command(
                 except subprocess.TimeoutExpired:
                     cleanup_timed_out = True
                     print("test lane process is still stuck after SIGKILL; host diagnosis is required", file=sys.stderr)
-        finally:
-            waiting = False
+        version = None if timed_out or interrupted_signal else command_version(command)
         report = base_report(lane_name, files, started_at)
+        if interrupted_signal and not timed_out:
+            exit_code = 128 + interrupted_signal
         report.update(
             {
                 "durationMs": round((time.monotonic() - command_started) * 1000),
@@ -526,7 +523,7 @@ def time_command(
                 "results": [],
                 "commandName": Path(command[0]).name,
                 # Do not launch the same tool again on the failing host.
-                "toolVersion": None if timed_out or interrupted_signal else command_version(command),
+                "toolVersion": version,
             }
         )
         write_report(report_path, report)

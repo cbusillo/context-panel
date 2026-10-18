@@ -104,15 +104,17 @@ SIGKILL; `cleanupTimedOut` records that condition for host diagnosis. SIGINT,
 SIGTERM and SIGHUP use the same cleanup path and return the signal's conventional
 exit status. The CI job's `timeout-minutes` ceiling covers compilation and other
 steps separately from the warning-only time budget. It also bounds a step whose
-output pipe remains open in a kernel-stuck child after the gate has returned.
+output pipe remains open in a leftover child after the gate has returned,
+including a child stuck in the kernel.
 A hang must fail the gate rather than occupy the runner until GitHub's default
 timeout.
 
 For a deliberately slower local diagnostic, choose a finite positive deadline:
 
 ```sh
+swift build --build-tests
 python3 scripts/context-panel-test-lanes.py time-command \
-  --lane routine-ci-swift --timeout-seconds 600 -- swift test
+  --lane routine-ci-swift --timeout-seconds 600 -- swift test --skip-build
 ```
 
 ## JetBrains Inspection Preparation
