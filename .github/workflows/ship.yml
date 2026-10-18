@@ -32,36 +32,19 @@ name: Ship
           - export-only
           - skip
       companion_app_store_channel:
-        description: Companion App Store Connect build-upload action.
+        description: iPhone/iPad/Watch, Vision Pro and Apple TV App Store Connect build-upload action.
         required: true
-        default: skip
+        default: upload
         type: choice
         options:
           - upload
           - export-only
           - skip
-      companion_platform:
-        description: Companion platform to archive.
-        required: true
-        default: ios
-        type: choice
-        options:
-          - ios
-          - visionos
-          - tvos
       testflight_beta:
-        description: Distribute the uploaded build to TestFlight beta groups.
+        description: Distribute every uploaded build to TestFlight beta groups.
         required: true
         default: true
         type: boolean
-      testflight_beta_source:
-        description: Uploaded build source to distribute to TestFlight.
-        required: true
-        default: macos
-        type: choice
-        options:
-          - macos
-          - companion
       testflight_beta_groups:
         description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
         required: false
@@ -137,6 +120,7 @@ jobs:
     environment: release
     outputs:
       build_number: ${{ steps.intent.outputs.build_number }}
+      testflight_platforms: ${{ steps.intent.outputs.testflight_platforms }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -151,9 +135,7 @@ jobs:
           INPUT_NOTARIZE_GITHUB_RELEASE: ${{ inputs.notarize_github_release }}
           INPUT_APP_STORE_CHANNEL: ${{ inputs.app_store_channel }}
           INPUT_COMPANION_APP_STORE_CHANNEL: ${{ inputs.companion_app_store_channel }}
-          INPUT_COMPANION_PLATFORM: ${{ inputs.companion_platform }}
           INPUT_TESTFLIGHT_BETA: ${{ inputs.testflight_beta }}
-          INPUT_TESTFLIGHT_BETA_SOURCE: ${{ inputs.testflight_beta_source }}
           INPUT_TESTFLIGHT_BETA_GROUPS: ${{ inputs.testflight_beta_groups }}
           INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS: ${{ inputs.include_internal_testflight_groups }}
           INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
@@ -196,9 +178,16 @@ jobs:
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   companion-app-store-upload:
-    name: Companion App Store Connect Build Upload Channel
+    name: Companion App Store Connect Build Upload Channel (${{ matrix.platform }})
     needs: validate
     if: ${{ inputs.companion_app_store_channel != 'skip' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - ios
+          - visionos
+          - tvos
     uses: ./.github/workflows/app-store-connect-companion-upload.yml
     secrets: inherit
     permissions:
@@ -207,12 +196,12 @@ jobs:
     with:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}
-      platform: ${{ inputs.companion_platform }}
+      platform: ${{ matrix.platform }}
       upload: ${{ inputs.companion_app_store_channel == 'upload' }}
       cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
 
   testflight-beta:
-    name: TestFlight Beta Distribution Channel
+    name: TestFlight Beta Distribution Channel (${{ matrix.platform }})
     needs:
       - validate
       - app-store-upload
@@ -224,11 +213,11 @@ jobs:
         && needs.validate.result == 'success'
         && (inputs.app_store_channel != 'upload' || needs.app-store-upload.result == 'success')
         && (inputs.companion_app_store_channel != 'upload' || needs.companion-app-store-upload.result == 'success')
-        && (
-          (inputs.testflight_beta_source == 'macos' && needs.app-store-upload.result == 'success')
-          || (inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.result == 'success')
-        )
       }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.validate.outputs.testflight_platforms) }}
     uses: ./.github/workflows/testflight-beta-distribution.yml
     secrets: inherit
     permissions:
@@ -236,10 +225,8 @@ jobs:
       actions: read
     with:
       version: ${{ inputs.version }}
-      build_number: >-
-        ${{ inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.outputs.build_number || needs.app-store-upload.outputs.build_number }}
-      platform: >-
-        ${{ inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.outputs.app_store_platform || 'MAC_OS' }}
+      build_number: ${{ needs.validate.outputs.build_number }}
+      platform: ${{ matrix.platform }}
       beta_groups: ${{ inputs.testflight_beta_groups }}
       include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
       dry_run: false
@@ -276,10 +263,8 @@ jobs:
           TESTFLIGHT_BETA_RESULT: ${{ needs.testflight-beta.result }}
           INPUT_APP_STORE_CHANNEL: ${{ inputs.app_store_channel }}
           INPUT_COMPANION_APP_STORE_CHANNEL: ${{ inputs.companion_app_store_channel }}
-          INPUT_TESTFLIGHT_BETA_SOURCE: ${{ inputs.testflight_beta_source }}
-          MAC_BUILD_NUMBER: ${{ needs.app-store-upload.outputs.build_number }}
-          COMPANION_BUILD_NUMBER: ${{ needs.companion-app-store-upload.outputs.build_number }}
-          COMPANION_PLATFORM: ${{ needs.companion-app-store-upload.outputs.app_store_platform }}
+          INPUT_TESTFLIGHT_BETA: ${{ inputs.testflight_beta }}
+          BUILD_NUMBER: ${{ needs.validate.outputs.build_number }}
         run: python3 scripts/app-store-release-status.py record-ship
 
       - name: Summarize Channels
@@ -297,7 +282,6 @@ jobs:
           INPUT_APP_STORE_CHANNEL: ${{ inputs.app_store_channel }}
           INPUT_COMPANION_APP_STORE_CHANNEL: ${{ inputs.companion_app_store_channel }}
           INPUT_TESTFLIGHT_BETA: ${{ inputs.testflight_beta }}
-          INPUT_TESTFLIGHT_BETA_SOURCE: ${{ inputs.testflight_beta_source }}
         run: |
           set -euo pipefail
           validate_result="${VALIDATE_RESULT}"
@@ -309,7 +293,6 @@ jobs:
           app_store_channel="${INPUT_APP_STORE_CHANNEL}"
           companion_app_store_channel="${INPUT_COMPANION_APP_STORE_CHANNEL}"
           testflight_beta_selected="${INPUT_TESTFLIGHT_BETA}"
-          testflight_beta_source="${INPUT_TESTFLIGHT_BETA_SOURCE}"
           {
             echo "### Uploaded/TestFlight channel results"
             echo
@@ -319,9 +302,8 @@ jobs:
             echo "- Validation: ${validate_result}"
             echo "- GitHub Release: ${github_release_result}"
             echo "- Mac App Store Connect build upload: ${app_store_upload_result}"
-            echo "- Companion App Store Connect build upload: ${companion_app_store_upload_result}"
+            echo "- Companion (iPhone/iPad/Watch, Vision Pro, Apple TV) App Store Connect build upload: ${companion_app_store_upload_result}"
             echo "- TestFlight beta distribution: ${testflight_beta_result}"
-            echo "- TestFlight source: ${testflight_beta_source}"
             echo
             echo "Ship does not submit App Store Review."
             echo "These results do not prove the build is live on the public App Store."

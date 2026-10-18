@@ -3,23 +3,18 @@
 Start with [Validation Authority and Operator Route](validation-authority.md)
 for the validation contract and supported capture path.
 
-Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
-It coordinates selected release channels from one commit and one marketing
-version:
+Context Panel's normal release path is the GitHub Actions `Ship` workflow.
+One run builds every platform from one commit with one marketing version and
+one build number:
 
 - GitHub Release zip artifact, signed and notarized
-- App Store Connect build upload, signed with Mac App Store profiles
-- TestFlight beta distribution for the uploaded build
+- Mac App Store Connect build upload, signed with Mac App Store profiles
+- iPhone/iPad (with the embedded Watch app), Vision Pro, and Apple TV App Store
+  Connect build uploads
+- TestFlight beta distribution for every uploaded build
 
-Companion iOS/iPadOS, visionOS, and tvOS distribution use the same App Store
-Connect and TestFlight building blocks, but each platform is deliberately
-opt-in from `Ship`. The native visionOS app is published and its signed physical
-Vision Pro path is proven. The first tvOS App Store version has complete
-metadata, screenshots, reviewer evidence, and signed physical Apple TV proof;
-it was submitted after the earlier rejected candidate was retired safely. Treat
-live review state as App Store Connect-owned operational data and verify it
-directly before release decisions. Fresh visionOS or tvOS trains still require
-the platform-specific signed device smoke gate described below.
+Treat live review state as App Store Connect-owned operational data and verify
+it directly before release decisions.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
@@ -53,7 +48,8 @@ Merging source is separate from all of these channel results.
 ### Durable handoff and public drift
 
 Ship's summary creates an issue for each successful platform upload, even when
-another channel fails. The issue records **App Store submission pending**, the
+another channel fails; the three companion uploads report together, so their
+issues are created once all three succeeded. The issue records **App Store submission pending**, the
 exact uploaded identity, channel results, run link, and the `Submit App Store
 Review` workflow command with `dry_run=true`. Failure to record it fails Ship's
 summary job. Retries reuse the same platform/version/build/source record.
@@ -117,8 +113,8 @@ App Store Review submission and screenshots also record intent automatically.
 Callers grant `actions: read` and at least `contents: read`; GitHub Release
 publication requires `contents: write`. Channel jobs reject failed or cancelled
 guards and failed intent jobs. The skipped-intent path remains limited to the
-exact Ship caller. Ship's TestFlight join requires successful validation and the
-selected upload before distributing a build.
+exact Ship caller. Ship's TestFlight join requires successful validation and
+every selected upload before distributing any build.
 
 Ship passes repository secrets to each same-commit local channel workflow with
 `secrets: inherit`. GitHub does not automatically forward repository secrets to
@@ -326,14 +322,12 @@ Use `Ship` for normal releases. It accepts:
 - `github_release`: publish the GitHub release channel.
 - `notarize_github_release`: notarize the GitHub zip; defaults to true. With
   `github_release=true`, selecting false is refused before channel builds.
-- `app_store_channel`: `upload`, `export-only`, or `skip`.
-- `companion_app_store_channel`: `upload`, `export-only`, or `skip`.
-- `companion_platform`: `ios`, `visionos`, or `tvos`.
-- `testflight_beta`: distribute the uploaded build through TestFlight.
-- `testflight_beta_source`: `macos` distributes the Mac App Store build;
-  `companion` distributes the selected iOS/visionOS/tvOS build. If
-  `companion_app_store_channel=upload` and `testflight_beta=true`, `Ship`
-  requires `testflight_beta_source=companion`.
+- `app_store_channel`: Mac `upload` (default), `export-only`, or `skip`.
+- `companion_app_store_channel`: `upload` (default), `export-only`, or `skip`
+  for the iPhone/iPad/Watch, Vision Pro, and Apple TV builds together.
+- `testflight_beta`: distribute every uploaded build through TestFlight. It
+  runs only after every selected upload succeeded, so the platforms reach
+  testers together.
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
   names; internal groups are included by default.
 - `include_internal_testflight_groups`: include internal TestFlight beta groups.
@@ -344,10 +338,13 @@ Use `Ship` for normal releases. It accepts:
   Empty inputs instead use the publication-time check; see "CloudKit Production
   Schema Gate".
 
-For a normal release, run `Ship` from `main` with GitHub release, App Store
-Connect build upload, and TestFlight beta distribution enabled. That creates the
-friend-installable GitHub artifact and makes the App Store build available to
-the selected TestFlight testers without submitting it for App Review.
+For a normal release, run `Ship` from `main` with the defaults. That creates the
+friend-installable GitHub artifact and makes every platform's App Store build
+available to the selected TestFlight testers at the same version and build,
+without submitting it for App Review. The summary records an App Store
+submission issue for each uploaded platform; companion records are created once
+all three companion uploads in the run succeeded. Recover a single failed
+platform by re-running the failed jobs of the same run.
 
 The workflow summary records the selected channels, version, build number,
 target commit, notarization choice, App Store Connect upload state, and
@@ -590,41 +587,31 @@ uploaded build; neither should secretly invoke the other.
 
 Use this path for companion device dogfood and CloudKit sync regression
 validation. Issue #274 records the completed initial iOS/visionOS validation.
-This path is separate from the normal Mac TestFlight cut unless `Ship` is
-explicitly configured to use the companion channel.
+Normal `Ship` runs include every companion platform.
 
 ### Deliver current builds to all of Chris's devices
 
-Merging companion code, running the unsigned compiler gate, or publishing the
-Mac release does not update a companion device. Use three companion `Ship`
-runs from the same protected `main` commit, waiting for each to finish before
-dispatching the next. Ship's version-level concurrency group allows one pending
-run; dispatching all three at once can cancel a queued platform.
+Merging companion code or running the unsigned compiler gate does not update a
+companion device. One `Ship` run from protected `main` uploads and distributes
+every package:
 
-| `companion_platform` | Devices updated by that package |
-| --- | --- |
-| `ios` | iPhone and iPad; the embedded Watch app and complication extension |
-| `visionos` | Native Apple Vision Pro app and widget |
-| `tvos` | Apple TV app and Top Shelf extension |
+| Package  | Devices updated by that package                                     |
+| -------- | ------------------------------------------------------------------- |
+| iOS      | iPhone and iPad; the embedded Watch app and complication extension  |
+| visionOS | Native Apple Vision Pro app and widget                              |
+| tvOS     | Apple TV app and Top Shelf extension                                |
 
 Apply [Before starting a release](#before-starting-a-release) first. Record the
 source commit and finished-change list on the delivery issue, resolve existing
 release holds, and choose a marketing version/build through the
-[versioning flow](#normal-ship-workflow) and App Store version preflight. Keep the
-source commit fixed across the three runs; if `main` advances, reconcile the
-candidate rather than calling unlike builds one train.
+[versioning flow](#normal-ship-workflow) and App Store version preflight.
 
-For each platform, set these `Ship` inputs:
+Set these `Ship` inputs; the other inputs keep their defaults:
 
 ```text
 version=<selected marketing version>
-build_number=<selected build number>
-github_release=false
-app_store_channel=skip
-companion_app_store_channel=upload
-companion_platform=<ios|visionos|tvos>
+build_number=<selected build number, or blank for a UTC timestamp>
 testflight_beta=true
-testflight_beta_source=companion
 include_internal_testflight_groups=true
 ```
 
@@ -640,11 +627,11 @@ Use the configured CI signing route rather than retrieving Apple credentials or
 signing keys. A missing signing asset is an operator setup step, not permission
 to copy a key into a task worktree.
 
-After each run, record its source/version/build, platform, upload result,
-processing result and TestFlight distribution result on the delivery issue.
+After the run, record its source/version/build and each platform's upload,
+processing and TestFlight distribution result on the delivery issue.
 Export-only output and a successful upload alone do not establish that a build
 is available to its tester. The iOS package supplies both phone and tablet;
-there is no separate iPad upload. Watch has no separate `companion_platform`.
+there is no separate iPad or Watch upload.
 
 Chris's device steps, only when needed:
 
@@ -1267,34 +1254,16 @@ Distribution` using:
 - `platform=TV_OS` for tvOS builds.
 - the same `version` and resolved `build_number` from the upload summary.
 
-For a coordinated one-shot run through `Ship`, select:
+`Ship` runs this upload and distribution for all three companion platforms
+alongside the Mac build. Use the lower-level workflows directly only to recover
+one platform at the same version and build.
 
-- `companion_app_store_channel=upload`
-- `companion_platform=ios`, `visionos`, or `tvos`
-- `testflight_beta=true`
-- `testflight_beta_source=companion`
-- `app_store_channel=skip` unless the same run should also upload a Mac build
-
-`Ship` intentionally rejects `companion_app_store_channel=upload` together with
-`testflight_beta=true` unless `testflight_beta_source=companion`. If a future
-release needs to upload both Mac and companion builds while distributing only the
-Mac build to TestFlight, run that as separate `Ship` dispatches so the TestFlight
-source remains unambiguous.
-
-Use `companion_platform=visionos` for native visionOS validation. Completed
-issues #168, #230, and #231 record the initial packaging, profile, icon,
-metadata, App Store Connect, and signed-device proof. The normal companion
-dogfood path remains `ios` for iPhone/iPad.
-
-Use `companion_platform=tvos` for the signed tvOS lane recorded by #379. Both
-tvOS profile secrets remain required. The signed candidate includes Couch Mode,
+Completed issues #168, #230, and #231 record the initial visionOS packaging,
+profile, icon, metadata, App Store Connect, and signed-device proof. The signed
+tvOS lane is recorded by #379; both tvOS profile secrets remain required. The signed candidate includes Couch Mode,
 the dynamic Top Shelf extension, and upgrade cleanup for the retired provider
 badge; every fresh App Store submission still requires physical Apple TV,
 screenshot, metadata, privacy, and reviewer evidence.
-
-Do not set `testflight_beta_source=macos` when the intent is companion device
-validation; that distributes the Mac App Store build instead of the companion
-build.
 
 ### Signed Device Smoke Test
 

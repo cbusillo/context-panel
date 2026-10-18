@@ -2015,9 +2015,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 "INPUT_NOTARIZE_GITHUB_RELEASE": "true",
                 "INPUT_APP_STORE_CHANNEL": "skip",
                 "INPUT_COMPANION_APP_STORE_CHANNEL": "skip",
-                "INPUT_COMPANION_PLATFORM": "ios",
                 "INPUT_TESTFLIGHT_BETA": "false",
-                "INPUT_TESTFLIGHT_BETA_SOURCE": "companion",
                 "INPUT_TESTFLIGHT_BETA_GROUPS": "",
                 "INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS": "false",
                 "INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64": "cmVjZWlwdA==",
@@ -2045,7 +2043,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         result, calls, output = self.run_ship_validate_inputs(
             INPUT_GITHUB_RELEASE="true", INPUT_NOTARIZE_GITHUB_RELEASE="false",
             INPUT_APP_STORE_CHANNEL="upload", INPUT_TESTFLIGHT_BETA="true",
-            INPUT_TESTFLIGHT_BETA_SOURCE="macos",
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("GitHub Releases require notarization", result.stdout)
@@ -2054,29 +2051,30 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         accepted, calls, output = self.run_ship_validate_inputs(
             INPUT_GITHUB_RELEASE="true", INPUT_NOTARIZE_GITHUB_RELEASE="true",
             INPUT_APP_STORE_CHANNEL="upload", INPUT_TESTFLIGHT_BETA="true",
-            INPUT_TESTFLIGHT_BETA_SOURCE="macos",
         )
         self.assertEqual(accepted.returncode, 0, accepted.stdout)
         self.assertEqual(len(calls), 1)
         self.assertTrue(output)
 
-    def test_ship_preflights_every_companion_platform_the_workflow_offers(self) -> None:
-        workflow = self.read(".github/workflows/ship.yml")
-        platforms = {}
-        for option in workflow_choice_options(workflow, "companion_platform"):
-            with self.subTest(companion_platform=option):
-                result, guard_calls, output = self.run_ship_validate_inputs(
-                    INPUT_COMPANION_APP_STORE_CHANNEL="upload",
-                    INPUT_COMPANION_PLATFORM=option,
-                )
+    def test_ship_preflights_and_distributes_every_platform_at_one_build(self) -> None:
+        result, guard_calls, output = self.run_ship_validate_inputs(
+            INPUT_APP_STORE_CHANNEL="upload",
+            INPUT_COMPANION_APP_STORE_CHANNEL="upload",
+            INPUT_TESTFLIGHT_BETA="true",
+        )
 
-                self.assertEqual(result.returncode, 0, result.stdout)
-                self.assertEqual(len(guard_calls), 1)
-                self.assertIn("9.9.9", guard_calls[0])
-                platforms[option] = self.guard_platform(guard_calls[0])
-                self.assertIn("build_number=202601010000", output)
-
-        self.assertEqual(platforms, {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"})
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            sorted(self.guard_platform(call) for call in guard_calls),
+            ["IOS", "MAC_OS", "TV_OS", "VISION_OS"],
+        )
+        self.assertTrue(all("9.9.9" in call for call in guard_calls))
+        values = dict(line.split("=", 1) for line in output.splitlines())
+        self.assertEqual(values["build_number"], "202601010000")
+        self.assertEqual(
+            sorted(json.loads(values["testflight_platforms"])),
+            ["IOS", "MAC_OS", "TV_OS", "VISION_OS"],
+        )
 
     def test_ship_validate_step_supplies_every_variable_the_script_reads(self) -> None:
         workflow = self.read(".github/workflows/ship.yml")
@@ -2090,17 +2088,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("        run: scripts/ship-validate-inputs.sh", step)
         self.assertTrue(required)
         self.assertEqual(required - provided, set())
-
-    def test_ship_rejects_an_unknown_companion_platform_without_preflight(self) -> None:
-        result, guard_calls, output = self.run_ship_validate_inputs(
-            INPUT_COMPANION_APP_STORE_CHANNEL="upload",
-            INPUT_COMPANION_PLATFORM="watchos",
-        )
-
-        self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("unsupported companion_platform", result.stdout)
-        self.assertEqual(guard_calls, [])
-        self.assertEqual(output, "")
 
     def test_ship_preflights_the_mac_app_store_channel(self) -> None:
         result, guard_calls, _ = self.run_ship_validate_inputs(INPUT_APP_STORE_CHANNEL="upload")
@@ -2132,10 +2119,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 "INPUT_APP_STORE_CHANNEL": "upload",
                 "APP_STORE_CONNECT_API_KEY_P8_BASE64": "",
             },
-            "TestFlight source without its upload": {
+            "TestFlight without an upload": {
                 "INPUT_GITHUB_RELEASE": "true",
                 "INPUT_TESTFLIGHT_BETA": "true",
-                "INPUT_TESTFLIGHT_BETA_SOURCE": "macos",
             },
             "closed version": {"INPUT_GITHUB_RELEASE": "true", "INPUT_VERSION": "1.0"},
         }
