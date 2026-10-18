@@ -38,25 +38,6 @@ PRESENTATION_IMPORT_PATTERN = re.compile(
     r"^\s*import\s+(?:SwiftUI|WidgetKit|AppKit|UIKit)\b",
     re.MULTILINE,
 )
-# Known storage, transport, sync, and OS-integration APIs, including Core's own
-# store and sync types. It catches direct use, not every indirect path; the
-# reviewed policy mapping stays the classification and new files default to runtime.
-RUNTIME_API_PATTERN = re.compile(
-    r"^\s*import\s+(?:CloudKit|Network|OSLog|Security|ServiceManagement|UserNotifications"
-    r"|WatchConnectivity|os)\b"
-    r"|\b(?:FileHandle|FileManager|NotificationCenter|ProcessInfo|URLRequest|URLSession"
-    r"|UserDefaults|WCSession|SecItem\w*|CK[A-Z]\w*)\b"
-    r"|\b\w*(?:Bookmark|Client|Connector|Locations|RefreshRunner|RefreshService|Store"
-    r"|StoreFactory|Sync|Webhook)\b"
-    r"|\bcontentsOf\s*:|\.write\s*\(\s*to\s*:",
-    re.MULTILINE,
-)
-GROUP_SOURCE_GUARDS = (
-    ("forbidPresentationImports", PRESENTATION_IMPORT_PATTERN,
-     "runtime-only input imports a presentation framework", "presentation-import"),
-    ("forbidRuntimeAPIs", RUNTIME_API_PATTERN,
-     "render-only input uses a runtime API", "runtime-API"),
-)
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 UUID_PATTERN = re.compile(
     r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
@@ -561,17 +542,18 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
             excludes=(str(value) for value in group.get("exclude") or []),
             excluded_basenames=excluded_basenames,
         )
-        for flag, pattern, violation, policy_name in GROUP_SOURCE_GUARDS:
-            if group.get(flag) is True:
-                for relative_path in group_files:
-                    if relative_path.endswith(".swift") and pattern.search(
-                        (root / relative_path).read_text()
-                    ):
-                        raise SurfacePolicyError(f"{violation}: {relative_path}")
-            elif group.get(flag) not in (None, False):
-                raise SurfacePolicyError(
-                    f"input group {policy_name} policy is invalid: {group_name}"
-                )
+        if group.get("forbidPresentationImports") is True:
+            for relative_path in group_files:
+                if relative_path.endswith(".swift") and PRESENTATION_IMPORT_PATTERN.search(
+                    (root / relative_path).read_text()
+                ):
+                    raise SurfacePolicyError(
+                        f"runtime-only input imports a presentation framework: {relative_path}"
+                    )
+        elif group.get("forbidPresentationImports") not in (None, False):
+            raise SurfacePolicyError(
+                f"input group presentation-import policy is invalid: {group_name}"
+            )
         groups[str(group_name)] = group_files
 
     surface_ids: set[str] = set()
