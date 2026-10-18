@@ -32,6 +32,8 @@ public struct RefreshDiagnosticsRun: Codable, Equatable, Sendable {
     public var limitCount: Int?
     public var savedSnapshotAt: Date?
     public var errorMessage: String?
+    /// The refresh agent's own `CFBundleVersion`, read when that process launched.
+    public var agentBundleVersion: String?
 
     public init(
         id: String,
@@ -46,7 +48,8 @@ public struct RefreshDiagnosticsRun: Codable, Equatable, Sendable {
         failureCount: Int? = nil,
         limitCount: Int? = nil,
         savedSnapshotAt: Date? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        agentBundleVersion: String? = nil
     ) {
         self.id = id
         self.source = source
@@ -61,6 +64,7 @@ public struct RefreshDiagnosticsRun: Codable, Equatable, Sendable {
         self.limitCount = limitCount
         self.savedSnapshotAt = savedSnapshotAt
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.agentBundleVersion = agentBundleVersion
     }
 }
 
@@ -204,13 +208,15 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         id: String,
         source: RefreshDiagnosticsSource,
         at startedAt: Date,
-        intervalSeconds: Int? = nil
+        intervalSeconds: Int? = nil,
+        agentBundleVersion: String? = nil
     ) {
         lastRun = RefreshDiagnosticsRun(
             id: id,
             source: source,
             startedAt: startedAt,
-            intervalSeconds: intervalSeconds
+            intervalSeconds: intervalSeconds,
+            agentBundleVersion: agentBundleVersion
         )
         if source == .refreshAgent { lastAgentRun = lastRun }
     }

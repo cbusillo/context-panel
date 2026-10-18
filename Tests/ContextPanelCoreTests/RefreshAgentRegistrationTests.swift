@@ -984,3 +984,99 @@ func refreshAgentDiagnosticAppearsInTheAppAndClearsAfterRecovery(kind: RefreshAg
     #expect(stateStore.repairedBuild == nil)
     #expect(coordinator.currentDiagnostic != nil)
 }
+
+@MainActor
+@Test func refreshAgentRepairReplacesAHelperLeftRunningByAnEarlierBuildOncePerBuild() async {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: .enabled,
+        registrationSteps: [.succeed(.enabled)]
+    )
+    service.isRunning = true
+    var agentBuild = "build-0"
+    service.onRegister = { agentBuild = "build-1" }
+    var lockedUnregisterCount = 0
+    var holdsRefreshLock = false
+    service.onUnregister = { if holdsRefreshLock { lockedUnregisterCount += 1 } }
+    let stateStore = makeRegistrationStateStore()
+    stateStore.markReconciled(build: "build-1")
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service,
+        stateStore: stateStore,
+        policy: immediateRepairPolicy,
+        currentBuild: { "build-1" },
+        isAgentHealthy: { service.isRunning },
+        currentAgentRunID: { service.latestRunID },
+        isAgentFromDifferentBuild: { agentBuild != "build-1" },
+        whileRefreshIdle: { operation in
+            holdsRefreshLock = true
+            defer { holdsRefreshLock = false }
+            try await operation()
+            return true
+        },
+        sleep: { _ in }
+    )
+
+    let outcome = await coordinator.repairIfNeeded(isEnabled: { true })
+
+    #expect(outcome == .repaired(attempts: 1))
+    #expect(service.unregisterCount == 1)
+    #expect(lockedUnregisterCount == 1)
+    #expect(service.registerCount == 1)
+    #expect(stateStore.repairedBuild == "build-1")
+
+    // A helper that still reports another build is not restarted again for this build.
+    agentBuild = "build-0"
+    let repeated = await coordinator.repairIfNeeded(isEnabled: { true })
+
+    #expect(repeated == .verifiedEnabled)
+    #expect(service.unregisterCount == 1)
+    #expect(service.registerCount == 1)
+}
+
+@MainActor
+@Test func refreshAgentStaleHelperIsNotStoppedWhileARefreshHoldsTheLock() async {
+    let service = ScriptedRefreshAgentRegistrationService(
+        status: .enabled,
+        registrationSteps: [.succeed(.enabled)]
+    )
+    service.isRunning = true
+    var refreshInProgress = true
+    let sleep = ScriptedRefreshAgentRegistrationSleep()
+    let policy = RefreshAgentRegistrationPolicy(
+        launchGrace: .zero,
+        retryDelays: [.zero, .zero, .zero],
+        verificationDelay: .zero,
+        refreshIdleRetryDelays: [.seconds(1), .seconds(2)]
+    )
+    let stateStore = makeRegistrationStateStore()
+    let coordinator = RefreshAgentRegistrationCoordinator(
+        service: service,
+        stateStore: stateStore,
+        policy: policy,
+        currentBuild: { "build-1" },
+        isAgentHealthy: { service.isRunning },
+        currentAgentRunID: { service.latestRunID },
+        isAgentFromDifferentBuild: { true },
+        whileRefreshIdle: { operation in
+            guard !refreshInProgress else { return false }
+            try await operation()
+            return true
+        },
+        sleep: { duration in try await sleep.sleep(for: duration) }
+    )
+
+    let deferred = await coordinator.repairIfNeeded(isEnabled: { true })
+
+    #expect(deferred == .agentAlreadyRunning)
+    #expect(service.unregisterCount == 0)
+    #expect(service.registerCount == 0)
+    #expect(sleep.durations == [.zero, .seconds(1), .seconds(2)])
+    #expect(stateStore.staleAgentReplacementBuild == nil)
+
+    refreshInProgress = false
+    let replaced = await coordinator.repairIfNeeded(isEnabled: { true })
+
+    #expect(replaced == .repaired(attempts: 1))
+    #expect(service.unregisterCount == 1)
+    #expect(stateStore.staleAgentReplacementBuild == "build-1")
+}
