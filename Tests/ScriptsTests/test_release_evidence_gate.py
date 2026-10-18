@@ -1602,6 +1602,42 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "shadow-approved")
 
+    def test_rc_against_pre_ledger_baseline_requires_everything_fresh(self) -> None:
+        surface = "watchos.app"
+
+        def legacy_comparison(*, eligible: bool) -> dict[str, Any]:
+            payload = comparison(surface, "actual-runtime", train="rc", eligible=eligible)
+            payload["artifactEvidence"]["previousState"] = "legacy-incomplete"
+            payload["artifactEvidence"]["previousExpectedBuildIds"] = sorted(
+                manifest["expectedBuildId"]
+                for manifest in all_expected_manifests(manifest_id=PREVIOUS_MANIFEST)
+            )
+            payload["escalationState"] = "unknown-fail-closed"
+            return payload
+
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="rc",
+            comparison_payload=legacy_comparison(eligible=False),
+            validation_report=report(surface, runtime=True),
+        )
+        self.assertEqual(payload["state"], "shadow-approved")
+
+        unbound = legacy_comparison(eligible=False)
+        unbound["artifactEvidence"]["currentExpectedBuildIds"] = ["0" * 64]
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "does not bind current builds",
+        ):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                train="rc",
+                comparison_payload=unbound,
+                validation_report=report(surface, runtime=True),
+            )
+
     def test_lineage_serialization_preserves_comparison_map_order(self) -> None:
         comparison_payload = comparison(
             "watchos.complication",

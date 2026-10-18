@@ -211,6 +211,48 @@ class OperatorFlowTests(unittest.TestCase):
         reloaded = context_panel_validation.OperatorFlowStore(self.store).load(session)
         self.assertEqual(reloaded, state)
 
+    def test_device_with_proven_runtime_does_not_reopen_on_sleep_or_lost_pairing(self):
+        surfaces = ("ios.app", "ios.widget", "tvos.app", "tvos.top-shelf")
+        session = self.session(surfaces)
+        report = self.report(
+            surfaces,
+            devices=(
+                device("iPhone", "iOS", condition="asleep"),
+                device("Apple TV", "tvOS", condition="not_found"),
+            ),
+        )
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+        proven = runtime_report(
+            tuple((surface, "proven", "exact-build-runtime-receipt") for surface in surfaces)
+        )
+        partly_proven = runtime_report(
+            (
+                ("ios.app", "proven", "exact-build-runtime-receipt"),
+                ("ios.widget", "waiting", "receipt-propagation"),
+                ("tvos.app", "proven", "exact-build-runtime-receipt"),
+                ("tvos.top-shelf", "proven", "exact-build-runtime-receipt"),
+            )
+        )
+
+        flow_store.reconcile(session, report, proven, NOW)
+        _, completed = flow_store.reconcile(
+            session,
+            report,
+            proven,
+            NOW + timedelta(minutes=30),
+        )
+        _, partial = flow_store.reconcile(
+            session,
+            report,
+            partly_proven,
+            NOW + timedelta(minutes=30),
+        )
+
+        self.assertFalse(completed["groups"])
+        self.assertFalse(completed["notificationDecisions"])
+        partial_devices = {group["device"] for group in partial["groups"]}
+        self.assertEqual(partial_devices, {"iPhone"})
+
     def test_processing_and_active_receipt_propagation_never_queue_human_work(self):
         surfaces = ("macos.app",)
         session = self.session(surfaces)

@@ -1329,7 +1329,12 @@ scripts/context-panel-release-gate.py enforce \
 
 Supply the complete sealed expected-build manifest set for every shipping
 surface; a comparison or manifest set that omits a shipping surface fails closed. Omit the
-previous lineage bundle when no earlier approval exists. The ledger output is
+previous lineage bundle when no earlier approval exists. A baseline released
+before ledger lineage existed (comparison previous evidence `legacy-incomplete`,
+such as 1.0.60) has no lineage to supply its build manifests; the gate accepts
+that comparison without one only while it fails closed with nothing eligible
+to carry forward, so every surface proves all of its evidence fresh. The
+ledger output is
 the privacy-safe report; the separate lineage output contains the authoritative
 generation inputs needed to replay that ledger before it can be reused.
 Placement carry-forward always
