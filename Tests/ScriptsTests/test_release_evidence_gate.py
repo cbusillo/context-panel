@@ -1624,18 +1624,25 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "shadow-approved")
 
-        unbound = legacy_comparison(eligible=False)
-        unbound["artifactEvidence"]["currentExpectedBuildIds"] = ["0" * 64]
+        missing_fresh = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="rc",
+            comparison_payload=legacy_comparison(eligible=False),
+            validation_report=report(surface, runtime=False),
+        )
+        self.assertNotEqual(missing_fresh["state"], "shadow-approved")
+        self.assertIn(f"{surface}:actual-runtime:missing", missing_fresh["blockers"])
+
+        resolved = legacy_comparison(eligible=False)
+        resolved["escalationState"] = "resolved"
         with self.assertRaisesRegex(
             ReleaseEvidenceError,
-            "does not bind current builds",
+            "requires previous expected-build context",
         ):
-            self.evaluate(
-                surface,
-                "actual-runtime",
-                train="rc",
-                comparison_payload=unbound,
-                validation_report=report(surface, runtime=True),
+            release_gate_core._validate_legacy_baseline_without_lineage(
+                resolved,
+                all_expected_manifests(),
             )
 
     def test_lineage_serialization_preserves_comparison_map_order(self) -> None:
