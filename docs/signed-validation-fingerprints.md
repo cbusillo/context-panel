@@ -165,7 +165,8 @@ Carry-forward is derived, never written back into prior evidence:
 
 - shared-view evidence is eligible only when the render fingerprint is equal
 - actual-runtime evidence is eligible only when the runtime fingerprint and
-  exact version, build, commit, configuration, Xcode build, and tree state match
+  exact version, build, commit, configuration, Xcode build, and tree state match;
+  this applies only to a surface whose `requiredEvidence` includes it
 - placement evidence requires an equal placement fingerprint, the matching
   current runtime receipt, and compatible host OS evidence. A render-only change
   is re-proven through shared-view evidence and does not invalidate unchanged
