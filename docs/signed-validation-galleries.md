@@ -145,10 +145,15 @@ snapshot creation cannot recursively copy or mutate capture-owned output.
 
 Each simulator name is unique. A pre-create inventory blocks collisions; any
 uncertain create result is cleaned only by a newly observed, profile-matching
-UDID. The executor never deletes by simulator name. Watch uses the existing
-`simctl` baseline and routed screenshots. Each capture requires a converged
-pre-route baseline, then a converged decodable routed PNG that differs from the
-baseline and every other cell.
+UDID. The executor never deletes by simulator name. Watch and tvOS use `simctl`
+baseline and routed screenshots, except that a `watchos.complication` or
+`tvos.top-shelf` launch makes the app draw the cell in its host frame and mask
+and write it to `tmp/context-panel-shared-view-cell.png` in its data container;
+the executor removes that file before the launch and reads it back instead of
+a screenshot. Regions listed in the simulator pins, such as the Watch clock,
+are painted out of a screenshot before its digest is taken. Each capture
+requires a converged pre-route baseline, then a converged decodable routed PNG
+that differs from the baseline and every other cell.
 
 iOS and iPadOS cannot use `simctl openurl`, because current simulators can
 substitute a custom-scheme confirmation sheet for the gallery. visionOS cannot
@@ -165,11 +170,10 @@ opening a custom-scheme URL or modifying the historical app source. It validates
 the canonical URL and selector contract inside the app-associated harness, then
 uses SwiftUI `ImageRenderer` with a non-shipping, pure-SwiftUI capture shell to
 produce stable baseline and routed PNGs from the exact fixture, core,
-companion-support, and widget modules. The shell labels its runtime surface as
-iPhone, iPad, or Vision so cross-surface duplicates remain an explicit evidence
-failure rather than an ambiguous identical artifact. The label identifies the
-executing host idiom; all three surfaces use the same 840-by-900-point canvas,
-not device-specific screen geometry. This is exact-source shared-view renderer
+companion-support, and widget modules. The shell draws only the cell, in the
+frame its iPhone, iPad, or Vision host gives it
+([reference images](validation-authority.md#reference-images)), so the same
+fixture on two hosts differs by frame size. This is exact-source shared-view renderer
 evidence, not proof that an arbitrary historical app opened
 the gallery route. On visionOS it also avoids the 1-by-1 placeholder returned by
 `XCUIElement.screenshot()` and the spatial-sheet crop returned by
@@ -231,8 +235,8 @@ notifications, or relays receipts. Three tvOS-specific rules apply:
   index with live services off. The `contextpaneltv://validation-gallery` URL
   route opens the same gallery inside the normally running app. Both show
   synthetic fixtures only.
-- The Top Shelf cells render the production Top Shelf renderer in-app. They are
-  shared-view evidence only; real Top Shelf placement remains
+- The Top Shelf cells are the production Top Shelf renderer's banner with the
+  inset corner mask, drawn in-app. They are shared-view evidence only; real Top Shelf placement remains
   `os-composited-placement` evidence from a physical Apple TV.
 
 The Watch profile does not create or repair a paired iPhone/Watch topology. A
@@ -334,8 +338,8 @@ runtime.
 
 The lane checks its workflow tooling commit and both target commits against
 protected `main`, then creates detached clean worktrees for the exact previous
-and current target SHAs. It selects `/Applications/Xcode_26.6.app` before
-validating the runner, requires the runner's full Xcode build to match the
+and current target SHAs. It selects the Xcode pinned in
+`Config/ContextPanelSharedViewSimulators.json` before validating the runner, requires the runner's full Xcode build to match the
 current sealed source identity, and downloads every requested run into its own
 bounded directory. Each artifact must come from an allowlisted completed release
 workflow dispatch or reusable-workflow call, match the requested run/source

@@ -20,6 +20,7 @@ workflow = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = workflow
 spec.loader.exec_module(workflow)
 
+from context_panel_validation import shared_view_capture as capture_module
 from Tests.ScriptsTests.test_shared_view_evidence import comparison_for
 
 
@@ -389,121 +390,93 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("ios.widget", {item["surface"] for item in plan["requirements"]})
         self.assertIn("ios.app", {item["surface"] for item in plan["requirements"]})
 
-    def test_capture_config_selects_available_runtime_and_device_type(self) -> None:
-        catalog = {
-            "runtimes": [
+    PINS = {
+        "ios": ("com.apple.CoreSimulator.SimRuntime.iOS-26-0", "com.apple.CoreSimulator.SimDeviceType.iPhone-16"),
+        "ipados": ("com.apple.CoreSimulator.SimRuntime.iOS-26-0", "com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3"),
+        "visionos": ("com.apple.CoreSimulator.SimRuntime.xrOS-26-0", "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro"),
+        "watchos": ("com.apple.CoreSimulator.SimRuntime.watchOS-26-0", "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm"),
+        "tvos": ("com.apple.CoreSimulator.SimRuntime.tvOS-26-0", "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K"),
+    }
+    PRODUCT_FAMILIES = {
+        "ios": ("iOS", "iPhone"),
+        "ipados": ("iOS", "iPad"),
+        "visionos": ("xrOS", "Apple Vision"),
+        "watchos": ("watchOS", "Apple Watch"),
+        "tvos": ("tvOS", "Apple TV"),
+    }
+    BUNDLES = {
+        "ios": "/tmp/i.app",
+        "ipados": "/tmp/i.app",
+        "visionos": "/tmp/v.app",
+        "watchos": "/tmp/w.app",
+        "tvos": "/tmp/t.app",
+    }
+
+    def pins(self) -> Any:
+        return capture_module.SimulatorPins(
+            "/Applications/Xcode.app",
+            {name: capture_module.SimulatorPin(runtime, device, {}) for name, (runtime, device) in self.PINS.items()},
+        )
+
+    def catalog(self, *, without: str | None = None) -> dict[str, Any]:
+        runtimes: dict[str, dict[str, Any]] = {}
+        device_types = []
+        for name, (runtime, device) in self.PINS.items():
+            platform, family = self.PRODUCT_FAMILIES[name]
+            entry = runtimes.setdefault(
+                runtime,
                 {
-                    "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-25-0",
-                    "platform": "iOS",
-                    "version": "25.0",
-                    "isAvailable": True,
-                    "supportedDeviceTypes": [
-                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16"},
-                    ],
-                },
-                {
-                    "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
-                    "platform": "iOS",
+                    "identifier": runtime,
+                    "platform": platform,
                     "version": "26.0",
                     "isAvailable": True,
-                    "supportedDeviceTypes": [
-                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17"},
-                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5"},
-                    ],
+                    "supportedDeviceTypes": [],
                 },
-                {
-                    "identifier": "com.apple.CoreSimulator.SimRuntime.xrOS-26-0",
-                    "platform": "xrOS",
-                    "version": "26.0",
-                    "isAvailable": True,
-                    "supportedDeviceTypes": [
-                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro"},
-                    ],
-                },
-                {
-                    "identifier": "com.apple.CoreSimulator.SimRuntime.watchOS-26-0",
-                    "platform": "watchOS",
-                    "version": "26.0",
-                    "isAvailable": True,
-                    "supportedDeviceTypes": [
-                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm"},
-                    ],
-                },
-                {
-                    "identifier": "com.apple.CoreSimulator.SimRuntime.tvOS-26-0",
-                    "platform": "tvOS",
-                    "version": "26.0",
-                    "isAvailable": True,
-                    "supportedDeviceTypes": [
-                        {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K"},
-                    ],
-                },
-            ],
-            "devicetypes": [
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17", "productFamily": "iPhone"},
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16", "productFamily": "iPhone"},
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5", "productFamily": "iPad"},
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro", "productFamily": "Apple Vision"},
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm", "productFamily": "Apple Watch"},
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-1080p", "productFamily": "Apple TV"},
-                {"identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K", "productFamily": "Apple TV"},
-            ],
+            )
+            if device != without:
+                entry["supportedDeviceTypes"].append({"identifier": device})
+            device_types.append({"identifier": device, "productFamily": family})
+        # A newer runtime and another device are present but must not be chosen.
+        runtimes["newer"] = {
+            "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+            "platform": "iOS",
+            "version": "27.0",
+            "isAvailable": True,
+            "supportedDeviceTypes": [{"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17"}],
         }
+        device_types.append({"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17", "productFamily": "iPhone"})
+        return {"runtimes": list(runtimes.values()), "devicetypes": device_types}
+
+    def test_capture_config_uses_the_pinned_runtime_and_device_type(self) -> None:
         config = workflow.capture_config(
-            catalog,
-            {
-                "ios": "/tmp/i.app",
-                "ipados": "/tmp/i.app",
-                "visionos": "/tmp/v.app",
-                "watchos": "/tmp/w.app",
-                "tvos": "/tmp/t.app",
-            },
+            self.catalog(),
+            self.BUNDLES,
             "/tmp/ios.xctestrun",
             "/tmp/visionos.xctestrun",
             macos_source_root="/tmp/current-source",
+            pins=self.pins(),
         )
         self.assertEqual(
             set(config["profiles"]), {*workflow.SUPPORTED_CAPTURE_SURFACES, "macos"}
         )
         self.assertEqual(config["profiles"]["macos"], {"sourceRoot": "/tmp/current-source"})
         self.assertEqual(
-            config["profiles"]["tvos"]["deviceTypeIdentifier"],
-            "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K",
+            {name: (config["profiles"][name]["runtimeIdentifier"], config["profiles"][name]["deviceTypeIdentifier"])
+             for name in self.PINS},
+            self.PINS,
         )
         self.assertNotIn("uiTestRun", config["profiles"]["tvos"])
-        self.assertEqual(
-            config["profiles"]["ios"]["runtimeIdentifier"],
-            "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
-        )
-        self.assertEqual(
-            config["profiles"]["ios"]["deviceTypeIdentifier"],
-            "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
-        )
-        self.assertEqual(
-            config["profiles"]["ios"]["uiTestRun"],
-            "/tmp/ios.xctestrun",
-        )
-        self.assertEqual(
-            config["profiles"]["ipados"]["uiTestRun"],
-            "/tmp/ios.xctestrun",
-        )
-        self.assertEqual(
-            config["profiles"]["visionos"]["uiTestRun"],
-            "/tmp/visionos.xctestrun",
-        )
+        self.assertEqual("/tmp/ios.xctestrun", config["profiles"]["ipados"]["uiTestRun"])
+        self.assertEqual("/tmp/visionos.xctestrun", config["profiles"]["visionos"]["uiTestRun"])
 
-    def test_capture_config_fails_without_a_required_device_family(self) -> None:
-        with self.assertRaises(workflow.WorkflowEvidenceError):
+    def test_capture_config_fails_when_the_runner_lacks_a_pinned_simulator(self) -> None:
+        with self.assertRaisesRegex(workflow.WorkflowEvidenceError, "pinned ipados simulator"):
             workflow.capture_config(
-                {"runtimes": [], "devicetypes": []},
-                {
-                    "ios": "/tmp/i.app",
-                    "ipados": "/tmp/i.app",
-                    "visionos": "/tmp/v.app",
-                    "watchos": "/tmp/w.app",
-                },
+                self.catalog(without=self.PINS["ipados"][1]),
+                self.BUNDLES,
                 "/tmp/ios.xctestrun",
                 "/tmp/visionos.xctestrun",
+                pins=self.pins(),
             )
 
     @staticmethod

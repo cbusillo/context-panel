@@ -176,7 +176,8 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cell = try #require(try macOSMatrixCells().first { $0.cell["presentation"] == "widget" }).cell
+    // The app overview prints dates and times; the framed widget cell may not.
+    let cell = try #require(try macOSMatrixCells().first { $0.surface == "macos.app" }).cell
     let hosts: [[String: String]] = [
         ["TZ": "UTC", "LANG": "en_US.UTF-8"],
         ["TZ": "Asia/Tokyo", "LANG": "ja_JP.UTF-8"],
