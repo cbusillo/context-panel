@@ -1188,8 +1188,11 @@ Completed issues #168, #230, and #231 record the initial visionOS packaging,
 profile, icon, metadata, App Store Connect, and signed-device proof. The signed
 tvOS lane is recorded by #379; both tvOS profile secrets remain required. The signed candidate includes Couch Mode,
 the dynamic Top Shelf extension, and upgrade cleanup for the retired provider
-badge; every fresh App Store submission still requires physical Apple TV,
-screenshot, metadata, privacy, and reviewer evidence.
+badge. A tvOS submission needs physical Apple TV proof only when the release
+gate's scope, the release comparison plus any active runtime regression
+watchlist entry, requires runtime or placement evidence for a tvOS surface.
+Every submission still needs screenshot, metadata, privacy, and reviewer
+evidence, including any demo video App Review asks for.
 
 ### Signed Device Smoke Test
 
