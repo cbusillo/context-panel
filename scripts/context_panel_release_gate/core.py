@@ -448,6 +448,47 @@ def _validate_expected_build_coverage(
         )
 
 
+def _validate_legacy_baseline_without_lineage(
+    comparison: dict[str, Any],
+    current_manifests: tuple[dict[str, Any], ...],
+) -> None:
+    """Accept a pre-ledger baseline only when nothing can be carried from it.
+
+    A baseline released before release-evidence lineage existed has no ledger
+    that could supply its expected-build manifests. Its artifact risks cannot be
+    re-derived, so the comparison is accepted only when it already fails closed
+    and every surface must prove all of its evidence fresh. The current side is
+    still fully bound.
+    """
+    evidence = comparison["artifactEvidence"]
+    if comparison.get("escalationState") != "unknown-fail-closed" or any(
+        not isinstance(surface.get("carryForward"), dict)
+        or any(
+            not isinstance(entry, dict) or entry.get("eligible") is not False
+            for entry in surface["carryForward"].values()
+        )
+        for surface in comparison["surfaces"]
+    ):
+        raise ReleaseEvidenceError(
+            "comparison artifact evidence requires previous expected-build context"
+        )
+    current_payloads = list(current_manifests)
+    if evidence["currentState"] != "complete" or not current_payloads:
+        raise ReleaseEvidenceError(
+            "comparison artifact evidence requires previous expected-build context"
+        )
+    _expected_build_identity_context(current_payloads, label="current")
+    _validate_expected_build_coverage(current_payloads, label="current")
+    if evidence["currentExpectedBuildIds"] != sorted(
+        {
+            item.get("expectedBuildId")
+            for item in current_payloads
+            if isinstance(item.get("expectedBuildId"), str)
+        }
+    ):
+        raise ReleaseEvidenceError("comparison artifact evidence does not bind current builds")
+
+
 def _validate_artifact_comparison_inputs(
     comparison: dict[str, Any],
     *,
@@ -469,6 +510,12 @@ def _validate_artifact_comparison_inputs(
         raise ReleaseEvidenceError(
             "current expected-build coverage is incomplete"
         )
+    if (
+        evidence["previousState"] == "legacy-incomplete"
+        and previous_lineage is None
+    ):
+        _validate_legacy_baseline_without_lineage(comparison, current_manifests)
+        return
     if evidence["previousState"] == "not-evaluated":
         previous_payloads: list[dict[str, Any]] | None = None
     elif (

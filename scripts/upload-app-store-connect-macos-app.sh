@@ -132,7 +132,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Match the companion helper's local-export fixture seam. Live upload must
-# refuse fixture tools before any receipt, credential, profile or Xcode work.
+# refuse fixture tools before any credential, profile or Xcode work.
 xcodebuild_tool=/usr/bin/xcodebuild
 if [[ -n "${CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR:-}" ]]; then
 	if [[ "$upload" == "true" ]]; then
@@ -146,11 +146,6 @@ fi
 if [[ "$archive_only" == "true" && "$skip_archive" == "true" ]]; then
 	echo "--archive-only and --skip-archive cannot be combined" >&2
 	exit 2
-fi
-
-# Uploading is a live App Store Connect mutation; export-only is not.
-if [[ "$upload" == "true" && "$archive_only" != "true" ]]; then
-	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
 fi
 
 require_command() {
@@ -432,10 +427,6 @@ if [[ "$archive_only" == "true" ]]; then
 	echo "Archive verified; no export or upload performed."
 	exit 0
 fi
-if [[ "$upload" == "true" ]]; then
-	"$(dirname "${BASH_SOURCE[0]}")/require-cloudkit-schema-receipt.sh"
-fi
-
 rm -rf "$export_path"
 run_xcodebuild \
 	-exportArchive \

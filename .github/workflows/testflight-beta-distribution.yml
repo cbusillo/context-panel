@@ -30,10 +30,6 @@ name: TestFlight Beta Distribution
         required: false
         default: false
         type: boolean
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -67,10 +63,6 @@ name: TestFlight Beta Distribution
         required: true
         default: false
         type: boolean
-      cloudkit_schema_receipt_base64:
-        description: Optional legacy receipt (option C). Leave empty for the Mac publication-time check.
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -131,7 +123,7 @@ jobs:
   distribute:
     name: Distribute TestFlight Beta
     needs: [guard, intent]
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     if: >-
       ${{ !cancelled() && needs.guard.result == 'success' &&
           (needs.intent.result == 'success' ||
@@ -145,6 +137,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Install Python Dependencies
         run: |
@@ -152,21 +146,16 @@ jobs:
           .build/testflight-beta-venv/bin/python -m pip install --upgrade pip
           .build/testflight-beta-venv/bin/python -m pip install cryptography
 
-      - name: Check Production CloudKit at Publication
+      - name: Check Production CloudKit Schema
         if: ${{ !inputs.dry_run }}
-        uses: ./.github/actions/cloudkit-publication-check
-        with:
-          channel: testflight
-          receipt: ${{ inputs.cloudkit_schema_receipt_base64 }}
-          receipt-key: ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+        env:
+          CLOUDKIT_MANAGEMENT_TOKEN: ${{ secrets.CLOUDKIT_MANAGEMENT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/cloudkit-schema-gate.py check
 
       - name: Distribute Beta
         shell: bash
         env:
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
-            ${{ inputs.cloudkit_schema_receipt_base64 }}
-          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
-            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_PLATFORM: ${{ inputs.platform }}

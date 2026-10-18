@@ -8,10 +8,6 @@ cktool_schema_path="CloudKit/companion-sync.schema.ckdb"
 team_id="${APPLE_TEAM_ID:-MM5YXC7T6E}"
 container_id="iCloud.com.shinycomputers.contextpanel"
 live="false"
-receipt_output=""
-receipt_ttl_seconds="21600"
-source_commit=""
-publication_request_digest=""
 
 usage() {
 	cat <<'USAGE'
@@ -27,11 +23,6 @@ Options:
   --schema PATH        Checked-in schema contract. Default: CloudKit/companion-sync.schema.json
   --cktool-schema PATH Checked-in cktool import schema. Default: CloudKit/companion-sync.schema.ckdb
   --live               Export and validate the live schema with xcrun cktool.
-  --receipt-output PATH Write a sealed short-lived receipt after successful live validation.
-  --receipt-ttl-seconds N
-                       Receipt validity in seconds. Default: 21600 (6 hours)
-  --publication-request-digest HEX Bind the result to one publication request.
-  --source-commit SHA  Full source commit bound to the receipt. Default: GITHUB_SHA or HEAD
   -h, --help           Show this help.
 
 Live validation requires a cktool token provided through cktool save-token,
@@ -65,22 +56,6 @@ while [[ $# -gt 0 ]]; do
 		live="true"
 		shift
 		;;
-	--receipt-output)
-		receipt_output="${2:?--receipt-output requires a value}"
-		shift 2
-		;;
-	--receipt-ttl-seconds)
-		receipt_ttl_seconds="${2:?--receipt-ttl-seconds requires a value}"
-		shift 2
-		;;
-	--publication-request-digest)
-		publication_request_digest="${2:?--publication-request-digest requires a value}"
-		shift 2
-		;;
-	--source-commit)
-		source_commit="${2:?--source-commit requires a value}"
-		shift 2
-		;;
 	-h | --help)
 		usage
 		exit 0
@@ -101,15 +76,6 @@ require_command() {
 }
 
 require_command jq
-
-if [[ -n "$receipt_output" && "$live" != "true" ]]; then
-	echo "--receipt-output requires --live" >&2
-	exit 2
-fi
-if [[ -n "$receipt_output" && "$environment" != "production" ]]; then
-	echo "CloudKit schema receipts require --environment production" >&2
-	exit 2
-fi
 
 if [[ ! -f "$schema_path" ]]; then
 	echo "CloudKit companion schema contract not found: $schema_path" >&2
@@ -337,6 +303,36 @@ validate_ckdb_grants() {
 	fi
 }
 
+# Every field the JSON contract declares must exist in the schema with its type
+# and declared indexes, so a newly added field cannot pass unchecked.
+validate_contract_fields() {
+	local schema="$1"
+	local label="$2"
+	local record_type field_name field_type queryable sortable ckdb_type
+	while IFS=$'\t' read -r record_type field_name field_type queryable sortable; do
+		case "$field_type" in
+		ENCRYPTED_BYTES) ckdb_type='ENCRYPTED[[:space:]]+BYTES' ;;
+		BYTES | INT64 | TIMESTAMP | STRING) ckdb_type="$field_type" ;;
+		*)
+			echo "schema contract field has an unsupported type: $record_type.$field_name $field_type" >&2
+			return 1
+			;;
+		esac
+		if ! live_schema_has_field_type "$schema" "$record_type" "$field_name" "$ckdb_type"; then
+			echo "$label schema is missing contract field/type: $record_type.$field_name $field_type" >&2
+			return 1
+		fi
+		if [[ "$queryable" == "true" ]] && ! live_schema_field_is_queryable "$schema" "$record_type" "$field_name"; then
+			echo "$label schema field is not queryable: $record_type.$field_name" >&2
+			return 1
+		fi
+		if [[ "$sortable" == "true" ]] && ! live_schema_field_is_sortable "$schema" "$record_type" "$field_name"; then
+			echo "$label schema field is not sortable: $record_type.$field_name" >&2
+			return 1
+		fi
+	done < <(jq -r '.recordTypes[] | .name as $record | .fields[] | [$record, .name, .type, (.queryable // false), (.sortable // false)] | @tsv' "$schema_path")
+}
+
 validate_ckdb_schema() {
 	local schema="$1"
 	local label="$2"
@@ -536,6 +532,7 @@ if [[ "$contract_sortable" != "true" ]]; then
 fi
 
 validate_ckdb_schema "$cktool_schema_path" "checked-in cktool" "true"
+validate_contract_fields "$cktool_schema_path" "checked-in cktool"
 
 if [[ "$live" != "true" ]]; then
 	echo "CloudKit companion and runtime receipt schema contracts OK: $schema_path and $cktool_schema_path"
@@ -560,43 +557,12 @@ if [[ -n "${CLOUDKIT_MANAGEMENT_TOKEN:-}" ]]; then
 fi
 
 if ! xcrun "${cktool_export_args[@]}" >/dev/null 2>&1; then
-	if [[ -n "$receipt_output" ]]; then
-		echo "CloudKit live schema validation failed: cktool export-schema failed for $container_id/$environment." >&2
-	else
-		echo "CloudKit live schema validation skipped: cktool export-schema failed for $container_id/$environment." >&2
-	fi
+	echo "CloudKit live schema validation skipped: cktool export-schema failed for $container_id/$environment." >&2
 	echo "Run xcrun cktool save-token or set CLOUDKIT_MANAGEMENT_TOKEN, then rerun with --live." >&2
-	if [[ -n "$receipt_output" ]]; then
-		exit 1
-	fi
 	exit 77
 fi
 
 validate_ckdb_schema "$live_schema" "live CloudKit $environment"
-
-if [[ -n "$receipt_output" ]]; then
-	require_command python3
-	if [[ -z "$source_commit" ]]; then
-		source_commit="${GITHUB_SHA:-}"
-	fi
-	if [[ -z "$source_commit" ]]; then
-		require_command git
-		source_commit="$(git -C "$repo_root" rev-parse HEAD)"
-	fi
-	receipt_command=(
-		python3 "$repo_root/scripts/cloudkit-schema-receipt.py" issue
-		--environment "$environment"
-		--container-id "$container_id"
-		--schema "$schema_path"
-		--cktool-schema "$cktool_schema_path"
-		--source-commit "$source_commit"
-		--ttl-seconds "$receipt_ttl_seconds"
-		--output "$receipt_output"
-	)
-	if [[ -n "$publication_request_digest" ]]; then
-		receipt_command+=(--publication-request-digest "$publication_request_digest")
-	fi
-	"${receipt_command[@]}"
-fi
+validate_contract_fields "$live_schema" "live CloudKit $environment"
 
 echo "CloudKit live schema contains private-only companion sync and runtime receipt contracts with required query and range indexes in $environment."

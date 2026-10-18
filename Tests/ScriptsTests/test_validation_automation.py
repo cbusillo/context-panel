@@ -915,8 +915,6 @@ class ValidationAutomationTests(unittest.TestCase):
                     TARGET.version,
                     "--build-number",
                     TARGET.build_number,
-                    "--cloudkit-schema-receipt",
-                    "cloudkit-schema-receipt.json",
                     "--capture-config",
                     "capture.json",
                 ]
@@ -1034,7 +1032,6 @@ class ValidationAutomationTests(unittest.TestCase):
             version=TARGET.version,
             build_number=TARGET.build_number,
             expected_build_manifests=[],
-            cloudkit_schema_receipt=Path("cloudkit-schema-receipt.json"),
             json=True,
         )
         invalid = runtime_observation(

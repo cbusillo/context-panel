@@ -1602,6 +1602,49 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "shadow-approved")
 
+    def test_rc_against_pre_ledger_baseline_requires_everything_fresh(self) -> None:
+        surface = "watchos.app"
+
+        def legacy_comparison(*, eligible: bool) -> dict[str, Any]:
+            payload = comparison(surface, "actual-runtime", train="rc", eligible=eligible)
+            payload["artifactEvidence"]["previousState"] = "legacy-incomplete"
+            payload["artifactEvidence"]["previousExpectedBuildIds"] = sorted(
+                manifest["expectedBuildId"]
+                for manifest in all_expected_manifests(manifest_id=PREVIOUS_MANIFEST)
+            )
+            payload["escalationState"] = "unknown-fail-closed"
+            return payload
+
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="rc",
+            comparison_payload=legacy_comparison(eligible=False),
+            validation_report=report(surface, runtime=True),
+        )
+        self.assertEqual(payload["state"], "shadow-approved")
+
+        missing_fresh = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="rc",
+            comparison_payload=legacy_comparison(eligible=False),
+            validation_report=report(surface, runtime=False),
+        )
+        self.assertNotEqual(missing_fresh["state"], "shadow-approved")
+        self.assertIn(f"{surface}:actual-runtime:missing", missing_fresh["blockers"])
+
+        resolved = legacy_comparison(eligible=False)
+        resolved["escalationState"] = "resolved"
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "requires previous expected-build context",
+        ):
+            release_gate_core._validate_legacy_baseline_without_lineage(
+                resolved,
+                all_expected_manifests(),
+            )
+
     def test_lineage_serialization_preserves_comparison_map_order(self) -> None:
         comparison_payload = comparison(
             "watchos.complication",
