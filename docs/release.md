@@ -1339,11 +1339,10 @@ blocks submission. Dry runs, cancel-only operations, and prepare-only operations
 without a build remain exempt. The ledger binds the canonical configured policy,
 full comparison, expected-build identity set, and exact coordinator report;
 submission independently recomputes every binding. When historical lineage needs
-non-current policy preimages, pass the same archive used by the release gate as
-one optional base64 JSON bundle in the workflow input
-`release_evidence_historical_policy_archive_base64`; the workflow decodes it and
-passes `--release-evidence-historical-policy-archive` to the submission
-validator.
+non-current policy preimages, include the same archive used by the release gate
+in the [submission evidence bundle](#submission-evidence-bundle); the workflow
+passes it to the submission validator as
+`--release-evidence-historical-policy-archive`.
 
 Validate a ledger outside the submission workflow with the same authoritative
 inputs:
@@ -1591,8 +1590,9 @@ scripts/context-panel-validation.py final-report \
 ```
 
 The App Store submit helper accepts the file with `--validation-report`. The
-GitHub workflow accepts the same JSON as `validation_report_base64`; encode it
-without line wrapping before dispatch. The report is validated before App Store
+GitHub workflow receives it inside the
+[submission evidence bundle](#submission-evidence-bundle). The report is
+validated before App Store
 Connect credentials are used. Dry runs, cancel-only recovery, and prepare-only
 metadata staging without a build remain available without runtime evidence.
 Prepare-only runs that attach a build are gated.
@@ -1814,8 +1814,9 @@ diagnostics established by #456 before treating provider refresh as the cause.
 
 After the uploaded build is processed, run the `Submit App Store Review` workflow
 with the App Store marketing version, uploaded build number, and App Store
-release notes. For a live build attachment or submission, also provide the
-base64-encoded exact-build validation report described above. The workflow calls
+release notes. For a live build attachment or submission, also publish the
+[submission evidence bundle](#submission-evidence-bundle) and pass its SHA-256
+as `evidence_bundle_sha256`. The workflow calls
 `scripts/submit-app-store-review.py`, which
 creates or reuses the App Store version for the selected platform, attaches the
 validated platform-matching build, copies localization and review-contact
@@ -1823,6 +1824,52 @@ metadata from an existing version, updates `What's New`, and submits the review
 submission. Use `dry_run: true` to validate the metadata source, uploaded build,
 blocked-version recovery path, and target version path without creating,
 updating, or submitting App Store review objects.
+
+### Submission evidence bundle
+
+GitHub caps all `workflow_dispatch` inputs at 65,535 characters in total, and a
+full release's evidence is several times that. The workflow therefore reads the
+evidence from Git, pinned by a digest the dispatcher supplies:
+
+1. Pack the exact files that passed `--validate-report-only`. Pass the same
+   optional inputs the release gate used (`--previous-ledger`,
+   `--host-os-evidence`, `--historical-policy-archive`):
+
+   ```sh
+   scripts/submission-evidence-bundle.py create \
+     --version <version> --build-number <build-number> \
+     --validation-report .build/validation-report.json \
+     --release-evidence-report .build/release-evidence.json \
+     --comparison .build/release-comparison.json \
+     --expected-build-manifest .build/ExpectedBuildManifest-macos.json \
+     --expected-build-manifest .build/ExpectedBuildManifest-ios.json \
+     --expected-build-manifest .build/ExpectedBuildManifest-visionos.json \
+     --expected-build-manifest .build/ExpectedBuildManifest-tvos.json \
+     --selected-rc-ledger .build/release-evidence-rc-lineage.json \
+     --output .build/submission-evidence.json
+   ```
+
+   It prints the branch name and `evidence_bundle_sha256`.
+2. Commit the bundle as `submission-evidence.json` at the root of an orphan
+   branch named `release-evidence/<version>-<build-number>` and push it with
+   the bot helpers. No workflow runs on that branch. The evidence is public by
+   design; the reports exclude device, account, credential and App Store
+   Connect identifiers.
+3. Dispatch `Submit App Store Review` from `main` with the same version and
+   build number and `evidence_bundle_sha256`. Use the same bundle for every
+   platform.
+
+The workflow keeps its protected-main guard and release-intent record. It
+fetches the branch, refuses the bundle unless its SHA-256, version and build
+number match the dispatch, and unpacks each file byte for byte. It then runs the
+same validation as the local route, against the policy files at the protected
+`main` commit. A missing branch, a changed bundle or a missing digest on a live
+run fails before any App Store Connect request. The branch can be deleted
+after the version is live.
+
+If the workflow cannot be used, the local operator route at the end of this
+section remains the fallback. It skips the protected-main guard and the
+release-intent record, so record why on the release issue.
 
 Preferred operator flow:
 
@@ -1839,6 +1886,8 @@ Preferred operator flow:
 3. If the dry run reports that an older App Store version blocks creating the
    target version, rerun the dry run with `remove_active_review_version` set to
    that blocking version.
+   Pass `evidence_bundle_sha256` in the dry run too, so the evidence is
+   validated before the live run.
 4. After the dry run succeeds, rerun the same inputs with `dry_run: false` to
    submit review.
 
@@ -1927,19 +1976,19 @@ cancel-only. It allows the submit script to remove or reuse an existing blocked
 App Store version, then continue creating the target version and submitting the
 new build after the dry-run path has validated that transition.
 
-For local operator use, the same script accepts an API key path or the existing
-App Store Connect environment variables. This example is a live run, so it
-runs the schema gate first:
+For the local operator route, the same script accepts an API key path or the
+existing App Store Connect environment variables. Run it from a clean checkout
+of protected `main`. A live run takes the schema gate first and the same
+evidence flags as the preflight above, without `--validate-report-only`:
 
 ```sh
 scripts/cloudkit-schema-gate.py check &&
   scripts/submit-app-store-review.py \
   --platform MAC_OS \
-  --version 1.0.12 \
-  --build-number 202605290049 \
-  --validation-report .build/validation-report.json \
-  --copy-from-version 1.0.2 \
-  --whats-new "Improves multi-account provider identity handling."
+  --version <version> \
+  --build-number <build-number> \
+  --whats-new "<approved release notes>" \
+  <evidence flags from the preflight>
 ```
 
 ### Direct App Store Connect API Checks

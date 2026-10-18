@@ -2,118 +2,6 @@
 name: Submit App Store Review
 
 "on":
-  workflow_call:
-    inputs:
-      version:
-        description: App Store marketing version.
-        required: true
-        type: string
-      platform:
-        description: App Store platform.
-        required: false
-        default: MAC_OS
-        type: string
-      build_number:
-        description: Uploaded CFBundleVersion/build number.
-        required: false
-        type: string
-      whats_new:
-        description: Release notes for the App Store version.
-        required: false
-        type: string
-      review_notes:
-        description: >-
-          Optional App Review explanation. TV_OS clears copied prior-version
-          notes when omitted and prepends physical-device evidence when a demo
-          URL is supplied.
-        required: false
-        type: string
-      tvos_demo_video_url:
-        description: >-
-          Optional reviewer-accessible HTTPS physical Apple TV demo URL for
-          submissions that need current hardware evidence. When supplied, its
-          standardized evidence block replaces copied prior-version notes.
-        required: false
-        type: string
-      copy_from_version:
-        description: Existing App Store version to copy metadata from.
-        required: false
-        type: string
-      copy_from_platform:
-        description: >-
-          Platform containing the metadata source. Defaults to the target
-          platform.
-        required: false
-        type: string
-      remove_active_review_version:
-        description: >-
-          Existing App Store version to remove/reuse first when App Store
-          Connect blocks creating the target version.
-        required: false
-        type: string
-      dry_run:
-        description: >-
-          Validate metadata, build, and review path without submitting.
-        required: false
-        default: false
-        type: boolean
-      cancel_review_only:
-        description: Cancel review without creating or submitting a replacement.
-        required: false
-        default: false
-        type: boolean
-      prepare_only:
-        description: >-
-          Create/update the App Store version without submitting review.
-        required: false
-        default: false
-        type: boolean
-      validation_report_base64:
-        description: >-
-          Base64 JSON from context-panel-validation.py final-report --json.
-          Required for live build attachment or submission.
-        required: false
-        type: string
-      validation_train:
-        description: >-
-          Evidence policy tier. Live build attachment or submission requires
-          release; lower tiers are only valid for non-live validation.
-        required: false
-        default: release
-        type: string
-      release_evidence_mode:
-        description: Enforce release evidence by default; shadow remains available for diagnostics.
-        required: false
-        default: enforce
-        type: string
-      release_evidence_report_base64:
-        description: Base64 JSON from context-panel-release-gate.py.
-        required: false
-        type: string
-      release_evidence_comparison_base64:
-        description: Base64 full source-manifest comparison used by the release gate.
-        required: false
-        type: string
-      release_evidence_expected_build_manifests_base64:
-        description: Base64 JSON array of sealed ExpectedBuildManifest objects.
-        required: false
-        type: string
-      release_evidence_previous_ledger_base64:
-        description: Base64 replayable lineage bundle for prior approved evidence.
-        required: false
-        type: string
-      release_evidence_selected_rc_ledger_base64:
-        description: Base64 replayable lineage bundle for the exact approved RC.
-        required: false
-        type: string
-      release_evidence_host_os_evidence_base64:
-        description: Base64 bounded host-OS evidence used by placement carry-forward.
-        required: false
-        type: string
-      release_evidence_historical_policy_archive_base64:
-        description: Base64 optional digest-verified historical policy archive JSON.
-        required: false
-        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -190,10 +78,12 @@ name: Submit App Store Review
         required: true
         default: false
         type: boolean
-      validation_report_base64:
+      evidence_bundle_sha256:
         description: >-
-          Base64 JSON from context-panel-validation.py final-report --json.
-          Required for live build attachment or submission.
+          SHA-256 of submission-evidence.json on branch
+          release-evidence/<version>-<build_number>, made by
+          scripts/submission-evidence-bundle.py create. Required for live
+          build attachment or submission.
         required: false
         type: string
       validation_train:
@@ -211,34 +101,6 @@ name: Submit App Store Review
         options:
           - shadow
           - enforce
-      release_evidence_report_base64:
-        description: Base64 JSON from context-panel-release-gate.py.
-        required: false
-        type: string
-      release_evidence_comparison_base64:
-        description: Base64 full source-manifest comparison used by the release gate.
-        required: false
-        type: string
-      release_evidence_expected_build_manifests_base64:
-        description: Base64 JSON array of sealed ExpectedBuildManifest objects.
-        required: false
-        type: string
-      release_evidence_previous_ledger_base64:
-        description: Base64 replayable lineage bundle for prior approved evidence.
-        required: false
-        type: string
-      release_evidence_selected_rc_ledger_base64:
-        description: Base64 replayable lineage bundle for the exact approved RC.
-        required: false
-        type: string
-      release_evidence_host_os_evidence_base64:
-        description: Base64 bounded host-OS evidence used by placement carry-forward.
-        required: false
-        type: string
-      release_evidence_historical_policy_archive_base64:
-        description: Base64 optional digest-verified historical policy archive JSON.
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -316,86 +178,31 @@ jobs:
           .build/submit-review-venv/bin/python -m pip install --upgrade pip
           .build/submit-review-venv/bin/python -m pip install cryptography
 
-      - name: Prepare Validation Report
-        if: ${{ inputs.validation_report_base64 != '' }}
+      - name: Fetch Release Evidence Bundle
+        if: ${{ inputs.evidence_bundle_sha256 != '' }}
         shell: bash
         env:
-          INPUT_VALIDATION_REPORT_BASE64: ${{ inputs.validation_report_base64 }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+          INPUT_EVIDENCE_BUNDLE_SHA256: ${{ inputs.evidence_bundle_sha256 }}
         run: |
           set -euo pipefail
-          mkdir -p .build
-          printf '%s' "${INPUT_VALIDATION_REPORT_BASE64}" \
-            | base64 -D > .build/validation-report.json
-          python3 -m json.tool .build/validation-report.json >/dev/null
-
-      - name: Prepare Release Evidence Report
-        if: ${{ inputs.release_evidence_report_base64 != '' }}
-        shell: bash
-        env:
-          INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
-            ${{ inputs.release_evidence_report_base64 }}
-          INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64: >-
-            ${{ inputs.release_evidence_comparison_base64 }}
-          INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
-            ${{ inputs.release_evidence_expected_build_manifests_base64 }}
-          INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64: >-
-            ${{ inputs.release_evidence_previous_ledger_base64 }}
-          INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64: >-
-            ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
-          INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
-            ${{ inputs.release_evidence_host_os_evidence_base64 }}
-          INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
-            ${{ inputs.release_evidence_historical_policy_archive_base64 }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" || \
-            -z "${INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64}" ]]; then
-            echo "release evidence requires comparison and expected-build manifest inputs" >&2
+          if [[ -z "${INPUT_BUILD_NUMBER}" ]]; then
+            echo "evidence_bundle_sha256 requires build_number" >&2
             exit 1
           fi
+          branch="release-evidence/${INPUT_VERSION}-${INPUT_BUILD_NUMBER}"
           mkdir -p .build
-          printf '%s' "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" \
-            | base64 -D > .build/release-evidence-report.json
-          python3 -m json.tool .build/release-evidence-report.json >/dev/null
-          printf '%s' "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" \
-            | base64 -D > .build/release-evidence-comparison.json
-          python3 -m json.tool .build/release-evidence-comparison.json >/dev/null
-          printf '%s' "${INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64}" \
-            | base64 -D > .build/release-evidence-expected-build-manifests.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          bundle = json.loads(
-              Path(".build/release-evidence-expected-build-manifests.json").read_text()
-          )
-          if not isinstance(bundle, list) or not bundle:
-              raise SystemExit("expected-build manifest bundle must be a non-empty JSON array")
-          destination = Path(".build/release-evidence-expected-build-manifests")
-          destination.mkdir(parents=True, exist_ok=True)
-          for index, manifest in enumerate(bundle):
-              if not isinstance(manifest, dict):
-                  raise SystemExit("expected-build manifest bundle contains a non-object")
-              (destination / f"{index:03d}.json").write_text(
-                  json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-              )
-          PY
-          decode_optional_json() {
-            local value="$1"
-            local destination="$2"
-            if [[ -n "${value}" ]]; then
-              printf '%s' "${value}" | base64 -D > "${destination}"
-              python3 -m json.tool "${destination}" >/dev/null
-            fi
-          }
-          decode_optional_json "${INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64}" \
-            .build/release-evidence-previous-ledger.json
-          decode_optional_json "${INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64}" \
-            .build/release-evidence-selected-rc-ledger.json
-          decode_optional_json "${INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64}" \
-            .build/release-evidence-host-os.json
-          decode_optional_json "${INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64}" \
-            .build/release-evidence-policy-archive.json
+          git fetch --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+          git cat-file blob "refs/remotes/origin/${branch}:submission-evidence.json" \
+            > .build/submission-evidence.json
+          python3 scripts/submission-evidence-bundle.py extract \
+            --bundle .build/submission-evidence.json \
+            --sha256 "${INPUT_EVIDENCE_BUNDLE_SHA256}" \
+            --version "${INPUT_VERSION}" \
+            --build-number "${INPUT_BUILD_NUMBER}" \
+            --output-dir .build/submission-evidence \
+            > .build/submission-evidence-args.txt
 
       - name: Check Production CloudKit Schema
         if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}
@@ -424,23 +231,9 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
           INPUT_PREPARE_ONLY: ${{ inputs.prepare_only }}
-          INPUT_VALIDATION_REPORT_BASE64: ${{ inputs.validation_report_base64 }}
           INPUT_VALIDATION_TRAIN: ${{ inputs.validation_train }}
           INPUT_RELEASE_EVIDENCE_MODE: ${{ inputs.release_evidence_mode }}
-          INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
-            ${{ inputs.release_evidence_report_base64 }}
-          INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64: >-
-            ${{ inputs.release_evidence_comparison_base64 }}
-          INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
-            ${{ inputs.release_evidence_expected_build_manifests_base64 }}
-          INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64: >-
-            ${{ inputs.release_evidence_previous_ledger_base64 }}
-          INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64: >-
-            ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
-          INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
-            ${{ inputs.release_evidence_host_os_evidence_base64 }}
-          INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
-            ${{ inputs.release_evidence_historical_policy_archive_base64 }}
+          INPUT_EVIDENCE_BUNDLE_SHA256: ${{ inputs.evidence_bundle_sha256 }}
         run: |
           set -euo pipefail
           args=(
@@ -525,48 +318,18 @@ jobs:
               report_required="true"
             fi
           fi
-          validation_report_required="${report_required}"
-          if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
-            validation_report_required="true"
-          fi
-          if [[ "${validation_report_required}" == "true" ]]; then
-            if [[ -z "${INPUT_VALIDATION_REPORT_BASE64}" ]]; then
-              echo "validation_report_base64 is required for live mutation or supplied release evidence" >&2
-              exit 1
-            fi
-            args+=(--validation-report .build/validation-report.json)
-          fi
-          if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+          if [[ -n "${INPUT_EVIDENCE_BUNDLE_SHA256}" ]]; then
             args+=(
               --validation-train "${INPUT_VALIDATION_TRAIN}"
               --release-evidence-mode "${INPUT_RELEASE_EVIDENCE_MODE}"
-              --release-evidence-report .build/release-evidence-report.json
-              --release-evidence-comparison .build/release-evidence-comparison.json
               --release-evidence-policy Config/ContextPanelReleaseEvidencePolicy.json
               --release-evidence-surface-policy Config/ContextPanelSurfacePolicy.json
             )
-            while IFS= read -r manifest; do
-              args+=(--release-evidence-expected-build-manifest "${manifest}")
-            done < <(find .build/release-evidence-expected-build-manifests \
-              -type f -name '*.json' -print | sort)
-            if [[ -f .build/release-evidence-previous-ledger.json ]]; then
-              args+=(--release-evidence-previous-ledger \
-                .build/release-evidence-previous-ledger.json)
-            fi
-            if [[ -f .build/release-evidence-selected-rc-ledger.json ]]; then
-              args+=(--release-evidence-selected-rc-ledger \
-                .build/release-evidence-selected-rc-ledger.json)
-            fi
-            if [[ -f .build/release-evidence-host-os.json ]]; then
-              args+=(--release-evidence-host-os-evidence \
-                .build/release-evidence-host-os.json)
-            fi
-            if [[ -f .build/release-evidence-policy-archive.json ]]; then
-              args+=(--release-evidence-historical-policy-archive \
-                .build/release-evidence-policy-archive.json)
-            fi
+            while IFS= read -r argument; do
+              args+=("${argument}")
+            done < .build/submission-evidence-args.txt
           elif [[ "${report_required}" == "true" ]]; then
-            echo "release_evidence_report_base64 is required for live shadow or enforce validation" >&2
+            echo "evidence_bundle_sha256 is required for live build attachment or submission" >&2
             exit 1
           fi
           submit=(
@@ -586,14 +349,12 @@ jobs:
             echo "- Dry run: ${INPUT_DRY_RUN}"
             echo "- Cancel review only: ${INPUT_CANCEL_REVIEW_ONLY}"
             echo "- Prepare only: ${INPUT_PREPARE_ONLY}"
-            if [[ "${report_required}" == "true" ]]; then
-              echo "- Validation report SHA-256: $(shasum -a 256 .build/validation-report.json | awk '{print $1}')"
+            if [[ -n "${INPUT_EVIDENCE_BUNDLE_SHA256}" ]]; then
+              echo "- Evidence bundle: release-evidence/${INPUT_VERSION}-${INPUT_BUILD_NUMBER}"
+              echo "- Evidence bundle SHA-256: ${INPUT_EVIDENCE_BUNDLE_SHA256}"
+              echo "- Validation report SHA-256: $(shasum -a 256 .build/submission-evidence/validationReport.json | awk '{print $1}')"
+              echo "- Release evidence report SHA-256: $(shasum -a 256 .build/submission-evidence/releaseEvidenceReport.json | awk '{print $1}')"
               echo "- Release evidence mode: ${INPUT_RELEASE_EVIDENCE_MODE}"
-              if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
-                echo "- Release evidence report SHA-256: $(shasum -a 256 .build/release-evidence-report.json | awk '{print $1}')"
-              else
-                echo "- Release evidence report: not required for this non-live operation"
-              fi
             fi
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"

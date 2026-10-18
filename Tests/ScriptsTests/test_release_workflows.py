@@ -2002,104 +2002,149 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self) -> None:
-        workflow = self.read(".github/workflows/submit-app-store-review.yml")
-        submit_step = re.search(
-            r"      - name: Submit Review\n.*?        run: \|\n(?P<body>.*?)(?=\n      - name:|\Z)",
-            workflow,
-            re.S,
-        )
-        self.assertIsNotNone(submit_step)
-        assert submit_step is not None
-        script = textwrap.dedent(submit_step.group("body"))
+    def test_app_store_review_workflow_fetches_pinned_evidence_bundle(self) -> None:
+        import yaml
 
-        trigger_modes = {}
-        for trigger in ("workflow_dispatch", "workflow_call"):
-            inputs = indented_block(indented_block(workflow, trigger, 2), "inputs", 4)
-            mode = indented_block(inputs, "release_evidence_mode", 6)
-            default = re.search(r"^ {8}default: (\S+)", mode, re.MULTILINE)
-            trigger_modes[f"default-{trigger}"] = shlex.split(default.group(1))[0] if default else ""
+        workflow = yaml.safe_load(self.read(".github/workflows/submit-app-store-review.yml"))
+        dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+        steps = {step.get("name"): step for step in workflow["jobs"]["submit"]["steps"]}
+        fetch_step = next(step for step in steps.values() if "submission-evidence-bundle.py" in step.get("run", ""))
+        submit_step = next(step for step in steps.values() if "scripts/submit-app-store-review.py" in step.get("run", ""))
+        version, build_number = "1.0.74", "202610180601"
+        evidence = {
+            "validation-report": '{"report":  1}\n',
+            "release-evidence": '{"ledger": "approved"}',
+            "comparison": '{"comparison": true}',
+            "rc-lineage": json.dumps({"lineage": ["a" * 64] * 8000}),
+            "manifest": '{"layout": "macos"}',
+        }
 
-        matrix = (
-            ("dry-run", True, False, False, "202608080418", ""),
-            ("prepare-only", False, False, True, "", ""),
-            ("cancel-only", False, True, False, "", "1.0.53"),
-            ("live", False, False, False, "202608080418", ""),
-            ("default-workflow_dispatch", False, False, False, "202608080418", ""),
-            ("default-workflow_call", False, False, False, "202608080418", ""),
-        )
-        for label, dry_run, cancel_only, prepare_only, build_number, removal in matrix:
-            with self.subTest(mode=label), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                python_path = root / ".build/submit-review-venv/bin/python"
+        def git(cwd: Path, *git_args: str) -> str:
+            return subprocess.run(
+                ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *git_args],
+                cwd=cwd, check=True, text=True, capture_output=True,
+            ).stdout.strip()
+
+        def bundle_commit(remote: Path, branch: str, payload: bytes) -> None:
+            # Publish the bundle the way the release agent does: an orphan branch.
+            source = remote.parent / f"publish-{branch.replace('/', '-')}"
+            git(remote.parent, "clone", "--quiet", str(remote), str(source))
+            git(source, "switch", "--quiet", "--orphan", branch)
+            (source / "submission-evidence.json").write_bytes(payload)
+            git(source, "add", "submission-evidence.json")
+            git(source, "commit", "--quiet", "-m", "evidence")
+            git(source, "push", "--quiet", "origin", branch)
+
+        def bindings(step: dict, dispatched: dict[str, str]) -> dict[str, str]:
+            environment = {"PATH": os.environ["PATH"], "PYTHONDONTWRITEBYTECODE": "1"}
+            for variable, value in step.get("env", {}).items():
+                match = re.fullmatch(r"\$\{\{\s*inputs\.(\w+)\s*}}", str(value).strip())
+                if match:
+                    environment[variable] = dispatched.get(match.group(1), "")
+                elif "secrets." not in str(value):
+                    environment[variable] = str(value)
+            return environment
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, text in evidence.items():
+                (root / f"{name}.json").write_text(text)
+            created = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts/submission-evidence-bundle.py"), "create",
+                 "--version", version, "--build-number", build_number,
+                 "--validation-report", str(root / "validation-report.json"),
+                 "--release-evidence-report", str(root / "release-evidence.json"),
+                 "--comparison", str(root / "comparison.json"),
+                 "--expected-build-manifest", str(root / "manifest.json"),
+                 "--selected-rc-ledger", str(root / "rc-lineage.json"),
+                 "--output", str(root / "bundle.json")],
+                check=True, text=True, capture_output=True,
+            )
+            digest = re.search(r"evidence_bundle_sha256: ([0-9a-f]{64})", created.stdout).group(1)
+            bundle = (root / "bundle.json").read_bytes()
+            self.assertGreater(len(base64.b64encode(bundle)), 65_535)
+
+            origin = root / "origin.git"
+            seed = root / "seed"
+            git(root, "init", "--quiet", "--bare", "--initial-branch=main", str(origin))
+            git(root, "clone", "--quiet", str(origin), str(seed))
+            (seed / "README").write_text("fixture\n")
+            git(seed, "add", "README")
+            git(seed, "commit", "--quiet", "-m", "main")
+            git(seed, "push", "--quiet", "origin", "main")
+            bundle_commit(origin, f"release-evidence/{version}-{build_number}", bundle)
+            bundle_commit(origin, "release-evidence/1.0.74-1", bundle.replace(b"approved", b"forged__"))
+
+            def run(case: str, **overrides: str) -> tuple[subprocess.CompletedProcess, list[str]]:
+                workspace = root / case
+                git(root, "clone", "--quiet", str(origin), str(workspace))
+                (workspace / "scripts").mkdir()
+                shutil.copy(REPO_ROOT / "scripts/submission-evidence-bundle.py", workspace / "scripts")
+                python_path = workspace / ".build/submit-review-venv/bin/python"
                 python_path.parent.mkdir(parents=True)
-                python_path.write_text(
-                    "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n"
-                )
+                python_path.write_text("#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n")
                 python_path.chmod(0o755)
-                for relative_path in (
-                    ".build/validation-report.json",
-                    ".build/release-evidence-report.json",
-                    ".build/release-evidence-comparison.json",
-                    ".build/release-evidence-selected-rc-ledger.json",
-                    ".build/release-evidence-policy-archive.json",
-                ):
-                    path = root / relative_path
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text("{}\n")
-                manifest = (
-                    root
-                    / ".build/release-evidence-expected-build-manifests/000.json"
-                )
-                manifest.parent.mkdir(parents=True)
-                manifest.write_text("{}\n")
-                capture_path = root / "args.txt"
-                summary_path = root / "summary.md"
-                environment = os.environ.copy()
-                environment.update(
-                    {
-                        "CAPTURE_ARGS": str(capture_path),
-                        "GITHUB_SHA": "d966d826257a0ee23a09c55bd6b073360edf36aa",
-                        "GITHUB_STEP_SUMMARY": str(summary_path),
-                        "INPUT_VERSION": "1.0.54",
-                        "INPUT_PLATFORM": "MAC_OS",
-                        "INPUT_BUILD_NUMBER": build_number,
-                        "INPUT_WHATS_NEW": "Release evidence preflight",
-                        "INPUT_REVIEW_NOTES": "",
-                        "INPUT_TVOS_DEMO_VIDEO_URL": "",
-                        "INPUT_COPY_FROM_VERSION": "",
-                        "INPUT_COPY_FROM_PLATFORM": "",
-                        "INPUT_REMOVE_ACTIVE_REVIEW_VERSION": removal,
-                        "INPUT_DRY_RUN": str(dry_run).lower(),
-                        "INPUT_CANCEL_REVIEW_ONLY": str(cancel_only).lower(),
-                        "INPUT_PREPARE_ONLY": str(prepare_only).lower(),
-                        "INPUT_VALIDATION_REPORT_BASE64": "present",
-                        "INPUT_VALIDATION_TRAIN": "release",
-                        "INPUT_RELEASE_EVIDENCE_MODE": trigger_modes.get(label, "shadow"),
-                        "INPUT_RELEASE_EVIDENCE_REPORT_BASE64": "present",
-                        "INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64": "present",
-                        "INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64": "present",
-                        "INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64": "",
-                        "INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64": "present",
-                        "INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64": "",
-                        "INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64": "present",
-                    }
-                )
-                result = subprocess.run(
-                    ["/bin/bash", "-c", script],
-                    cwd=root,
-                    env=environment,
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
+                dispatched = {
+                    "version": version, "platform": "MAC_OS", "build_number": build_number,
+                    "whats_new": "Fixture release", "dry_run": "false",
+                    "cancel_review_only": "false", "prepare_only": "false",
+                    "validation_train": dispatch_inputs["validation_train"]["default"],
+                    "release_evidence_mode": dispatch_inputs["release_evidence_mode"]["default"],
+                    **overrides,
+                }
+                step_result = subprocess.CompletedProcess([], 1)
+                for step in (fetch_step, submit_step):
+                    if step is fetch_step and not dispatched.get("evidence_bundle_sha256"):
+                        continue
+                    environment = bindings(step, dispatched)
+                    environment.update(
+                        CAPTURE_ARGS=str(workspace / "args.txt"),
+                        GITHUB_SHA="d966d826257a0ee23a09c55bd6b073360edf36aa",
+                        GITHUB_STEP_SUMMARY=str(workspace / "summary.md"),
+                    )
+                    step_result = subprocess.run(
+                        ["/bin/bash", "-c", step["run"]], cwd=workspace, env=environment,
+                        text=True, capture_output=True, check=False,
+                    )
+                    if step_result.returncode != 0:
+                        return step_result, []
+                return step_result, [str(workspace), *(workspace / "args.txt").read_text().splitlines()]
+
+            for label, dry_run in (("live", "false"), ("dry-run", "true")):
+                with self.subTest(label):
+                    result, captured = run(label, evidence_bundle_sha256=digest, dry_run=dry_run)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    run_root, forwarded = Path(captured[0]), captured[1:]
+
+                    def file_for(flag: str) -> str:
+                        return (run_root / forwarded[forwarded.index(flag) + 1]).read_text()
+
+                    self.assertEqual(file_for("--validation-report"), evidence["validation-report"])
+                    self.assertEqual(file_for("--release-evidence-report"), evidence["release-evidence"])
+                    self.assertEqual(file_for("--release-evidence-comparison"), evidence["comparison"])
+                    self.assertEqual(file_for("--release-evidence-selected-rc-ledger"), evidence["rc-lineage"])
+                    self.assertEqual(file_for("--release-evidence-expected-build-manifest"), evidence["manifest"])
+                    self.assertEqual(forwarded[forwarded.index("--release-evidence-mode") + 1], "enforce")
+                    self.assertEqual(forwarded[forwarded.index("--validation-train") + 1], "release")
+
+            refusals = {
+                "wrong digest": {"evidence_bundle_sha256": "0" * 64},
+                "tampered branch": {"evidence_bundle_sha256": digest, "build_number": "1"},
+                "missing branch": {"evidence_bundle_sha256": digest, "build_number": "202610180699"},
+                "live without evidence": {},
+                "evidence without build": {"evidence_bundle_sha256": digest, "build_number": "",
+                                           "prepare_only": "true"},
+            }
+            for label, refusal in refusals.items():
+                with self.subTest(label):
+                    result, captured = run(label.replace(" ", "-"), **refusal)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(captured, [])
+
+            with self.subTest("dry run without evidence"):
+                result, captured = run("metadata-dry-run", dry_run="true")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                arguments = capture_path.read_text().splitlines()
-                self.assertIn("--validation-report", arguments)
-                self.assertIn("--release-evidence-report", arguments)
-                self.assertIn("--release-evidence-historical-policy-archive", arguments)
-                forwarded_mode = arguments[arguments.index("--release-evidence-mode") + 1]
-                self.assertEqual(forwarded_mode, "enforce" if label in trigger_modes else "shadow")
+                self.assertNotIn("--validation-report", captured[1:])
 
     def test_release_evidence_entrypoints_execute_directly(self) -> None:
         for relative_path in (
