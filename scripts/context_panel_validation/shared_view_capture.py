@@ -2248,9 +2248,17 @@ def _rendered_cell_path(
         container = Path(lines[0]).resolve(strict=True)
     except (OSError, RuntimeError):
         return None, "simctl-data-container-invalid"
-    if not container.is_dir():
+    temporary = container / "tmp"
+    # The app owns its container. Refuse a symlinked or missing tmp directory so
+    # neither the removal before launch nor the read after it can leave the container.
+    if (
+        not container.is_dir()
+        or not temporary.is_dir()
+        or temporary.is_symlink()
+        or temporary.resolve(strict=True).parent != container
+    ):
         return None, "simctl-data-container-invalid"
-    return container / "tmp" / RENDERED_CELL_FILE_NAME, None
+    return temporary / RENDERED_CELL_FILE_NAME, None
 
 
 def _take_stable_rendered_cell(
@@ -2788,6 +2796,29 @@ def _capture_profile(
                         error_code=baseline_error,
                     )
                     continue
+                baseline_regions = masked_regions.get(requirement.surface)
+                if baseline_regions:
+                    # Mask the baseline like the capture, so the painted-out region
+                    # alone can never make a capture differ from its baseline.
+                    try:
+                        route_baseline, masked_baseline_path = _mask_capture(
+                            route_baseline_path,
+                            baseline_regions,
+                            artifact_directory,
+                            f".{requirement.requirement_id}.baseline-masked.",
+                        )
+                        masked_baseline_path.unlink(missing_ok=True)
+                    except (OSError, SharedViewCaptureError):
+                        route_baseline_path.unlink(missing_ok=True)
+                        results[requirement.requirement_id] = _result(
+                            requirement,
+                            status="unknown",
+                            captured_at=now(),
+                            host_mechanism=host_mechanism,
+                            appearance_mechanism=appearance_mechanism,
+                            error_code="simulator-baseline-image-invalid",
+                        )
+                        continue
                 route_baseline_path.unlink(missing_ok=True)
                 rendered_path: Path | None = None
                 if requirement.surface in APP_RENDERED_SURFACES:

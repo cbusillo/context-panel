@@ -238,6 +238,7 @@ class FakeRunner:
         # "written", or "missing" when the app never writes its framed cell.
         self.rendered_cell = rendered_cell
         self.data_container = Path(tempfile.mkdtemp()).resolve()
+        (self.data_container / "tmp").mkdir()
         weakref.finalize(self, shutil.rmtree, self.data_container, True)
         self.launch_environments: list[dict[str, str] | None] = []
         self.catalog = catalog or simulator_catalog()
@@ -469,7 +470,6 @@ class FakeRunner:
 
     def _write_rendered_cell(self, route: str) -> None:
         cell = self.data_container / "tmp" / capture_module.RENDERED_CELL_FILE_NAME
-        cell.parent.mkdir(exist_ok=True)
         cell.write_bytes(self._image_for("rendered:" + route))
 
     def _image_for(self, route: str | None) -> bytes:
@@ -1782,6 +1782,36 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertNotEqual(b"\x00\x00\x00\xff", pixel(299, 19))
         self.assertNotEqual(b"\x00\x00\x00\xff", pixel(319, 20))
         self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), receipt["captures"][0]["artifactDigest"])
+
+    def test_a_masked_watch_capture_still_must_differ_from_its_masked_baseline(self) -> None:
+        self.write_plan(["watchos.app"])
+        self.write_config(("watchos",))
+        pins = self.write_pins(
+            masked_regions=[
+                {"surface": "watchos.app", "x": 0, "y": 0, "width": 40, "height": 20, "reason": "clock"}
+            ]
+        )
+
+        exit_code, receipt = self.execute(FakeRunner(baseline_equal=True), simulator_pins_path=pins)
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(receipt, "route-baseline-unchanged", "route-baseline-unchanged")
+
+    def test_a_symlinked_container_tmp_directory_is_refused(self) -> None:
+        self.write_plan(["watchos.complication"])
+        self.write_config(("watchos",))
+        runner = FakeRunner()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / capture_module.RENDERED_CELL_FILE_NAME).write_bytes(png_bytes())
+        (runner.data_container / "tmp").rmdir()
+        (runner.data_container / "tmp").symlink_to(outside)
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(receipt, "simctl-data-container-invalid", "simctl-data-container-invalid")
+        self.assertTrue((outside / capture_module.RENDERED_CELL_FILE_NAME).exists())
 
     def test_reference_cells_are_written_as_surface_and_cell_images(self) -> None:
         self.write_config(("watchos", "tvos"))
