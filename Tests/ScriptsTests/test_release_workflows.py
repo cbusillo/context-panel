@@ -1148,6 +1148,7 @@ exit 42
         management_token: str | None = None,
         require_token: bool = False,
         checked_in_schema: str | None = None,
+        contract: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1160,6 +1161,10 @@ exit 42
                 checked_in_schema_path = root / "checked-in.ckdb"
                 checked_in_schema_path.write_text(checked_in_schema)
                 checked_in_schema_args = ["--cktool-schema", str(checked_in_schema_path)]
+            if contract is not None:
+                contract_path = root / "contract.json"
+                contract_path.write_text(contract)
+                checked_in_schema_args += ["--schema", str(contract_path)]
             fake_xcrun = """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" != "cktool" || "${2:-}" != "export-schema" ]]; then
@@ -2507,6 +2512,25 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing record type: RuntimeReceipt", result.stdout)
+
+    def test_cloudkit_schema_validator_checks_every_contract_field_live(self) -> None:
+        contract = json.loads(self.read("CloudKit/companion-sync.schema.json"))
+        contract["recordTypes"][0]["fields"].append({"name": "addedField", "type": "STRING"})
+        live_schema = self.read("CloudKit/companion-sync.schema.ckdb")
+        checked_in_schema = live_schema.replace(
+            "    RECORD TYPE CompanionSyncDocument (\n",
+            "    RECORD TYPE CompanionSyncDocument (\n        addedField STRING,\n",
+            1,
+        )
+        self.assertNotEqual(checked_in_schema, live_schema)
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            live_schema, checked_in_schema=checked_in_schema, contract=json.dumps(contract)
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("live CloudKit production schema is missing contract field/type: "
+                      "CompanionSyncDocument.addedField STRING", result.stdout)
 
     def test_commit_gate_namespaces_artifact_cache_by_physical_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

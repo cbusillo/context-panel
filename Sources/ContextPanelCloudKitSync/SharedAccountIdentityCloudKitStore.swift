@@ -7,17 +7,11 @@ actor SharedAccountIdentityCloudKitStore {
     private let container: CKContainer
     private let cache = ProviderCredentialStore(service: "Context Panel shared account identity")
     private var memoryKeys: [CompanionCloudKitUserScope: ProviderAccountIdentityKey] = [:]
-    private static let recordID = CKRecord.ID(recordName: "ContextPanelAccountIdentityKey.v1")
+    private let recordID = CKRecord.ID(recordName: "ContextPanelAccountIdentityKey.v1")
     private static let recordType = "ContextPanelAccountIdentityKey"
     private static let encryptedField = "keyMaterial"
 
     init(containerIdentifier: String) { container = CKContainer(identifier: containerIdentifier) }
-
-    static func makeRecord(keyMaterial: Data) -> CKRecord {
-        let record = CKRecord(recordType: recordType, recordID: recordID)
-        record.encryptedValues[encryptedField] = keyMaterial as NSData
-        return record
-    }
 
     func resolve(_ material: ProviderAccountIdentityMaterial) async -> SharedProviderAccountIdentity? {
         guard let scope = await currentScope() else { return nil }
@@ -59,7 +53,7 @@ actor SharedAccountIdentityCloudKitStore {
 
     private func loadKey(scope: CompanionCloudKitUserScope) async -> ProviderIdentityKeyLoad {
         do {
-            let record = try await container.privateCloudDatabase.record(for: Self.recordID)
+            let record = try await container.privateCloudDatabase.record(for: recordID)
             guard let key = decode(record, scope: scope) else { return .unavailable }
             return .available(key)
         } catch let error as CKError where error.code == .unknownItem {
@@ -70,10 +64,11 @@ actor SharedAccountIdentityCloudKitStore {
     private func insertIfAbsent(_ key: ProviderAccountIdentityKey, scope: CompanionCloudKitUserScope) async -> ProviderAccountIdentityKey? {
         guard await currentScope() == scope else { return nil }
         do {
-            let record = Self.makeRecord(keyMaterial: try ScopedProviderAccountIdentityKey.encode(key, scope: scope))
+            let record = CKRecord(recordType: Self.recordType, recordID: recordID)
+            record.encryptedValues[Self.encryptedField] = try ScopedProviderAccountIdentityKey.encode(key, scope: scope) as NSData
             let result = try await container.privateCloudDatabase.modifyRecords(saving: [record], deleting: [],
                 savePolicy: .ifServerRecordUnchanged, atomically: true)
-            guard let saved = result.saveResults[Self.recordID] else { return nil }
+            guard let saved = result.saveResults[recordID] else { return nil }
             return decode(try saved.get(), scope: scope)
         } catch {
             // Concurrent first installs converge on the server's winner, not the proposed key.

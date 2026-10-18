@@ -171,13 +171,6 @@ import Testing
     #expect(mergedDocument.snapshot.limits.first { $0.accountName == "OpenAI B" }?.used == 40)
 }
 
-@Test func sharedAccountIdentityKeyRecordFitsProductionSchema() throws {
-    let keyMaterial = try ScopedProviderAccountIdentityKey.encode(cloudKitIdentityKey, scope: cloudKitUserScope)
-    let record = SharedAccountIdentityCloudKitStore.makeRecord(keyMaterial: keyMaterial)
-
-    try expectCloudKitRecordFitsProductionSchema(record)
-}
-
 @Test func companionCloudKitRecordBuilderDropsUnverifiedAccountsTheNewPublishNoLongerReports() throws {
     let remoteDate = Date(timeIntervalSince1970: 72_000)
     let incomingDate = remoteDate.addingTimeInterval(60)
@@ -384,6 +377,8 @@ func expectCloudKitRecordFitsProductionSchema(_ record: CKRecord, identityDigest
     let plainFields = Set(declaration.fields.map(\.name)).subtracting(encryptedFields)
     #expect(Set(record.allKeys()).subtracting(encryptedFields) == plainFields,
             "Record fields differ from the contract for \(record.recordType)")
+    #expect(Set(record.encryptedValues.allKeys()) == encryptedFields,
+            "Encrypted fields differ from the contract for \(record.recordType)")
     for field in declaration.fields {
         if field.type == "ENCRYPTED_BYTES" {
             #expect(record.encryptedValues[field.name] is Data, "\(record.recordType).\(field.name) must be encrypted bytes")

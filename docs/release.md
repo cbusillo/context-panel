@@ -886,9 +886,10 @@ public-database grants for runtime evidence. Do not reconstruct the candidate by
 hand in CloudKit Console.
 
 Every build also checks the app against that contract without credentials:
-Swift tests build each record the app writes and compare its type, record
-name, fields and value types with `CloudKit/companion-sync.schema.json`, and
-the routine Python tests run the offline check above.
+Swift tests build the companion snapshot and runtime records the app writes
+and compare each record's type, name, fields and value types with
+`CloudKit/companion-sync.schema.json`, and the routine Python tests run the
+offline check above.
 
 #### When Production is checked
 

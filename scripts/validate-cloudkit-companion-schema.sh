@@ -303,6 +303,36 @@ validate_ckdb_grants() {
 	fi
 }
 
+# Every field the JSON contract declares must exist in the schema with its type
+# and declared indexes, so a newly added field cannot pass unchecked.
+validate_contract_fields() {
+	local schema="$1"
+	local label="$2"
+	local record_type field_name field_type queryable sortable ckdb_type
+	while IFS=$'\t' read -r record_type field_name field_type queryable sortable; do
+		case "$field_type" in
+		ENCRYPTED_BYTES) ckdb_type='ENCRYPTED[[:space:]]+BYTES' ;;
+		BYTES | INT64 | TIMESTAMP | STRING) ckdb_type="$field_type" ;;
+		*)
+			echo "schema contract field has an unsupported type: $record_type.$field_name $field_type" >&2
+			return 1
+			;;
+		esac
+		if ! live_schema_has_field_type "$schema" "$record_type" "$field_name" "$ckdb_type"; then
+			echo "$label schema is missing contract field/type: $record_type.$field_name $field_type" >&2
+			return 1
+		fi
+		if [[ "$queryable" == "true" ]] && ! live_schema_field_is_queryable "$schema" "$record_type" "$field_name"; then
+			echo "$label schema field is not queryable: $record_type.$field_name" >&2
+			return 1
+		fi
+		if [[ "$sortable" == "true" ]] && ! live_schema_field_is_sortable "$schema" "$record_type" "$field_name"; then
+			echo "$label schema field is not sortable: $record_type.$field_name" >&2
+			return 1
+		fi
+	done < <(jq -r '.recordTypes[] | .name as $record | .fields[] | [$record, .name, .type, (.queryable // false), (.sortable // false)] | @tsv' "$schema_path")
+}
+
 validate_ckdb_schema() {
 	local schema="$1"
 	local label="$2"
@@ -502,6 +532,7 @@ if [[ "$contract_sortable" != "true" ]]; then
 fi
 
 validate_ckdb_schema "$cktool_schema_path" "checked-in cktool" "true"
+validate_contract_fields "$cktool_schema_path" "checked-in cktool"
 
 if [[ "$live" != "true" ]]; then
 	echo "CloudKit companion and runtime receipt schema contracts OK: $schema_path and $cktool_schema_path"
@@ -532,5 +563,6 @@ if ! xcrun "${cktool_export_args[@]}" >/dev/null 2>&1; then
 fi
 
 validate_ckdb_schema "$live_schema" "live CloudKit $environment"
+validate_contract_fields "$live_schema" "live CloudKit $environment"
 
 echo "CloudKit live schema contains private-only companion sync and runtime receipt contracts with required query and range indexes in $environment."
