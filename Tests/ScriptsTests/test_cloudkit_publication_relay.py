@@ -1,6 +1,7 @@
 """Secretless relay behavior; clocks, GitHub, schema export and publication are fakes."""
 
 import copy
+import fcntl
 import importlib.util
 import io
 import json
@@ -475,6 +476,7 @@ class RelayTests(unittest.TestCase):
                 FAKE_DEFAULT_BRANCH=json.loads(
                     (ROOT / ".github/github.json").read_text()
                 )["defaultBranch"],
+                CONTEXT_PANEL_OPERATOR_PASS_LOCKED="1",
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=KEY.decode(),
             )
             command = [
@@ -502,6 +504,135 @@ class RelayTests(unittest.TestCase):
                 0,
             )
             self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_scheduled_wrapper_runs_current_main_and_refuses_unsafe_checkouts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory)
+            tools, log = scratch / "tools", scratch / "operator.log"
+            tools.mkdir()
+            for name, content in {
+                "uname": "#!/bin/bash\necho Darwin\n",
+                "uv": '#!/bin/bash\nprintf "pass %s\\n" "$(cat scripts/gate.txt)"\n',
+                "security": "#!/bin/bash\nexit 64\n",
+            }.items():
+                (tools / name).write_text(content)
+                (tools / name).chmod(0o755)
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if not k.startswith(("CONTEXT_PANEL_", "GITHUB_", "CLOUDKIT_", "GIT_"))
+            }
+            env.update(
+                PATH=str(tools) + os.pathsep + env["PATH"],
+                CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=KEY.decode(),
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_AUTHOR_NAME="Fixture",
+                GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                GIT_COMMITTER_NAME="Fixture",
+                GIT_COMMITTER_EMAIL="fixture@example.invalid",
+            )
+
+            def git(cwd: Path, *args: str) -> str:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=cwd,
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+
+            def commit(cwd: Path, gate: str, wrapper_extra: str = "") -> None:
+                wrapper = (ROOT / "scripts/cloudkit-schema-operator.sh").read_text()
+                if wrapper_extra:
+                    wrapper = wrapper.replace(
+                        "set -euo pipefail\n", "set -euo pipefail\n" + wrapper_extra, 1
+                    )
+                (cwd / "scripts").mkdir(exist_ok=True)
+                (cwd / "scripts/cloudkit-schema-operator.sh").write_text(wrapper)
+                (cwd / "scripts/gate.txt").write_text(gate)
+                git(cwd, "add", "-A")
+                git(cwd, "commit", "-qm", gate)
+
+            source, operator = scratch / "source", scratch / "operator"
+            source.mkdir()
+            git(source, "init", "-q", "-b", "main")
+            (source / ".gitignore").write_text(".build/\n")
+            commit(source, "old-gate")
+            git(scratch, "clone", "-q", str(source), str(operator))
+            commit(
+                source,
+                "new-gate",
+                wrapper_extra="echo new-wrapper\n",
+            )
+
+            def run_pass(
+                previous_log: str = "",
+            ) -> tuple[subprocess.CompletedProcess, list[str]]:
+                log.write_text(previous_log)
+                completed = subprocess.run(
+                    [
+                        "/bin/bash",
+                        str(operator / "scripts/cloudkit-schema-operator.sh"),
+                        "--follow-main",
+                        "--log",
+                        str(log),
+                        str(scratch / "bot-helper"),
+                    ],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                lines = log.read_text().splitlines()
+                if completed.returncode != 75:  # lockf: another pass holds the checkout
+                    self.assertTrue(
+                        lines[-1].endswith(
+                            f"operator pass exit {completed.returncode}"
+                        ),
+                        lines,
+                    )
+                    lines = lines[:-1]
+                return completed, lines
+
+            result, passes = run_pass()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(passes, ["new-wrapper", "pass new-gate"])
+            self.assertEqual(
+                git(operator, "rev-parse", "HEAD"), git(source, "rev-parse", "HEAD")
+            )
+
+            (operator / ".build").mkdir(exist_ok=True)
+            (operator / ".build/cloudkit-relay-served.json").write_text("{}")
+            full_log = "x" * (1024 * 1024 + 1)
+            result, passes = run_pass(full_log)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(passes, ["new-wrapper", "pass new-gate"])
+            self.assertEqual(Path(f"{log}.1").read_text(), full_log)
+
+            unsafe = {
+                "dirty": lambda: (operator / "scripts/gate.txt").write_text("edited"),
+                "local commit": lambda: commit(operator, "local-gate"),
+                "other branch": lambda: git(operator, "switch", "-qc", "elsewhere"),
+                "pass running": lambda: fcntl.flock(
+                    holders.append(held.open("a")) or holders[-1],
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                ),
+            }
+            held, holders = operator / ".build/cloudkit-operator-pass.lock", []
+            for name, make_unsafe in unsafe.items():
+                with self.subTest(name):
+                    git(operator, "switch", "-qf", "main")
+                    git(operator, "fetch", "-q", "origin", "main")
+                    git(operator, "reset", "-q", "--hard", "FETCH_HEAD")
+                    commit(source, f"after-{name}")
+                    make_unsafe()
+                    before = git(operator, "rev-parse", "HEAD")
+                    result, passes = run_pass()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse([p for p in passes if p.startswith("pass ")])
+                    self.assertEqual(git(operator, "rev-parse", "HEAD"), before)
 
     def test_pre_export_read_failure_can_recover_without_duplicate_export(self):
         github = self.github()
