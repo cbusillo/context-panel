@@ -94,12 +94,19 @@ and bounded runner metadata such as OS, architecture, and image version; they do
 not contain arbitrary environment values, credentials, command output, machine
 names, or absolute checkout paths.
 
-The timed Swift command has a five-minute deadline. On expiry it kills its own
+The commit gate compiles the product and test targets with `swift build
+--build-tests`, then times `swift test --skip-build`. Cold test compilation does
+not consume the execution deadline. `time-command --help` reports the default
+deadline. On expiry it kills its own
 process group (including renderer children), bounds the cleanup wait, records a
 failed timing report and exits 124. A process stuck in the kernel may survive
-SIGKILL; `cleanupTimedOut` records that condition for host diagnosis. The CI job
-also has a 15-minute ceiling covering build and other steps. A hang must fail
-the gate rather than occupy the runner until GitHub's default timeout.
+SIGKILL; `cleanupTimedOut` records that condition for host diagnosis. SIGINT,
+SIGTERM and SIGHUP use the same cleanup path and return the signal's conventional
+exit status. The CI job's `timeout-minutes` ceiling covers compilation and other
+steps separately from the warning-only time budget. It also bounds a step whose
+output pipe remains open in a kernel-stuck child after the gate has returned.
+A hang must fail the gate rather than occupy the runner until GitHub's default
+timeout.
 
 For a deliberately slower local diagnostic, choose a finite positive deadline:
 

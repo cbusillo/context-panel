@@ -39,6 +39,11 @@ class TestLaneError(RuntimeError):
     pass
 
 
+class CommandInterrupted(Exception):
+    def __init__(self, signum: int):
+        self.signum = signum
+
+
 def display_path(path: Path) -> str:
     try:
         return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
@@ -459,49 +464,77 @@ def time_command(
     started_at = datetime.now(timezone.utc)
     command_started = time.monotonic()
     timed_out = False
-    interrupted = False
+    interrupted_signal = 0
+    waiting = False
     cleanup_timed_out = False
+
+    def interrupt(signum, _frame):
+        nonlocal interrupted_signal, waiting
+        interrupted_signal = interrupted_signal or signum
+        # Defer signals during spawn and cleanup. Raising during Popen could
+        # lose the child PID; a repeated interrupt must not abandon cleanup.
+        if waiting:
+            waiting = False
+            raise CommandInterrupted(interrupted_signal)
+
+    previous_handlers = {
+        sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
     try:
-        # Own the group, including swift-testing and renderer grandchildren.
-        # Popen's context manager and subprocess.run's timeout cleanup both wait
-        # without a deadline after killing; a kernel-stuck child may never exit.
-        process = subprocess.Popen(command, cwd=REPO_ROOT, start_new_session=True)
-    except FileNotFoundError as error:
-        raise TestLaneError(f"test lane command not found: {command[0]}") from error
-    try:
-        exit_code = process.wait(timeout=timeout_seconds)
-    except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
-        timed_out = isinstance(error, subprocess.TimeoutExpired)
-        interrupted = not timed_out
-        exit_code = 124 if timed_out else 130
-        reason = f"timed out after {timeout_seconds:g}s" if timed_out else "was interrupted"
-        print(f"test lane {lane_name} {reason}; killing its process group", file=sys.stderr)
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            # Own the group, including swift-testing and renderer grandchildren.
+            # Popen's context manager and subprocess.run's timeout cleanup both
+            # wait indefinitely after killing a kernel-stuck child.
+            process = subprocess.Popen(command, cwd=REPO_ROOT, start_new_session=True)
+        except FileNotFoundError as error:
+            raise TestLaneError(f"test lane command not found: {command[0]}") from error
         try:
-            process.wait(timeout=COMMAND_CLEANUP_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            cleanup_timed_out = True
-            print("test lane process is still stuck after SIGKILL; host diagnosis is required", file=sys.stderr)
-    report = base_report(lane_name, files, started_at)
-    report.update(
-        {
-            "durationMs": round((time.monotonic() - command_started) * 1000),
-            "exitCode": exit_code,
-            "timedOut": timed_out,
-            "timeoutSeconds": timeout_seconds,
-            "cleanupTimedOut": cleanup_timed_out,
-            "results": [],
-            "commandName": Path(command[0]).name,
-            # Do not launch the same tool again on the failing host.
-            "toolVersion": None if timed_out or interrupted else command_version(command),
-        }
-    )
-    write_report(report_path, report)
-    append_summary(report)
-    return exit_code
+            waiting = True
+            if interrupted_signal:
+                raise CommandInterrupted(interrupted_signal)
+            exit_code = process.wait(timeout=timeout_seconds)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt, CommandInterrupted) as error:
+            waiting = False
+            timed_out = isinstance(error, subprocess.TimeoutExpired)
+            if not timed_out:
+                interrupted_signal = error.signum if isinstance(error, CommandInterrupted) else signal.SIGINT
+            exit_code = 124 if timed_out else 128 + interrupted_signal
+            reason = f"timed out after {timeout_seconds:g}s" if timed_out else "was interrupted"
+            print(f"test lane {lane_name} {reason}; killing its process group", file=sys.stderr)
+            # Once reaped, a leader's PID can be reused by another group. Never
+            # issue a group kill from that state, even on an interrupt race.
+            if process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=COMMAND_CLEANUP_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    cleanup_timed_out = True
+                    print("test lane process is still stuck after SIGKILL; host diagnosis is required", file=sys.stderr)
+        finally:
+            waiting = False
+        report = base_report(lane_name, files, started_at)
+        report.update(
+            {
+                "durationMs": round((time.monotonic() - command_started) * 1000),
+                "exitCode": exit_code,
+                "timedOut": timed_out,
+                "timeoutSeconds": timeout_seconds,
+                "cleanupTimedOut": cleanup_timed_out,
+                "results": [],
+                "commandName": Path(command[0]).name,
+                # Do not launch the same tool again on the failing host.
+                "toolVersion": None if timed_out or interrupted_signal else command_version(command),
+            }
+        )
+        write_report(report_path, report)
+        append_summary(report)
+        return exit_code
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
 
 
 def default_report_path(lane_name: str) -> Path:

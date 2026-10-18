@@ -320,11 +320,11 @@ class TestLaneTests(unittest.TestCase):
                     ["true"],
                 )
 
-    def timed_command(self, process, directory):
+    def timed_command(self, process, directory, *, on_spawn=None):
         report_path = Path(directory) / "report.json"
         with (
             mock.patch.object(module, "files_for_lane", return_value=["Tests/CoreTests/FirstTests.swift"]),
-            mock.patch.object(module.subprocess, "Popen", return_value=process) as spawn,
+            mock.patch.object(module.subprocess, "Popen", return_value=process, side_effect=on_spawn) as spawn,
             mock.patch.object(module, "source_commit", return_value="fixture-source"),
             mock.patch.object(module, "command_version", return_value="fixture-tool"),
             mock.patch.object(module, "append_summary"),
@@ -349,7 +349,7 @@ class TestLaneTests(unittest.TestCase):
 
     def test_timed_command_kills_its_group_and_records_a_hang_as_failure(self):
         with tempfile.TemporaryDirectory() as directory:
-            process = mock.Mock(pid=12345)
+            process = mock.Mock(pid=12345, returncode=None)
             process.wait.side_effect = [subprocess.TimeoutExpired("fixture-swift", 17), -signal.SIGKILL]
             with mock.patch.object(os, "killpg") as kill:
                 status, report, _ = self.timed_command(process, directory)
@@ -362,7 +362,7 @@ class TestLaneTests(unittest.TestCase):
 
     def test_timed_command_never_waits_forever_for_a_kernel_stuck_child(self):
         with tempfile.TemporaryDirectory() as directory:
-            process = mock.Mock(pid=12345)
+            process = mock.Mock(pid=12345, returncode=None)
             process.wait.side_effect = subprocess.TimeoutExpired("fixture-swift", 17)
             with mock.patch.object(os, "killpg"):
                 status, report, _ = self.timed_command(process, directory)
@@ -374,7 +374,7 @@ class TestLaneTests(unittest.TestCase):
 
     def test_timed_command_interrupt_cleans_up_only_its_own_group(self):
         with tempfile.TemporaryDirectory() as directory:
-            process = mock.Mock(pid=12345)
+            process = mock.Mock(pid=12345, returncode=None)
             process.wait.side_effect = [KeyboardInterrupt(), -signal.SIGKILL]
             with mock.patch.object(os, "killpg") as kill:
                 status, report, spawn = self.timed_command(process, directory)
@@ -382,6 +382,51 @@ class TestLaneTests(unittest.TestCase):
             self.assertFalse(report["timedOut"])
             self.assertTrue(spawn.call_args.kwargs["start_new_session"])
             kill.assert_called_once_with(process.pid, signal.SIGKILL)
+
+    def test_termination_signals_clean_up_record_status_and_restore_handlers(self):
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            with self.subTest(signal=sig), tempfile.TemporaryDirectory() as directory:
+                signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+                previous = {item: signal.getsignal(item) for item in signals}
+                process = mock.Mock(pid=12345, returncode=None)
+                def wait(*, timeout):
+                    # A repeated Ctrl-C during cleanup must not discard the report.
+                    signal.raise_signal(sig if process.wait.call_count == 1 else signal.SIGINT)
+                    return -signal.SIGKILL
+                process.wait.side_effect = wait
+                with mock.patch.object(os, "killpg") as kill:
+                    status, report, _ = self.timed_command(process, directory)
+                kill.assert_called_once_with(process.pid, signal.SIGKILL)
+                self.assertEqual(status, 128 + sig)
+                self.assertEqual(report["exitCode"], status)
+                self.assertFalse(report["timedOut"])
+                self.assertFalse(report["cleanupTimedOut"])
+                self.assertEqual({item: signal.getsignal(item) for item in signals}, previous)
+
+    def test_signal_during_spawn_is_deferred_until_the_child_group_is_known(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = mock.Mock(pid=12345, returncode=None)
+            process.wait.return_value = -signal.SIGKILL
+            def spawn(*_args, **_kwargs):
+                signal.raise_signal(signal.SIGTERM)
+                return process
+            with mock.patch.object(os, "killpg") as kill:
+                status, report, _ = self.timed_command(process, directory, on_spawn=spawn)
+            kill.assert_called_once_with(process.pid, signal.SIGKILL)
+            self.assertEqual(status, 128 + signal.SIGTERM)
+            self.assertEqual(report["exitCode"], status)
+            process.wait.assert_called_once_with(timeout=module.COMMAND_CLEANUP_TIMEOUT_SECONDS)
+
+    def test_interrupt_after_reaping_the_leader_cannot_kill_a_reused_group_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = mock.Mock(pid=12345, returncode=0)
+            process.wait.side_effect = KeyboardInterrupt()
+            with mock.patch.object(os, "killpg") as kill:
+                status, report, _ = self.timed_command(process, directory)
+            kill.assert_not_called()
+            self.assertNotEqual(status, 0)
+            self.assertEqual(report["exitCode"], status)
+            self.assertEqual(process.wait.call_count, 1)
 
     def test_timed_command_reaps_a_real_group_including_a_pipe_holding_grandchild(self):
         # Inject the expired deadline after a readiness handshake, without sleeping.
