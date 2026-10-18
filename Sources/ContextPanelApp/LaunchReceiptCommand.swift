@@ -1,25 +1,26 @@
+import ContextPanelCore
 import Foundation
 
 /// Writes one launch receipt for a launcher that macOS refuses the App Group (#873).
 /// The installed app's own entitlement covers the store, so no other process needs a grant.
-public enum LaunchReceiptCommand {
-    public struct Result: Sendable {
-        public let exitCode: Int32
-        public let standardOutput: Data
-        public let standardError: Data
+enum LaunchReceiptCommand {
+    struct Result: Sendable {
+        let exitCode: Int32
+        let standardOutput: Data
+        let standardError: Data
     }
 
     static let receiptKeys: Set<String> = ["schemaVersion", "provider", "accountID", "launchedAt"]
     static let launcherPattern = "^[a-z0-9]{1,32}$"
 
     /// Reads at most this many bytes, so oversized input is rejected without reading all of it.
-    public static let inputLimit = LaunchReceiptStore.maximumFileBytes + 1
+    static let inputLimit = LaunchReceiptStore.maximumFileBytes + 1
 
-    public static func readInput(from handle: FileHandle = .standardInput) throws -> Data {
+    static func readInput(from handle: FileHandle = .standardInput) throws -> Data {
         try handle.read(upToCount: inputLimit) ?? Data()
     }
 
-    public static func run(arguments: [String], input: () throws -> Data, rootDirectory: URL, now: Date = Date()) -> Result {
+    static func run(arguments: [String], input: () throws -> Data, rootDirectory: URL, now: Date = Date()) -> Result {
         if arguments == ["--help"] {
             return Result(exitCode: 0, standardOutput: Data(
                 """
