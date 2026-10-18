@@ -12,62 +12,47 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.fixture = RuntimeRelayFixture(Path(directory.name))
         self.fixture.write_agent()
-        issued = self.fixture.issue_receipt()
-        self.assertEqual(issued.returncode, 0, issued.stderr)
 
-    def test_runtime_receipt_sync_requires_valid_production_schema_receipt(self):
-        receipt = json.loads(self.fixture.receipt_path.read_text())
-        receipt["seal"] = "invalid-seal"
-        self.fixture.receipt_path.write_text(json.dumps(receipt))
-
-        result = self.fixture.sync()
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("runtime receipt relay blocked", result.stderr)
-        self.assertIn("receipt seal is invalid", result.stderr)
-        self.assertFalse(self.fixture.marker_path.exists())
-
-    def test_runtime_receipt_sync_rejects_a_valid_receipt_for_another_commit(self):
-        issued = self.fixture.issue_receipt(source_commit="b" * 40)
-        self.assertEqual(issued.returncode, 0, issued.stderr)
-
-        result = self.fixture.sync()
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("receipt source commit does not match", result.stderr)
-        self.assertFalse(self.fixture.marker_path.exists())
-
-    def test_runtime_receipt_sync_rejects_a_missing_receipt_without_launching(self):
-        self.fixture.receipt_path.unlink()
-
-        result = self.fixture.sync()
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("runtime receipt relay blocked", result.stderr)
-        self.assertIn("receipt is unavailable or invalid", result.stderr)
-        self.assertFalse(self.fixture.marker_path.exists())
-
-    def test_runtime_receipt_sync_rejects_unavailable_source_identity(self):
-        for script in ("#!/bin/sh\nexit 8\n", "#!/bin/sh\nprintf 'invalid commit\\n'\n"):
-            with self.subTest(script=script):
-                git = self.fixture.tools / "git"
-                git.write_text(script)
-                git.chmod(0o755)
-                self.fixture.environment["PATH"] = str(self.fixture.tools) + ":" + self.fixture.environment["PATH"]
-
-                result = self.fixture.sync()
-
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("repository source commit is unavailable", result.stderr)
-                self.assertEqual(result.stdout, "")
-                self.assertFalse(self.fixture.marker_path.exists())
-
-    def test_runtime_receipt_sync_relays_after_schema_receipt_verification(self):
+    def test_runtime_receipt_sync_relays_when_the_contract_is_unchanged_since_release(self):
         result = self.fixture.sync()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.fixture.marker_path.exists())
         self.assertTrue(json.loads(result.stdout)["healthy"])
+
+    def test_runtime_receipt_sync_blocks_a_changed_contract_that_production_lacks(self):
+        self.fixture.change_contract()
+
+        result = self.fixture.sync()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runtime receipt relay blocked", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse(self.fixture.marker_path.exists())
+
+    def test_runtime_receipt_sync_relays_a_changed_contract_after_production_matches(self):
+        self.fixture.change_contract()
+        self.fixture.write_cktool(exports_contract=True)
+        self.fixture.environment["CLOUDKIT_MANAGEMENT_TOKEN"] = "fixture-token"
+
+        result = self.fixture.sync()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.fixture.marker_path.exists())
+
+    def test_runtime_receipt_sync_blocks_when_release_history_is_unreadable(self):
+        for script in ("#!/bin/sh\nexit 8\n", "#!/bin/sh\nprintf 'invalid output\\n'\n"):
+            with self.subTest(script=script):
+                git = self.fixture.tools / "git"
+                git.write_text(script)
+                git.chmod(0o755)
+
+                result = self.fixture.sync()
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("runtime receipt relay blocked", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertFalse(self.fixture.marker_path.exists())
 
     def test_runtime_receipt_sync_rejects_invalid_agent_output(self):
         for output in ("not JSON", "[]", "{}"):

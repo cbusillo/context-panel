@@ -331,12 +331,6 @@ Use `Ship` for normal releases. It accepts:
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
   names; internal groups are included by default.
 - `include_internal_testflight_groups`: include internal TestFlight beta groups.
-- `cloudkit_schema_receipt_base64`: optional legacy Production schema evidence
-  (option C). Leave empty for the [Mac publication-time check](cloudkit-publication-check.md).
-  When supplied, `Ship` forwards it to every selected channel, and each publication,
-  upload, or TestFlight step verifies the supplied evidence before mutation.
-  Empty inputs instead use the publication-time check; see "CloudKit Production
-  Schema Gate".
 
 For a normal release, run `Ship` from `main` with the defaults. That creates the
 friend-installable GitHub artifact and makes every platform's App Store build
@@ -367,8 +361,6 @@ Manual dispatch accepts:
 - `create_github_release`: whether to create or update a GitHub Release.
 - `notarize`: whether to run Apple notarization; defaults to true and must
   complete before a GitHub Release can be published.
-- `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
-  receipt for the legacy option C. Leave empty for the Mac publication-time check.
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
 workflow artifact. Before upload, it seals the metadata with the tag, exact
@@ -434,8 +426,7 @@ requires signing and completed notarization. Ship rejects
 starting any channel. Standalone Release rejects the same publication intent
 before building; artifact metadata remains the final publication authority.
 
-The publication check can also run locally without secrets, a CloudKit receipt,
-or GitHub access:
+The publication check can also run locally without secrets or GitHub access:
 
 ```sh
 uv run --no-project python scripts/publish-github-release.py \
@@ -568,11 +559,10 @@ External TestFlight beta groups may still require Apple's beta review process;
 keep external beta rollout expectations separate from internal dogfood testing.
 
 For local operator use, the same script accepts App Store Connect environment
-variables. A live run also needs the Production CloudKit schema receipt, so run
-it through the receipt wrapper (see "CloudKit Production Schema Gate"):
+variables. Run the schema gate first (see "CloudKit Production Schema Gate"):
 
 ```sh
-scripts/with-cloudkit-schema-receipt.sh -- \
+scripts/cloudkit-schema-gate.py check &&
   scripts/distribute-testflight-beta.py \
   --version 1.0.22 \
   --build-number 202606111944 \
@@ -846,11 +836,9 @@ companion widget rendering all work.
 
 ### CloudKit Production Schema Gate
 
-Normal hosted publication uses the [Mac publication-time check](cloudkit-publication-check.md)
-(Q43 option B). Leave the receipt input empty: intent recording and building precede
-its single live schema check. The manual receipt instructions below remain the
-option C compatibility route and the direct operator-command route. The Mac
-checker runs on its own every minute on Chris-Studio.
+Chris chose this design on [#904](https://github.com/cbusillo/context-panel/issues/904):
+check Production only when the committed schema changes, from CI, with the
+management token held as a GitHub secret.
 
 The companion TestFlight and App Store builds use the Production CloudKit
 environment for `iCloud.com.shinycomputers.contextpanel`. Private database
@@ -896,6 +884,42 @@ schema candidate. It preserves the existing companion and `Users` definitions,
 adds the two runtime record types, includes the required range index, and omits
 public-database grants for runtime evidence. Do not reconstruct the candidate by
 hand in CloudKit Console.
+
+Every build also checks the app against that contract without credentials:
+Swift tests build the companion snapshot and runtime records the app writes
+and compare each record's type, name, fields and value types with
+`CloudKit/companion-sync.schema.json`, and the routine Python tests run the
+offline check above.
+
+#### When Production is checked
+
+Each publication step runs `scripts/cloudkit-schema-gate.py check` before it
+publishes: GitHub Release publication, Mac and companion uploads in upload
+mode, TestFlight distribution outside dry runs, and App Store Review live
+operations. Export-only, artifact-only, dry-run and cancel-only paths skip it.
+The gate compares `CloudKit/` with the newest `vMAJOR.MINOR.PATCH` release tag
+reachable from the commit being released. It trusts that tag only when its
+GitHub Release was published by `github-actions[bot]`, because the release
+workflow publishes only after this gate; a hand-made tag or release does not
+count. (A tag ruleset cannot do this here: personal-account repositories cannot
+exempt GitHub Actions from one.)
+
+- unchanged since a trusted tag: no live check
+- changed, no reachable tag, or a tag whose release is missing or published by
+  anyone else: the live validator must pass against Production (`scripts/validate-cloudkit-companion-schema.sh --live
+  --environment production`)
+- the export fails, the token is missing, Production does not match, or
+  history cannot be read: the step refuses and nothing is published
+
+Production accepts only additive schema deployments, so a contract verified
+once stays deployed. In CI the token comes from `CLOUDKIT_MANAGEMENT_TOKEN` in
+the `release` environment, the single release secret store, limited to Branch
+`main` and checked by every release run's guard. Only the gate step receives
+it. Runtime receipt sync runs the same gate on the operator Mac (see
+[Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md))
+and does not pass the token to the signed agent. For a live release command
+run locally, run `scripts/cloudkit-schema-gate.py check` first; it uses the
+token `cktool` saved in the Keychain.
 
 The live gate uses Apple's `cktool`, not the App Store Connect API key. `cktool`
 needs a CloudKit management token. Apple documents that management tokens are
@@ -952,47 +976,15 @@ xcrun cktool save-token --type management --method keychain --force
 xcrun cktool get-teams
 ```
 
-Then validate the live Production schema and issue a six-hour sealed receipt
-bound to the exact source commit:
+To give CI the token, the owner opens **Settings → Environments → release →
+Environment secrets → Add environment secret**, names it
+`CLOUDKIT_MANAGEMENT_TOKEN`, and pastes the token. Do not add it as a
+repository secret or to another environment. Replace it there when it is
+rotated or expires.
 
-```sh
-export CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY="$(
-  security find-generic-password \
-    -a "$USER" \
-    -s com.shinycomputers.contextpanel.cloudkit-schema-receipt \
-    -w
-)"
-source_commit="$(git rev-parse HEAD)"
-scripts/validate-cloudkit-companion-schema.sh \
-  --live \
-  --environment production \
-  --source-commit "$source_commit" \
-  --receipt-output .build/cloudkit-production-schema-receipt.json
-```
-
-The receipt contains only its schema identity, Production environment, fixed
-container identifier, checked-in JSON/ckdb contract digest, exact source commit,
-validation and expiry times, an optional publication-request digest, and an
-HMAC-SHA256 seal. It contains no CloudKit
-management token, HMAC key, record name, account identifier, or live object ID.
-It expires after six hours by default and cannot be reused for another commit or
-changed schema contract.
-
-For option C, encode the receipt as one line for the
-`cloudkit_schema_receipt_base64` workflow input:
-
-```sh
-base64 < .build/cloudkit-production-schema-receipt.json | tr -d '\r\n'
-```
-
-GitHub Release publication verifies the receipt while artifact-only builds
-remain available without it. Mac and companion upload workflows verify the
-receipt only for upload mode; export-only remains non-mutating. TestFlight
-distribution verifies it unless `dry_run` is enabled. App Store Review verifies
-it for every live prepare, build-attachment, or submission operation; dry runs
-and cancel-only operations remain available without a receipt. The `Ship`
-workflow forwards a supplied legacy input. With an empty input, every live
-channel requests its own publication-time check.
+If Keychain storage is unavailable, provide the token only to the command
+process with `CLOUDKIT_MANAGEMENT_TOKEN`; do not write the token into tracked
+files, shell history, GitHub issues, PRs, agent summaries, or release notes.
 
 Both upload helpers have one test-only input,
 `CONTEXT_PANEL_UPLOAD_FIXTURE_TOOLS_DIR`. The Mac helper replaces `xcodebuild`;
@@ -1008,68 +1000,6 @@ decoding, project generation, fingerprint generation and expected-build collecti
 They exercise `--export-only` with `--archive-only` or `--skip-archive`, including
 version/build and source mismatch refusals and missing fresh package output.
 They do not qualify signing, real archives, or live uploads.
-
-The release entrypoints enforce this themselves, not only the workflows.
-`publish-github-release.py`, both `upload-app-store-connect-*-app.sh` scripts in
-upload mode, `distribute-testflight-beta.py` without `--dry-run`, and
-`submit-app-store-review.py` outside dry-run, cancel-only, and
-validate-report-only all call `scripts/require-cloudkit-schema-receipt.sh`
-before live mutation and refuse without a valid receipt for the commit. Upload
-helpers also verify immediately before export/upload; archive-only makes no
-upload and skip-archive still validates the existing archive.
-That holds on an operator machine too, and there is no override flag.
-
-For a live run from an operator machine, wrap the command:
-
-```sh
-scripts/with-cloudkit-schema-receipt.sh -- \
-  scripts/distribute-testflight-beta.py \
-  --version <marketing-version> \
-  --build-number <build-number> \
-  --platform MAC_OS
-```
-
-The wrapper reads the receipt key from the Keychain, reuses
-`.build/cloudkit-production-schema-receipt.json` while it is still valid for
-`HEAD`, and otherwise runs the live schema gate above to issue a fresh one.
-It runs the command from the repository root. The receipt is bound to the
-checkout's `HEAD`, so check out the commit being released first; for GitHub
-Release publication that is the same commit passed as `--source-commit`.
-
-The local signed runtime-receipt relay verifies the receipt before invoking the
-canonical refresh agent:
-
-```sh
-scripts/context-panel-runtime-session.py sync \
-  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
-```
-
-The relay receives the receipt and HMAC key only for local verification. It does
-not pass either value to the signed agent. The signed agent continues to use its
-own Production CloudKit entitlement and account authority.
-
-One-time operator setup must put the same high-entropy HMAC key in local
-Keychain and the protected GitHub `release` environment without printing it:
-
-```sh
-receipt_key="$(openssl rand -base64 48)"
-printf '%s\n%s\n' "$receipt_key" "$receipt_key" \
-  | security add-generic-password \
-  -U \
-  -a "$USER" \
-  -s com.shinycomputers.contextpanel.cloudkit-schema-receipt \
-  -w
-printf '%s' "$receipt_key" \
-  | gh secret set CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY \
-      --env release \
-      --repo cbusillo/context-panel
-unset receipt_key
-```
-
-If Keychain storage is unavailable, provide the token only to the command
-process with `CLOUDKIT_MANAGEMENT_TOKEN`; do not write the token into tracked
-files, shell history, GitHub issues, PRs, agent summaries, or release notes.
-Apply the same handling to `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`.
 
 If the live gate reports a missing runtime record type or index, re-export both
 environments and require Production and Development to contain no unrelated
@@ -1236,9 +1166,6 @@ Use inputs:
 - `build_number`: optional; blank uses a UTC timestamp.
 - `platform`: `ios`, `visionos`, or `tvos`.
 - `upload`: `true` to upload, `false` for export-only.
-- `cloudkit_schema_receipt_base64`: the sealed Production CloudKit schema
-  receipt for legacy option C. Leave empty for the Mac publication-time check
-  when `upload` is `true`; export-only does not request a check.
 
 Upload mode may not emit a local IPA because Xcode can upload the signed archive
 directly. Export-only mode must emit a local IPA. In either mode, retain the
@@ -1527,8 +1454,7 @@ relay through the existing signed host and reconcile the sanitized export:
 ```sh
 scripts/context-panel-validation.py sync-runtime-evidence \
   --version <marketing-version> \
-  --build-number <coordinated-build-number> \
-  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
+  --build-number <coordinated-build-number>
 ```
 
 This explicit command invokes the existing runtime-session `sync`, `status`,
@@ -1996,11 +1922,11 @@ App Store version, then continue creating the target version and submitting the
 new build after the dry-run path has validated that transition.
 
 For local operator use, the same script accepts an API key path or the existing
-App Store Connect environment variables. This example is a live run, so it goes
-through the receipt wrapper:
+App Store Connect environment variables. This example is a live run, so it
+runs the schema gate first:
 
 ```sh
-scripts/with-cloudkit-schema-receipt.sh -- \
+scripts/cloudkit-schema-gate.py check &&
   scripts/submit-app-store-review.py \
   --platform MAC_OS \
   --version 1.0.12 \

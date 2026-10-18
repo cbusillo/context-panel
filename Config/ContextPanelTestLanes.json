@@ -74,7 +74,7 @@
       "Tests/ScriptsTests/test_validation_gallery_target_graph.py",
       "Tests/ScriptsTests/test_ci_change_scope.py",
       "Tests/ScriptsTests/test_release_approvals.py",
-      "Tests/ScriptsTests/test_cloudkit_publication_relay.py",
+      "Tests/ScriptsTests/test_cloudkit_schema_gate.py",
       "Tests/ScriptsTests/test_shared_view_references.py"
     ],
     "routine-ci-python": [

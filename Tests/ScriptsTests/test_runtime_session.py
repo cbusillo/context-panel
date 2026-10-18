@@ -483,9 +483,6 @@ class RuntimeSessionScriptTests(unittest.TestCase):
                 "uploadedReceiptCount": 2, "downloadedReceiptCount": 3,
                 "deletedRemoteReceiptCount": 1,
             })
-            issued = fixture.issue_receipt()
-            self.assertEqual(issued.returncode, 0, issued.stderr)
-
             completed = fixture.sync()
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
