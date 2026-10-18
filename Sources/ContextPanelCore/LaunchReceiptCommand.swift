@@ -15,7 +15,11 @@ public enum LaunchReceiptCommand {
     /// Reads at most this many bytes, so oversized input is rejected without reading all of it.
     public static let inputLimit = LaunchReceiptStore.maximumFileBytes + 1
 
-    public static func run(arguments: [String], input: () -> Data, rootDirectory: URL, now: Date = Date()) -> Result {
+    public static func readInput(from handle: FileHandle = .standardInput) throws -> Data {
+        try handle.read(upToCount: inputLimit) ?? Data()
+    }
+
+    public static func run(arguments: [String], input: () throws -> Data, rootDirectory: URL, now: Date = Date()) -> Result {
         if arguments == ["--help"] {
             return Result(exitCode: 0, standardOutput: Data(
                 """
@@ -31,7 +35,12 @@ public enum LaunchReceiptCommand {
         }
         let launcher = arguments[1]
 
-        let data = input()
+        let data: Data
+        do {
+            data = try input()
+        } catch {
+            return failure(64, "Unable to read launch receipt from stdin.")
+        }
         guard data.count <= LaunchReceiptStore.maximumFileBytes,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == receiptKeys,
@@ -42,7 +51,7 @@ public enum LaunchReceiptCommand {
 
         let directory = rootDirectory.appending(path: LaunchReceiptStore.directoryName)
         let name = "\(fileTimestamp(receipt.launchedAt))-\(launcher)-\(randomHex()).json"
-        let temporary = directory.appending(path: ".\(launcher)-\(randomHex()).tmp")
+        let temporary = directory.appending(path: temporaryFileName(launcher: launcher))
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -63,15 +72,25 @@ public enum LaunchReceiptCommand {
         return Result(exitCode: 0, standardOutput: Data("\(name)\n".utf8), standardError: Data())
     }
 
-    /// Deletes only this launcher's own receipts once they are a day old; other launchers' files stay.
+    /// Deletes only this launcher's day-old receipts and interrupted temporary writes.
     static func prune(directory: URL, launcher: String, now: Date) {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
         let own = "^[0-9]{8}T[0-9]{6}Z-\(launcher)-[0-9a-f]+\\.json$"
-        for name in names where name.range(of: own, options: .regularExpression) != nil {
+        let interrupted = "^\\.\(launcher)-[0-9a-f]+\\.tmp$"
+        for name in names {
+            let isReceipt = name.range(of: own, options: .regularExpression) != nil
+            let isTemporary = name.range(of: interrupted, options: .regularExpression) != nil
+            guard isReceipt || isTemporary else { continue }
             let url = directory.appending(path: name)
-            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                  values.isRegularFile == true, values.isSymbolicLink != true,
-                  let size = values.fileSize, size <= LaunchReceiptStore.maximumFileBytes,
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true else { continue }
+            if isTemporary {
+                if let modified = values.contentModificationDate, now.timeIntervalSince(modified) >= LaunchReceiptStore.lookback {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                continue
+            }
+            guard let size = values.fileSize, size <= LaunchReceiptStore.maximumFileBytes,
                   let data = try? Data(contentsOf: url),
                   let receipt = try? JSONDecoder.contextPanelISO8601.decode(LaunchReceipt.self, from: data),
                   now.timeIntervalSince(receipt.launchedAt) >= LaunchReceiptStore.lookback else { continue }
@@ -89,6 +108,10 @@ public enum LaunchReceiptCommand {
 
     static func randomHex() -> String {
         UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    static func temporaryFileName(launcher: String) -> String {
+        ".\(launcher)-\(randomHex()).tmp"
     }
 
     /// The system's reason without the path, which may be private.

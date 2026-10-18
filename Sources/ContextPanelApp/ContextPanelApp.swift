@@ -27,7 +27,7 @@ public enum ContextPanelEntryPoint {
             exit(result.exitCode)
         }
         if let result = recordLaunchResult(arguments: Array(CommandLine.arguments.dropFirst()), input: {
-            FileHandle.standardInput.readData(ofLength: LaunchReceiptCommand.inputLimit)
+            try LaunchReceiptCommand.readInput()
         }) {
             FileHandle.standardOutput.write(result.standardOutput)
             FileHandle.standardError.write(result.standardError)
@@ -63,7 +63,7 @@ public enum ContextPanelEntryPoint {
     }
 
     /// Writes into the App Group store only; it takes no storage-root override.
-    static func recordLaunchResult(arguments: [String], input: () -> Data, now: Date = Date(),
+    static func recordLaunchResult(arguments: [String], input: () throws -> Data, now: Date = Date(),
                                    rootDirectory: URL = AgentAccountSnapshotCommand.defaultStorageRoot()) -> LaunchReceiptCommand.Result? {
         guard arguments.first == "--record-launch" else { return nil }
         return LaunchReceiptCommand.run(arguments: Array(arguments.dropFirst()), input: input,

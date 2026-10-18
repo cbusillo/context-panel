@@ -861,11 +861,12 @@ installed app instead, which needs no new grant
 Stdin holds one receipt in the format above, with exactly those four keys; the
 mode adds nothing to it. `--launcher` is a token of at most 32 lowercase
 letters and digits. The mode writes `<launch time>-<launcher>-<random>.json`
-atomically, deletes only that launcher's own receipts once they are a day old,
-prints the file name (not the path) and exits 0. A receipt that is malformed,
-over 1 KB, not current, or has other keys exits 64, as do invalid arguments; a
-storage failure exits 1 with the reason on stderr. It writes only to the App
-Group store, accepts no storage-root override, and exits before the app
+atomically, deletes only that launcher's own receipts and temporary files left
+by interrupted writes once they are a day old, prints the file name (not the
+path) and exits 0. A receipt that is malformed,
+over 1 KB, not current, or has other keys exits 64, as do invalid arguments or
+unreadable stdin; a storage failure exits 1 with the reason on stderr. It writes
+only to the App Group store, accepts no storage-root override, and exits before the app
 interface, provider services or refresh-agent registration start. Launchers
 that can write the store directly keep using the directory.
 
