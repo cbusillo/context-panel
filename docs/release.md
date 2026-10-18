@@ -898,11 +898,15 @@ publishes: GitHub Release publication, Mac and companion uploads in upload
 mode, TestFlight distribution outside dry runs, and App Store Review live
 operations. Export-only, artifact-only, dry-run and cancel-only paths skip it.
 The gate compares `CloudKit/` with the newest `vMAJOR.MINOR.PATCH` release tag
-reachable from the commit being released:
+reachable from the commit being released. It trusts that tag only when its
+GitHub Release was published by `github-actions[bot]`, because the release
+workflow publishes only after this gate; a hand-made tag or release does not
+count. (A tag ruleset cannot do this here: personal-account repositories cannot
+exempt GitHub Actions from one.)
 
-- unchanged: no live check; that release already passed this gate
-- changed, or no reachable tag: the live validator must pass against
-  Production (`scripts/validate-cloudkit-companion-schema.sh --live
+- unchanged since a trusted tag: no live check
+- changed, no reachable tag, or a tag whose release is missing or published by
+  anyone else: the live validator must pass against Production (`scripts/validate-cloudkit-companion-schema.sh --live
   --environment production`)
 - the export fails, the token is missing, Production does not match, or
   history cannot be read: the step refuses and nothing is published

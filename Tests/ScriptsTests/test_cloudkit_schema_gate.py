@@ -17,6 +17,15 @@ sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 
 
+FAKE_GH = r"""#!/bin/sh
+# Fake gh: prints the GitHub Release for the tag named in the requested path.
+[ -n "${FAKE_RELEASE_MISSING:-}" ] && exit 1
+for argument in "$@"; do path="$argument"; done
+tag="${path##*/}"
+printf '{"tag_name": "%s", "draft": false, "published_at": "2026-10-12T10:42:58Z", "author": {"login": "%s"}}\n' "$tag" "${FAKE_RELEASE_AUTHOR:-github-actions[bot]}"
+"""
+
+
 class CloudKitSchemaGateTests(unittest.TestCase):
     """A fake validator stands in for the live Production export."""
 
@@ -27,6 +36,10 @@ class CloudKitSchemaGateTests(unittest.TestCase):
         self.marker = Path(directory.name) / "validator-ran"
         self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         self.environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        fake_gh = Path(directory.name) / "gh"
+        fake_gh.write_text(FAKE_GH)
+        fake_gh.chmod(0o755)
+        self.environment["CONTEXT_PANEL_RELEASE_GH"] = str(fake_gh)
         (self.repo / "CloudKit").mkdir(parents=True)
         (self.repo / "scripts").mkdir()
         (self.repo / "CloudKit/companion-sync.schema.json").write_text("{}\n")
@@ -87,6 +100,26 @@ class CloudKitSchemaGateTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("changed since v1.0.0", stdout)
         self.assertEqual(self.marker.read_text().split(), ["--live", "--environment", "production"])
+
+    def test_release_not_published_by_the_release_workflow_requires_the_live_check(self) -> None:
+        self.git("tag", "v1.0.0")
+        self.edit("README.md", "more product\n")
+        self.environment["FAKE_RELEASE_AUTHOR"] = "cbusillo"
+
+        code, stdout, _ = self.run_gate()
+
+        self.assertEqual(code, 0)
+        self.assertIn("v1.0.0 has no GitHub Release published by github-actions[bot]", stdout)
+        self.assertTrue(self.marker.exists())
+
+    def test_unreadable_release_requires_the_live_check(self) -> None:
+        self.git("tag", "v1.0.0")
+        self.environment["FAKE_RELEASE_MISSING"] = "1"
+
+        code, _, _ = self.run_gate()
+
+        self.assertEqual(code, 0)
+        self.assertTrue(self.marker.exists())
 
     def test_failed_live_check_refuses(self) -> None:
         self.git("tag", "v1.0.0")

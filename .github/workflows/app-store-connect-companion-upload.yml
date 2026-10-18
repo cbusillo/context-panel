@@ -316,6 +316,7 @@ jobs:
         if: ${{ inputs.upload }}
         env:
           CLOUDKIT_MANAGEMENT_TOKEN: ${{ secrets.CLOUDKIT_MANAGEMENT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/cloudkit-schema-gate.py check
 
       - name: Upload Verified Archive

@@ -29,6 +29,14 @@ class RuntimeRelayFixture:
         # Never reach the real cktool or its saved token.
         self.environment["PATH"] = f"{self.tools}:{self.environment['PATH']}"
         self.write_cktool(exports_contract=False)
+        release_gh = self.tools / "release-gh"
+        release_gh.write_text(
+            "#!/bin/sh\nfor argument in \"$@\"; do path=\"$argument\"; done\n"
+            "printf '{\"tag_name\": \"%s\", \"draft\": false, \"published_at\": \"2026-10-12T10:42:58Z\", "
+            "\"author\": {\"login\": \"github-actions[bot]\"}}\\n' \"${path##*/}\"\n"
+        )
+        release_gh.chmod(0o755)
+        self.environment["CONTEXT_PANEL_RELEASE_GH"] = str(release_gh)
         for relative in (
             "scripts/context-panel-runtime-session.py", "scripts/cloudkit-schema-gate.py",
             "scripts/validate-cloudkit-companion-schema.sh",
