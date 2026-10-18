@@ -3,10 +3,12 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -23,6 +25,9 @@ ALLOWED_ROLES = {"test", "support"}
 # change only the lane manifest skip that step, so validation has to catch a
 # manifest the step would refuse.
 COMMIT_GATE_SWIFT_LANE = "routine-ci-swift"
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
+COMMAND_CLEANUP_TIMEOUT_SECONDS = 5
+COMMAND_POLL_SECONDS = 0.1
 # Lanes whose membership may be claimed by a glob. SwiftPM runs every file in the
 # test target whatever this manifest says, and support files never run, so a
 # list of them records nothing a pattern does not. Python and manual lanes stay
@@ -293,26 +298,26 @@ def files_for_lane(
 
 
 def source_commit() -> str | None:
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True,
+            text=True, check=False, timeout=COMMAND_CLEANUP_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
 def command_version(command: list[str]) -> str | None:
     if not command:
         return None
-    completed = subprocess.run(
-        [command[0], "--version"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [command[0], "--version"], cwd=REPO_ROOT, capture_output=True,
+            text=True, check=False, timeout=COMMAND_CLEANUP_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if completed.returncode != 0:
         return None
     return completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else None
@@ -436,9 +441,14 @@ def run_python_lane(
     return exit_code
 
 
-def time_command(payload: dict[str, Any], lane_name: str, report_path: Path, command: list[str]) -> int:
+def time_command(
+    payload: dict[str, Any], lane_name: str, report_path: Path, command: list[str],
+    *, timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+) -> int:
     if not command:
         raise TestLaneError("time-command requires a command after --")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise TestLaneError("time-command timeout must be finite and positive")
     lane = payload["lanes"].get(lane_name)
     if lane is None:
         raise TestLaneError(f"unknown test lane: {lane_name}")
@@ -449,23 +459,83 @@ def time_command(payload: dict[str, Any], lane_name: str, report_path: Path, com
     files = files_for_lane(payload, lane_name, require_safe=True)
     started_at = datetime.now(timezone.utc)
     command_started = time.monotonic()
+    timed_out = False
+    interrupted_signal = 0
+    cleanup_timed_out = False
+
+    def interrupt(signum, _frame):
+        nonlocal interrupted_signal
+        # Never throw from a signal handler into spawn, timeout handling or
+        # cleanup. The bounded wait loop observes this flag promptly.
+        interrupted_signal = interrupted_signal or signum
+
+    previous_handlers = {
+        sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
     try:
-        completed = subprocess.run(command, cwd=REPO_ROOT, check=False)
-    except FileNotFoundError as error:
-        raise TestLaneError(f"test lane command not found: {command[0]}") from error
-    report = base_report(lane_name, files, started_at)
-    report.update(
-        {
-            "durationMs": round((time.monotonic() - command_started) * 1000),
-            "exitCode": completed.returncode,
-            "results": [],
-            "commandName": Path(command[0]).name,
-            "toolVersion": command_version(command),
-        }
-    )
-    write_report(report_path, report)
-    append_summary(report)
-    return completed.returncode
+        try:
+            # Own the group, including swift-testing and renderer grandchildren.
+            # Popen's context manager and subprocess.run's timeout cleanup both
+            # wait indefinitely after killing a kernel-stuck child.
+            process = subprocess.Popen(command, cwd=REPO_ROOT, start_new_session=True)
+        except FileNotFoundError as error:
+            raise TestLaneError(f"test lane command not found: {command[0]}") from error
+        deadline = command_started + timeout_seconds
+        while True:
+            if interrupted_signal:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                exit_code = process.wait(timeout=min(remaining, COMMAND_POLL_SECONDS))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if timed_out or interrupted_signal:
+            exit_code = 124 if timed_out else 128 + interrupted_signal
+            reason = f"timed out after {timeout_seconds:g}s" if timed_out else "was interrupted"
+            print(f"test lane {lane_name} {reason}; killing its process group", file=sys.stderr)
+            # Once reaped, a leader's PID can be reused by another group. Never
+            # issue a group kill from that state, even on an interrupt race.
+            if process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=COMMAND_CLEANUP_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    cleanup_timed_out = True
+                    print("test lane process is still stuck after SIGKILL; host diagnosis is required", file=sys.stderr)
+        version = None if timed_out or interrupted_signal else command_version(command)
+        report = base_report(lane_name, files, started_at)
+        if interrupted_signal and not timed_out:
+            exit_code = 128 + interrupted_signal
+        report.update(
+            {
+                "durationMs": round((time.monotonic() - command_started) * 1000),
+                "exitCode": exit_code,
+                "timedOut": timed_out,
+                "timeoutSeconds": timeout_seconds,
+                "cleanupTimedOut": cleanup_timed_out,
+                "results": [],
+                "commandName": Path(command[0]).name,
+                # Do not launch the same tool again on the failing host.
+                "toolVersion": version,
+            }
+        )
+        write_report(report_path, report)
+        append_summary(report)
+        if interrupted_signal and not timed_out and exit_code != 128 + interrupted_signal:
+            exit_code = 128 + interrupted_signal
+            report["exitCode"] = exit_code
+            write_report(report_path, report)
+        return exit_code
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
 
 
 def default_report_path(lane_name: str) -> Path:
@@ -490,6 +560,10 @@ def parse_args() -> argparse.Namespace:
     command_parser = subparsers.add_parser("time-command", help="Time a safe external test command.")
     command_parser.add_argument("--lane", required=True)
     command_parser.add_argument("--report", type=Path)
+    command_parser.add_argument(
+        "--timeout-seconds", type=float, default=DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        help="Deadline for the command and its child processes (default: %(default)s).",
+    )
     command_parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
 
@@ -524,6 +598,7 @@ def main() -> int:
             arguments.lane,
             arguments.report or default_report_path(arguments.lane),
             command,
+            timeout_seconds=arguments.timeout_seconds,
         )
     except TestLaneError as error:
         print(f"context-panel-test-lanes failed: {error}", file=sys.stderr)

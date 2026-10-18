@@ -86,6 +86,7 @@ jobs:
           [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' ]]
 
   swift-tests:
+    timeout-minutes: 30
     runs-on: >-
       ${{ fromJSON(github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name != github.repository &&

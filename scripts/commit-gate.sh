@@ -74,7 +74,9 @@ if [[ "$run_swift" != "true" ]]; then
 	exit 0
 fi
 
-swift build "${swift_args[@]}"
+# Compile tests before starting their execution deadline, including on a cold
+# cache. The CI job timeout remains the backstop for compilation.
+swift build --build-tests "${swift_args[@]}"
 python3 scripts/context-panel-test-lanes.py time-command \
 	--lane routine-ci-swift \
-	-- swift test "${swift_args[@]}"
+	-- swift test --skip-build "${swift_args[@]}"
