@@ -27,7 +27,7 @@ public enum LaunchReceiptStore {
     /// Receipts older than this no longer change the ranking.
     public static let lookback: TimeInterval = 24 * 3_600
     static let maximumFileCount = 5_000
-    static let maximumFileBytes = 1_024
+    public static let maximumFileBytes = 1_024
 
     public static func load(rootDirectory: URL, now: Date) -> [LaunchReceipt] {
         let directory = rootDirectory.appending(path: directoryName)
@@ -43,7 +43,7 @@ public enum LaunchReceiptStore {
         }
     }
 
-    static func isUsable(_ receipt: LaunchReceipt, now: Date) -> Bool {
+    public static func isUsable(_ receipt: LaunchReceipt, now: Date) -> Bool {
         receipt.schemaVersion == LaunchReceipt.currentSchemaVersion
             && receipt.accountID.range(of: "^\(receipt.provider.rawValue)-[0-9a-f]{1,64}$", options: .regularExpression) != nil
             && receipt.launchedAt <= now.addingTimeInterval(60) && receipt.launchedAt >= now.addingTimeInterval(-lookback)
