@@ -67,7 +67,7 @@
       "candidateRuntimeBaseline": "scripts/context-panel-runtime-baseline.sh check --require-production-runtime --candidate-manifest <ExpectedBuildManifest-macos.json> (read-only exact-candidate identity with current validator checks; docs/validation-authority.md owns the operator route)",
       "candidateRuntimeFixtureTests": "uv run --no-project python -m unittest -k runtime_baseline Tests.ScriptsTests.test_release_workflows (inert bundle, signed-manifest, process and launchd fixtures; no installed-app validation)",
       "macOSUploadFixtureTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_macos_upload_script (export-only fixture seam and fake profiles; docs/release.md owns fixture boundaries)",
-      "cloudKitPublicationRelay": "uv run --no-project python -m unittest Tests.ScriptsTests.test_cloudkit_publication_relay (fake clocks/GitHub/schema; operator activation is separate)",
+      "cloudKitPublicationRelay": "uv run --no-project python -m unittest Tests.ScriptsTests.test_cloudkit_publication_relay (fake clocks/GitHub/schema/git; the scheduled Mac checker is docs/cloudkit-publication-check.md)",
       "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
       "cloudKitSchemaReceiptGate": "scripts/require-cloudkit-schema-receipt.sh (called by every live release entrypoint; local live runs use scripts/with-cloudkit-schema-receipt.sh -- <command>)",
       "githubReleasePublication": "scripts/publish-github-release.py --validate-only <release arguments> (non-mutating package eligibility check; publication policy and validation-artifact route: docs/release.md#ci-signing-and-notarization-secrets)",

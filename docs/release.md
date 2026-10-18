@@ -849,9 +849,8 @@ companion widget rendering all work.
 Normal hosted publication uses the [Mac publication-time check](cloudkit-publication-check.md)
 (Q43 option B). Leave the receipt input empty: intent recording and building precede
 its single live schema check. The manual receipt instructions below remain the
-option C compatibility route and the direct operator-command route. Activation
-of the Mac checker needs Chris's separate authorization; the source PR does not
-use credentials or qualify a live release.
+option C compatibility route and the direct operator-command route. The Mac
+checker runs on its own every minute on Chris-Studio.
 
 The companion TestFlight and App Store builds use the Production CloudKit
 environment for `iCloud.com.shinycomputers.contextpanel`. Private database
