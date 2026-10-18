@@ -303,16 +303,22 @@ struct WatchHorizon: View {
                         Rectangle().fill(WatchTokens.color(.primary)).frame(width: 1)
                             .offset(x: min(width - 1, max(0, width * reset - 0.5)))
                     }
-                    ForEach(Array(geometry.banked.enumerated()), id: \.offset) { _, mark in
-                        WatchDiamond().fill(WatchTokens.color(.banked)).frame(width: 6, height: 6)
-                            .offset(x: min(width - 6, max(0, width * mark.x - 3)),
-                                    y: min(height - 6, max(0, height * (1 - mark.level) - 3)))
-                    }
+                    bankedMarks(geometry, width: width, height: height)
                 }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
         .accessibilityHidden(true)
+    }
+
+    // Kept out of `body`: inline, this expression exceeds the release compiler's
+    // type-check time limit.
+    private func bankedMarks(_ geometry: AccountHorizonGeometry, width: CGFloat, height: CGFloat) -> some View {
+        ForEach(Array(geometry.banked.enumerated()), id: \.offset) { _, mark in
+            let x: CGFloat = min(width - 6, max(0, width * CGFloat(mark.x) - 3))
+            let y: CGFloat = min(height - 6, max(0, height * (1 - CGFloat(mark.level)) - 3))
+            WatchDiamond().fill(WatchTokens.color(.banked)).frame(width: 6, height: 6).offset(x: x, y: y)
+        }
     }
 }
 
