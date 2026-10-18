@@ -76,8 +76,8 @@ jobs:
   shared-view-references:
     # Renders the host shared-view cells and compares them with their committed
     # reference images. References are only valid for this runner image and the
-    # Xcode the Shared-View Capture Evidence workflow selects; re-record them when
-    # either changes (docs/validation-authority.md#reference-images).
+    # pinned Xcode; re-record them when either changes
+    # (docs/validation-authority.md#reference-images).
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -95,7 +95,7 @@ jobs:
 
       - name: Select Xcode
         if: ${{ steps.scope.outputs.product != 'false' }}
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-capture-workflow.py pinned-xcode)"
 
       - name: Render host cells
         if: ${{ steps.scope.outputs.product != 'false' }}
@@ -125,8 +125,103 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  shared-view-simulator-references:
+    # Captures the simulator shared-view cells exactly as Shared-View Capture
+    # Evidence does, from fresh Release builds of this commit, and compares them
+    # with their committed reference images. Xcode, runtimes and devices come from
+    # Config/ContextPanelSharedViewSimulators.json
+    # (docs/validation-authority.md#reference-images).
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify change scope
+        id: scope
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
+
+      - name: Select Xcode
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-capture-workflow.py pinned-xcode)"
+
+      - name: Install XcodeGen
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Build Release simulator products
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          export CONTEXT_PANEL_SHARED_VIEW_SOURCE_ROOT="${GITHUB_WORKSPACE}"
+          export CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE="${GITHUB_WORKSPACE}/Tests/ContextPanelCompanionSharedViewCaptureUITests"
+          xcodegen generate \
+            --spec Config/ContextPanelSharedViewCaptureUITests.yml \
+            --project-root "${GITHUB_WORKSPACE}" \
+            --project "${GITHUB_WORKSPACE}"
+          build_simulator() {
+            xcodebuild -project ContextPanel.xcodeproj -scheme "$1" -configuration Release \
+              -destination "$2" -derivedDataPath "$3" CODE_SIGNING_ALLOWED=NO build
+          }
+          build_ui_tests() {
+            xcodebuild -project ContextPanel.xcodeproj \
+              -scheme ContextPanelCompanionSharedViewCaptureUITests -configuration Release \
+              -destination "$1" -derivedDataPath "$2" build-for-testing
+          }
+          build_ui_tests 'generic/platform=iOS Simulator' .build/ios-derived-data
+          build_ui_tests 'generic/platform=visionOS Simulator' .build/visionos-derived-data
+          build_simulator ContextPanelWatch 'generic/platform=watchOS Simulator' .build/watchos-derived-data
+          build_simulator ContextPanelTV 'generic/platform=tvOS Simulator' .build/tvos-derived-data
+
+      - name: Capture simulator cells
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          set -euo pipefail
+          xcrun simctl list --json >"${RUNNER_TEMP}/simctl-catalog.json"
+          products() { echo "${GITHUB_WORKSPACE}/.build/$1-derived-data/Build/Products"; }
+          test_run() {
+            find "$(products "$1")" -maxdepth 1 -type f -name 'ContextPanelCompanionSharedViewCaptureUITests_*.xctestrun' -print -quit
+          }
+          python3 scripts/context-panel-shared-view-capture-workflow.py capture-config \
+            --catalog "${RUNNER_TEMP}/simctl-catalog.json" \
+            --ios-app "$(products ios)/Release-iphonesimulator/Context Panel.app" \
+            --ios-ui-test-run "$(test_run ios)" \
+            --visionos-app "$(products visionos)/Release-xrsimulator/Context Panel.app" \
+            --visionos-ui-test-run "$(test_run visionos)" \
+            --watchos-app "$(products watchos)/Release-watchsimulator/Context Panel.app" \
+            --tvos-app "$(products tvos)/Release-appletvsimulator/Context Panel.app" \
+            --output "${RUNNER_TEMP}/capture-config.json"
+          python3 scripts/context-panel-shared-view-references.py render-simulator \
+            --config "${RUNNER_TEMP}/capture-config.json" \
+            --output .build/shared-view-rendered
+
+      - name: Compare with reference images
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          python3 scripts/context-panel-shared-view-references.py compare \
+            --rendered .build/shared-view-rendered --simulator \
+            --report .build/shared-view-rendered/report.json
+
+      - name: Upload rendered cells
+        if: ${{ always() && steps.scope.outputs.product != 'false' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-view-simulator-rendered-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/shared-view-rendered
+          if-no-files-found: warn
+          retention-days: 14
+
   swift:
-    needs: [swift-tests, macos-release, shared-view-references]
+    needs: [swift-tests, macos-release, shared-view-references, shared-view-simulator-references]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -135,8 +230,10 @@ jobs:
           TEST_RESULT: ${{ needs.swift-tests.result }}
           RELEASE_RESULT: ${{ needs.macos-release.result }}
           REFERENCES_RESULT: ${{ needs.shared-view-references.result }}
+          SIMULATOR_REFERENCES_RESULT: ${{ needs.shared-view-simulator-references.result }}
         run: |
-          [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' && "$REFERENCES_RESULT" == 'success' ]]
+          [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' && "$REFERENCES_RESULT" == 'success' \
+            && "$SIMULATOR_REFERENCES_RESULT" == 'success' ]]
 
   swift-tests:
     timeout-minutes: 30

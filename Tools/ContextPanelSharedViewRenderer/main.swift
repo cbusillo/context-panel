@@ -11,8 +11,9 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-// Renders one macOS Validation Gallery cell (widget or Mac app presentation) to a
-// PNG without launching the app.
+// Renders one macOS shared-view cell (widget or Mac app presentation) to a PNG
+// without launching the app. A widget is drawn in its family frame with the widget
+// corner mask; an app presentation fills the window's detail area.
 // Operator and CI tooling only: it links no app or widget bundle, registers
 // nothing with LaunchServices or PlugInKit, and reads only synthetic fixtures.
 //
@@ -22,7 +23,6 @@ import WidgetKit
 // Exit codes: EX_USAGE for bad arguments, 3 for a presentation the Mac gallery
 // does not offer, EX_SOFTWARE when rendering fails, EX_CANTCREAT when writing fails.
 
-private let canvas = CGSize(width: 1_024, height: 768)
 private let interactive = CommandLine.arguments.contains("--interactive")
 private let windowsLayout = CommandLine.arguments.contains("windows")
 private let appStoreScenario: Bool = {
@@ -34,8 +34,6 @@ private var presentationWindow: NSWindow?
 
 private let unsupportedPresentationStatus: Int32 = 3
 private let macPresentations: Set<ValidationGalleryPresentation> = [.overview, .detail, .reconnect, .diagnostics, .widget]
-// The Mac app's presentations need more room than a widget tile.
-private let applicationCanvas = CGSize(width: 1_120, height: 900)
 
 // Default review sizes, plus App Store draft canvases selected by the app-store scenario.
 private let accountPresentationSizes: [String: CGSize] = [
@@ -126,7 +124,11 @@ private func renderSize(route: ValidationGalleryRoute, scenario: Bool, deadlines
     if scenario {
         return deadlines ? CGSize(width: 760, height: 320) : CGSize(width: route.family.width, height: route.family.height)
     }
-    return route.presentation == .widget ? canvas : applicationCanvas
+    return cellFrame(route: route).size
+}
+
+private func cellFrame(route: ValidationGalleryRoute) -> SharedViewFrame {
+    route.presentation == .widget ? route.family.frame(on: .mac) : SharedViewHost.mac.applicationFrame
 }
 
 @MainActor
@@ -223,8 +225,19 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
                 .background(CPWTheme.surface(variant: isDark ? .dark : .light))
                 .clipShape(RoundedRectangle(cornerRadius: 18)))
         }
+    } else if route.presentation == .widget {
+        view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily,
+            snapshot: ValidationGalleryContext(route: route).snapshot,
+            displayPreferences: ValidationGalleryFixtureAdapter().displayPreferences,
+            links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel-validation://sample")!,
+                reconnect: URL(string: "contextpanel-validation://sample")!,
+                cacheStatsSettings: URL(string: "contextpanel-validation://sample")!, resetCreditInteraction: .none),
+            showsResetCreditSurfaces: true, presentationDate: ValidationFixtureCatalog.referencePresentationDate)
+            .cpwThemeVariant(isDark ? .dark : .light)
+            .sharedViewFrame(cellFrame(route: route)) { CPWTheme.surface(variant: isDark ? .dark : .light) })
     } else {
-        view = AnyView(MacValidationGallery.view(route: route))
+        view = AnyView(MacValidationGallery.presentation(route: route)
+            .sharedViewFrame(cellFrame(route: route)) { Color(nsColor: .windowBackgroundColor) })
     }
     func tokenColor(_ token: AccountColorToken, dark: Bool) -> Color {
         let value = token.rgb(dark: dark)

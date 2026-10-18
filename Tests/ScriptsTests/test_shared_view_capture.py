@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import mock
+import weakref
 import uuid
 import zlib
 
@@ -36,6 +37,7 @@ from context_panel_validation.shared_view_capture import (
     SharedViewCaptureError,
     _png_snapshot,
     _verify_created_simulator,
+    capture_reference_cells,
     execute_shared_view_capture,
     load_capture_config,
     load_capture_requirements,
@@ -46,6 +48,7 @@ from context_panel_validation.shared_view_evidence import (
     load_surface_policy,
     plan_shared_view_evidence,
 )
+from context_panel_shared_view_references import decode_png
 from context_panel_surface_manifest.core import canonical_json as manifest_canonical_json
 from context_panel_surface_manifest.core import hash_parts as manifest_hash_parts
 from Tests.ScriptsTests.test_shared_view_evidence import comparison_for
@@ -229,8 +232,14 @@ class FakeRunner:
         sticky_route_until_erase: bool = False,
         xcuitest_manifest_error: str | None = None,
         png_bit_depth: int = 8,
+        rendered_cell: str = "written",
     ) -> None:
         self.calls: list[tuple[list[str], int]] = []
+        # "written", or "missing" when the app never writes its framed cell.
+        self.rendered_cell = rendered_cell
+        self.data_container = Path(tempfile.mkdtemp()).resolve()
+        weakref.finalize(self, shutil.rmtree, self.data_container, True)
+        self.launch_environments: list[dict[str, str] | None] = []
         self.catalog = catalog or simulator_catalog()
         self.fail_at = fail_at
         self.timeout_at = timeout_at
@@ -273,7 +282,8 @@ class FakeRunner:
     def run(
         self, args: list[str], *, timeout: int, environment: dict[str, str] | None = None
     ) -> CommandResult:
-        del environment
+        if args[:3] == ["xcrun", "simctl", "launch"]:
+            self.launch_environments.append(environment)
         self.calls.append((args, timeout))
         if args and args[0] == "xcodebuild":
             verb = "xcodebuild"
@@ -412,6 +422,8 @@ class FakeRunner:
             return CommandResult(0, SIMULATOR_ID + "\n", "")
         if args[:3] == ["xcrun", "simctl", "install"]:
             self.installed_app_bundle = args[-1]
+        if args[:3] == ["xcrun", "simctl", "get_app_container"] and args[-1] == "data":
+            return CommandResult(0, f"{self.data_container}\n", "")
         if args[:3] == ["xcrun", "simctl", "get_app_container"]:
             output = self.container_output or str(self.container_path or self.installed_app_bundle)
             return CommandResult(0, f"{output}\n", "")
@@ -433,6 +445,9 @@ class FakeRunner:
             route_arguments = args[6:]
             if route_arguments:
                 self.active_route[simulator_id] = "&".join(route_arguments)
+                surface = route_arguments[route_arguments.index("--context-panel-validation-surface") + 1]
+                if surface in capture_module.APP_RENDERED_SURFACES and self.rendered_cell != "missing":
+                    self._write_rendered_cell(self.active_route[simulator_id])
             elif not self.sticky_route_until_erase:
                 self.active_route[simulator_id] = None
         if args[:4] == ["xcrun", "simctl", "io", args[3] if len(args) > 3 else ""]:
@@ -451,6 +466,11 @@ class FakeRunner:
             self.screenshot_destinations_absent.append(not Path(args[-1]).exists())
             Path(args[-1]).write_bytes(image)
         return CommandResult(0, "", "")
+
+    def _write_rendered_cell(self, route: str) -> None:
+        cell = self.data_container / "tmp" / capture_module.RENDERED_CELL_FILE_NAME
+        cell.parent.mkdir(exist_ok=True)
+        cell.write_bytes(self._image_for("rendered:" + route))
 
     def _image_for(self, route: str | None) -> bytes:
         baseline_color = (0x11, 0x22, 0x33, 0xFF)
@@ -838,6 +858,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         matrix_path: Path | None = None,
         receipt_path: Path | None = None,
         surface_policy_path: Path | None = None,
+        simulator_pins_path: Path | None = None,
     ) -> tuple[int, dict[str, Any]]:
         return execute_shared_view_capture(
             self.comparison_path,
@@ -853,7 +874,39 @@ class SharedViewCaptureTests(unittest.TestCase):
             matrix_path=matrix_path or REPO_ROOT / "Config/ContextPanelSharedViewMatrix.json",
             surface_policy_path=surface_policy_path
             or REPO_ROOT / "Config/ContextPanelSurfacePolicy.json",
+            simulator_pins_path=simulator_pins_path or self.write_pins(),
         )
+
+    def write_pins(
+        self,
+        *,
+        masked_regions: list[dict[str, Any]] | None = None,
+        device_types: dict[str, str] | None = None,
+    ) -> Path:
+        """Pins matching this test's simulator catalog."""
+        path = self.root / "simulator-pins.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": capture_module.SIMULATOR_PINS_KIND,
+                    "xcode": "/Applications/Xcode.app",
+                    "profiles": {
+                        name: {
+                            "runtimeIdentifier": RUNTIME_IDENTIFIERS[name],
+                            "deviceTypeIdentifier": (device_types or DEVICE_TYPE_IDENTIFIERS)[name],
+                            **(
+                                {"maskedRegions": masked_regions}
+                                if name == "watchos" and masked_regions is not None
+                                else {}
+                            ),
+                        }
+                        for name in RUNTIME_IDENTIFIERS
+                    },
+                }
+            )
+        )
+        return path
 
     def assert_capture_errors(self, receipt: dict[str, Any], *errors: str) -> None:
         self.assertEqual(list(errors), [item["errorCode"] for item in receipt["captures"]])
@@ -1579,6 +1632,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                     "--context-panel-validation-fixture", cell.fixture_id,
                     "--context-panel-validation-family", cell.family,
                     "--context-panel-validation-presentation", cell.presentation,
+                    *capture_module.SIMULATOR_LAUNCH_LOCALE_ARGUMENTS,
                 ]
                 for surface_id, cell in cells
             ],
@@ -1640,15 +1694,21 @@ class SharedViewCaptureTests(unittest.TestCase):
         exit_code, receipt = self.execute(runner)
 
         self.assertEqual(EXIT_OK, exit_code)
-        self.assertEqual([3.0] * 12, self.sleeps)
+        self.assertEqual([3.0] * 14, self.sleeps)
         commands = [args for args, _ in runner.calls]
         self.assertFalse(any(args[2] == "erase" for args in commands))
+        self.assertEqual(
+            {"UTC"},
+            {environment["SIMCTL_CHILD_TZ"] for environment in runner.launch_environments},
+        )
         self.assertEqual(
             [
                 "list", "list", "create", "list", "boot", "bootstatus", "install", "get_app_container",
                 "io", "io", "launch", "io", "io", "terminate", "io", "io", "launch", "io", "io",
-                "terminate", "io", "io", "launch", "io", "io", "terminate", "io", "io", "launch",
-                "io", "io", "shutdown", "delete", "list", "list",
+                # The complications draw their own framed cell; it is read from the data
+                # container instead of a screenshot.
+                "terminate", "io", "io", "get_app_container", "launch", "terminate", "io", "io",
+                "get_app_container", "launch", "shutdown", "delete", "list", "list",
             ],
             [args[2] for args in commands],
         )
@@ -1664,6 +1724,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                     *([] if family == "not-applicable" else [
                         "--context-panel-validation-family", family,
                     ]),
+                    *capture_module.SIMULATOR_LAUNCH_LOCALE_ARGUMENTS,
                 ]
                 for surface, fixture, family in (
                     ("watchos.app", "healthy", "not-applicable"),
@@ -1674,7 +1735,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             ],
             launch_commands,
         )
-        self.assertEqual([True] * 16, runner.screenshot_destinations_absent)
+        self.assertEqual([True] * 12, runner.screenshot_destinations_absent)
         self.assertEqual(["captured"] * 4, [item["status"] for item in receipt["captures"]])
         self.assertEqual(
             ["simctl-gallery"] * 4,
@@ -1688,6 +1749,92 @@ class SharedViewCaptureTests(unittest.TestCase):
             canonical_json_hash(REQUIREMENTS_DIGEST_DOMAIN, payload),
             receipt["requirementsDigest"],
         )
+
+    def test_watch_complication_is_unknown_when_the_app_writes_no_framed_cell(self) -> None:
+        self.write_plan(["watchos.complication"])
+        self.write_config(("watchos",))
+
+        exit_code, receipt = self.execute(FakeRunner(rendered_cell="missing"))
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assert_capture_errors(receipt, "rendered-cell-missing", "rendered-cell-missing")
+
+    def test_watch_app_capture_paints_out_the_pinned_clock_region(self) -> None:
+        self.write_plan(["watchos.app"])
+        self.write_config(("watchos",))
+        pins = self.write_pins(
+            masked_regions=[
+                {"surface": "watchos.app", "x": 300, "y": 0, "width": 40, "height": 20, "reason": "clock"}
+            ]
+        )
+
+        exit_code, receipt = self.execute(FakeRunner(), simulator_pins_path=pins)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        [artifact] = self.artifact_root.rglob("shared-view.watchos-app.baseline.png")
+        image = decode_png(artifact.read_bytes())
+
+        def pixel(x: int, y: int) -> bytes:
+            start = (y * image.width + x) * 4
+            return image.rgba[start : start + 4]
+
+        self.assertEqual(b"\x00\x00\x00\xff", pixel(319, 19))
+        self.assertNotEqual(b"\x00\x00\x00\xff", pixel(299, 19))
+        self.assertNotEqual(b"\x00\x00\x00\xff", pixel(319, 20))
+        self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), receipt["captures"][0]["artifactDigest"])
+
+    def test_reference_cells_are_written_as_surface_and_cell_images(self) -> None:
+        self.write_config(("watchos", "tvos"))
+        output = self.root / "rendered"
+
+        results = capture_reference_cells(
+            self.config_path,
+            output,
+            runner=FakeRunner(),
+            sleeper=self.sleeps.append,
+            now=lambda: FIXED_NOW,
+            simulator_pins_path=self.write_pins(),
+        )
+
+        captured = sorted(
+            f"{item['surface']}/{item['cellID']}.png" for item in results.values() if item["status"] == "captured"
+        )
+        self.assertEqual(
+            [f"{surface}/{cell}.png" for surface in ("tvos.app", "tvos.top-shelf", "watchos.app", "watchos.complication")
+             for cell in ("baseline", "stress")],
+            captured,
+        )
+        self.assertEqual(sorted(captured), sorted(path.relative_to(output).as_posix() for path in output.rglob("*.png")))
+        self.assertEqual(
+            {"profile-not-configured"},
+            {item["errorCode"] for item in results.values() if item["status"] != "captured"},
+        )
+
+    def test_reference_cells_refuse_a_simulator_other_than_the_pinned_one(self) -> None:
+        self.write_config(("watchos",))
+        runner = FakeRunner()
+
+        results = capture_reference_cells(
+            self.config_path,
+            self.root / "rendered",
+            runner=runner,
+            sleeper=self.sleeps.append,
+            now=lambda: FIXED_NOW,
+            simulator_pins_path=self.write_pins(
+                device_types={**DEVICE_TYPE_IDENTIFIERS, "watchos": "com.apple.CoreSimulator.SimDeviceType.Other"}
+            ),
+        )
+
+        watch = [item for item in results.values() if str(item["surface"]).startswith("watchos.")]
+        self.assertEqual({("blocked", "simctl-profile-not-pinned")}, {(item["status"], item["errorCode"]) for item in watch})
+        self.assertEqual([], runner.calls)
+
+    def test_simulator_pins_reject_a_masked_region_for_another_platform(self) -> None:
+        pins = self.write_pins(
+            masked_regions=[{"surface": "tvos.app", "x": 0, "y": 0, "width": 1, "height": 1, "reason": "clock"}]
+        )
+        with self.assertRaisesRegex(SharedViewCaptureError, "masked region is invalid"):
+            capture_module.load_simulator_pins(pins)
 
     def test_watch_profile_rejects_invalid_bundle_metadata_and_selectors(self) -> None:
         self.write_plan(["watchos.app"])
