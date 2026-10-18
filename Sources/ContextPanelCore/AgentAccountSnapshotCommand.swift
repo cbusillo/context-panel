@@ -8,6 +8,14 @@ public enum AgentAccountSnapshotCommand {
         public let standardError: Data
     }
 
+    /// The App Group `Context Panel` directory the installed app publishes to.
+    public static func defaultStorageRoot() -> URL {
+        ContextPanelLocations.realUserHomeDirectory()
+            .appending(path: "Library/Group Containers")
+            .appending(path: ContextPanelLocations.appGroupID)
+            .appending(path: "Context Panel")
+    }
+
     public static func run(arguments: [String], now: Date = Date()) -> Result {
         if arguments == ["--help"] {
             return Result(exitCode: 0, standardOutput: Data(
@@ -21,10 +29,7 @@ public enum AgentAccountSnapshotCommand {
 
         let root: URL
         if arguments.isEmpty {
-            root = ContextPanelLocations.realUserHomeDirectory()
-                .appending(path: "Library/Group Containers")
-                .appending(path: ContextPanelLocations.appGroupID)
-                .appending(path: "Context Panel")
+            root = defaultStorageRoot()
         } else if arguments.count == 2, arguments[0] == "--storage-root" {
             root = URL(fileURLWithPath: NSString(string: arguments[1]).expandingTildeInPath)
         } else {
