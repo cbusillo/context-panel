@@ -76,9 +76,12 @@ it, and launchd can run scripts from it. Nobody edits it.
 
 `--follow-main` fetches protected `main` and fast-forwards the checkout before
 each pass, then runs the pass with the wrapper that `main` now holds. It refuses
-a dirty checkout, a checkout off `main` and local commits not on `main`. The
-checker refuses unless its local relay, validator and receipt implementation
-match the release commit. So a release dispatched before a gate-code change
+a dirty checkout, a checkout off `main` and local commits not on `main`. Each
+pass holds `.build/cloudkit-operator-pass.lock` from before the update until the
+relay exits, so a pass started while another runs exits with status 75 and
+changes nothing.
+The checker refuses unless its local relay, validator and receipt
+implementation match the release commit. So a release dispatched before a gate-code change
 cannot be checked; redispatch it from current protected main. Unrelated product
 commits do not matter. `--log` appends each pass's output and a line ending
 `operator pass exit N`. An idle pass prints only that line. The wrapper also

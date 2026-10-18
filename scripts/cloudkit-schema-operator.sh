@@ -6,11 +6,11 @@
 # previous file once it passes 1 MiB.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
-follow_main=false
+follow_main=
 log_file=
 while [[ $# -gt 1 ]]; do
   case "$1" in
-  --follow-main) follow_main=true ;;
+  --follow-main) follow_main=1 ;;
   --log)
     log_file="$2"
     shift
@@ -38,12 +38,21 @@ if [[ "${GITHUB_ACTIONS:-}" == true || "$(uname -s)" != Darwin ]]; then
   echo "The CloudKit checker runs only outside Actions on the operator Mac" >&2
   exit 1
 fi
+if [[ "${CONTEXT_PANEL_OPERATOR_PASS_LOCKED:-}" != 1 ]]; then
+  # One pass per checkout: an update must never replace files a running pass uses.
+  mkdir -p "$repo_root/.build"
+  export CONTEXT_PANEL_OPERATOR_PASS_LOCKED=1
+  trap - EXIT
+  exec /usr/bin/lockf -k -t 0 "$repo_root/.build/cloudkit-operator-pass.lock" \
+    /bin/bash "$repo_root/scripts/cloudkit-schema-operator.sh" \
+    ${follow_main:+--follow-main} ${log_file:+--log "$log_file"} "$1"
+fi
 if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   echo "Use a clean, reviewed operator checkout" >&2
   exit 1
 fi
 git -C "$repo_root" fetch --no-tags origin main --quiet
-if [[ "$follow_main" == true ]]; then
+if [[ -n "$follow_main" ]]; then
   if [[ "$(git -C "$repo_root" symbolic-ref --quiet --short HEAD || true)" != main ]]; then
     echo "--follow-main needs the operator checkout on its main branch" >&2
     exit 1

@@ -1,6 +1,7 @@
 """Secretless relay behavior; clocks, GitHub, schema export and publication are fakes."""
 
 import copy
+import fcntl
 import importlib.util
 import io
 import json
@@ -475,6 +476,7 @@ class RelayTests(unittest.TestCase):
                 FAKE_DEFAULT_BRANCH=json.loads(
                     (ROOT / ".github/github.json").read_text()
                 )["defaultBranch"],
+                CONTEXT_PANEL_OPERATOR_PASS_LOCKED="1",
                 CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY=KEY.decode(),
             )
             command = [
@@ -582,10 +584,13 @@ class RelayTests(unittest.TestCase):
                     check=False,
                 )
                 lines = log.read_text().splitlines()
-                self.assertTrue(
-                    lines[-1].endswith(f"operator pass exit {result.returncode}"), lines
-                )
-                return result, lines[:-1]
+                if result.returncode != 75:  # lockf: another pass holds the checkout
+                    self.assertTrue(
+                        lines[-1].endswith(f"operator pass exit {result.returncode}"),
+                        lines,
+                    )
+                    lines = lines[:-1]
+                return result, lines
 
             result, passes = run_pass()
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -594,19 +599,24 @@ class RelayTests(unittest.TestCase):
                 git(operator, "rev-parse", "HEAD"), git(source, "rev-parse", "HEAD")
             )
 
-            (operator / ".build").mkdir()
+            (operator / ".build").mkdir(exist_ok=True)
             (operator / ".build/cloudkit-relay-served.json").write_text("{}")
             full_log = "x" * (1024 * 1024 + 1)
             result, passes = run_pass(full_log)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(passes, ["pass new-gate"])
+            self.assertEqual(passes, ["new-wrapper", "pass new-gate"])
             self.assertEqual(Path(f"{log}.1").read_text(), full_log)
 
             unsafe = {
                 "dirty": lambda: (operator / "scripts/gate.txt").write_text("edited"),
                 "local commit": lambda: commit(operator, "local-gate"),
                 "other branch": lambda: git(operator, "switch", "-qc", "elsewhere"),
+                "pass running": lambda: fcntl.flock(
+                    holders.append(held.open("a")) or holders[-1],
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                ),
             }
+            held, holders = operator / ".build/cloudkit-operator-pass.lock", []
             for name, make_unsafe in unsafe.items():
                 with self.subTest(name):
                     git(operator, "switch", "-qf", "main")
@@ -617,7 +627,7 @@ class RelayTests(unittest.TestCase):
                     before = git(operator, "rev-parse", "HEAD")
                     result, passes = run_pass()
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertNotIn("pass", " ".join(passes))
+                    self.assertFalse([p for p in passes if p.startswith("pass ")])
                     self.assertEqual(git(operator, "rev-parse", "HEAD"), before)
 
     def test_pre_export_read_failure_can_recover_without_duplicate_export(self):
