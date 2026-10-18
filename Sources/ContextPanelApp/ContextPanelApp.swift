@@ -18,10 +18,9 @@ private func reloadContextPanelWidgetTimeline() {
     WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
 }
 
-@main
-enum ContextPanelEntryPoint {
+public enum ContextPanelEntryPoint {
     @MainActor
-    static func main() {
+    public static func main() {
         if let result = accountSnapshotResult(arguments: Array(CommandLine.arguments.dropFirst())) {
             FileHandle.standardOutput.write(result.standardOutput)
             FileHandle.standardError.write(result.standardError)
@@ -1136,13 +1135,7 @@ private struct SettingsValidationGallerySheet: View {
 
     var body: some View {
         NavigationStack {
-            ValidationGalleryView(
-                route: route,
-                supportedPresentations: [.overview, .detail, .reconnect, .diagnostics, .widget],
-                applicationPreview: { context in
-                    AnyView(MacValidationGalleryPreview(context: context))
-                }
-            )
+            MacValidationGallery.view(route: route)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") {
@@ -1152,6 +1145,21 @@ private struct SettingsValidationGallerySheet: View {
                 }
         }
         .frame(minWidth: 1_120, minHeight: 720)
+    }
+}
+
+/// The Mac Validation Gallery: the shared gallery with the app's own presentations.
+/// Settings shows it, and the shared-view renderer draws it on the host.
+public enum MacValidationGallery {
+    @MainActor
+    public static func view(route: ValidationGalleryRoute) -> ValidationGalleryView {
+        ValidationGalleryView(
+            route: route,
+            supportedPresentations: [.overview, .detail, .reconnect, .diagnostics, .widget],
+            applicationPreview: { context in
+                AnyView(MacValidationGalleryPreview(context: context))
+            }
+        )
     }
 }
 

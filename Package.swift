@@ -14,7 +14,7 @@ let package = Package(
         ),
         .executable(
             name: "ContextPanelApp",
-            targets: ["ContextPanelApp"]
+            targets: ["ContextPanelAppMain"]
         ),
         .executable(
             name: "ContextPanelRefreshAgent",
@@ -92,7 +92,9 @@ let package = Package(
             name: "ContextPanelTVSupport",
             dependencies: ["ContextPanelCore"]
         ),
-        .executableTarget(
+        // The Mac app's views are a library so the shared-view renderer can draw
+        // them on the host; the Xcode app target compiles both directories as one.
+        .target(
             name: "ContextPanelApp",
             dependencies: [
                 "ContextPanelCore",
@@ -100,7 +102,13 @@ let package = Package(
                 "ContextPanelSettingsUI",
                 "ContextPanelWidgetUI",
                 "ContextPanelValidationGalleryUI",
-            ]
+            ],
+            exclude: ["Main"]
+        ),
+        .executableTarget(
+            name: "ContextPanelAppMain",
+            dependencies: ["ContextPanelApp"],
+            path: "Sources/ContextPanelApp/Main"
         ),
         .executableTarget(
             name: "ContextPanelRefreshAgent",
@@ -109,6 +117,7 @@ let package = Package(
         .executableTarget(
             name: "ContextPanelSharedViewRenderer",
             dependencies: [
+                "ContextPanelApp",
                 "ContextPanelCore",
                 "ContextPanelWidgetUI",
                 "ContextPanelSettingsUI",

@@ -73,17 +73,70 @@ jobs:
             done
           done
 
+  shared-view-references:
+    # Renders the host shared-view cells and compares them with their committed
+    # reference images. References are only valid for this runner image and the
+    # Xcode the Shared-View Capture Evidence workflow selects; re-record them when
+    # either changes (docs/validation-authority.md#reference-images).
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify change scope
+        id: scope
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
+
+      - name: Select Xcode
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Render host cells
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          swift build -c release --product ContextPanelSharedViewRenderer
+          python3 scripts/context-panel-shared-view-references.py render-host \
+            --renderer "$(swift build -c release --show-bin-path)/ContextPanelSharedViewRenderer" \
+            --output .build/shared-view-rendered
+
+      - name: Compare with reference images
+        if: ${{ steps.scope.outputs.product != 'false' }}
+        run: |
+          python3 scripts/context-panel-shared-view-references.py compare \
+            --rendered .build/shared-view-rendered \
+            --surface macos.app --surface macos.widget \
+            --report .build/shared-view-rendered/report.json
+
+      - name: Upload rendered cells
+        if: ${{ always() && steps.scope.outputs.product != 'false' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-view-rendered-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/shared-view-rendered
+          if-no-files-found: warn
+          retention-days: 14
+
   swift:
-    needs: [swift-tests, macos-release]
+    needs: [swift-tests, macos-release, shared-view-references]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require product tests and release compilation
+      - name: Require product tests, release compilation and reference images
         env:
           TEST_RESULT: ${{ needs.swift-tests.result }}
           RELEASE_RESULT: ${{ needs.macos-release.result }}
+          REFERENCES_RESULT: ${{ needs.shared-view-references.result }}
         run: |
-          [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' ]]
+          [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' && "$REFERENCES_RESULT" == 'success' ]]
 
   swift-tests:
     timeout-minutes: 30

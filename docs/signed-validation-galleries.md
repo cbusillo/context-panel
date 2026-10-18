@@ -315,9 +315,9 @@ embedded manifest; the link between binary and source is that the executor built
 it from the verified root. Product source older than the tool is
 `blocked/host-renderer-unavailable` and fails qualification by design.
 
-`macos.app` remains an explicit `unsupported-host-mechanism` result: its
-presentations are drawn by views inside the Mac app target, and a Mac app is not
-built on the host for capture. Missing
+`macos.app` remains an explicit `unsupported-host-mechanism` result in this
+executor, although the renderer can now draw its presentations for
+[reference images](validation-authority.md#reference-images). Missing
 profiles are blocked and command, image, stability, identity, cleanup, or
 publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an

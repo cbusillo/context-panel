@@ -34,7 +34,7 @@
   "qualityGate": {
     "build": {
       "default": "swift build",
-      "macOSReleaseCI": ".github/workflows/ci.yml macos-release (Ship hosted runner and Xcode guard; optimized universal native app build; required swift check joins release compilation and product tests)"
+      "macOSReleaseCI": ".github/workflows/ci.yml macos-release (Ship hosted runner and Xcode guard; optimized universal native app build; required swift check joins release compilation, product tests and shared-view reference images)"
     },
     "test": {
       "default": "scripts/commit-gate.sh",
@@ -95,6 +95,8 @@
       "signedValidationAutomationAdvance": "scripts/context-panel-validation.py advance-automation --version <version> --build-number <build-number> --cloudkit-schema-receipt <cloudkit-production-schema-receipt.json> [--surface-comparison <comparison.json> --current-manifest <current-surface-manifest.json> --requirements <visual-review-requirements.json> --capture-config <private-capture-config.json> --artifact-root <absolute-private-artifact-root> --capture-output <absolute-shared-view-capture-receipt.json>]",
       "signedValidationAutomationTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_automation.py Tests/ScriptsTests/test_validation_operator_flow.py",
       "signedValidationCoordinatorTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_coordinator.py Tests/ScriptsTests/test_validation_automation.py Tests/ScriptsTests/test_runtime_receipt_ingestion.py Tests/ScriptsTests/test_validation_operator_flow.py Tests/ScriptsTests/test_visual_approvals.py Tests/ScriptsTests/test_release_workflows.py",
+      "sharedViewReferenceImages": ".github/workflows/ci.yml shared-view-references (macos-26 with the capture workflow's Xcode; renders the macos.app and macos.widget cells and compares them with Tests/SharedViewReferences; re-record route: docs/validation-authority.md#reference-images)",
+      "sharedViewReferenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_shared_view_references.py && swift test --filter SharedViewRendererToolTests",
       "signedValidationSharedViewEvidenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_shared_view_evidence.py",
       "signedValidationSharedViewCaptureTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_shared_view_capture.py Tests/ScriptsTests/test_shared_view_capture_workflow.py",
       "signedValidationOperatorFlowTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_operator_flow.py",
