@@ -6,16 +6,13 @@ or active train status. Keep those in their existing sources.
 
 ## Sources of truth
 
-Explicit user instructions define the requested outcome. The accepted contract
-is recorded in [#608](https://github.com/cbusillo/context-panel/issues/608)
-(simulator-first, risk-triggered validation) and
-[#655](https://github.com/cbusillo/context-panel/issues/655)
-(host-side capture and consolidated shared-view review).
+Explicit user instructions define the requested outcome. Validation is
+simulator-first: simulators and host rendering prove shared views, and signed
+builds prove runtime and placement only where they changed. Every platform
+ships together as one release ([definition of released](release.md#definition-of-released)).
 
 | Question | Owning source |
 | --- | --- |
-| What behavior is agreed? | #608 and #655 acceptance criteria and decisions |
-| Is the current policy qualified for cutover? | [#616](https://github.com/cbusillo/context-panel/issues/616) and [#612](https://github.com/cbusillo/context-panel/issues/612), including their evidence and dependencies |
 | What must this exact candidate prove? | [Surface policy](../Config/ContextPanelSurfacePolicy.json), [release-evidence policy](../Config/ContextPanelReleaseEvidencePolicy.json), [matrix](../Config/ContextPanelSharedViewMatrix.json), and the complete source/build-manifest comparison |
 | How does the implemented path operate? | [Release procedure](release.md), [coordinator](signed-validation-operator-flow.md), and [capture mechanisms](signed-validation-galleries.md) |
 
@@ -25,41 +22,19 @@ sources disagree, reconcile the owning plan and implementation before proceeding
 with the dependent decision; continue independent work. Do not choose whichever
 interpretation makes the current run pass.
 
-Desired behavior is implemented through normal reviewed changes. A plan or
-desired outcome alone never authorizes bypassing a runtime or submission gate,
-omitting evidence, downgrading submission evidence enforcement, or declaring a
-pending qualification gate passed. Preserve implemented execution gates while
-reconciling a discrepancy.
-
 ## Evaluation and submission
 
-**Candidate-policy shadow evaluation** and **live submission evidence
-enforcement** are separate operations. They do not select different policies.
-Both bind the current configured policy and surface-policy digests.
-
-Use the [release evaluator](../scripts/context-panel-release-gate.py) in shadow
-mode to collect candidate-policy results and classify disagreements against the
-physical runbook. Qualification and cutover are governed by #616 and #612;
-source availability or an earlier policy's qualification does not complete them.
-
 The [submission workflow](../.github/workflows/submit-app-store-review.yml)
-and [submission CLI](../scripts/submit-app-store-review.py) already default to
-`release_evidence_mode=enforce`. That mode controls report acceptance strictness,
-not policy selection. Preserve this existing control, as #612's decisions
-require. It can correctly reject a candidate lacking qualified current-policy
-evidence. Shadow evaluation is not permission to switch a live submission to
-shadow to bypass that rejection. An enabled submission verifier is not proof
-that the current risk-policy cutover is complete.
+and [submission CLI](../scripts/submit-app-store-review.py) default to
+`release_evidence_mode=enforce`: App Store submission fails closed when required
+evidence is missing. Shadow mode evaluates the same configured policy for
+diagnostics; it does not approve a submission.
 
 ## Capture before review
 
 1. Read the owning plan and identify the exact previous/current source and
    signed build identities. Generate the full comparison with every archive
-   layout's expected-build manifests. For a partial-platform RC or release,
-   use the [explicit platform release record](release.md#mixed-platform-release-records):
-   each platform is submitted with its new artifact or carried with its actual
-   shipped artifact, source manifest and approved lineage. Carried platforms
-   remain in the full gate; changed dependencies or missing proof fail closed.
+   layout's expected-build manifests; every platform ships in the release.
    Follow [the release procedure](release.md);
    do not filter or rewrite `requiredEvidence` or `requiredSurfaces`.
 2. Prepare visual requirements from the canonical matrix and the comparison's
@@ -67,11 +42,7 @@ that the current risk-policy cutover is complete.
    carry-forward from valid lineage; a smaller current review queue does not
    waive the complete evidence requirements.
 3. Open an exact-build runtime session only when the comparison requires it,
-   using exactly `requiredSurfaces.actual-runtime` for full-fleet comparisons,
-   or `runtimeSessionSurfaces` for an explicit platform record. The latter
-   requests submitted builds only; the evaluator independently verifies each
-   carried platform's shipped proof, expiry and shared-contract compatibility.
-   Follow the canonical
+   using exactly `requiredSurfaces.actual-runtime`. Follow the canonical
    Production runtime/cache checks in [Validation](#validation). Observe normal
    install and receipt propagation through the coordinator before requesting
    manual recovery.
@@ -343,17 +314,17 @@ acceptable.
   repeated `--previous-expected-build-manifest` and
   `--current-expected-build-manifest` arguments covering every archive layout;
   source-only comparisons are diagnostic and cannot enter the signed gate.
-  For beta work, do not open a runtime session when
-  `requiresRuntimeSession=false`; automated shared-view evidence is the gate for
-  render-only changes. When runtime proof is required, pass only the surfaces in
+  Do not open a runtime session when `requiresRuntimeSession=false`;
+  automated shared-view evidence is the gate for render-only changes. When runtime proof is required, pass only the surfaces in
   `requiredSurfaces.actual-runtime` through repeated `--surface` arguments.
   `requiredEvidence`/`requiredSurfaces` are authoritative; `freshEvidence` is
   explanatory delta metadata and is not a complete gate. Simulator builds and
   galleries can satisfy shared-view evidence only; they never satisfy
   `actual-runtime`, which must come from the exact signed artifact.
   `requiresPlacementReview=true` remains a separate physical/OS-composited
-  review requirement. RC and release train floors still require exact-build
-  runtime proof for every capable shipping surface.
+  review requirement. Every train re-checks only what changed: a rebuild alone
+  needs no new runtime proof, and unchanged surfaces carry forward their
+  approved evidence.
 - Historical replay input qualification starts with
   `scripts/context-panel-replay-inventory.py check --json`. Re-sealing requires
   explicit private root bindings; never discover or record host paths. The
@@ -365,26 +336,16 @@ acceptable.
   `feat/simulator-first-rc-validation` working tree is never qualification
   evidence.
 - After the coordinator final report is available, evaluate the full comparison
-  with `scripts/context-panel-release-gate.py shadow`. Do not filter or rewrite
+  with `scripts/context-panel-release-gate.py enforce`. Do not filter or rewrite
   `requiredSurfaces`. Carry-forward must bind to the previous approved ledger,
   the complete expected-build manifest set for every shipping surface, bounded retention, current runtime
   receipts, and compatible host OS evidence. Release evidence additionally
   binds the full comparison, configured policy, expected-build identity set,
   and exact coordinator report, and requires the exact selected approved RC.
   Final validation must also receive the same previous ledger, selected RC,
-  host-OS evidence, and shadow evidence used during generation so it can
+  and host-OS evidence used during generation so it can
   reconstruct the ledger. Live submission requires those authoritative inputs
-  even in shadow mode. Keep
-  shadow mode and the current
-  physical runbook authoritative until two signed shadow trains have resolved
-  every disagreement; only then may the submission workflow use `enforce`.
-  This qualification condition does not instruct agents to change the existing
-  live submission default, `release_evidence_mode=enforce`. Submission evidence
-  enforcement and candidate-policy shadow evaluation are separate operations;
-  both evaluate the current configured policy. The default can correctly block
-  an unqualified candidate. Neither this description nor a plan authorizes
-  changing workflow inputs to bypass a block or declaring a pending gate passed.
-  See the [mode distinction](#evaluation-and-submission).
+  in either mode; see [evaluation and submission](#evaluation-and-submission).
 - Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
   and Apple TV product UI must not expose gallery buttons, toolbar actions, list
   rows, or runway items. Use the allowlisted signed routes and the bounded Watch

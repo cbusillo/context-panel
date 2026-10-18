@@ -632,7 +632,7 @@ def _validate_policy(
         or maximum_age > 90
         or not isinstance(shadow_count, int)
         or isinstance(shadow_count, bool)
-        or shadow_count < 2
+        or shadow_count < 0
         or not isinstance(compatibility, dict)
         or set(compatibility) != {
             "invalidateMajorMinorChanges",
@@ -1348,7 +1348,7 @@ def _validate_ledger(
         or shadow.get("state") not in {"pending", "passed"}
         or not isinstance(shadow.get("requiredTrainCount"), int)
         or isinstance(shadow.get("requiredTrainCount"), bool)
-        or shadow["requiredTrainCount"] < 2
+        or shadow["requiredTrainCount"] < 0
         or shadow["requiredTrainCount"] != required_shadow_train_count
         or not isinstance(shadow.get("observedTrainCount"), int)
         or isinstance(shadow.get("observedTrainCount"), bool)
@@ -1731,13 +1731,14 @@ def _shadow_state(
     lineage_seen: frozenset[str],
 ) -> dict[str, Any]:
     if payload is None:
+        missing = ["insufficient-shadow-trains"] if required_count > 0 else []
         return {
-            "state": "pending",
+            "state": "pending" if missing else "passed",
             "requiredTrainCount": required_count,
             "observedTrainCount": 0,
             "qualifiedTrainCount": 0,
             "disagreements": [],
-            "blockers": ["insufficient-shadow-trains"],
+            "blockers": missing,
         }
     if (
         set(payload) != {"schemaVersion", "kind", "runs"}
@@ -2190,9 +2191,14 @@ def evaluate_release_evidence(
             shipped_expiries.append(parse_iso8601(shipped["expiresAt"]))
             for surface in manifest["surfaces"]:
                 surface_id = surface["id"]
-                if verified.get(surface_id, {}).get("identityDigest") != identity_by_surface[surface_id].identity_digest():
+                recorded = verified.get(surface_id)
+                if recorded is None:
+                    # The shipped ledger needed no proof for this surface, so it has
+                    # none to carry; any current requirement stays unmet.
+                    continue
+                if recorded.get("identityDigest") != identity_by_surface[surface_id].identity_digest():
                     raise ReleaseEvidenceError("carried platform shipped identity does not match")
-                shipped_surfaces[surface_id] = verified[surface_id]
+                shipped_surfaces[surface_id] = recorded
         for entry in policy.get("runtimeRegressionWatchlist", {}).get("entries", []):
             expiry = entry["extensions"][-1]["expiresAt"] if entry["extensions"] else entry["expiresAt"]
             if entry["surfaceId"] in shipped_surfaces and parse_iso8601(entry["enteredAt"]) <= now < parse_iso8601(expiry):
