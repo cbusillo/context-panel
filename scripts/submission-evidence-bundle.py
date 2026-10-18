@@ -52,7 +52,8 @@ def evidence_branch(version: str, build_number: str) -> str:
 
 def read_json_text(path: Path, label: str) -> str:
     try:
-        text = path.read_text(encoding="utf-8")
+        # Decode bytes directly: read_text() would turn CRLF into LF.
+        text = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise BundleError(f"{label}: cannot read {path}: {error}") from error
     parse_json(text, label)
@@ -160,11 +161,11 @@ def extract(args: argparse.Namespace) -> int:
     for name, (flag, _) in MEMBERS.items():
         if name in bundle["members"]:
             path = output / f"{name}.json"
-            path.write_text(bundle["members"][name], encoding="utf-8")
+            path.write_text(bundle["members"][name], encoding="utf-8", newline="")
             submit_args += [flag, str(path)]
     for index, manifest in enumerate(bundle["expectedBuildManifests"]):
         path = manifest_dir / f"{index:03d}.json"
-        path.write_text(manifest, encoding="utf-8")
+        path.write_text(manifest, encoding="utf-8", newline="")
         submit_args += [MANIFEST_FLAG, str(path)]
     print("\n".join(submit_args))
     return 0

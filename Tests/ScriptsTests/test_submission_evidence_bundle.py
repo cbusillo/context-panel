@@ -25,13 +25,13 @@ class SubmissionEvidenceBundleTests(unittest.TestCase):
         self.sources = {
             "validation-report": '{"z": 1,  "a": [1, 2]}\n',
             "release-evidence": '{\n  "ledgerID": "ledger"\n}',
-            "comparison": '{"comparison": true}',
+            "comparison": '{\r\n  "comparison": true\r\n}\r\n',
             "rc-lineage": '{"selectedRCLedger": {"b": 2, "a": 1}}\n',
             "manifest-macos": '{"layout": "macos"}\n',
             "manifest-ios": '{"layout":"ios"}',
         }
         for name, text in self.sources.items():
-            (self.root / f"{name}.json").write_text(text)
+            (self.root / f"{name}.json").write_bytes(text.encode())
 
     @staticmethod
     def run_tool(*arguments: str) -> tuple[int, str, str]:
