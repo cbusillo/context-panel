@@ -533,7 +533,7 @@ class RelayTests(unittest.TestCase):
                 GIT_COMMITTER_EMAIL="fixture@example.invalid",
             )
 
-            def git(cwd, *args):
+            def git(cwd: Path, *args: str) -> str:
                 return subprocess.run(
                     ["git", *args],
                     cwd=cwd,
@@ -543,7 +543,7 @@ class RelayTests(unittest.TestCase):
                     text=True,
                 ).stdout.strip()
 
-            def commit(cwd, gate, wrapper_extra=""):
+            def commit(cwd: Path, gate: str, wrapper_extra: str = "") -> None:
                 wrapper = (ROOT / "scripts/cloudkit-schema-operator.sh").read_text()
                 if wrapper_extra:
                     wrapper = wrapper.replace(
@@ -567,9 +567,11 @@ class RelayTests(unittest.TestCase):
                 wrapper_extra="echo new-wrapper\n",
             )
 
-            def run_pass(previous_log=""):
+            def run_pass(
+                previous_log: str = "",
+            ) -> tuple[subprocess.CompletedProcess, list[str]]:
                 log.write_text(previous_log)
-                result = subprocess.run(
+                completed = subprocess.run(
                     [
                         "/bin/bash",
                         str(operator / "scripts/cloudkit-schema-operator.sh"),
@@ -584,13 +586,15 @@ class RelayTests(unittest.TestCase):
                     check=False,
                 )
                 lines = log.read_text().splitlines()
-                if result.returncode != 75:  # lockf: another pass holds the checkout
+                if completed.returncode != 75:  # lockf: another pass holds the checkout
                     self.assertTrue(
-                        lines[-1].endswith(f"operator pass exit {result.returncode}"),
+                        lines[-1].endswith(
+                            f"operator pass exit {completed.returncode}"
+                        ),
                         lines,
                     )
                     lines = lines[:-1]
-                return result, lines
+                return completed, lines
 
             result, passes = run_pass()
             self.assertEqual(result.returncode, 0, result.stderr)
