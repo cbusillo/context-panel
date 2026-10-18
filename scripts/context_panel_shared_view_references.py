@@ -86,6 +86,9 @@ def decode_png(data: bytes) -> Image:
             header = struct.unpack(">IIBBBBB", body)
         elif kind == b"IDAT":
             compressed.extend(body)
+        elif kind in (b"tRNS", b"PLTE"):
+            # Colour-key transparency and palettes would change pixels this decoder does not model.
+            raise ReferenceImageError("unsupported PNG format")
         elif kind == b"IEND":
             break
     if header is None:

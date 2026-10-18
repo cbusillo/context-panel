@@ -113,8 +113,9 @@ scripts/context-panel-validation.py record-reference-approvals \
 ```
 
 The inputs are the capture run's public evidence and its private PNGs. The
-command reads both references from Git at the source commits those manifests
-name. It approves a cell only when the captured image matches the candidate's
+command refuses a receipt that fails the capture lane's qualification and a
+manifest whose ID does not match its contents, then reads both references from
+Git at the source commits those manifests name. It approves a cell only when the captured image matches the candidate's
 reference and that reference matches the previous release's. A missing, new or
 changed reference, a changed image, or a capture that does not match the receipt
 leaves the cell for Chris. It never replaces a recorded decision and never

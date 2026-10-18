@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 import hashlib
+import importlib.util
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -29,11 +31,43 @@ from context_panel_shared_view_references import (
     committed_reference,
     images_match,
 )
+from context_panel_surface_manifest.core import canonical_json, hash_parts
 
 from .shared_view_evidence import shared_view_requirement_id
 from .visual_approvals import VisualApprovalError, VisualReviewDecision, VisualReviewRequirement
 
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
+SCRIPTS_ROOT = Path(__file__).resolve().parents[1]
+SURFACE_POLICY_PATH = SCRIPTS_ROOT.parent / "Config" / "ContextPanelSurfacePolicy.json"
+CAPTURE_WORKFLOW_PATH = SCRIPTS_ROOT / "context-panel-shared-view-capture-workflow.py"
+
+
+def _manifest_is_genuine(manifest: dict[str, Any]) -> bool:
+    """The manifest's ID is the digest of its own contents in the repository's digest domain."""
+    try:
+        domain = json.loads(SURFACE_POLICY_PATH.read_text(encoding="utf-8"))["digestDomain"]
+    except (OSError, ValueError, KeyError) as error:
+        raise VisualApprovalError("surface policy is unreadable") from error
+    body = {key: value for key, value in manifest.items() if key != "manifestId"}
+    return body.get("digestDomain") == domain and manifest.get("manifestId") == hash_parts(
+        f"{domain}/manifest", [canonical_json(body)]
+    )
+
+
+def _qualify_capture_receipt(receipt: dict[str, Any], requirements: tuple[VisualReviewRequirement, ...]) -> None:
+    """Apply the hosted capture lane's own qualification to the receipt."""
+    spec = importlib.util.spec_from_file_location("context_panel_capture_workflow", CAPTURE_WORKFLOW_PATH)
+    if spec is None or spec.loader is None:
+        raise VisualApprovalError("capture qualification is unavailable")
+    workflow = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(workflow)
+    try:
+        workflow.qualify_capture_receipt(
+            receipt,
+            {"requirements": [requirement.to_dict() for requirement in requirements]},
+        )
+    except workflow.WorkflowEvidenceError as error:
+        raise VisualApprovalError(f"capture receipt is not qualified: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -65,6 +99,8 @@ def reference_sources(
         or previous_manifest.get("manifestId") != comparison.get("previousManifestId")
     ):
         raise VisualApprovalError("reference sources do not match the session's comparison")
+    if not _manifest_is_genuine(current_manifest) or not _manifest_is_genuine(previous_manifest):
+        raise VisualApprovalError("reference source manifest does not match its identity")
     commits = []
     for manifest in (current_manifest, previous_manifest):
         source = manifest.get("source")
@@ -82,9 +118,9 @@ def _cell(requirement: VisualReviewRequirement) -> Cell | None:
     return Cell(requirement.surface, cell_id)
 
 
-def _file_digest(path: Path) -> str | None:
+def _read_image(path: Path) -> bytes | None:
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        return path.read_bytes()
     except OSError:
         return None
 
@@ -99,6 +135,7 @@ def review_against_references(
 ) -> list[ReferenceOutcome]:
     if receipt.get("currentManifestID") != current_manifest_id or not isinstance(receipt.get("captures"), list):
         raise VisualApprovalError("capture receipt does not match the session")
+    _qualify_capture_receipt(receipt, requirements)
     captures = {
         item.get("requirementID"): item for item in receipt["captures"] if isinstance(item, dict)
     }
@@ -116,9 +153,16 @@ def review_against_references(
             outcomes.append(review("not-a-matrix-cell"))
             continue
         capture = captures.get(requirement.id) or {}
-        image_path = captures_directory / f"{requirement.id}.png"
-        digest = _file_digest(image_path)
-        if capture.get("status") != "captured" or digest is None or digest != capture.get("artifactDigest"):
+        image = _read_image(captures_directory / f"{requirement.id}.png")
+        digest = hashlib.sha256(image).hexdigest() if image is not None else None
+        if (
+            capture.get("status") != "captured"
+            or capture.get("surface") != requirement.surface
+            or capture.get("cellID") != cell.cell
+            or capture.get("fixtureContractID") != requirement.fixture_contract_id
+            or digest is None
+            or digest != capture.get("artifactDigest")
+        ):
             outcomes.append(review("capture-unavailable"))
             continue
         try:
@@ -130,10 +174,10 @@ def review_against_references(
                 outcomes.append(review("new-reference"))
             elif not images_match(previous, current):
                 outcomes.append(review("reference-changed"))
-            elif not images_match(current, image_path.read_bytes()):
+            elif not images_match(current, image):
                 outcomes.append(review("image-changed"))
             else:
                 outcomes.append(ReferenceOutcome(requirement.id, True, "matches-unchanged-reference", digest))
-        except (OSError, ReferenceImageError):
+        except ReferenceImageError:
             outcomes.append(review("image-unreadable"))
     return outcomes
