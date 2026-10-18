@@ -1497,11 +1497,17 @@ class SurfaceManifestTests(unittest.TestCase):
 
     def test_render_only_group_rejects_runtime_apis(self) -> None:
         path = self.core_render_only_input()
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = self.fixture(temporary_directory)
-            self.append(root / path, "\nlet syntheticStore = FileManager.default\n")
-            with self.assertRaisesRegex(SurfacePolicyError, "render-only input uses a runtime API"):
-                resolve_policy(root)
+        for addition in (
+            "\nlet syntheticStore = FileManager.default\n",
+            "\nlet syntheticSaved = try? JSONSnapshotStore(rootDirectory: url).loadCurrent()\n",
+            "\nlet syntheticData = try Data(\n    contentsOf: url\n)\n",
+            "\nlet syntheticText = try String(contentsOf: url, encoding: .utf8)\n",
+        ):
+            with self.subTest(addition=addition), tempfile.TemporaryDirectory() as temporary_directory:
+                root = self.fixture(temporary_directory)
+                self.append(root / path, addition)
+                with self.assertRaisesRegex(SurfacePolicyError, "render-only input uses a runtime API"):
+                    resolve_policy(root)
 
     def test_version_only_change_preserves_source_fingerprints_and_carries_proof(self) -> None:
         next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")

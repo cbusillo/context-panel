@@ -38,13 +38,17 @@ PRESENTATION_IMPORT_PATTERN = re.compile(
     r"^\s*import\s+(?:SwiftUI|WidgetKit|AppKit|UIKit)\b",
     re.MULTILINE,
 )
-# Storage, transport, sync, and OS-integration APIs that only a signed runtime can prove.
+# Known storage, transport, sync, and OS-integration APIs, including Core's own
+# store and sync types. It catches direct use, not every indirect path; the
+# reviewed policy mapping stays the classification and new files default to runtime.
 RUNTIME_API_PATTERN = re.compile(
     r"^\s*import\s+(?:CloudKit|Network|OSLog|Security|ServiceManagement|UserNotifications"
     r"|WatchConnectivity|os)\b"
     r"|\b(?:FileHandle|FileManager|NotificationCenter|ProcessInfo|URLRequest|URLSession"
     r"|UserDefaults|WCSession|SecItem\w*|CK[A-Z]\w*)\b"
-    r"|Data\(contentsOf:|\.write\(to:",
+    r"|\b\w*(?:Bookmark|Client|Connector|Locations|RefreshRunner|RefreshService|Store"
+    r"|StoreFactory|Sync|Webhook)\b"
+    r"|\bcontentsOf\s*:|\.write\s*\(\s*to\s*:",
     re.MULTILINE,
 )
 GROUP_SOURCE_GUARDS = (

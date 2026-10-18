@@ -33,8 +33,8 @@ The policy owns:
 Shared-library presentation code, the `core-presentation` group, is render
 input. The rest of `ContextPanelCore`, including any file not yet classified,
 stays a shared input and moves both render and runtime fingerprints. A group
-marked `forbidRuntimeAPIs` fails validation when a file uses storage, transport,
-sync, or OS-integration APIs.
+marked `forbidRuntimeAPIs` fails validation when a file directly uses a known
+storage, transport, sync, or OS-integration API or a Core store or sync type.
 
 The generator also reads a normalized `project.yml` representation. Target
 settings and dependency closure therefore affect only the relevant surfaces,
