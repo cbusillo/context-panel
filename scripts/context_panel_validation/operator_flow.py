@@ -1219,6 +1219,30 @@ def _apply_shared_view_capture_automation(
     )
 
 
+def _device_runtime_proven(
+    device: str,
+    requested_surfaces: tuple[str, ...],
+    runtime_evidence: dict[str, Any] | None,
+) -> bool:
+    """Whether every requested runtime surface on a device has exact-build proof.
+
+    A proven receipt binds the installed build more strictly than a CoreDevice
+    listing, so a later lock, sleep, or reachability loss on that device does not
+    need an operator action.
+    """
+    if runtime_evidence is None or runtime_evidence.get("state") == "superseded":
+        return False
+    device_surfaces = set(_surfaces_for_device(requested_surfaces, device))
+    if not device_surfaces:
+        return False
+    proven = {
+        item.get("surface")
+        for item in runtime_evidence.get("surfaces") or []
+        if isinstance(item, dict) and item.get("state") == "proven"
+    }
+    return device_surfaces.issubset(proven)
+
+
 def build_operator_candidates(
     report: ValidationReport,
     session: CoordinatorSessionState,
@@ -1250,6 +1274,8 @@ def build_operator_candidates(
     for device in report.devices:
         if not device_is_in_scope(device, scoped_device_labels) or device.condition != "not_found":
             continue
+        if _device_runtime_proven(device.label, session.requested_surfaces, runtime_evidence):
+            continue
         action_id = f"device.{_device_key(device.label)}.connect"
         candidates[action_id] = OperatorActionCandidate(
             action_id=action_id,
@@ -1271,6 +1297,8 @@ def build_operator_candidates(
             ),
         )
     for wait in state.waits:
+        if _device_runtime_proven(wait.device, session.requested_surfaces, runtime_evidence):
+            continue
         first_seen = parse_iso8601(wait.first_seen_at)
         assert first_seen is not None
         elapsed = normalize_utc(now) - first_seen
