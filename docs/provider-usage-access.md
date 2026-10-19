@@ -212,7 +212,9 @@ not rotate client refresh tokens. A usage-service 401/403 means credentials were
 rejected, not proof that the subscription or account access was revoked. The
 account's message names its local nickname and asks the user to use Codex once
 with that home, or sign in again there; it says "expired" only when the access
-token's own expiry has passed. The next refresh picks up the renewed sign-in.
+token's own expiry has passed. The next refresh picks up the renewed sign-in,
+unless saving it to Context Panel's Keychain fails; that failure is still silent
+([#934](https://github.com/cbusillo/context-panel/issues/934)).
 [Codex credential recovery](codex-credential-recovery.md) records the
 recommended recovery route and the options that were set aside.
 

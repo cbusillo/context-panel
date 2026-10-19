@@ -49,7 +49,8 @@ The source shows how a renewed credential reaches the connector:
   The connector then reads that copy. A file that Codex has rewritten is
   therefore used on the next refresh, provided the import succeeds. A stale
   copy remains in use when the bookmarked file cannot be read (the user rebinds
-  the home) or when the Keychain save fails, which the import ignores silently.
+  the home) or when the Keychain save fails, which the import ignores silently
+  ([#934](https://github.com/cbusillo/context-panel/issues/934)).
 - A usage-service 401/403 with a refresh token present is reported as
   `foregroundRefreshRequired`. Without one, it is `invalidAuth`
   ([`CodexRateLimits.swift`](../Sources/ContextPanelCore/CodexRateLimits.swift)).
