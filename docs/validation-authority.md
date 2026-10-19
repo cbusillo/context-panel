@@ -73,32 +73,51 @@ see [the capture contract](signed-validation-galleries.md#private-simulator-capt
 
 ## Reference images
 
-Each host-rendered shared-view cell (`macos.app` and `macos.widget`) has a
-committed reference PNG at `Tests/SharedViewReferences/<surface>/<cell>.png`.
-The CI job `shared-view-references` renders those cells and compares them with
-[`scripts/context-panel-shared-view-references.py`](../scripts/context-panel-shared-view-references.py);
-a cell matches when its size is the same and only a few pixels differ beyond a
-small per-channel tolerance (the constants live in
+Every shared-view cell has a committed reference PNG at
+`Tests/SharedViewReferences/<surface>/<cell>.png`. Two CI jobs draw the cells
+the way Shared-View Capture Evidence does and compare them with
+[`scripts/context-panel-shared-view-references.py`](../scripts/context-panel-shared-view-references.py):
+`shared-view-references` renders the macOS cells on the host, and
+`shared-view-simulator-references` builds the Release simulator products and
+captures the iOS, iPadOS, visionOS, watchOS and tvOS cells. A cell matches when
+its size is the same and only a few pixels differ beyond a small per-channel
+tolerance (the constants live in
 [`scripts/context_panel_shared_view_references.py`](../scripts/context_panel_shared_view_references.py)).
 A changed or missing reference fails the job.
 
-References are valid only for the runner image and Xcode that job selects,
-which are the ones the Shared-View Capture Evidence workflow uses. When a PR
-changes how a cell looks on purpose, or that image or Xcode changes, re-record:
+Each image shows the surface in the frame its host gives it, not the gallery
+screen: a widget in its family size with the widget corner mask, a Watch
+complication in its face frame and mask, the Top Shelf banner with its corner
+mask, and an app presentation filling its content area. The frames live in
+[`SharedViewFrame`](../Sources/ContextPanelValidationGalleryUI/SharedViewFrame.swift)
+and `ValidationGalleryFamily.frame(on:)`. Dates come from fixed fixture times in
+the `en_US_POSIX` locale and UTC. The Watch status-bar clock, which nothing can
+pin, is painted out by a masked region.
 
-1. Download the `shared-view-rendered-*` artifact from the PR's CI run. Its
-   `report.json` lists each cell as matched, changed or missing-reference.
-2. Look at every changed cell.
-3. Copy them over the references and commit:
+[`Config/ContextPanelSharedViewSimulators.json`](../Config/ContextPanelSharedViewSimulators.json)
+pins the Xcode, simulator runtimes, devices and masked regions both jobs and the
+release capture use; a runner without them fails instead of capturing on another
+simulator. References are valid only for those pins and the `macos-26` runner
+image. When a PR changes how a cell looks on purpose, or the toolchain changes,
+re-record:
+
+1. For a toolchain change, update the pins file first: the Xcode, each runtime
+   and device the runner offers, and each masked region if the device changed.
+2. Download the `shared-view-rendered-*` and `shared-view-simulator-rendered-*`
+   artifacts from the PR's CI run. Each `report.json` lists every cell as
+   matched, changed or missing-reference.
+3. Look at every changed cell.
+4. Copy them over the references and commit:
 
    ```sh
    scripts/context-panel-shared-view-references.py compare \
-     --rendered <downloaded-artifact> \
-     --surface macos.app --surface macos.widget --update
+     --rendered <host-artifact> --surface macos.app --surface macos.widget --update
+   scripts/context-panel-shared-view-references.py compare \
+     --rendered <simulator-artifact> --simulator --update
    ```
 
-Do not record references on a local Mac; its OS and fonts differ from the
-pinned runner.
+Do not record references on a local Mac; its OS, fonts and simulators differ
+from the pinned runner.
 
 At release, after a qualified capture, approve the unchanged cells:
 

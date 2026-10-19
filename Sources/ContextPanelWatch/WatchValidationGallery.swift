@@ -140,6 +140,37 @@ struct WatchComplicationValidationGalleryView: View {
             }
         }
         .navigationTitle(state == nil ? family.displayName : "Complication")
+        .task {
+            // A launch for one sample also writes the framed cell for the shared-view capture.
+            if state != nil {
+                writeFramedCell()
+            }
+        }
+    }
+
+    /// Draws the complication in the frame and mask a face gives it and writes the PNG
+    /// to `tmp/context-panel-shared-view-cell.png`, where the shared-view capture reads
+    /// it (docs/validation-authority.md#reference-images).
+    private func writeFramedCell() {
+        guard let frame = family.sharedViewFrame else { return }
+        let renderer = ImageRenderer(
+            content: ContextPanelWatchWidgetView(
+                entry: entry,
+                family: family.widgetFamily,
+                presentationDate: context.presentationDate
+            )
+            .frame(width: frame.size.width, height: frame.size.height)
+            .background(Color.black)
+            .clipShape(frame.mask)
+            .environment(\.colorScheme, .dark)
+        )
+        renderer.scale = 2
+        renderer.isOpaque = false
+        guard let data = renderer.uiImage?.pngData() else { return }
+        try? data.write(
+            to: URL.temporaryDirectory.appending(path: "context-panel-shared-view-cell.png"),
+            options: .atomic
+        )
     }
 }
 
@@ -193,6 +224,18 @@ private extension ContextPanelWatchComplicationFamily {
         case .rectangular: "rectangle"
         case .inline: "text.line.first.and.arrowtriangle.forward"
         case .corner: "circle.bottomrighthalf.filled"
+        }
+    }
+
+    /// The frame and mask a face gives the family on Apple Watch Series 11 (46mm), the
+    /// pinned Watch simulator: the HIG's circular size with its circular mask, and the
+    /// HIG's rectangular widget size with its four-point corner radius.
+    var sharedViewFrame: (size: CGSize, mask: AnyShape)? {
+        switch self {
+        case .circular: (CGSize(width: 50, height: 50), AnyShape(Circle()))
+        case .rectangular:
+            (CGSize(width: 194, height: 80.5), AnyShape(RoundedRectangle(cornerRadius: 4, style: .continuous)))
+        case .inline, .corner: nil
         }
     }
 

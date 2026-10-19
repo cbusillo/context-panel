@@ -253,7 +253,8 @@ struct TVValidationGalleryView: View {
                 preferences: context.displayPreferences,
                 mode: presentationMode,
                 presentationDate: context.presentationDate,
-                scale: CGFloat(topShelfScale)
+                scale: CGFloat(topShelfScale),
+                writesFramedCell: showsOnlyTheSample
             )
         }
     }
@@ -292,6 +293,8 @@ private struct TVTopShelfValidationPreview: View {
     let mode: TVPresentationMode
     let presentationDate: Date
     let scale: CGFloat
+    /// A launch for one sample also writes the framed banner for the shared-view capture.
+    let writesFramedCell: Bool
 
     @State private var renderedImage: UIImage?
     @State private var accessibilityLabel = "Top Shelf sample preview"
@@ -355,6 +358,24 @@ private struct TVTopShelfValidationPreview: View {
         }
     }
 
+    /// The production banner with the corner mask the inset Top Shelf applies, written
+    /// to `tmp/context-panel-shared-view-cell.png`, where the shared-view capture reads
+    /// it (docs/validation-authority.md#reference-images).
+    private func writeFramedCell(_ image: UIImage) {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        format.opaque = false
+        let bounds = CGRect(origin: .zero, size: image.size)
+        let framed = UIGraphicsImageRenderer(size: image.size, format: format).pngData { _ in
+            UIBezierPath(roundedRect: bounds, cornerRadius: 12).addClip()
+            image.draw(in: bounds)
+        }
+        try? framed.write(
+            to: URL.temporaryDirectory.appending(path: "context-panel-shared-view-cell.png"),
+            options: .atomic
+        )
+    }
+
     private func renderPreview() async {
         isRendering = true
         renderedImage = nil
@@ -385,6 +406,9 @@ private struct TVTopShelfValidationPreview: View {
         )
         guard !Task.isCancelled, let output else { return }
         renderedImage = output.imageData.flatMap(UIImage.init(data:))
+        if writesFramedCell, let renderedImage {
+            writeFramedCell(renderedImage)
+        }
         accessibilityLabel = output.accessibilityLabel
         isRendering = false
     }
