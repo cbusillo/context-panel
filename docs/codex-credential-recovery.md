@@ -47,9 +47,10 @@ The source shows how a renewed credential reaches the connector:
   into Context Panel's Keychain (`importConfiguredAuthFiles` in
   [`SnapshotRefreshService.swift`](../Sources/ContextPanelCore/SnapshotRefreshService.swift)).
   The connector then reads that copy. A file that Codex has rewritten is
-  therefore used on the next refresh, provided the import succeeds. A stale
-  copy remains in use when the bookmarked file cannot be read (the user rebinds
-  the home) or when the Keychain save fails, which the import ignores silently.
+  therefore used on the next refresh. When the Keychain save fails, that
+  refresh reads the file it just imported, and the import retries the save on
+  the next refresh. A stale copy remains in use only when the bookmarked file
+  cannot be read (the user rebinds the home).
 - A usage-service 401/403 with a refresh token present is reported as
   `foregroundRefreshRequired`. Without one, it is `invalidAuth`
   ([`CodexRateLimits.swift`](../Sources/ContextPanelCore/CodexRateLimits.swift)).
