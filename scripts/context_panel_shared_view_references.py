@@ -127,6 +127,42 @@ def decode_png(data: bytes) -> Image:
     return Image(width, height, bytes(rgba))
 
 
+def encode_png(image: Image) -> bytes:
+    """Encode 8-bit RGBA pixels as a PNG that `decode_png` reads back unchanged."""
+    stride = image.width * 4
+    if len(image.rgba) != stride * image.height:
+        raise ReferenceImageError("image data has the wrong length")
+    raw = b"".join(
+        b"\x00" + image.rgba[row * stride : (row + 1) * stride] for row in range(image.height)
+    )
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return (
+        PNG_SIGNATURE
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", image.width, image.height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def fill_regions(image: Image, regions: tuple[tuple[int, int, int, int], ...]) -> Image:
+    """Paint each (x, y, width, height) region opaque black, clipped to the image.
+
+    Used for content the simulator draws and nothing can pin, such as the Watch clock.
+    """
+    rgba = bytearray(image.rgba)
+    for x, y, width, height in regions:
+        left, right = max(0, x), min(image.width, x + width)
+        if left >= right:
+            continue
+        for row in range(max(0, y), min(image.height, y + height)):
+            start = (row * image.width + left) * 4
+            rgba[start : start + (right - left) * 4] = b"\x00\x00\x00\xff" * (right - left)
+    return Image(image.width, image.height, bytes(rgba))
+
+
 def _unfilter(kind: int, line: bytearray, previous: bytearray, pixel_bytes: int) -> None:
     if kind == 0:
         return
