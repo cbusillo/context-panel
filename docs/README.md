@@ -22,3 +22,5 @@
 Open work lives in
 [GitHub issues](https://github.com/cbusillo/context-panel/issues), not in
 local plan files.
+
+<!-- CI scope proof for #938; this PR is closed without merging. -->
