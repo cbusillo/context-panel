@@ -68,9 +68,15 @@ struct ContextPanelRefreshAgent {
         let runtimeSnapshotStore = JSONSnapshotStore(
             rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
         )
+        let agentBundleVersion = Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String
         if arguments.contains("--refresh-once") {
             let startedAt = Date()
-            let runID = recordRefreshStarted(diagnosticsStore, source: .refreshAgent, startedAt: startedAt)
+            let runID = recordRefreshStarted(
+                diagnosticsStore,
+                source: .refreshAgent,
+                startedAt: startedAt,
+                agentBundleVersion: agentBundleVersion
+            )
             do {
                 let evidence = try await runner.refreshWithEvidence()
                 let decision = evidence.decision
@@ -101,6 +107,7 @@ struct ContextPanelRefreshAgent {
             Foundation.exit(0)
         }
 
+        let installationWatch = RefreshAgentInstallationWatch.appDefault(executablePath: Bundle.main.executablePath)
         while !Task.isCancelled {
             let wallStartedAt = Date()
             let settings = settingsStore.load()
@@ -109,7 +116,8 @@ struct ContextPanelRefreshAgent {
                 diagnosticsStore,
                 source: .refreshAgent,
                 startedAt: wallStartedAt,
-                intervalSeconds: settings.intervalSeconds
+                intervalSeconds: settings.intervalSeconds,
+                agentBundleVersion: agentBundleVersion
             )
 
             do {
@@ -147,7 +155,10 @@ struct ContextPanelRefreshAgent {
                     startedAt: wallStartedAt,
                     finishedAt: Date()
                 )
-                try await Task.sleep(for: .seconds(sleepInterval))
+                if try await installationWatch.sleepUntilNextRefresh(seconds: sleepInterval) {
+                    fputs("ContextPanelRefreshAgent: app was updated; exiting so launchd starts the installed helper\n", stderr)
+                    Foundation.exit(RefreshAgentInstallationWatch.replacedInstallationExitCode)
+                }
             } catch {
                 return
             }
@@ -197,11 +208,18 @@ struct ContextPanelRefreshAgent {
         _ store: RefreshDiagnosticsStateStore,
         source: RefreshDiagnosticsSource,
         startedAt: Date,
-        intervalSeconds: Int? = nil
+        intervalSeconds: Int? = nil,
+        agentBundleVersion: String? = nil
     ) -> String {
         let runID = UUID().uuidString
         try? store.update { state in
-            state.recordRunStarted(id: runID, source: source, at: startedAt, intervalSeconds: intervalSeconds)
+            state.recordRunStarted(
+                id: runID,
+                source: source,
+                at: startedAt,
+                intervalSeconds: intervalSeconds,
+                agentBundleVersion: agentBundleVersion
+            )
         }
         return runID
     }

@@ -24,4 +24,15 @@ public enum RefreshAgentHealth {
             .filter { $0.source == .refreshAgent }
             .max(by: { ($0.finishedAt ?? $0.startedAt) < ($1.finishedAt ?? $1.startedAt) })
     }
+
+    /// An app update does not stop a running login item, so the helper can outlive
+    /// the bundle it was launched from. A run recorded before helpers reported a
+    /// version counts as a different build.
+    public static func latestRunIsFromDifferentBuild(
+        state: RefreshDiagnosticsState,
+        appBundleVersion: String?
+    ) -> Bool {
+        guard let appBundleVersion, let run = latestRun(state: state) else { return false }
+        return run.agentBundleVersion != appBundleVersion
+    }
 }

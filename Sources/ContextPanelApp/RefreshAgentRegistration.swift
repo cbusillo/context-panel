@@ -72,6 +72,8 @@ struct RefreshAgentRegistrationPolicy: Equatable, Sendable {
     let launchGrace: Duration
     let retryDelays: [Duration]
     let verificationDelay: Duration
+    /// Waits between attempts to find the helper between refreshes before replacing it.
+    var refreshIdleRetryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(15)]
 
     static let appDefault = RefreshAgentRegistrationPolicy(
         launchGrace: .seconds(8),
@@ -120,6 +122,7 @@ final class RefreshAgentRegistrationStateStore {
     private static let repairedBuildKey = "ContextPanelRefreshAgentRepairedBuild"
     private static let diagnosticBuildKey = "ContextPanelRefreshAgentDiagnosticBuild"
     private static let diagnosticKindKey = "ContextPanelRefreshAgentDiagnosticKind"
+    private static let staleAgentReplacementBuildKey = "ContextPanelRefreshAgentStaleReplacementBuild"
 
     private let defaults: UserDefaults
 
@@ -141,6 +144,15 @@ final class RefreshAgentRegistrationStateStore {
 
     func markRepaired(build: String) {
         defaults.set(build, forKey: Self.repairedBuildKey)
+    }
+
+    /// Replacing a helper left running by an earlier build happens at most once per build.
+    var staleAgentReplacementBuild: String? {
+        defaults.string(forKey: Self.staleAgentReplacementBuildKey)
+    }
+
+    func markStaleAgentReplacement(build: String) {
+        defaults.set(build, forKey: Self.staleAgentReplacementBuildKey)
     }
 
     func clearMarkers() {
@@ -171,6 +183,7 @@ final class RefreshAgentRegistrationStateStore {
     func clearAll() {
         clearMarkers()
         clearDiagnostic()
+        defaults.removeObject(forKey: Self.staleAgentReplacementBuildKey)
     }
 }
 
@@ -188,6 +201,9 @@ enum RefreshAgentRegistrationError: LocalizedError {
 @MainActor
 final class RefreshAgentRegistrationCoordinator {
     typealias Sleep = @MainActor (Duration) async throws -> Void
+    /// Runs the operation while no refresh can write the shared snapshot, or
+    /// returns false without running it when a refresh is in progress.
+    typealias WhileRefreshIdle = @MainActor (@MainActor () async throws -> Void) async throws -> Bool
     static let automaticRepairCooldown: TimeInterval = 300
 
     private let service: any RefreshAgentRegistrationService
@@ -196,6 +212,8 @@ final class RefreshAgentRegistrationCoordinator {
     private let currentBuild: @MainActor () -> String
     private let isAgentHealthy: @MainActor () -> Bool
     private let currentAgentRunID: @MainActor () -> String?
+    private let isAgentFromDifferentBuild: @MainActor () -> Bool
+    private let whileRefreshIdle: WhileRefreshIdle
     private let now: @MainActor () -> Date
     private let awakeTime: @MainActor () -> Duration
     private let sleep: Sleep
@@ -217,6 +235,8 @@ final class RefreshAgentRegistrationCoordinator {
         currentBuild: @escaping @MainActor () -> String,
         isAgentHealthy: @escaping @MainActor () -> Bool,
         currentAgentRunID: @escaping @MainActor () -> String? = { nil },
+        isAgentFromDifferentBuild: @escaping @MainActor () -> Bool = { false },
+        whileRefreshIdle: WhileRefreshIdle? = nil,
         now: @escaping @MainActor () -> Date = { Date() },
         awakeTime: (@MainActor () -> Duration)? = nil,
         sleep: @escaping Sleep = { duration in try await Task.sleep(for: duration) }
@@ -227,6 +247,11 @@ final class RefreshAgentRegistrationCoordinator {
         self.currentBuild = currentBuild
         self.isAgentHealthy = isAgentHealthy
         self.currentAgentRunID = currentAgentRunID
+        self.isAgentFromDifferentBuild = isAgentFromDifferentBuild
+        self.whileRefreshIdle = whileRefreshIdle ?? { operation in
+            try await operation()
+            return true
+        }
         self.now = now
         let clock = SuspendingClock()
         let start = clock.now
@@ -372,7 +397,11 @@ final class RefreshAgentRegistrationCoordinator {
 
         let build = currentBuild()
         let initialStatus = service.status
-        if stateStore.repairedBuild == build, initialStatus == .enabled, hasVerifiedAgentActivity() {
+        let replacesStaleAgent = initialStatus == .enabled
+            && hasVerifiedAgentActivity()
+            && isAgentFromDifferentBuild()
+            && stateStore.staleAgentReplacementBuild != build
+        if !replacesStaleAgent, stateStore.repairedBuild == build, initialStatus == .enabled, hasVerifiedAgentActivity() {
             nextAutomaticRepairAt = .distantPast
             stateStore.clearDiagnostic()
             return .verifiedEnabled
@@ -383,7 +412,7 @@ final class RefreshAgentRegistrationCoordinator {
         }
 
         if initialStatus == .enabled {
-            if hasVerifiedAgentActivity() {
+            if !replacesStaleAgent, hasVerifiedAgentActivity() {
                 nextAutomaticRepairAt = .distantPast
                 stateStore.clearDiagnostic()
                 if stateStore.reconciledBuild == build {
@@ -392,11 +421,24 @@ final class RefreshAgentRegistrationCoordinator {
                 return .agentAlreadyRunning
             }
 
-            expectNewAgentRun()
             nextAutomaticRepairAt = now().addingTimeInterval(Self.automaticRepairCooldown)
             isRestorativeUnregisterInFlight = true
             do {
-                try await service.unregisterAndWait()
+                if replacesStaleAgent {
+                    guard try await unregisterBetweenRefreshes(build: build, isEnabled: isEnabled) else {
+                        isRestorativeUnregisterInFlight = false
+                        guard isEnabled() else { return stopDisabled() }
+                        guard !Task.isCancelled else { return .cancelled }
+                        // Leave the working helper for now; the next app launch tries again.
+                        refreshAgentRegistrationLogger.notice(
+                            "refresh agent replacement deferred because a refresh stayed in progress build=\(build, privacy: .public)"
+                        )
+                        return .agentAlreadyRunning
+                    }
+                } else {
+                    expectNewAgentRun()
+                    try await service.unregisterAndWait()
+                }
             } catch {
                 isRestorativeUnregisterInFlight = false
                 guard isEnabled() else { return stopDisabledEnsuringUnregistered() }
@@ -418,6 +460,32 @@ final class RefreshAgentRegistrationCoordinator {
         }
 
         return await restoreRegistration(build: build, isEnabled: isEnabled)
+    }
+
+    /// Stops the helper only while the refresh lock is held, so it is never
+    /// stopped in the middle of writing the shared snapshot.
+    private func unregisterBetweenRefreshes(
+        build: String,
+        isEnabled: @MainActor () -> Bool
+    ) async throws -> Bool {
+        for attemptIndex in 0...policy.refreshIdleRetryDelays.count {
+            if attemptIndex > 0 {
+                try await sleep(policy.refreshIdleRetryDelays[attemptIndex - 1])
+            }
+            guard isEnabled(), !Task.isCancelled else { return false }
+            let unregistered = try await whileRefreshIdle { [self] in
+                // Mark before stopping so a helper that keeps reporting another
+                // build cannot cause repeated restarts.
+                stateStore.markStaleAgentReplacement(build: build)
+                refreshAgentRegistrationLogger.notice(
+                    "refresh agent is running an earlier build; replacing it build=\(build, privacy: .public)"
+                )
+                expectNewAgentRun()
+                try await service.unregisterAndWait()
+            }
+            if unregistered { return true }
+        }
+        return false
     }
 
     private func reconcileEnabledRegistration() throws {
@@ -653,7 +721,9 @@ enum RefreshAgentRegistration {
         stateStore: stateStore,
         currentBuild: currentBuild,
         isAgentHealthy: isRefreshAgentHealthy,
-        currentAgentRunID: { RefreshAgentHealth.latestRun(state: agentDiagnosticsState()).map(\.id) }
+        currentAgentRunID: { RefreshAgentHealth.latestRun(state: agentDiagnosticsState()).map(\.id) },
+        isAgentFromDifferentBuild: isAgentFromDifferentBuild,
+        whileRefreshIdle: whileRefreshIdle
     )
 
     static func reconcile(settings: BackgroundRefreshSettings) throws {
@@ -720,6 +790,20 @@ enum RefreshAgentRegistration {
         }
 
         return Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String ?? "unknown"
+    }
+
+    private static func isAgentFromDifferentBuild() -> Bool {
+        RefreshAgentHealth.latestRunIsFromDifferentBuild(
+            state: agentDiagnosticsState(),
+            appBundleVersion: Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String
+        )
+    }
+
+    private static func whileRefreshIdle(_ operation: @MainActor () async throws -> Void) async throws -> Bool {
+        guard let hold = try SnapshotRefreshLock.appDefault().tryHold() else { return false }
+        defer { hold.release() }
+        try await operation()
+        return true
     }
 
     private static func isRefreshAgentHealthy() -> Bool {
