@@ -56,24 +56,33 @@ summary job. Retries reuse the same platform/version/build/source record.
 The release agent owns TestFlight validation and the existing submission gates;
 recording a pending issue grants no submission authority. Keep it open until
 the exact build is verified live, then close it with that proof. Submission,
-rejection, and approval updates belong on the same issue.
+rejection, and approval updates belong on the same issue. A real `Submit App
+Store Review` run (not a dry run, cancel or prepare-only run) marks the
+matching record as submitted. A build uploaded outside Ship has no record, so
+the monitor cannot watch it: the run warns, and the monitor keeps its previous
+target for that platform. A record whose build is replaced as the candidate
+never goes live: close it as not planned, with a link to the replacing record.
 
 `App Store Release Drift` runs every six hours and can also be dispatched
 manually. `scripts/app-store-release-status.py check --lag-hours 48` reads the
 public US storefront separately for each platform and compares its numeric
-marketing version with that platform's latest tracked uploaded build. It also
+marketing version with that platform's newest build submitted for review.
+Before any build on a platform is submitted, it uses the newest upload, so a
+release that stalls before submission still alerts; a TestFlight-only build
+uploaded after a submission raises no alert. It also
 uses the latest sealed GitHub Mac publication as a baseline, including releases
 predating these records; that baseline explicitly leaves upload and TestFlight
 state unknown. Other platforms are tracked when selected for a successful Ship
 upload, never inferred from a Mac release.
 
-After 48 hours from the upload record (or GitHub publication for the legacy Mac
-baseline), lag produces an alert comment on that durable issue and a failing
+After 48 hours from the submission (from the upload for a build not yet
+submitted, or GitHub publication for the legacy Mac baseline), lag produces an alert comment on that durable issue and a failing
 workflow signal for Supervisor watchers. This also catches a release stalled
 in review or rejected without querying or changing App Store Connect. An
 unreadable or changed public page alerts as **unknown**, immediately. Identical
 observations produce no duplicate comments; a later recovery is recorded.
-Closed records still participate, so premature closeout cannot hide drift.
+Records closed as completed still participate, so premature closeout cannot
+hide drift; records closed as not planned were superseded and are ignored.
 No store credentials or store writes are used. The public page parser verifies
 the requested app/platform; it never substitutes another platform's version.
 Public version equality reports only “public version current”; public listings
@@ -172,7 +181,10 @@ approval changes. `scripts/check-release-approvals.py` lints the parsed workflow
 graph in CI and prints an all-channel structural dry-run plus secret names,
 never values. It checks one secretless Ship intent job, standalone intent paths,
 success dependencies, repository-secret inheritance on all four local channel
-calls, and a single secret environment. It cannot verify live
+calls, and a single secret environment. The one classified non-channel job is
+`Submit App Store Review`'s `record-submission`: it needs only the submit job,
+holds no secrets or environment, and may only read contents and write issues.
+It cannot verify live
 reviewer settings or actual secret placement. In unclassified workflows, it
 rejects names that could select `release`, `release-approval`, or the retired
 `release-channels`, including opaque expressions such as

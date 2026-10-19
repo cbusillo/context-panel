@@ -32,6 +32,8 @@ CHANNELS = {
     "testflight-beta": "testflight-beta-distribution.yml",
 }
 STANDALONE_ONLY = ("submit-app-store-review.yml", "upload-app-store-screenshots.yml")
+# A secretless follow-up that marks the submitted build on its release-tracking issue.
+SUBMISSION_RECORDER = ("submit-app-store-review.yml", "record-submission")
 RELEASE_ENVIRONMENTS = ("release", "release-approval", "release-channels")
 
 
@@ -224,9 +226,17 @@ def check(workflows: dict[str, dict]) -> dict:
         standalone_jobs = workflows[filename]["jobs"]
         guard_check(standalone_jobs, filename)
         intent_check(standalone_jobs, filename)
-        require(len(standalone_jobs) == 3, f"{filename}: classify additional jobs before adding them")
+        recorder = SUBMISSION_RECORDER[1] if filename == SUBMISSION_RECORDER[0] else None
+        require(len(standalone_jobs) == 3 + (recorder in standalone_jobs),
+                f"{filename}: classify additional jobs before adding them")
         for job_id, job in standalone_jobs.items():
-            if job_id not in ("guard", "intent"):
+            if job_id == recorder:
+                require(environment(job) is None and not secret_bearing(job) and "uses" not in job
+                        and needs(job) == ["submit"]
+                        and job.get("permissions") == {"contents": "read", "issues": "write"},
+                        f"{filename}/{job_id}: the submission recorder must follow the submission "
+                        "without secrets, a release environment, or other permissions")
+            elif job_id not in ("guard", "intent"):
                 require(environment(job) == "release",
                         f"{filename}/{job_id}: standalone secrets require the sole release secret environment")
                 require(needs(job) == ["guard", "intent"] and not job.get("if")
