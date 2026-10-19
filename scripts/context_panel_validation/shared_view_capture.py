@@ -3599,6 +3599,34 @@ def execute_shared_view_capture(
     return EXIT_BLOCKED, receipt
 
 
+class _TimedRunner:
+    """Logs each command's verb, duration and outcome to stderr for CI diagnosis.
+
+    Only the command's first words are printed; paths, identifiers and output are not.
+    """
+
+    def __init__(self, runner: Runner) -> None:
+        self.runner = runner
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        timeout: int,
+        environment: dict[str, str] | None = None,
+    ) -> CommandResult:
+        started = time.monotonic()
+        result = self.runner.run(args, timeout=timeout, environment=environment)
+        verb = " ".join(Path(args[0]).name if index == 0 else part for index, part in enumerate(args[:3]))
+        outcome = "timed out" if result.timed_out else f"exit {result.returncode}"
+        print(
+            f"{verb}: {time.monotonic() - started:.1f}s of {timeout}s, {outcome}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return result
+
+
 def capture_reference_cells(
     config_path: Path,
     output_root: Path,
@@ -3640,7 +3668,7 @@ def capture_reference_cells(
                     accessibility=cell.accessibility,
                 )
             )
-    active_runner = runner or SubprocessRunner()
+    active_runner = runner or _TimedRunner(SubprocessRunner())
     capture_run_id = uuid.uuid4().hex[:12]
     results: dict[str, dict[str, object]] = {}
     seen_digests: dict[str, str | None] = {}
