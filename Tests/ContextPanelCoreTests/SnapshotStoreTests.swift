@@ -1907,6 +1907,46 @@ import Testing
     #expect(try credentialStore.load(accountID: "openai-code") == currentCredential)
 }
 
+@Test func snapshotRefreshUsesRenewedAuthFileWhenKeychainSaveFails() async throws {
+    let root = try temporaryDirectory()
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    // Both copies fail locally with different messages, so no usage request is sent.
+    let stale = Data(#"{"accounts":1}"#.utf8)
+    let renewed = Data(#"{}"#.utf8)
+    let credentialStore = SaveFailingProviderCredentialStore(
+        storage: ["unsaved": stale, "sibling": stale],
+        failingAccountIDs: ["unsaved"]
+    )
+    var accounts: [LocalProviderAccountConfiguration] = []
+    for id in ["unsaved", "sibling"] {
+        let authURL = root.appending(path: "\(id)-auth.json")
+        try renewed.write(to: authURL)
+        try bookmarkStore.createAndStoreBookmark(for: authURL, path: authURL.path)
+        accounts.append(LocalProviderAccountConfiguration(id: id, provider: .openAI,
+            connectorKind: .codexRateLimits, displayName: id, authPath: authURL.path))
+    }
+    try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: accounts))
+    let service = SnapshotRefreshService(
+        accountStore: accountStore,
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))),
+        bookmarkStore: bookmarkStore,
+        credentialStore: credentialStore,
+        promptCacheTelemetryMirror: { _, _ in },
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    let outcome = try await service.refresh(now: Date(timeIntervalSince1970: 200))
+
+    let messages = Dictionary(uniqueKeysWithValues: outcome.refreshResult.reports.compactMap { report in
+        report.configuredAccountID.map { ($0, report.errorMessage ?? "") }
+    })
+    #expect(messages["unsaved"]?.contains("token auth") == true)
+    #expect(messages["sibling"]?.contains("token auth") == true)
+    #expect(try credentialStore.load(accountID: "unsaved") == stale)
+    #expect(try credentialStore.load(accountID: "sibling") == renewed)
+}
+
 @Test func snapshotRefreshServiceDoesNotImportAuthForSessionQuotaSource() throws {
     let root = try temporaryDirectory()
     let authURL = root.appending(path: "auth.json")
@@ -3776,6 +3816,28 @@ private final class SnapshotRefreshSourceRecorder: @unchecked Sendable {
         lock.withLock {
             storedValues = values
         }
+    }
+}
+
+private final class SaveFailingProviderCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data]
+    private let failingAccountIDs: Set<String>
+
+    init(storage: [String: Data], failingAccountIDs: Set<String>) {
+        self.storage = storage
+        self.failingAccountIDs = failingAccountIDs
+    }
+
+    func load(accountID: String) throws -> Data? {
+        lock.withLock { storage[accountID] }
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        guard !failingAccountIDs.contains(accountID) else {
+            throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed)
+        }
+        lock.withLock { storage[accountID] = data }
     }
 }
 

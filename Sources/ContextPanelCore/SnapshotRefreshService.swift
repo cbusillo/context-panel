@@ -707,17 +707,25 @@ public struct SnapshotRefreshService: Sendable {
         }
     }
 
-    public func importConfiguredAuthFiles(now: Date = Date()) {
-        guard let bookmarkStore, let credentialStore else { return }
+    /// Returns the auth files read but not saved, by account, so this refresh can use them over the older Keychain copy.
+    @discardableResult
+    public func importConfiguredAuthFiles(now: Date = Date()) -> [String: Data] {
+        guard let bookmarkStore, let credentialStore else { return [:] }
         let accountDocument = accountStore.load(now: now).document
+        var unsaved: [String: Data] = [:]
         for account in accountDocument.accounts where account.isEnabled && !account.isRetiredSource {
             guard account.connectorKind.importsAuthFileCredential,
                   let authPath = account.effectiveAuthPath
             else { continue }
             let expanded = NSString(string: authPath).expandingTildeInPath
             guard let data = try? bookmarkStore.readData(for: expanded) else { continue }
-            try? credentialStore.save(data, accountID: account.id)
+            do {
+                try credentialStore.save(data, accountID: account.id)
+            } catch {
+                unsaved[account.id] = data
+            }
         }
+        return unsaved
     }
 
     public func loadHistory(query: SnapshotStoreQuery = SnapshotStoreQuery()) -> [StoredUsageSnapshot] {
@@ -731,7 +739,7 @@ public struct SnapshotRefreshService: Sendable {
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
         try await companionSyncPublisher?.receiveGlobalRemovals(accountStore: accountStore,
             storedSnapshot: stores.primary.loadCurrent().snapshot, now: now)
-        importConfiguredAuthFiles(now: now)
+        let unsavedAuthFiles = importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
         let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
         let previousLoadResult = stores.primary.loadCurrent()
@@ -740,7 +748,9 @@ public struct SnapshotRefreshService: Sendable {
         let connectors = connectorFactory?(accountResult.document) ?? AccountConnectorFactory.connectors(
             from: accountResult.document,
             bookmarkStore: bookmarkStore,
-            credentialStore: credentialStore,
+            credentialStore: credentialStore.map {
+                unsavedAuthFiles.isEmpty ? $0 : UnsavedAuthFileCredentialStore(base: $0, unsaved: unsavedAuthFiles)
+            },
             googleAntigravitySnapshotLoader: googleAntigravitySnapshotLoader,
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox,
             identityResolver: companionSyncPublisher?.remoteStore?.accountIdentityResolver
@@ -999,6 +1009,21 @@ enum RefreshDiagnostics {
             ordinals[ordinalKey] = ordinal
         }
         return ordinals
+    }
+}
+
+/// Serves auth files the Keychain refused to save ahead of its older copy for one refresh.
+private struct UnsavedAuthFileCredentialStore: ProviderCredentialStoring {
+    let base: any ProviderCredentialStoring
+    let unsaved: [String: Data]
+
+    func load(accountID: String) throws -> Data? {
+        if let data = unsaved[accountID] { return data }
+        return try base.load(accountID: accountID)
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        try base.save(data, accountID: accountID)
     }
 }
 
