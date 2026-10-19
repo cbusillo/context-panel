@@ -1846,6 +1846,14 @@ submission. Use `dry_run: true` to validate the metadata source, uploaded build,
 blocked-version recovery path, and target version path without creating,
 updating, or submitting App Store review objects.
 
+A live submission and the `--validate-report-only` preflight also need a
+passing `shared-view-simulator-references` CI job on each source commit the
+expected-build manifests name, from a push, manual or nightly run of CI. CI
+skips that job when a change cannot affect it, so the release commit may not
+have one. The helper then refuses and prints how to get one: push a branch at
+that commit and dispatch CI on it. It reads the runs from the GitHub API, with
+`GH_TOKEN` when set.
+
 ### Submission evidence bundle
 
 GitHub caps all `workflow_dispatch` inputs at 65,535 characters in total, and a

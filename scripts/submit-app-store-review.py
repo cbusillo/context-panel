@@ -32,6 +32,15 @@ from context_panel_validation import (
     Target,
 )
 from context_panel_release_gate.core import release_comparison_identities
+from shared_view_reference_gate import (
+    ReferenceRunError,
+    github_fetch_json,
+    repository_from_environment,
+    require_reference_runs,
+)
+
+# Reads CI runs from GitHub; tests replace it.
+fetch_ci_json = github_fetch_json
 
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
@@ -1848,6 +1857,24 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
     )
 
 
+def require_shared_view_reference_runs(args: argparse.Namespace) -> None:
+    """Refuse unless each submitted source commit passed the simulator reference job."""
+    try:
+        manifests = [
+            load_json_object(Path(value), "expected signed build manifest")
+            for value in args.release_evidence_expected_build_manifests or ()
+        ]
+        found = require_reference_runs(
+            manifests,
+            repository=repository_from_environment(),
+            fetch_json=fetch_ci_json,
+        )
+    except (ReferenceRunError, ReleaseEvidenceError) as error:
+        raise AppStoreConnectError(f"shared-view reference images are not proven: {error}") from error
+    for commit, url in found:
+        print(f"Simulator reference images passed for source {commit}: {url}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID)
@@ -2043,6 +2070,8 @@ def main() -> int:
             validate_validation_report(args)
         if getattr(args, "release_evidence_report", None):
             validate_release_evidence_report(args)
+            if validation_report_required(args):
+                require_shared_view_reference_runs(args)
         if args.validate_report_only:
             print("Validation report preflight succeeded; no App Store Connect request was made")
             return 0
