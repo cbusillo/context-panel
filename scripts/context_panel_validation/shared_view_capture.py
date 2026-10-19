@@ -61,8 +61,9 @@ REQUIREMENTS_DIGEST_DOMAIN = "context-panel-shared-view-capture-requirements/v1"
 EMBEDDED_MANIFEST_DIGEST_DOMAIN = "context-panel-shared-view-capture-embedded-manifest/v1"
 APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel"
 WATCH_APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.watch"
-# CoreSimulator can stall a device listing for over 30 seconds right after a
-# visionOS reinstall on a loaded hosted runner (CI run 39180325140).
+# On a loaded hosted runner CoreSimulator stalls queries after a visionOS reset:
+# a device listing passed 30 seconds (CI run 39180325140, normally under 6) and an
+# app-container query took 65 seconds (CI run 39191727857, normally about 2).
 SIMCTL_CATALOG_TIMEOUT = 120
 MAX_SIMULATOR_DEVICE_COUNT = 256
 SIMCTL_CREATE_TIMEOUT = 30
@@ -70,7 +71,7 @@ SIMCTL_BOOT_TIMEOUT = 60
 SIMCTL_BOOTSTATUS_TIMEOUT = 300
 SIMCTL_INSTALL_TIMEOUT = 120
 SIMCTL_VISIONOS_INSTALL_TIMEOUT = 300
-SIMCTL_CONTAINER_TIMEOUT = 120
+SIMCTL_CONTAINER_TIMEOUT = 300
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
@@ -3617,7 +3618,8 @@ class _TimedRunner:
     ) -> CommandResult:
         started = time.monotonic()
         result = self.runner.run(args, timeout=timeout, environment=environment)
-        verb = " ".join(Path(args[0]).name if index == 0 else part for index, part in enumerate(args[:3]))
+        words = 2 if Path(args[0]).name == "xcodebuild" else 3
+        verb = " ".join(Path(args[0]).name if index == 0 else part for index, part in enumerate(args[:words]))
         outcome = "timed out" if result.timed_out else f"exit {result.returncode}"
         print(
             f"{verb}: {time.monotonic() - started:.1f}s of {timeout}s, {outcome}",

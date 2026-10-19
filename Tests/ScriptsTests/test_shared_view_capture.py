@@ -983,7 +983,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([300, 300], [
             timeout for args, timeout in runner.calls if args[2] == "bootstatus"
         ])
-        self.assertEqual([120, 120, 120, 120], [
+        self.assertEqual([capture_module.SIMCTL_CONTAINER_TIMEOUT] * 4, [
             timeout for args, timeout in runner.calls if args[2] == "get_app_container"
         ])
 
