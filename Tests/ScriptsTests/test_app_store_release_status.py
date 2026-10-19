@@ -282,8 +282,8 @@ class StoreReleaseStatusTests(unittest.TestCase):
         status.record_submission(client, items, env, NOW + timedelta(minutes=5))
         self.assertEqual([path for path, _ in client.writes], ["issues/2/comments"])
         self.assertEqual(status.target_records(client, items)["MAC_OS"][2]["submittedAt"], NOW.isoformat())
-        with self.assertRaises(status.StatusError):
-            status.record_submission(client, items, {**env, "INPUT_BUILD_NUMBER": "950"}, NOW)
+        self.assertIsNone(status.record_submission(client, items, {**env, "INPUT_BUILD_NUMBER": "950"}, NOW))
+        self.assertEqual(len(client.writes), 1)
 
 
 if __name__ == "__main__":

@@ -58,7 +58,8 @@ recording a pending issue grants no submission authority. Keep it open until
 the exact build is verified live, then close it with that proof. Submission,
 rejection, and approval updates belong on the same issue. A real `Submit App
 Store Review` run (not a dry run, cancel or prepare-only run) marks the
-matching record as submitted. A record whose build is replaced as the
+matching record as submitted. A build uploaded outside Ship has no record; the
+run then warns, and the monitor keeps watching that platform's newest upload. A record whose build is replaced as the
 candidate never goes live: close it as not planned, with a link to the
 replacing record.
 

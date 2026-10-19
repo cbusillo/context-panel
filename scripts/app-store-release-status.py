@@ -341,8 +341,12 @@ def target_records(client: Any, issues: list[dict]) -> dict[str, tuple[dict, dic
     return targets
 
 
-def record_submission(client: Any, issues: list[dict], env: dict[str, str], now: datetime) -> dict:
-    """Mark the Ship record of a build that was just submitted for App Store review."""
+def record_submission(client: Any, issues: list[dict], env: dict[str, str], now: datetime) -> dict | None:
+    """Mark the Ship record of a build that was just submitted for App Store review.
+
+    A build uploaded outside Ship has no record; the submission already succeeded, so
+    that is reported rather than failed, and the monitor keeps watching the newest upload.
+    """
     identity = {"platform": env.get("INPUT_PLATFORM", ""), "version": env.get("INPUT_VERSION", ""),
                 "buildNumber": env.get("INPUT_BUILD_NUMBER", "")}
     if identity["platform"] not in PLATFORMS or not version_guard.VERSION_PATTERN.fullmatch(identity["buildNumber"]):
@@ -361,7 +365,7 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
                 "Keep this record open until the exact build is verified live.\n\n"
                 + marker(SUBMISSION, value)})
         return issue
-    raise StatusError("no Ship release record matches the submitted build")
+    return None
 
 
 def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
@@ -417,7 +421,11 @@ def main() -> int:
         now = datetime.now(timezone.utc)
         if args.mode == "record-submission":
             issue = record_submission(client, issues, dict(os.environ), now)
-            print(f"App Store submission recorded: {issue['html_url']}")
+            if issue is None:
+                print("::warning::No Ship release record matches the submitted build; "
+                      "the drift monitor keeps watching the newest upload for this platform")
+            else:
+                print(f"App Store submission recorded: {issue['html_url']}")
         elif args.mode == "record-ship":
             records = ship_records(dict(os.environ), now)
             for record in records:
