@@ -262,6 +262,16 @@ a minute timer checks helper health without interrupting an in-flight repair,
 so a later exit triggers another bounded repair. The app stops repair immediately
 when the user disables background refresh, and surfaces approval, missing-helper,
 stopped-update, or exhausted-retry diagnostics in the app and Settings.
+App Store and TestFlight updates replace the bundle and stop the app, but they
+leave the login item running from the replaced files, and registering again
+does not restart it ([Apple DTS](https://developer.apple.com/forums/thread/763268)).
+The helper records its own `CFBundleVersion` in each run and checks its
+executable's file identity about once a minute while it waits between
+refreshes. When the app was replaced it exits unsuccessfully, so launchd starts
+the installed copy. For a helper from a build without that check, the app
+compares the helper's recorded version with its own after launch and, once per
+build, unregisters and registers it while holding the refresh lock, so a
+running refresh is never cut off.
 Persistent failure retries registration no more than once per five minutes;
 manual Refresh and the existing repair control remain available. Health checks
 compare wall-clock and awake elapsed time to allow the helper one refresh interval

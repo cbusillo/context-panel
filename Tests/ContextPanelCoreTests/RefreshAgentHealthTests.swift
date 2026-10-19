@@ -65,3 +65,29 @@ import Testing
     #expect(loaded.lastAgentRun == nil)
     #expect(RefreshAgentHealth.hasRecentWake(state: loaded, intervalSeconds: 300, now: now))
 }
+
+@Test func refreshAgentBuildComparisonKeepsTheVersionThroughTheRunAndTreatsOlderHelpersAsDifferent() throws {
+    let now = Date(timeIntervalSince1970: 5_000)
+    var state = RefreshDiagnosticsState.empty
+    #expect(!RefreshAgentHealth.latestRunIsFromDifferentBuild(state: state, appBundleVersion: "202610181827"))
+
+    state.recordRunStarted(
+        id: "agent", source: .refreshAgent, at: now, intervalSeconds: 300, agentBundleVersion: "202610181827"
+    )
+    state.recordRunFinished(id: "agent", decision: .refreshed, finishedAt: now.addingTimeInterval(4))
+    #expect(!RefreshAgentHealth.latestRunIsFromDifferentBuild(state: state, appBundleVersion: "202610181827"))
+    #expect(RefreshAgentHealth.latestRunIsFromDifferentBuild(state: state, appBundleVersion: "202610190900"))
+    #expect(!RefreshAgentHealth.latestRunIsFromDifferentBuild(state: state, appBundleVersion: nil))
+
+    // A helper built before runs carried a version wrote records without the field.
+    let encoder = JSONEncoder()
+    var payload = try #require(JSONSerialization.jsonObject(with: encoder.encode(state)) as? [String: Any])
+    for key in ["lastRun", "lastAgentRun", "lastSuccessfulRun"] {
+        var run = try #require(payload[key] as? [String: Any])
+        run.removeValue(forKey: "agentBundleVersion")
+        payload[key] = run
+    }
+    let older = try JSONDecoder().decode(RefreshDiagnosticsState.self, from: JSONSerialization.data(withJSONObject: payload))
+    #expect(RefreshAgentHealth.hasRecentWake(state: older, intervalSeconds: 300, now: now.addingTimeInterval(5)))
+    #expect(RefreshAgentHealth.latestRunIsFromDifferentBuild(state: older, appBundleVersion: "202610181827"))
+}

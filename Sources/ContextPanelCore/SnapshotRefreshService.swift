@@ -120,6 +120,14 @@ public struct SnapshotRefreshLock: Sendable {
     }
 
     public func withLock<T>(_ operation: () async throws -> T) async throws -> T? {
+        guard let hold = try tryHold() else { return nil }
+        defer { hold.release() }
+        return try await operation()
+    }
+
+    /// Takes the lock without waiting, or returns nil while another refresh holds it.
+    /// The kernel releases it if the holding process exits.
+    public func tryHold() throws -> Hold? {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
@@ -127,16 +135,32 @@ public struct SnapshotRefreshLock: Sendable {
         guard descriptor >= 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        defer { close(descriptor) }
-
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-            if errno == EWOULDBLOCK {
+            let lockErrno = errno
+            close(descriptor)
+            if lockErrno == EWOULDBLOCK {
                 return nil
             }
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            throw POSIXError(POSIXErrorCode(rawValue: lockErrno) ?? .EIO)
         }
-        defer { flock(descriptor, LOCK_UN) }
-        return try await operation()
+        return Hold(descriptor: descriptor)
+    }
+
+    public final class Hold {
+        private var descriptor: Int32?
+
+        fileprivate init(descriptor: Int32) {
+            self.descriptor = descriptor
+        }
+
+        public func release() {
+            guard let descriptor else { return }
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
+            self.descriptor = nil
+        }
+
+        deinit { release() }
     }
 }
 
