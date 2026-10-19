@@ -53,9 +53,11 @@ The source shows how a renewed credential reaches the connector:
 - A usage-service 401/403 with a refresh token present is reported as
   `foregroundRefreshRequired`. Without one, it is `invalidAuth`
   ([`CodexRateLimits.swift`](../Sources/ContextPanelCore/CodexRateLimits.swift)).
-  The connector cannot yet tell normal access-token expiry from a revoked
-  refresh token or an unrelated 403. Both messages still name the retired
-  Codex Lab client.
+  Since [#864](https://github.com/cbusillo/context-panel/issues/864) both
+  messages name the entry's local nickname. With a refresh token, the message
+  says whether the access token's own expiry had passed, had not passed, or
+  could not be read; the connector still cannot tell a revoked refresh token
+  from an unrelated 403.
 - Context Panel never sends a refresh-token grant and never writes a
   client's files.
 
@@ -146,10 +148,11 @@ no new entitlement for local networking, but it does need a prototype.
 - Recovery is per home. Siblings keep their reports, and the stale account
   keeps its last limits marked stale until a genuine successful read
   ([Current Codex homes](provider-usage-access.md#current-codex-homes-and-openai-recovery)).
-- Follow-up scope ([#864](https://github.com/cbusillo/context-panel/issues/864)): drop the Codex Lab wording, and name the affected home's
-  local nickname so the user knows which home to open. Optionally, check the
-  access token's own expiry locally, without logging it, so that "expired"
-  can be said separately from "rejected". Retry on the next scheduled refresh.
+- Delivered by [#864](https://github.com/cbusillo/context-panel/issues/864):
+  the messages drop the Codex Lab wording, name the affected home's local
+  nickname so the user knows which home to open, and read the access token's
+  own expiry locally, without logging it, so that "expired" is said separately
+  from "rejected". Recovery happens on the next scheduled refresh.
 - This does not fix expiry that happens while the user never uses Codex with
   that home. Candidate C is the answer for that case.
 
