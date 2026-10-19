@@ -68,6 +68,13 @@ class FakeGitHub:
         return self.comments.get(path, [])
 
 
+def mark_submitted(client: FakeGitHub, number: int, value: dict, hours: int) -> None:
+    mark = {key: value[key] for key in status.IDENTITY}
+    mark["submittedAt"] = (NOW - timedelta(hours=hours)).isoformat()
+    client.comments.setdefault(f"issues/{number}/comments", []).append(
+        {"body": "In review.\n\n" + status.marker(status.SUBMISSION, mark)})
+
+
 class StoreReleaseStatusTests(unittest.TestCase):
     def test_numeric_versions_not_lexicographic(self) -> None:
         self.assertTrue(status.evaluate(record(), "2.0.9", NOW, 48)["alert"])
@@ -239,6 +246,44 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertNotEqual(stored["testflight"], "success")
         status.include_published_mac(client, items)
         self.assertEqual(len(client.writes), 1)
+
+    def test_testflight_upload_after_submission_does_not_alert(self) -> None:
+        client = FakeGitHub()
+        in_review, testflight_only = record(hours=60), record(version="2.0.11", build="901")
+        mark_submitted(client, 1, in_review, hours=2)
+        items = [issue(1, in_review), issue(2, testflight_only)]
+        result = status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=lambda _: page("MAC_OS", ["2.0.9"]))
+        self.assertEqual((result[0]["version"], result[0]["alert"]), ("2.0.10", False))
+        self.assertNotIn("issues/2/comments", client.comments)
+
+    def test_overdue_submitted_build_alerts(self) -> None:
+        client = FakeGitHub()
+        in_review = record(hours=60)
+        mark_submitted(client, 1, in_review, hours=49)
+        items = [issue(1, in_review), issue(2, record(version="2.0.11", hours=1, build="901"))]
+        result = status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=lambda _: page("MAC_OS", ["2.0.9"]))
+        self.assertEqual((result[0]["version"], result[0]["status"], result[0]["alert"]), ("2.0.10", "App Store drift", True))
+
+    def test_closed_superseded_records_are_never_the_target(self) -> None:
+        client = FakeGitHub()
+        candidate, superseded = record(hours=10), record(version="2.0.11", hours=60, build="901")
+        mark_submitted(client, 2, superseded, hours=55)
+        items = [issue(1, candidate), {**issue(2, superseded, "closed"), "state_reason": "not_planned"}]
+        target = status.target_records(client, items)["MAC_OS"]
+        self.assertEqual((target[1], target[2]), (candidate, None))
+
+    def test_submission_marks_its_exact_record_once(self) -> None:
+        client = FakeGitHub()
+        value = record()
+        items = [issue(1, record(build="899")), issue(2, value)]
+        env = {"INPUT_PLATFORM": "MAC_OS", "INPUT_VERSION": value["version"], "INPUT_BUILD_NUMBER": value["buildNumber"],
+               "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "7"}
+        self.assertEqual(status.record_submission(client, items, env, NOW)["number"], 2)
+        status.record_submission(client, items, env, NOW + timedelta(minutes=5))
+        self.assertEqual([path for path, _ in client.writes], ["issues/2/comments"])
+        self.assertEqual(status.target_records(client, items)["MAC_OS"][2]["submittedAt"], NOW.isoformat())
+        with self.assertRaises(status.StatusError):
+            status.record_submission(client, items, {**env, "INPUT_BUILD_NUMBER": "950"}, NOW)
 
 
 if __name__ == "__main__":
