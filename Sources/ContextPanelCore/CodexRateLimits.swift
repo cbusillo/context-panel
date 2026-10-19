@@ -301,16 +301,8 @@ public struct CodexTokenIdentity: Equatable, Sendable {
 
     public static func extract(fromIDToken token: String?) -> CodexTokenIdentity {
         let empty = CodexTokenIdentity(chatGPTAccountID: nil, email: nil, name: nil, planType: nil)
-        guard let token else { return empty }
-        let parts = token.split(separator: ".")
-        guard parts.count >= 2 else { return empty }
-        var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        while payload.count % 4 != 0 {
-            payload.append("=")
-        }
         guard
-            let data = Data(base64Encoded: payload),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let object = jwtPayload(token),
             let auth = object["https://api.openai.com/auth"] as? [String: Any]
         else {
             return empty
@@ -322,6 +314,24 @@ public struct CodexTokenIdentity: Equatable, Sendable {
             planType: auth["chatgpt_plan_type"] as? String,
             userID: auth["chatgpt_user_id"] as? String
         )
+    }
+
+    /// The token's own `exp` claim, read locally so recovery copy can say "expired"; never logged.
+    static func expiry(ofToken token: String?) -> Date? {
+        guard let exp = jwtPayload(token)?["exp"] as? NSNumber else { return nil }
+        return Date(timeIntervalSince1970: exp.doubleValue)
+    }
+
+    private static func jwtPayload(_ token: String?) -> [String: Any]? {
+        guard let token else { return nil }
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while payload.count % 4 != 0 {
+            payload.append("=")
+        }
+        guard let data = Data(base64Encoded: payload) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 }
 
@@ -432,7 +442,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
         var observedResetCredits: ProviderResetCreditSummary?
         let identity = if let material, let identityResolver { await identityResolver.resolve(material)?.bound(toLocalAccountID: localAccountID) } else { nil as SharedProviderAccountIdentity? }
         do {
-            let data = try await fetchUsage(endpoint: account.endpoint, auth: auth)
+            let data = try await fetchUsage(endpoint: account.endpoint, auth: auth, homeName: localName, now: now)
             observedResetCredits = await resetCredits(
                 for: account,
                 auth: auth,
@@ -550,22 +560,35 @@ public struct CodexRateLimitConnector: ProviderConnector {
         }
     }
 
-    private func fetchUsage(endpoint: URL, auth: CodexAuthTokens) async throws -> Data {
+    private func fetchUsage(endpoint: URL, auth: CodexAuthTokens, homeName: String, now: Date) async throws -> Data {
         let response = try await httpClient.data(for: ConnectorHTTPRequest(url: endpoint, method: "GET", headers: authorizedHeaders(auth: auth)))
         guard (200..<300).contains(response.statusCode) else {
             if response.statusCode == 401 || response.statusCode == 403 {
-                throw codexUsageAuthorizationError(auth: auth)
+                throw codexUsageAuthorizationError(auth: auth, homeName: homeName, now: now)
             }
             throw ConnectorError.httpFailure(operation: "Codex usage endpoint", statusCode: response.statusCode)
         }
         return response.data
     }
 
-    private func codexUsageAuthorizationError(auth: CodexAuthTokens) -> ConnectorError {
-        if auth.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return ConnectorError.foregroundRefreshRequired("The configured Codex client's credentials were rejected by the usage service. They may have expired. Refresh your sign-in from Codex, then refresh Context Panel.")
+    // Codex stays the only writer of its credentials (docs/codex-credential-recovery.md): the user
+    // renews in Codex, and the next refresh re-imports the rewritten auth file.
+    private func codexUsageAuthorizationError(auth: CodexAuthTokens, homeName: String, now: Date) -> ConnectorError {
+        let home = ConnectorRedactor.safeErrorDescription(homeName) == homeName && !homeName.isEmpty
+            ? "the Codex home \u{201C}\(homeName)\u{201D}"
+            : "this Codex home"
+        guard auth.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return ConnectorError.invalidAuth("The sign-in for \(home) cannot be renewed. Sign in again in Codex with that home, then refresh Context Panel.")
         }
-        return ConnectorError.invalidAuth("Auth for this ChatGPT account cannot be refreshed. Sign in again from the configured Codex client, then refresh Context Panel.")
+        let renewal = "Use Codex once with that home so it renews the sign-in, or sign in again there if Codex asks. Context Panel picks up the renewed sign-in on its next refresh."
+        switch CodexTokenIdentity.expiry(ofToken: auth.accessToken) {
+        case let expiry? where expiry <= now:
+            return ConnectorError.foregroundRefreshRequired("The usage service rejected the expired sign-in for \(home). \(renewal)")
+        case .some:
+            return ConnectorError.foregroundRefreshRequired("The usage service rejected the sign-in for \(home) before it expired. \(renewal)")
+        case nil:
+            return ConnectorError.foregroundRefreshRequired("The usage service rejected the sign-in for \(home). It may have expired. \(renewal)")
+        }
     }
 
     private func fetchModelAvailability(endpoint: URL, auth: CodexAuthTokens) async throws -> CodexModelAvailability {
