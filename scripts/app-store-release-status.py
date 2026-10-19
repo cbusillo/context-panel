@@ -39,6 +39,8 @@ COMPANION_PLATFORMS = ("IOS", "VISION_OS", "TV_OS")
 RECORD = "context-panel-store-release:v1"
 OBSERVATION = "context-panel-store-observation:v1"
 CHANNELS = "context-panel-store-channels:v1"
+SUBMISSION = "context-panel-store-submission:v1"
+IDENTITY = ("platform", "version", "buildNumber")
 DEFINITION = "docs/release.md#definition-of-released"
 
 
@@ -274,8 +276,9 @@ def public_app_id() -> str:
     return str(matches[0]["trackId"])
 
 
-def evaluate(record: dict, public_version: str | None, now: datetime, lag_hours: int) -> dict:
-    age = now - timestamp(record["uploadedAt"])
+def evaluate(record: dict, public_version: str | None, now: datetime, lag_hours: int,
+             since: str | None = None) -> dict:
+    age = now - timestamp(since or record["uploadedAt"])
     if age < timedelta():
         raise StatusError("release timestamp is in the future")
     if public_version is None:
@@ -308,10 +311,68 @@ def latest_records(issues: list[dict]) -> dict[str, tuple[dict, dict]]:
     return latest
 
 
+def submission(client: Any, issue: dict, record: dict) -> dict | None:
+    """The submission marker that the Submit workflow wrote for this exact build."""
+    found = [read_marker(SUBMISSION, comment.get("body") or "")
+             for comment in client.pages(f"issues/{issue['number']}/comments")]
+    matching = [item for item in found
+                if item is not None and all(item.get(key) == record[key] for key in IDENTITY)]
+    if matching:
+        timestamp(matching[-1]["submittedAt"])
+    return matching[-1] if matching else None
+
+
+def target_records(client: Any, issues: list[dict]) -> dict[str, tuple[dict, dict, dict | None]]:
+    """Per platform, the newest build submitted for review; before any submission, the newest upload.
+
+    A record closed as not planned was superseded as the candidate and is never a target.
+    """
+    candidates = [issue for issue in issues if issue.get("state_reason") != "not_planned"]
+    targets = {platform: (issue, record, None) for platform, (issue, record) in latest_records(candidates).items()}
+    submitted = []
+    submissions = {}
+    for issue in candidates:
+        record = read_marker(RECORD, issue.get("body") or "")
+        if record is not None and (submitted_build := submission(client, issue, record)) is not None:
+            submitted.append(issue)
+            submissions[issue["number"]] = submitted_build
+    for platform, (issue, record) in latest_records(submitted).items():
+        targets[platform] = (issue, record, submissions[issue["number"]])
+    return targets
+
+
+def record_submission(client: Any, issues: list[dict], env: dict[str, str], now: datetime) -> dict | None:
+    """Mark the Ship record of a build that was just submitted for App Store review.
+
+    A build uploaded outside Ship has no record; the submission already succeeded, so
+    that is reported rather than failed. The monitor cannot watch that build and keeps
+    its previous target for the platform.
+    """
+    identity = {"platform": env.get("INPUT_PLATFORM", ""), "version": env.get("INPUT_VERSION", ""),
+                "buildNumber": env.get("INPUT_BUILD_NUMBER", "")}
+    if identity["platform"] not in PLATFORMS or not version_guard.VERSION_PATTERN.fullmatch(identity["buildNumber"]):
+        raise StatusError("submission is missing its platform/build identity")
+    version_guard.version_components(identity["version"])
+    for issue in issues:
+        record = read_marker(RECORD, issue.get("body") or "")
+        if record is None or any(record.get(key) != identity[key] for key in IDENTITY):
+            continue
+        if submission(client, issue, record) is None:
+            run_url = f"https://github.com/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}"
+            value = {**identity, "submittedAt": now.isoformat(), "runURL": run_url}
+            client.api(f"issues/{issue['number']}/comments", {"body":
+                f"[Submitted for App Store review]({run_url}): {identity['platform']} {identity['version']} "
+                f"({identity['buildNumber']}). The drift monitor now watches this build for this platform. "
+                "Keep this record open until the exact build is verified live.\n\n"
+                + marker(SUBMISSION, value)})
+        return issue
+    return None
+
+
 def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
             lookup: Callable[[], str] = public_app_id,
             fetch: Callable[[str], str] = fetch_text) -> list[dict]:
-    latest = latest_records(issues)
+    latest = target_records(client, issues)
     if not latest:
         raise StatusError("no Ship release records; public delivery is unknown")
     try:
@@ -319,7 +380,7 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
     except (OSError, ValueError, KeyError, StatusError):
         app_id = None
     observations = []
-    for platform, (issue, record) in sorted(latest.items()):
+    for platform, (issue, record, submitted) in sorted(latest.items()):
         try:
             if app_id is None:
                 raise StatusError("public App Store lookup unavailable")
@@ -327,7 +388,7 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
             version = public_page_version(fetch(url), platform, app_id)
         except (OSError, ValueError, StatusError):
             version = None
-        result = evaluate(record, version, now, lag_hours)
+        result = evaluate(record, version, now, lag_hours, since=submitted and submitted["submittedAt"])
         observation = {"platform": platform, "version": record["version"], "buildNumber": record["buildNumber"], **result}
         previous = [read_marker(OBSERVATION, comment.get("body") or "")
                     for comment in client.pages(f"issues/{issue['number']}/comments")]
@@ -335,7 +396,7 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
         if not previous or previous[-1] != observation:
             prefix = "Alert" if result["alert"] else "Observation"
             body = (f"{prefix}: {platform} — {result['status']}.\n\n"
-                    f"Uploaded target: {record['version']} ({record['buildNumber']}); "
+                    f"{'Submitted' if submitted else 'Uploaded'} target: {record['version']} ({record['buildNumber']}); "
                     f"public App Store (US): {version or 'unknown'}. "
                     "Upload/TestFlight success is separate from live App Store delivery. "
                     "Public marketing-version equality cannot prove the exact build, approval, or TestFlight state.\n\n"
@@ -349,7 +410,7 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("record-ship", "check"))
+    parser.add_argument("mode", choices=("record-ship", "record-submission", "check"))
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--lag-hours", type=int, default=48)
     args = parser.parse_args()
@@ -359,7 +420,14 @@ def main() -> int:
         client = GitHub(args.repo or "")
         issues = client.issues()
         now = datetime.now(timezone.utc)
-        if args.mode == "record-ship":
+        if args.mode == "record-submission":
+            issue = record_submission(client, issues, dict(os.environ), now)
+            if issue is None:
+                print("::warning::No Ship release record matches the submitted build, so the drift "
+                      "monitor cannot watch it and keeps its previous target for this platform")
+            else:
+                print(f"App Store submission recorded: {issue['html_url']}")
+        elif args.mode == "record-ship":
             records = ship_records(dict(os.environ), now)
             for record in records:
                 issue = ensure_record(client, issues, record)

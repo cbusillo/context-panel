@@ -361,3 +361,29 @@ jobs:
             fi
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"
+
+  record-submission:
+    name: Record Submitted Build
+    needs: submit
+    if: >-
+      ${{ !inputs.dry_run && !inputs.cancel_review_only && !inputs.prepare_only
+      && inputs.build_number != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: app-store-release-status
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Mark the Ship record as submitted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: python3 scripts/app-store-release-status.py record-submission
