@@ -58,10 +58,10 @@ recording a pending issue grants no submission authority. Keep it open until
 the exact build is verified live, then close it with that proof. Submission,
 rejection, and approval updates belong on the same issue. A real `Submit App
 Store Review` run (not a dry run, cancel or prepare-only run) marks the
-matching record as submitted. A build uploaded outside Ship has no record; the
-run then warns, and the monitor keeps watching that platform's newest upload. A record whose build is replaced as the
-candidate never goes live: close it as not planned, with a link to the
-replacing record.
+matching record as submitted. A build uploaded outside Ship has no record, so
+the monitor cannot watch it: the run warns, and the monitor keeps its previous
+target for that platform. A record whose build is replaced as the candidate
+never goes live: close it as not planned, with a link to the replacing record.
 
 `App Store Release Drift` runs every six hours and can also be dispatched
 manually. `scripts/app-store-release-status.py check --lag-hours 48` reads the

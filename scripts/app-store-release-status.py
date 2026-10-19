@@ -345,7 +345,8 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
     """Mark the Ship record of a build that was just submitted for App Store review.
 
     A build uploaded outside Ship has no record; the submission already succeeded, so
-    that is reported rather than failed, and the monitor keeps watching the newest upload.
+    that is reported rather than failed. The monitor cannot watch that build and keeps
+    its previous target for the platform.
     """
     identity = {"platform": env.get("INPUT_PLATFORM", ""), "version": env.get("INPUT_VERSION", ""),
                 "buildNumber": env.get("INPUT_BUILD_NUMBER", "")}
@@ -422,8 +423,8 @@ def main() -> int:
         if args.mode == "record-submission":
             issue = record_submission(client, issues, dict(os.environ), now)
             if issue is None:
-                print("::warning::No Ship release record matches the submitted build; "
-                      "the drift monitor keeps watching the newest upload for this platform")
+                print("::warning::No Ship release record matches the submitted build, so the drift "
+                      "monitor cannot watch it and keeps its previous target for this platform")
             else:
                 print(f"App Store submission recorded: {issue['html_url']}")
         elif args.mode == "record-ship":
