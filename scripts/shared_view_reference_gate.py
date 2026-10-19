@@ -62,7 +62,8 @@ def passing_run_url(commit: str, repository: str, fetch_json: FetchJSON) -> str 
             or (run.get("head_repository") or {}).get("full_name") != repository
         ):
             continue
-        jobs = fetch_json(f"repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
+        # Every attempt: "re-run failed jobs" leaves a passed reference job in an earlier one.
+        jobs = fetch_json(f"repos/{repository}/actions/runs/{run['id']}/jobs?filter=all&per_page=100").get("jobs", [])
         for job in jobs:
             if job.get("name") == JOB_NAME and job.get("conclusion") == "success":
                 return job.get("html_url") or run.get("html_url") or ""

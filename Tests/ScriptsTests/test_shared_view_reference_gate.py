@@ -49,7 +49,11 @@ class FakeGitHub:
             commit = path.split("head_sha=")[1].split("&")[0]
             return {"workflow_runs": [run for run in self.runs if run["head_sha"] == commit]}
         run_id = int(path.split("/actions/runs/")[1].split("/")[0])
-        return {"jobs": self.jobs[run_id]}
+        attempts = self.jobs[run_id] if isinstance(self.jobs[run_id][0], list) else [self.jobs[run_id]]
+        # GitHub lists only the latest attempt unless asked for all of them.
+        if "filter=all" in path:
+            return {"jobs": [job for attempt in attempts for job in attempt]}
+        return {"jobs": attempts[-1]}
 
 
 class RequireReferenceRunsTests(unittest.TestCase):
@@ -64,6 +68,13 @@ class RequireReferenceRunsTests(unittest.TestCase):
                 github = FakeGitHub()
                 github.add_run(COMMIT, event=event)
                 self.assertEqual(self.require(github), [(COMMIT, "https://example.invalid/runs/1/job")])
+
+    def test_a_pass_in_an_earlier_attempt_counts_after_rerunning_other_jobs(self):
+        github = FakeGitHub()
+        github.add_run(COMMIT)
+        first_attempt = github.jobs[1]
+        github.jobs[1] = [first_attempt, [{"name": "swift-tests", "conclusion": "success"}]]
+        self.assertEqual(self.require(github), [(COMMIT, "https://example.invalid/runs/1/job")])
 
     def test_no_run_refuses_and_says_how_to_get_one(self):
         github = FakeGitHub()
