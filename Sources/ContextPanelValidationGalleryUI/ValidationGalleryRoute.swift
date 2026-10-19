@@ -48,6 +48,47 @@ public enum ValidationGalleryFamily: String, CaseIterable, Identifiable, Sendabl
             344
         }
     }
+
+    /// The frame `host` gives this family when the widget is placed.
+    public func frame(on host: SharedViewHost) -> SharedViewFrame {
+        let size: (width: CGFloat, height: CGFloat) = switch (host, self) {
+        // Apple publishes no macOS widget sizes; the Mac keeps the gallery's reference size.
+        case (.mac, _): (width, height)
+        // iPhone 16 (393 x 852 pt) and Apple Vision Pro share the HIG sizes.
+        case (.phone, .systemSmall), (.vision, .systemSmall): (158, 158)
+        case (.phone, .systemMedium), (.vision, .systemMedium): (338, 158)
+        case (.phone, .systemLarge), (.vision, .systemLarge): (338, 354)
+        // iPad Air 11-inch (820 x 1180 pt) canvas sizes; the system scales the canvas onto the Home Screen.
+        case (.pad, .systemSmall): (155, 155)
+        case (.pad, .systemMedium): (342, 155)
+        case (.pad, .systemLarge): (342, 342)
+        }
+        return SharedViewFrame(
+            width: size.width,
+            height: size.height,
+            cornerRadius: SharedViewFrame.widgetCornerRadius
+        )
+    }
+}
+
+/// The device a shared-view cell is drawn for.
+public enum SharedViewHost: Sendable {
+    case mac
+    case phone
+    case pad
+    case vision
+
+    /// The content area an app presentation fills: the window's detail area on the
+    /// Mac, the screen width on iPhone and iPad, and the default window on Vision Pro.
+    public var applicationFrame: SharedViewFrame {
+        let size: (width: CGFloat, height: CGFloat) = switch self {
+        case .mac: (860, 720)
+        case .phone: (393, 420)
+        case .pad: (820, 420)
+        case .vision: (1_280, 420)
+        }
+        return SharedViewFrame(width: size.width, height: size.height, cornerRadius: 0)
+    }
 }
 
 public enum ValidationGalleryAppearance: String, CaseIterable, Identifiable, Sendable {

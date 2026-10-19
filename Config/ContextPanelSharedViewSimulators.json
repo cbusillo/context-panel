@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "context-panel-shared-view-simulators",
+  "xcode": "/Applications/Xcode_26.6.app",
+  "profiles": {
+    "ios": {
+      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
+    },
+    "ipados": {
+      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3"
+    },
+    "visionos": {
+      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.xrOS-26-5",
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro-4K"
+    },
+    "watchos": {
+      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.watchOS-26-5",
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm",
+      "maskedRegions": [
+        { "surface": "watchos.app", "x": 256, "y": 0, "width": 160, "height": 80, "reason": "status-bar clock" }
+      ]
+    },
+    "tvos": {
+      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.tvOS-26-5",
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K"
+    }
+  }
+}

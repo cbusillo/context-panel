@@ -45,6 +45,22 @@ public struct ValidationGalleryContext: Identifiable, Sendable {
         ].joined(separator: ":")
     }
 
+    /// The context the gallery shows for `route` at the fixed presentation time.
+    public init(route: ValidationGalleryRoute) {
+        let adapter = ValidationGalleryFixtureAdapter()
+        let fixture = ValidationFixtureCatalog.fixture(id: route.fixtureID)
+        let presentationDate = ValidationFixtureCatalog.referencePresentationDate
+        self.init(
+            fixture: fixture,
+            snapshot: adapter.snapshot(fixture: fixture, presentationDate: presentationDate),
+            presentationDate: presentationDate,
+            presentation: route.presentation,
+            family: route.family,
+            appearance: route.appearance,
+            displayPreferences: adapter.displayPreferences
+        )
+    }
+
     public var storedSnapshot: StoredUsageSnapshot {
         StoredUsageSnapshot(
             savedAt: snapshot.generatedAt,

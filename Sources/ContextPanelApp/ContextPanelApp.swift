@@ -1176,6 +1176,13 @@ public enum MacValidationGallery {
             }
         )
     }
+
+    /// One app presentation of the gallery without the gallery around it, for the
+    /// framed shared-view cell the renderer draws.
+    @MainActor
+    public static func presentation(route: ValidationGalleryRoute) -> some View {
+        MacValidationGalleryPreview(context: ValidationGalleryContext(route: route))
+    }
 }
 
 @MainActor

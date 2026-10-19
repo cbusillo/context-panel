@@ -15,6 +15,15 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
+        // Text that formats dates reads the process's time zone and locale, not
+        // SwiftUI's environment. Pin both so the image is the same on every host.
+        setenv("TZ", "UTC", 1)
+        tzset()
+        NSTimeZone.default = TimeZone(identifier: "UTC") ?? .gmt
+        UserDefaults.standard.setVolatileDomain(
+            ["AppleLocale": "en_US_POSIX", "AppleLanguages": ["en-US"]],
+            forName: UserDefaults.argumentDomain
+        )
     }
 
     func testCaptureSharedView() throws {
@@ -44,11 +53,10 @@ final class ContextPanelCompanionSharedViewCaptureUITests: XCTestCase {
     }
 
     private func renderedGalleryPNG(route: ValidationGalleryRoute) throws -> Data {
-        let content = CaptureGalleryView(route: route, surface: .current)
-            .frame(width: 840, height: 900)
-
+        let content = CaptureCellView(route: route, host: CaptureSurface.current.host)
         let renderer = ImageRenderer(content: content)
-        renderer.scale = 2
+        renderer.scale = SharedViewFrame.referenceScale
+        renderer.isOpaque = false
         guard let data = renderer.uiImage?.pngData() else {
             throw CaptureError.imageRenderingFailed
         }
@@ -101,36 +109,38 @@ private enum CaptureSurface {
         #endif
     }
 
-    var displayName: String {
+    var host: SharedViewHost {
         switch self {
         case .phone:
-            "iPhone"
+            .phone
         case .tablet:
-            "iPad"
+            .pad
         case .spatial:
-            "Vision"
+            .vision
         }
     }
 }
 
-private struct CaptureGalleryView: View {
+/// One shared-view cell in the frame its host gives it: a widget in its family
+/// frame with the widget corner mask, or an app presentation filling its content
+/// area. Nothing of the gallery screen around it is drawn.
+private struct CaptureCellView: View {
     @Environment(\.colorScheme) private var hostColorScheme
 
     let route: ValidationGalleryRoute
-    let surface: CaptureSurface
+    let host: SharedViewHost
 
     private let adapter = ValidationGalleryFixtureAdapter()
-
-    private var fixture: ValidationFixture {
-        ValidationFixtureCatalog.fixture(id: route.fixtureID)
-    }
 
     private var presentationDate: Date {
         ValidationFixtureCatalog.referencePresentationDate
     }
 
     private var snapshot: WidgetSnapshot {
-        adapter.snapshot(fixture: fixture, presentationDate: presentationDate)
+        adapter.snapshot(
+            fixture: ValidationFixtureCatalog.fixture(id: route.fixtureID),
+            presentationDate: presentationDate
+        )
     }
 
     private var previewColorScheme: ColorScheme {
@@ -148,148 +158,28 @@ private struct CaptureGalleryView: View {
         previewColorScheme == .dark ? .dark : .light
     }
 
-    private var pageBackground: Color {
-        previewColorScheme == .dark
-            ? Color(red: 0.07, green: 0.075, blue: 0.085)
-            : Color(red: 0.94, green: 0.945, blue: 0.96)
+    private var frame: SharedViewFrame {
+        route.presentation == .widget ? route.family.frame(on: host) : host.applicationFrame
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Image(systemName: "testtube.2")
-                    .font(.title2.weight(.semibold))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("SAMPLE DATA")
-                        .font(.caption.weight(.bold))
-                        .tracking(1.2)
-                    Text("Read-only validation fixtures · never live account data")
-                        .font(.subheadline)
-                }
-                Spacer()
-                Text("Shared-view proof")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.black.opacity(0.09), in: Capsule())
-            }
-            .foregroundStyle(.black)
-            .padding(.horizontal, 24)
-            .frame(height: 78)
-            .background(Color(red: 1, green: 0.53, blue: 0.12))
-
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("Sample state")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    selectionChip(fixture.title)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(fixture.title)
-                        .font(.title2.weight(.semibold))
-                    Text(fixture.purpose)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                    Text(
-                        "Fixed presentation time · "
-                            + presentationDate.formatted(date: .abbreviated, time: .shortened)
-                    )
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                HStack(spacing: 14) {
-                    selectionCard(label: "Presentation", value: route.presentation.displayName)
-                    selectionCard(label: "Appearance", value: route.appearance.displayName)
-                    selectionCard(label: "Surface", value: surface.displayName)
-                    if route.presentation == .widget {
-                        selectionCard(label: "Family", value: route.family.displayName)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("\(route.presentation.displayName) presentation")
-                            .font(.headline)
-                        Spacer()
-                        Text("SAMPLE DATA")
-                            .font(.caption.weight(.bold))
-                            .tracking(1)
-                            .foregroundStyle(.orange)
-                    }
-                    preview
-                }
-                .padding(18)
-                .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
-            }
-            .padding(24)
+        ContextPanelWidgetContentView(
+            family: route.presentation == .widget ? route.family.widgetFamily : .systemLarge,
+            snapshot: snapshot,
+            displayPreferences: adapter.displayPreferences,
+            links: CompanionDeepLinks.previewLinks,
+            showsResetCreditSurfaces: true,
+            resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+            presentationDate: presentationDate
+        )
+        .cpwThemeVariant(themeVariant)
+        .sharedViewFrame(frame) {
+            CPWTheme.surface(variant: themeVariant)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .foregroundStyle(previewColorScheme == .dark ? Color.white : Color.black)
-        .background(pageBackground)
         .environment(\.colorScheme, previewColorScheme)
-    }
-
-    @ViewBuilder
-    private var preview: some View {
-        if route.presentation == .widget {
-            ContextPanelWidgetContentView(
-                family: route.family.widgetFamily,
-                snapshot: snapshot,
-                displayPreferences: adapter.displayPreferences,
-                links: CompanionDeepLinks.previewLinks,
-                showsResetCreditSurfaces: true,
-                resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
-                presentationDate: presentationDate
-            )
-            .cpwThemeVariant(themeVariant)
-            .frame(width: route.family.width, height: route.family.height)
-            .background(
-                CPWTheme.surface(variant: themeVariant),
-                in: RoundedRectangle(cornerRadius: 28, style: .continuous)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        } else {
-            ContextPanelWidgetContentView(
-                family: .systemLarge,
-                snapshot: snapshot,
-                displayPreferences: adapter.displayPreferences,
-                links: CompanionDeepLinks.previewLinks,
-                showsResetCreditSurfaces: true,
-                resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
-                presentationDate: presentationDate
-            )
-            .cpwThemeVariant(themeVariant)
-            .frame(maxWidth: .infinity, minHeight: 420)
-            .background(
-                CPWTheme.surface(variant: themeVariant),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-        }
-    }
-
-    private func selectionChip(_ value: String) -> some View {
-        Text(value)
-            .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background(.primary.opacity(0.09), in: Capsule())
-    }
-
-    private func selectionCard(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .environment(\.locale, Locale(identifier: "en_US_POSIX"))
+        .environment(\.timeZone, TimeZone(identifier: "UTC") ?? .gmt)
     }
 }
 
