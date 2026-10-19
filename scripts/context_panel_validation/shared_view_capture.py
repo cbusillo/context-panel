@@ -61,7 +61,9 @@ REQUIREMENTS_DIGEST_DOMAIN = "context-panel-shared-view-capture-requirements/v1"
 EMBEDDED_MANIFEST_DIGEST_DOMAIN = "context-panel-shared-view-capture-embedded-manifest/v1"
 APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel"
 WATCH_APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.watch"
-SIMCTL_CATALOG_TIMEOUT = 30
+# CoreSimulator can stall a device listing for over 30 seconds right after a
+# visionOS reinstall on a loaded hosted runner (CI run 39180325140).
+SIMCTL_CATALOG_TIMEOUT = 120
 MAX_SIMULATOR_DEVICE_COUNT = 256
 SIMCTL_CREATE_TIMEOUT = 30
 SIMCTL_BOOT_TIMEOUT = 60
