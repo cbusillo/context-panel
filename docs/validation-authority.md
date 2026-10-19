@@ -85,6 +85,12 @@ tolerance (the constants live in
 [`scripts/context_panel_shared_view_references.py`](../scripts/context_panel_shared_view_references.py)).
 A changed or missing reference fails the job.
 
+The jobs run only when a change can affect them (see
+[`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py)), and every night
+on `main` to catch runner image drift. App Store submission refuses a build
+whose source commit has no passing `shared-view-simulator-references` job; see
+[the release procedure](release.md#app-store-review-submission).
+
 Each image shows the surface in the frame its host gives it, not the gallery
 screen: a widget in its family size with the widget corner mask, a Watch
 complication in its face frame and mask, the Top Shelf banner with its corner
@@ -427,12 +433,15 @@ Run the commit gate before publishing changes:
 scripts/commit-gate.sh
 ```
 
-In CI, `scripts/ci-change-scope.py` lets a pull request skip the Swift and
-companion builds when none of its changed paths can affect them. Unknown paths
-run everything, and every push to `main` runs the full set. CodeQL always runs,
-because the `main` ruleset requires its results on every pull request. When adding a build input outside `Sources/`, `Tools/`, and `Config/`
-that lives under `docs/`, `Tests/ScriptsTests/`, or a Python script, list it in
-that script rather than widening the skip rules.
+In CI, `scripts/ci-change-scope.py` skips the Swift and companion builds when
+no changed path can affect them, and the reference image jobs when no product
+or reference job input changed. It compares a pull request with its base, a
+push to `main` with the previous tip, and a merge-train candidate with `main`.
+A manual run, an unknown base or an unknown path runs everything. CodeQL always
+runs, because the `main` ruleset requires its results on every pull request.
+When adding a build input outside `Sources/`, `Tools/`, and `Config/` that
+lives under `docs/`, `Tests/ScriptsTests/`, or a Python script, list it in that
+script rather than widening the skip rules.
 
 For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.

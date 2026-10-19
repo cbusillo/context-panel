@@ -400,6 +400,74 @@ class ValidationReportGateTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("no App Store Connect request was made", output.getvalue())
 
+    @staticmethod
+    def run_main_with_reference_runs(args, runs):
+        """Run main() with evidence checks stubbed and CI runs served from `runs`."""
+        source = "c" * 40
+
+        def fetch(path):
+            if "/actions/workflows/" in path:
+                return {"workflow_runs": [run for run, _ in runs if run["head_sha"] in path]}
+            run_id = int(path.split("/actions/runs/")[1].split("/")[0])
+            return {"jobs": next(jobs for run, jobs in runs if run["id"] == run_id)}
+
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "expected.json"
+            manifest_path.write_text(json.dumps({"artifacts": [{"sourceCommit": source}]}))
+            args.release_evidence_expected_build_manifests = [str(manifest_path)]
+            args.api_key_id = None
+            args.api_issuer_id = None
+            with (
+                patch.object(submit_app_store_review, "parse_args", return_value=args),
+                patch.object(submit_app_store_review, "validate_validation_report"),
+                patch.object(submit_app_store_review, "validate_release_evidence_report"),
+                patch.object(submit_app_store_review, "fetch_ci_json", fetch),
+                patch.dict("os.environ", {"GITHUB_REPOSITORY": "owner/repo"}),
+                redirect_stdout(io.StringIO()) as output,
+                redirect_stderr(io.StringIO()) as errors,
+            ):
+                exit_code = submit_app_store_review.main()
+        return source, exit_code, output.getvalue(), errors.getvalue()
+
+    @staticmethod
+    def reference_run(commit, conclusion):
+        run = {
+            "id": 7,
+            "head_sha": commit,
+            "event": "push",
+            "path": ".github/workflows/ci.yml",
+            "head_repository": {"full_name": "owner/repo"},
+        }
+        return run, [{"name": "shared-view-simulator-references", "conclusion": conclusion, "html_url": "run-url"}]
+
+    def test_live_submission_refuses_without_a_passing_reference_run_before_credentials(self):
+        for runs in ([], [self.reference_run("c" * 40, "skipped")], [self.reference_run("d" * 40, "success")]):
+            with self.subTest(runs=runs):
+                source, exit_code, _, errors = self.run_main_with_reference_runs(self.live_args(), runs)
+                self.assertEqual(exit_code, 1)
+                self.assertIn("shared-view reference images are not proven", errors)
+                self.assertIn(f"git push origin {source}:refs/heads/reference-check/", errors)
+                self.assertNotIn("APP_STORE_CONNECT_KEY_ID", errors)
+
+    def test_live_submission_continues_past_a_passing_reference_run(self):
+        _, exit_code, output, errors = self.run_main_with_reference_runs(
+            self.live_args(), [self.reference_run("c" * 40, "success")]
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Simulator reference images passed", output)
+        self.assertIn("APP_STORE_CONNECT_KEY_ID", errors)
+
+    def test_preflight_checks_the_same_reference_run(self):
+        args = self.live_args(validate_report_only=True, release_evidence_mode="enforce")
+        _, refused, _, errors = self.run_main_with_reference_runs(args, [])
+        self.assertEqual(refused, 1)
+        self.assertIn("shared-view reference images are not proven", errors)
+
+        args = self.live_args(validate_report_only=True, release_evidence_mode="enforce")
+        _, accepted, output, _ = self.run_main_with_reference_runs(args, [self.reference_run("c" * 40, "success")])
+        self.assertEqual(accepted, 0)
+        self.assertIn("no App Store Connect request was made", output)
+
     def test_live_shadow_and_enforce_require_release_evidence_report(self):
         for mode in ("shadow", "enforce"):
             with self.subTest(mode=mode):

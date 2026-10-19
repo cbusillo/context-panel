@@ -13,7 +13,7 @@ usage() {
 
 while (($# > 0)); do
 	case "$1" in
-	# For pull requests whose changed paths cannot affect the Swift package;
+	# For changes whose paths cannot affect the Swift package;
 	# scripts/ci-change-scope.py makes that decision in CI.
 	--skip-swift) run_swift=false ;;
 	--serial-python) python_lane_args+=(--serial) ;;

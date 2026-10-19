@@ -234,6 +234,9 @@ jobs:
           INPUT_VALIDATION_TRAIN: ${{ inputs.validation_train }}
           INPUT_RELEASE_EVIDENCE_MODE: ${{ inputs.release_evidence_mode }}
           INPUT_EVIDENCE_BUNDLE_SHA256: ${{ inputs.evidence_bundle_sha256 }}
+          # Reads CI runs to prove the simulator reference images passed on
+          # the submitted source commit.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           args=(
