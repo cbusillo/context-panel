@@ -246,11 +246,14 @@ public struct AccountOverview: Equatable, Sendable {
             let notedPlan = limits.lazy.compactMap { limit -> String? in
                 guard let note = limit.note, note.lowercased().hasPrefix("plan:") else { return nil }
                 let value = note.dropFirst("plan:".count).trimmingCharacters(in: .whitespacesAndNewlines)
-                return value.isEmpty ? nil : value.capitalized
+                // Claude plan labels come from a closed vocabulary and may carry a company name.
+                return value.isEmpty ? nil : entry.provider == .anthropic ? value : value.capitalized
             }.first
-            let plan = entry.provider == .openAI
-                ? (namedPlan ?? notedPlan)
-                    .map { ConnectorRedactor.safeErrorDescription($0) } : nil
+            let plan = switch entry.provider {
+            case .openAI: (namedPlan ?? notedPlan).map { ConnectorRedactor.safeErrorDescription($0) }
+            case .anthropic: notedPlan.map { ConnectorRedactor.safeErrorDescription($0) }
+            default: nil as String?
+            }
             var account = Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
                                   bankedState: bankedState, observedAt: observed, providerPlan: plan)
             account.bankedAdvice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }

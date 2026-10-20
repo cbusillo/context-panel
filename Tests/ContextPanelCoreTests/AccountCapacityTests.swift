@@ -187,3 +187,20 @@ func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
         snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [limit]), reports: [report], now: capacityNow).first)
     #expect(row.state == .available)
 }
+
+@Test func accountCapacityUsesReportedLoginOnlyWhenTypedNameIsEmpty() {
+    var unnamed = capacityConfiguration("c", provider: .anthropic)
+    unnamed.displayName = ""
+    let report = StoredProviderReport(provider: .anthropic, accountID: "c", configuredAccountID: "c",
+        accountName: "pat@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil)
+    let rows = AccountCapacity.rows(configuration: [unnamed, capacityConfiguration("d", provider: .anthropic)],
+        snapshot: UsageSnapshot(generatedAt: capacityNow, limits: []),
+        reports: [report, StoredProviderReport(provider: .anthropic, accountID: "d", configuredAccountID: "d",
+            accountName: "other@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil)],
+        now: capacityNow)
+    #expect(rows.map(\.name) == ["pat@example.test", "Local d"])
+    unnamed.displayName = " "
+    let unread = AccountCapacity.rows(configuration: [unnamed], snapshot: UsageSnapshot(generatedAt: capacityNow, limits: []),
+        reports: [], now: capacityNow)
+    #expect(unread.map(\.name) == ["Claude"])
+}

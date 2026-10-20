@@ -541,7 +541,7 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProviderBadge(provider: account.provider)
-                            TextField("Local account name", text: nameBinding(.account(account.id)))
+                            TextField(account.provider == .anthropic ? "Uses your Claude login" : "Local account name", text: nameBinding(.account(account.id)))
                                 .labelsHidden().accessibilityLabel("Local account name")
                                 .focused($focusedName, equals: .account(account.id))
                                 .onSubmit { commitName(.account(account.id)) }
@@ -1044,7 +1044,7 @@ struct SettingsPane: View {
         guard nameDrafts[field] != nil else { return }
         let allowsEmpty: Bool
         switch field {
-        case .account: allowsEmpty = false
+        case let .account(id): allowsEmpty = model.accounts.first { $0.id == id }?.provider == .anthropic
         case .alias: allowsEmpty = true
         }
         nameInputError = AccountNameEditing.commit(for: field, drafts: $nameDrafts, allowsEmpty: allowsEmpty) { value in
@@ -1308,7 +1308,7 @@ struct AddAccountSheet: View {
             Picker("Provider", selection: $provider) {
                 ForEach(Provider.allCases) { Text($0.accountDisplayName).tag($0) }
             }.pickerStyle(.segmented)
-            TextField("Local account name", text: $name).textFieldStyle(.roundedBorder)
+            TextField(provider == .anthropic ? "Name (optional, uses your Claude login)" : "Local account name", text: $name).textFieldStyle(.roundedBorder)
             if provider == .openAI {
                 Button("Find Codex sign-ins…") {
                     model.findCodexHomes { root, results in
@@ -1346,7 +1346,7 @@ struct AddAccountSheet: View {
                 Spacer()
                 Button(provider == .anthropic ? "Sign in" : "Add account") { add() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isAdding || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
+                    .disabled(isAdding || provider != .anthropic && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
                         || (provider == .openAI && selectedHome == nil)
                         || (provider == .google && model.settingsAccounts.contains { $0.provider == .google }))
             }
@@ -2203,7 +2203,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         accounts.append(LocalProviderAccountConfiguration(
             id: "local-" + UUID().uuidString.lowercased(), provider: provider,
             connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
-            displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
+            // An empty Claude name uses the account's login (#760).
+            displayName: provider == .anthropic ? "" : "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
             authPath: nil,
             codexClient: provider == .openAI ? .codex : nil,
             restorationRequestedAt: Date()
@@ -4003,7 +4004,7 @@ private struct ReconnectAccountRow: View {
         HStack(alignment: .center, spacing: 12) {
             ProviderBadge(provider: account.provider)
             VStack(alignment: .leading, spacing: 4) {
-                Text(account.displayName)
+                Text(account.displayName.isEmpty ? attentionReport?.accountName ?? account.provider.accountDisplayName : account.displayName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                 Text(statusText)

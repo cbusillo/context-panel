@@ -65,9 +65,13 @@ public struct AccountCapacity: Identifiable, Sendable {
                     : stale || expired ? .stale
                     : limits.isEmpty ? .unknown
                     : ([report?.status ?? .unknown] + limits.map(\.status)).contextPanelWorstStatus
+                // An empty typed name uses the login the provider reported for this account (#760).
+                let typedName = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : account.displayName
+                let defaultName = typedName.map { ids.count > 1 ? "\($0) \(id.suffix(6))" : $0 }
+                    ?? limits.first?.accountName ?? report?.accountName ?? account.provider.accountDisplayName
                 return Self(
                     id: id, configuredAccountID: account.id, provider: account.provider,
-                    name: account.accountAliases?[id] ?? report?.legacyAccountID.flatMap { account.accountAliases?[$0] } ?? (ids.count > 1 ? "\(account.displayName) \(id.suffix(6))" : account.displayName),
+                    name: account.accountAliases?[id] ?? report?.legacyAccountID.flatMap { account.accountAliases?[$0] } ?? defaultName,
                     isEnabled: account.isEnabled, limits: limits, report: report, status: status
                 )
             }

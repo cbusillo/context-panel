@@ -679,7 +679,8 @@ Schema 1 has `schemaVersion`, `readAt`, `savedAt`, `accounts`, `answers`,
 `deadlines`, `providers`, `headline`, `ranking`, `resetPrompts`,
 `configurationErrors` and `providerRefills`. `answers.tightestAccountID` repeats
 `closestAccountID` under the word the UI uses. Each row has an opaque local ID,
-provider, typed local label (including email-like names), shared panel `state`,
+provider, local label (typed, including email-like names, or an unnamed Claude
+account's profile login), shared panel `state`,
 observation time, windows, and a stable opaque `configurationID` for the
 configured source. The row `id` identifies its current logical lane and can
 change when a connection first establishes the account or a catalog source gains
@@ -730,7 +731,8 @@ No new CloudKit record type, server schema or entitlement is introduced.
 
 No credentials, source paths, raw provider responses, diagnostics, credential-derived
 account identity or transcript/cache payloads are exported. Explicitly typed local
-names and aliases retain email addresses under the Owner decision on #719;
+names and aliases retain email addresses under the Owner decision on #719, as does
+an unnamed Claude account's profile login under #760;
 secret/path patterns in those labels and provider-derived window labels remain redacted. IDs are local opaque projections,
 not provider identifiers. The command does not access Keychain, auth files,
 bookmarks, session files or provider endpoints; it performs no writes, migration
@@ -1011,5 +1013,27 @@ them or changing credential keys. Exit 0 means all selected profile checks passe
 
 Use the signed-runtime baseline and exact-build release gates before qualifying
 live fields. Development command tests with synthetic credentials prove routing
-and privacy only. Actual profile values remain unqualified until that step;
-typed account names remain the display fallback.
+and privacy only. Signed 1.0.75 qualified the shapes on October 20, 2026: all six
+fields are strings for both enabled entries (#760).
+
+### Claude account login and plan
+
+A typed Claude account name always wins. An empty name uses the login email from
+`/api/oauth/profile` everywhere the name appears, including the widget, companions
+and the agent account snapshot (Director decision on #760, October 20, 2026). Until
+the profile has been read, an unnamed account shows "Claude". New Claude accounts
+start unnamed.
+
+The plan label comes from a closed table of `organization_type` and
+`rate_limit_tier` values: Pro, Max, Max 5x, Max 20x, Team and Enterprise. Team and
+Enterprise labels add the organization name, which names the company there.
+Unrecognised values show no plan, never the raw string. The plan appears in the
+account detail's Plan row, through the same limit note OpenAI plans use.
+
+Only the email and plan label are kept. Account and organization UUIDs, full and
+display names, and personal organization names are dropped, and no profile value
+is logged. The values are cached in Context Panel's own Keychain identity-binding
+service, bound to the exact access token. Without companion identity resolution,
+the profile is read once per access token and only when the saved sign-in holds
+`user:profile`; with it, the existing per-refresh profile read is reused. No new
+consent or access is requested.

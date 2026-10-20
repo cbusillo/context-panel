@@ -280,3 +280,16 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
         try bytes.write(to: root.appendingPathComponent("used-only-unknown-unit.png"))
     }
 }
+
+@Test func claudePlanFromTheProfileReachesTheAccountDetailUnchanged() throws {
+    let limit = { (note: String?) in
+        UsageLimit(provider: .anthropic, accountID: "claude-plan", accountName: "pat@example.test",
+            label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 10, limit: 100,
+            resetsAt: detailNow.addingTimeInterval(86_400), lastUpdatedAt: detailNow, note: note)
+    }
+    let account = { (note: String?) in
+        AccountOverview(snapshot: UsageSnapshot(generatedAt: detailNow, limits: [limit(note)]), reports: [], now: detailNow).accounts.first
+    }
+    #expect(account("plan: Team · ACME Labs")?.providerPlan == "Team · ACME Labs")
+    #expect(account(nil)?.providerPlan == nil)
+}

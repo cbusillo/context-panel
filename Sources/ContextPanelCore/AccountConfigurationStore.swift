@@ -385,7 +385,7 @@ public struct AccountConfigurationStore: Sendable {
                 id: "claude-oauth-default",
                 provider: .anthropic,
                 connectorKind: .claudeOAuthUsage,
-                displayName: "Claude"
+                displayName: ""
             ),
             LocalProviderAccountConfiguration(
                 id: "google-antigravity-default",
@@ -550,7 +550,10 @@ public enum AccountConnectorFactory {
                     )],
                     credentialStore: effectiveCredentialStore,
                     identityResolver: identityResolver,
-                    identityMaterialStore: identityResolver == nil ? nil : ProviderAccountIdentityMaterialStore(store: ProviderCredentialStore(service: "Context Panel account identity bindings"))
+                    identityMaterialStore: identityResolver == nil ? nil : ProviderAccountIdentityMaterialStore(store: ProviderCredentialStore(service: "Context Panel account identity bindings")),
+                    // An injected store keeps the profile cache beside its credentials instead of the Keychain.
+                    profileDisplayStore: ClaudeOAuthProfileDisplayStore(store: effectiveCredentialStore is ProviderCredentialStore
+                        ? ProviderCredentialStore(service: "Context Panel account identity bindings") : effectiveCredentialStore)
                 )
             }
         }
