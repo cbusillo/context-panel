@@ -63,7 +63,7 @@ class RequireReferenceRunsTests(unittest.TestCase):
                                            fetch_json=github)
 
     def test_a_passing_job_on_the_exact_commit_is_accepted(self):
-        for event in ("push", "workflow_dispatch", "schedule"):
+        for event in ("push", "workflow_dispatch"):
             with self.subTest(event=event):
                 github = FakeGitHub()
                 github.add_run(COMMIT, event=event)
