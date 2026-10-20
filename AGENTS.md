@@ -3,12 +3,13 @@
 ## Direction and Instruction Authority
 
 Read the Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
-before this file. This repository has no DIRECTION.md of its own; the overall
-file governs work selection, stop boundaries, and retired guidance.
+before this file. This repository has no DIRECTION.md of its own.
 AGENTS.md is the only agent-instruction file; use nested AGENTS.md files when
 path-specific instructions are needed.
 
 ## Product Shape
+
+Client: the Director.
 
 Context Panel is a native macOS app plus WidgetKit extension for tracking AI
 usage limits across providers, with read-only iPhone, iPad, Vision Pro, Apple
@@ -62,43 +63,17 @@ Start with [Validation Authority and Operator Route](docs/validation-authority.m
 
 ## Test Rules
 
-A test stays only if it fails when the product is broken and passes when
-someone makes an intended change.
+Follow the [shared Tests rule](https://github.com/cbusillo/codex-skills/blob/main/instructions/global.md#tests).
 
-- No test may assert a literal defined elsewhere (versions, build numbers,
-  toolchain versions, identifiers, hashes). Compare against the single source
-  of truth, or do not test it.
-- No new test may assert workflow, config, script, doc, or Swift source text.
-  Enforce a rule where it executes: the workflow itself, a helper script with
-  its own behavioural test, or a linter. Issue #695 removed the existing text
-  tests; the only ones kept on purpose are negative privacy and security scans
-  that still lack a linter or executable replacement.
-- Verification and loading code, and the tests for it, must not depend on
-  working-tree or Git state; check live state only on the path that acts on
-  it. Release and runtime receipts bound to an exact commit are that acting
-  path.
-- Generated inventories and snapshots must not need a regeneration commit for
-  unrelated changes.
-- Keep byte-exact and hash gates only on real artifacts and immutable evidence.
-- Tests must not wait on real time. Inject or patch sleeps, clocks, and retry
-  delays.
+Repository exception: the existing negative privacy and security text scans
+retained by #695 remain until a linter or executable replacement covers them.
 
 ## Repo Workflow
 
 - Default branch: `main`.
 - Use the shared [executing loop](https://github.com/cbusillo/codex-skills/blob/main/skills/references/executing-loop.md)
-  and its owning skills. Read the issue and every comment, recheck ownership,
-  and run `gh-plan.py claim` before creating the linked task worktree.
-- Work on focused branches and open pull requests. Commit and push through the
-  configured bot helpers. GitHub issues hold durable plans and Current Status.
-- Follow the overall DIRECTION.md and the shared
-  [merge-train procedure](https://github.com/cbusillo/codex-skills/blob/main/skills/launchplane/references/merge-train.md)
-  for landing. Launchplane's active policy owns enrollment and routing.
-  Apply [reviews by another model](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md)
-  to execution guidance and other changes it covers: account for findings with
-  evidence; reviewer approval is not a merge or completion gate.
-- Merging a PR does not publish a release. Use [the release procedure](docs/release.md)
-  for separately authorized release work.
+  and its owning skills.
+- Release operations: [the release procedure](docs/release.md).
 - Release closeout and Supervisor reporting follow the single
   [definition of released](docs/release.md#definition-of-released).
 - Keep `.github/github.json` current when docs, validation gates,

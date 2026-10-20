@@ -11,18 +11,9 @@ which limits are close, and when each allowance resets.
 
 ## Direction and Contributions
 
-The Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
-governs priorities and stop boundaries. This repository has no DIRECTION.md of
-its own. [AGENTS.md](AGENTS.md) is the only agent-instruction file and owns the
-repository's execution and validation guidance. Durable work is tracked in
-GitHub issues.
-
-Contributions use focused branches and pull requests. Landing follows the
-overall direction and the [shared merge-train procedure](https://github.com/cbusillo/codex-skills/blob/main/skills/launchplane/references/merge-train.md).
-Reviews by another model follow the
-[shared review reference](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md):
-findings are weighed against evidence, rather than reviewer approval being a
-gate. Releases are separate from merging and follow [the release procedure](docs/release.md).
+See the Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
+and [AGENTS.md](AGENTS.md) for direction and repository guidance, and
+[the release procedure](docs/release.md) for release operations.
 
 ## Product Experience
 
