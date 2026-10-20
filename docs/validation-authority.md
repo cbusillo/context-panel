@@ -90,9 +90,10 @@ The jobs run only when a change can affect them (see
 `shared-view-references` runs on pull requests and merge-train candidates.
 `shared-view-simulator-references` takes about an hour, so it does not: it runs
 after a change lands on `main`, one run at a time with a newer merge replacing a
-running one, and on a manual CI run. Nothing waits for it. A failure there turns
-`main` red rather than blocking a merge, and the next PR re-records or fixes the
-cell. Runner image drift shows up in the next of these runs, and at release the
+running one, and on a manual CI run. Nothing waits for it. A failure on `main`
+opens a plan issue titled "Simulator reference images fail on main", or comments
+on the open one, naming the changed cells; the next passing run on `main` closes
+it. Runner image drift shows up in the next of these runs, and at release the
 capture compares every cell with its reference on the current runner. The capture
 retries a failed cell once in a fresh simulator when the rest of its platform
 captured, so one flaky cell does not fail the job. App Store submission refuses
