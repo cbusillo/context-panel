@@ -1852,6 +1852,25 @@ class SharedViewCaptureTests(unittest.TestCase):
         )
         return {key: item for key, item in results.items() if str(item["surface"]).startswith("watchos.")}
 
+    def test_reference_visionos_cells_share_one_simulator_without_erasing_it(self) -> None:
+        self.write_config(("visionos",))
+        runner = FakeRunner()
+
+        results = capture_reference_cells(
+            self.config_path,
+            self.root / "rendered",
+            runner=runner,
+            sleeper=self.sleeps.append,
+            now=lambda: FIXED_NOW,
+            simulator_pins_path=self.write_pins(),
+        )
+
+        vision = [item for item in results.values() if str(item["surface"]).startswith("visionos.")]
+        self.assertEqual({"captured"}, {item["status"] for item in vision})
+        self.assertEqual(4, len(vision))
+        self.assertEqual(0, sum(args[2] == "erase" for args, _ in runner.calls))
+        self.assertEqual(1, sum(args[:3] == ["xcrun", "simctl", "create"] for args, _ in runner.calls))
+
     def test_a_reference_cell_that_fails_once_is_retried_in_a_fresh_simulator(self) -> None:
         runner = FakeRunner(fail_at_call=("launch", 2))
 
