@@ -289,6 +289,26 @@ class DecideTests(unittest.TestCase):
     def test_the_nightly_schedule_runs_only_the_reference_jobs(self):
         scope = self.decide("schedule")
         self.assertEqual((scope.product, scope.references), (False, True))
+        self.assertTrue(scope.simulator_references)
+
+    def test_pull_requests_and_train_candidates_skip_the_simulator_reference_job(self):
+        git(self.root, "update-ref", "refs/remotes/origin/main", self.base)
+        commit(self.root, {"Sources/ContextPanelCore/A.swift": "changed\n"}, "product")
+        for event, ref, pr_base in (
+            ("pull_request", "refs/pull/1/merge", self.base),
+            ("pull_request", "refs/pull/1/merge", ""),
+            ("push", "refs/heads/launchplane/train/batch", ""),
+        ):
+            with self.subTest(event=event, ref=ref, pr_base=pr_base):
+                scope = self.decide(event, ref, pr_base=pr_base, before="0" * 40)
+                self.assertTrue(scope.references)
+                self.assertFalse(scope.simulator_references)
+
+    def test_main_pushes_and_manual_runs_keep_the_simulator_reference_job(self):
+        commit(self.root, {"Sources/ContextPanelCore/A.swift": "changed\n"}, "product")
+        for event, ref in (("push", "refs/heads/main"), ("workflow_dispatch", "refs/heads/reference-check/abc")):
+            with self.subTest(event=event, ref=ref):
+                self.assertTrue(self.decide(event, ref, before=self.base).simulator_references)
 
 
 class MainTests(unittest.TestCase):
@@ -306,13 +326,20 @@ class MainTests(unittest.TestCase):
     def test_writes_the_decision_as_step_outputs(self):
         self.assertEqual(
             self.run_main(module.Scope(False, "docs", references=False)),
-            ["product=false", "references=false"],
+            ["product=false", "references=false", "simulator_references=false"],
         )
         self.assertEqual(
             self.run_main(module.Scope(False, "pins", references=True)),
-            ["product=false", "references=true"],
+            ["product=false", "references=true", "simulator_references=true"],
         )
-        self.assertEqual(self.run_main(module.Scope(True, "app", references=True)), ["product=true", "references=true"])
+        self.assertEqual(
+            self.run_main(module.Scope(True, "pull request", references=True, merge_path=True)),
+            ["product=true", "references=true", "simulator_references=false"],
+        )
+        self.assertEqual(
+            self.run_main(module.Scope(True, "app", references=True)),
+            ["product=true", "references=true", "simulator_references=true"],
+        )
 
 
 if __name__ == "__main__":

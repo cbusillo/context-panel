@@ -3645,6 +3645,8 @@ def capture_reference_cells(
     Each captured cell is written to ``<output_root>/<surface>/<cell>.png`` for
     comparison with its committed reference. A profile whose runtime or device is
     not the pinned one is blocked rather than captured on another simulator.
+    Cells that fail in a profile that captured others get one retry in a fresh
+    simulator.
     """
     surface_policy = load_surface_policy(surface_policy_path)
     matrix = load_shared_view_matrix(matrix_path, surface_policy)
@@ -3713,6 +3715,29 @@ def capture_reference_cells(
                 masked_regions=pin.masked_regions,
             )
             results.update(outcome.results)
+            # A profile that captured some cells works, so a cell that failed is
+            # most likely a simulator flake: give it one more try in a fresh
+            # simulator instead of failing the whole job.
+            failed = tuple(
+                requirement
+                for requirement in requirements
+                if results[requirement.requirement_id]["status"] != "captured"
+            )
+            if failed and len(failed) < len(requirements):
+                retried = _capture_profile(
+                    profile,
+                    failed,
+                    staging_directory,
+                    f"{capture_run_id}-retry",
+                    active_runner,
+                    sleeper,
+                    now,
+                    seen_digests,
+                    results,
+                    published,
+                    masked_regions=pin.masked_regions,
+                )
+                results.update(retried.results)
         for requirement_id, artifact_path in published.items():
             result = results[requirement_id]
             if result["status"] != "captured":

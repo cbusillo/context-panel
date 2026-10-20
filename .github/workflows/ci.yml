@@ -32,6 +32,7 @@ jobs:
     outputs:
       product: ${{ steps.scope.outputs.product }}
       references: ${{ steps.scope.outputs.references }}
+      simulator_references: ${{ steps.scope.outputs.simulator_references }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -142,9 +143,10 @@ jobs:
     # Evidence does, from fresh Release builds of this commit, and compares them
     # with their committed reference images. Xcode, runtimes and devices come from
     # Config/ContextPanelSharedViewSimulators.json
-    # (docs/validation-authority.md#reference-images).
+    # (docs/validation-authority.md#reference-images). It takes about an hour, so
+    # pull requests and merge-train candidates skip it (scripts/ci-change-scope.py).
     needs: scope
-    if: ${{ needs.scope.outputs.references != 'false' }}
+    if: ${{ needs.scope.outputs.simulator_references != 'false' }}
     runs-on: macos-26
     timeout-minutes: 120
     steps:
@@ -233,6 +235,7 @@ jobs:
           SCOPE_RESULT: ${{ needs.scope.result }}
           PRODUCT: ${{ needs.scope.outputs.product }}
           REFERENCES: ${{ needs.scope.outputs.references }}
+          SIMULATOR_REFERENCES: ${{ needs.scope.outputs.simulator_references }}
           TEST_RESULT: ${{ needs.swift-tests.result }}
           RELEASE_RESULT: ${{ needs.macos-release.result }}
           REFERENCES_RESULT: ${{ needs.shared-view-references.result }}
@@ -242,7 +245,7 @@ jobs:
           [[ "$SCOPE_RESULT" == 'success' && "$TEST_RESULT" == 'success' ]]
           passed "$RELEASE_RESULT" "$PRODUCT"
           passed "$REFERENCES_RESULT" "$REFERENCES"
-          passed "$SIMULATOR_REFERENCES_RESULT" "$REFERENCES"
+          passed "$SIMULATOR_REFERENCES_RESULT" "$SIMULATOR_REFERENCES"
 
   swift-tests:
     needs: scope

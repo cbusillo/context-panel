@@ -11,6 +11,11 @@ The base depends on the event:
   runner image drift;
 - anything else, or a missing or all-zero base: run everything.
 
+The simulator reference job takes about an hour, so it stays off the pull
+request and merge-train path: it runs on pushes to the default branch, the
+nightly schedule and manual runs, which are also the only runs App Store
+submission accepts (scripts/shared_view_reference_gate.py).
+
 The decision fails open: an unknown path, an empty diff, or a Git error runs
 everything. CodeQL is deliberately not gated here. The ruleset on main requires
 CodeQL results for every pull request, so a skipped analysis would block the
@@ -20,7 +25,7 @@ merge.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -73,6 +78,13 @@ class Scope:
     product: bool
     reason: str
     references: bool
+    # A pull request or merge-train candidate, which the simulator reference
+    # job stays off.
+    merge_path: bool = False
+
+    @property
+    def simulator_references(self) -> bool:
+        return self.references and not self.merge_path
 
 
 def _matches(path: str, entries: tuple[str, ...]) -> bool:
@@ -139,10 +151,14 @@ def decide(
 ) -> Scope:
     if event == "schedule":
         return Scope(False, "scheduled run checks the reference images for runner drift", references=True)
+    merge_path = event == "pull_request" or (
+        event == "push" and ref.startswith(f"refs/heads/{TRAIN_BRANCH_PREFIX}")
+    )
     base = select_base(event, ref, pr_base=pr_base, before=before, default_branch=default_branch)
     if base is None:
-        return Scope(True, f"no base to compare for {event} on {ref or 'an unknown ref'}", references=True)
-    return classify(changed_paths(base, head, cwd=cwd))
+        reason = f"no base to compare for {event} on {ref or 'an unknown ref'}"
+        return Scope(True, reason, references=True, merge_path=merge_path)
+    return replace(classify(changed_paths(base, head, cwd=cwd)), merge_path=merge_path)
 
 
 def changed_paths(base: str, head: str, *, cwd: Path | None = None) -> list[str] | None:
@@ -181,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     lines = [
         f"product={'true' if scope.product else 'false'}",
         f"references={'true' if scope.references else 'false'}",
+        f"simulator_references={'true' if scope.simulator_references else 'false'}",
     ]
     print(f"change scope: {', '.join(lines)} ({scope.reason})")
 
