@@ -2569,6 +2569,7 @@ def _capture_profile(
     published_artifact_paths: dict[str, Path],
     cleanup_target_observer: Callable[[str], None] = lambda _: None,
     masked_regions: dict[str, tuple[tuple[int, int, int, int], ...]] | None = None,
+    reset_visionos_cells: bool = True,
 ) -> ProfileCaptureOutcome:
     masked_regions = masked_regions or {}
     results: dict[str, dict[str, object]] = {}
@@ -2689,7 +2690,7 @@ def _capture_profile(
             stable_snapshot: PNGSnapshot | None = None
             stable_path: Path | None = None
             if index > 0:
-                if profile.name == "visionos":
+                if profile.name == "visionos" and reset_visionos_cells:
                     reset_error = _reset_visionos_cell(
                         runner,
                         simulator_id,
@@ -3646,7 +3647,8 @@ def capture_reference_cells(
     comparison with its committed reference. A profile whose runtime or device is
     not the pinned one is blocked rather than captured on another simulator.
     Cells that fail in a profile that captured others get one retry in a fresh
-    simulator.
+    simulator. visionOS cells share their simulator like the other XCUITest
+    cells; only the release capture erases it between cells.
     """
     surface_policy = load_surface_policy(surface_policy_path)
     matrix = load_shared_view_matrix(matrix_path, surface_policy)
@@ -3714,6 +3716,7 @@ def capture_reference_cells(
                 results,
                 published,
                 masked_regions=pin.masked_regions,
+                reset_visionos_cells=False,
             )
             results.update(outcome.results)
             # A profile that captured some cells works, so a cell that failed is
@@ -3742,6 +3745,7 @@ def capture_reference_cells(
                     results,
                     published,
                     masked_regions=pin.masked_regions,
+                    reset_visionos_cells=False,
                 )
                 results.update(retried.results)
         for requirement_id, artifact_path in published.items():
