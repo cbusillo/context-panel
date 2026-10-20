@@ -3701,6 +3701,7 @@ def capture_reference_cells(
                     )
                 )
                 continue
+            digests_before = set(seen_digests)
             outcome = _capture_profile(
                 profile,
                 tuple(requirements),
@@ -3724,6 +3725,11 @@ def capture_reference_cells(
                 if results[requirement.requirement_id]["status"] != "captured"
             )
             if failed and len(failed) < len(requirements):
+                # A digest this attempt left without an owner belongs to a failed
+                # cell; keeping it would mark that cell's retry a duplicate.
+                for digest in set(seen_digests) - digests_before:
+                    if seen_digests[digest] is None:
+                        del seen_digests[digest]
                 retried = _capture_profile(
                     profile,
                     failed,

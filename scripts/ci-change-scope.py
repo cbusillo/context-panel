@@ -7,14 +7,12 @@ The base depends on the event:
 - push to the default branch: the previous tip (`github.event.before`);
 - push to a merge-train candidate branch: the default branch, so the diff is
   the candidate's batch;
-- schedule: nothing changed, so only the reference image jobs run, to catch
-  runner image drift;
 - anything else, or a missing or all-zero base: run everything.
 
 The simulator reference job takes about an hour, so it stays off the pull
-request and merge-train path: it runs on pushes to the default branch, the
-nightly schedule and manual runs, which are also the only runs App Store
-submission accepts (scripts/shared_view_reference_gate.py).
+request and merge-train path: it runs on pushes to the default branch and on
+manual runs, which are also the only runs App Store submission accepts
+(scripts/shared_view_reference_gate.py).
 
 The decision fails open: an unknown path, an empty diff, or a Git error runs
 everything. CodeQL is deliberately not gated here. The ruleset on main requires
@@ -149,8 +147,6 @@ def decide(
     head: str = "HEAD",
     cwd: Path | None = None,
 ) -> Scope:
-    if event == "schedule":
-        return Scope(False, "scheduled run checks the reference images for runner drift", references=True)
     merge_path = event == "pull_request" or (
         event == "push" and ref.startswith(f"refs/heads/{TRAIN_BRANCH_PREFIX}")
     )

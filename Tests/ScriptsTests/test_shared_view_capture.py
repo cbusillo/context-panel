@@ -1864,6 +1864,22 @@ class SharedViewCaptureTests(unittest.TestCase):
             sorted(path.relative_to(self.root / "rendered").as_posix() for path in (self.root / "rendered").rglob("*.png")),
         )
 
+    def test_a_cell_whose_image_failed_to_publish_is_captured_on_retry(self) -> None:
+        real_replace = os.replace
+        failures: list[str] = []
+
+        def fail_first_publish(source, destination):
+            if not failures:
+                failures.append(str(destination))
+                raise OSError("publish failed")
+            return real_replace(source, destination)
+
+        with mock.patch.object(capture_module.os, "replace", side_effect=fail_first_publish):
+            watch = self.capture_watch_references(FakeRunner())
+
+        self.assertEqual(1, len(failures))
+        self.assertEqual({"captured"}, {item["status"] for item in watch.values()})
+
     def test_a_profile_where_every_cell_fails_is_not_retried(self) -> None:
         runner = FakeRunner(fail_at="boot")
 

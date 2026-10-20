@@ -286,11 +286,6 @@ class DecideTests(unittest.TestCase):
                 scope = self.decide(event, ref, before=self.base)
                 self.assertEqual((scope.product, scope.references), (True, True))
 
-    def test_the_nightly_schedule_runs_only_the_reference_jobs(self):
-        scope = self.decide("schedule")
-        self.assertEqual((scope.product, scope.references), (False, True))
-        self.assertTrue(scope.simulator_references)
-
     def test_pull_requests_and_train_candidates_skip_the_simulator_reference_job(self):
         git(self.root, "update-ref", "refs/remotes/origin/main", self.base)
         commit(self.root, {"Sources/ContextPanelCore/A.swift": "changed\n"}, "product")

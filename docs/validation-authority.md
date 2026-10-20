@@ -86,12 +86,14 @@ tolerance (the constants live in
 A changed or missing reference fails the job.
 
 The jobs run only when a change can affect them (see
-[`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py)), and every night
-on `main` to catch runner image drift. `shared-view-references` runs on pull
-requests and merge-train candidates. `shared-view-simulator-references` takes
-about an hour, so it does not: it runs after a change lands on `main`, every
-night, and on a manual CI run. A failure there turns `main` red rather than
-blocking a merge, and the next PR re-records or fixes the cell. The capture
+[`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py)).
+`shared-view-references` runs on pull requests and merge-train candidates.
+`shared-view-simulator-references` takes about an hour, so it does not: it runs
+after a change lands on `main`, one run at a time with a newer merge replacing a
+running one, and on a manual CI run. Nothing waits for it. A failure there turns
+`main` red rather than blocking a merge, and the next PR re-records or fixes the
+cell. Runner image drift shows up in the next of these runs, and at release the
+capture compares every cell with its reference on the current runner. The capture
 retries a failed cell once in a fresh simulator when the rest of its platform
 captured, so one flaky cell does not fail the job. App Store submission refuses
 a build whose source commit has no passing `shared-view-simulator-references`

@@ -8,9 +8,6 @@ name: CI
       - main
       - "launchplane/train/**"
   workflow_dispatch:
-  # Nightly reference image check on main, to catch runner image drift.
-  schedule:
-    - cron: "17 7 * * *"
 
 permissions:
   contents: read
@@ -144,9 +141,13 @@ jobs:
     # with their committed reference images. Xcode, runtimes and devices come from
     # Config/ContextPanelSharedViewSimulators.json
     # (docs/validation-authority.md#reference-images). It takes about an hour, so
-    # pull requests and merge-train candidates skip it (scripts/ci-change-scope.py).
+    # pull requests and merge-train candidates skip it (scripts/ci-change-scope.py)
+    # and nothing waits for it. On a branch, a newer push replaces a running one.
     needs: scope
     if: ${{ needs.scope.outputs.simulator_references != 'false' }}
+    concurrency:
+      group: shared-view-simulator-references-${{ github.event_name == 'push' && github.ref || github.run_id }}
+      cancel-in-progress: true
     runs-on: macos-26
     timeout-minutes: 120
     steps:
@@ -225,27 +226,24 @@ jobs:
           retention-days: 14
 
   swift:
-    needs: [scope, swift-tests, macos-release, shared-view-references, shared-view-simulator-references]
+    needs: [scope, swift-tests, macos-release, shared-view-references]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require product tests, release compilation and reference images
+      - name: Require product tests, release compilation and host reference images
         # A job the change scope skipped passes; any other skip or failure does not.
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
           PRODUCT: ${{ needs.scope.outputs.product }}
           REFERENCES: ${{ needs.scope.outputs.references }}
-          SIMULATOR_REFERENCES: ${{ needs.scope.outputs.simulator_references }}
           TEST_RESULT: ${{ needs.swift-tests.result }}
           RELEASE_RESULT: ${{ needs.macos-release.result }}
           REFERENCES_RESULT: ${{ needs.shared-view-references.result }}
-          SIMULATOR_REFERENCES_RESULT: ${{ needs.shared-view-simulator-references.result }}
         run: |
           passed() { [[ "$1" == 'success' || ( "$1" == 'skipped' && "$2" == 'false' ) ]]; }
           [[ "$SCOPE_RESULT" == 'success' && "$TEST_RESULT" == 'success' ]]
           passed "$RELEASE_RESULT" "$PRODUCT"
           passed "$REFERENCES_RESULT" "$REFERENCES"
-          passed "$SIMULATOR_REFERENCES_RESULT" "$SIMULATOR_REFERENCES"
 
   swift-tests:
     needs: scope
