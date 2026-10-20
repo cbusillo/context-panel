@@ -541,7 +541,7 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProviderBadge(provider: account.provider)
-                            TextField("Local account name", text: nameBinding(.account(account.id)))
+                            TextField(account.provider == .anthropic ? "Uses your Claude login" : "Local account name", text: nameBinding(.account(account.id)))
                                 .labelsHidden().accessibilityLabel("Local account name")
                                 .focused($focusedName, equals: .account(account.id))
                                 .onSubmit { commitName(.account(account.id)) }
@@ -576,7 +576,7 @@ struct SettingsPane: View {
                             .fixedSize()
                             Toggle(AccountTerms.useLast, isOn: Binding(
                                 get: { account.useLast ?? false },
-                                set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                                set: { model.setUseLast(account.id, useLast: $0, reports: appModel.storedSnapshot?.reports ?? []); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
                             .toggleStyle(.checkbox)
                             .fixedSize()
@@ -765,7 +765,7 @@ struct SettingsPane: View {
                 }
                 ForEach(model.retiredSettingsAccounts) { account in
                     HStack {
-                        Text("\(account.displayName) · retired source, off")
+                        Text("\(account.presentedName(reports: appModel.storedSnapshot?.reports ?? [])) · retired source, off")
                             .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         Spacer()
                         Button(AccountTerms.removeAccount, role: .destructive) {
@@ -1044,7 +1044,7 @@ struct SettingsPane: View {
         guard nameDrafts[field] != nil else { return }
         let allowsEmpty: Bool
         switch field {
-        case .account: allowsEmpty = false
+        case let .account(id): allowsEmpty = model.accounts.first { $0.id == id }?.provider == .anthropic
         case .alias: allowsEmpty = true
         }
         nameInputError = AccountNameEditing.commit(for: field, drafts: $nameDrafts, allowsEmpty: allowsEmpty) { value in
@@ -1056,7 +1056,12 @@ struct SettingsPane: View {
             case let .alias(id, logical): return model.renameAccount(id, name: value, logicalID: logical)
             }
         }
-        if nameInputError == nil { appModel.loadSnapshot(reloadWidgetTimelines: false) }
+        guard nameInputError == nil else { return }
+        appModel.loadSnapshot(reloadWidgetTimelines: false)
+        // A cleared Claude name takes the cached login on the next read, so read now (#760).
+        if case let .account(id) = field, model.accounts.first(where: { $0.id == id })?.displayName.isEmpty == true {
+            refreshAfterAuthorization()
+        }
     }
 
     private func reloadWidgetPreview() {
@@ -1308,7 +1313,7 @@ struct AddAccountSheet: View {
             Picker("Provider", selection: $provider) {
                 ForEach(Provider.allCases) { Text($0.accountDisplayName).tag($0) }
             }.pickerStyle(.segmented)
-            TextField("Local account name", text: $name).textFieldStyle(.roundedBorder)
+            TextField(provider == .anthropic ? "Name (optional, uses your Claude login)" : "Local account name", text: $name).textFieldStyle(.roundedBorder)
             if provider == .openAI {
                 Button("Find Codex sign-ins…") {
                     model.findCodexHomes { root, results in
@@ -1346,7 +1351,7 @@ struct AddAccountSheet: View {
                 Spacer()
                 Button(provider == .anthropic ? "Sign in" : "Add account") { add() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isAdding || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
+                    .disabled(isAdding || provider != .anthropic && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
                         || (provider == .openAI && selectedHome == nil)
                         || (provider == .google && model.settingsAccounts.contains { $0.provider == .google }))
             }
@@ -2203,7 +2208,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         accounts.append(LocalProviderAccountConfiguration(
             id: "local-" + UUID().uuidString.lowercased(), provider: provider,
             connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
-            displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
+            // An empty Claude name uses the account's login (#760).
+            displayName: provider == .anthropic ? "" : "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
             authPath: nil,
             codexClient: provider == .openAI ? .codex : nil,
             restorationRequestedAt: Date()
@@ -2297,9 +2303,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         // Preserve legacy paused accounts; active accounts keep collecting when hidden.
         saveAccounts()
     }
-    func setUseLast(_ accountID: String, useLast: Bool) {
+    func setUseLast(_ accountID: String, useLast: Bool, reports: [StoredProviderReport]) {
         guard !isRemovingAccount, accounts.contains(where: { $0.id == accountID }) else { return }
-        let notice = accounts.setUseLast(accountID, useLast)
+        let notice = accounts.setUseLast(accountID, useLast, reports: reports)
         useLastNotice = notice.map { (accountID, $0) }
         saveAccounts()
     }
@@ -4003,7 +4009,7 @@ private struct ReconnectAccountRow: View {
         HStack(alignment: .center, spacing: 12) {
             ProviderBadge(provider: account.provider)
             VStack(alignment: .leading, spacing: 4) {
-                Text(account.displayName)
+                Text(account.presentedName(reports: attentionReport.map { [$0] } ?? []))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                 Text(statusText)

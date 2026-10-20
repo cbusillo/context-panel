@@ -187,3 +187,46 @@ func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
         snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [limit]), reports: [report], now: capacityNow).first)
     #expect(row.state == .available)
 }
+
+@Test func accountCapacityUsesReportedLoginOnlyWhenTypedNameIsEmpty() {
+    var unnamed = capacityConfiguration("c", provider: .anthropic)
+    unnamed.displayName = ""
+    let report = StoredProviderReport(provider: .anthropic, accountID: "c", configuredAccountID: "c",
+        accountName: "pat@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil)
+    let rows = AccountCapacity.rows(configuration: [unnamed, capacityConfiguration("d", provider: .anthropic)],
+        snapshot: UsageSnapshot(generatedAt: capacityNow, limits: []),
+        reports: [report, StoredProviderReport(provider: .anthropic, accountID: "d", configuredAccountID: "d",
+            accountName: "other@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil)],
+        now: capacityNow)
+    #expect(rows.map(\.name) == ["pat@example.test", "Local d"])
+    unnamed.displayName = " "
+    let unread = AccountCapacity.rows(configuration: [unnamed], snapshot: UsageSnapshot(generatedAt: capacityNow, limits: []),
+        reports: [], now: capacityNow)
+    #expect(unread.map(\.name) == [Provider.anthropic.accountDisplayName])
+}
+
+@Test func clearedNameUsesTheNewestReportOverLimitsRetainedFromTheTypedName() {
+    var cleared = capacityConfiguration("c", provider: .anthropic)
+    cleared.displayName = ""
+    let retained = UsageLimit(provider: .anthropic, accountID: "c", configuredAccountID: "c", accountName: "Work",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 10, limit: 100,
+        resetsAt: capacityNow.addingTimeInterval(86_400), lastUpdatedAt: capacityNow.addingTimeInterval(-600))
+    let failedRead = StoredProviderReport(provider: .anthropic, accountID: "c", configuredAccountID: "c",
+        accountName: "pat@example.test", generatedAt: capacityNow, status: .failure, errorMessage: nil)
+    let rows = AccountCapacity.rows(configuration: [cleared], snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [retained]),
+        reports: [failedRead], now: capacityNow)
+    #expect(rows.map(\.name) == ["pat@example.test"])
+}
+
+@Test func useLastNoticeNamesUnnamedAccountsByTheirLogin() {
+    var first = capacityConfiguration("c", provider: .anthropic)
+    var second = capacityConfiguration("d", provider: .anthropic)
+    first.displayName = ""
+    second.displayName = ""
+    first.useLast = true
+    var accounts = [first, second]
+    let reports = ["c", "d"].map { StoredProviderReport(provider: .anthropic, accountID: $0, configuredAccountID: $0,
+        accountName: "\($0)@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil) }
+    let notice = accounts.setUseLast("d", true, reports: reports) ?? ""
+    #expect(notice.contains("c@example.test") && notice.contains("d@example.test"))
+}

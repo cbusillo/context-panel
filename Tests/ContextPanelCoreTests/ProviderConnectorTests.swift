@@ -3640,3 +3640,64 @@ private func base64URLEncoded(_ data: Data) -> String {
     let stored = StoredUsageSnapshot(savedAt: result.generatedAt, snapshot: result.snapshot, reports: result.reports.map { StoredProviderReport(report: $0) })
     #expect(CompanionSnapshot(storedSnapshot: stored).limits.count == 2)
 }
+
+private final class ClaudeProfileRoutingHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
+    private(set) var requests: [ConnectorHTTPRequest] = []
+    func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
+        requests.append(request)
+        if request.url.path == "/api/oauth/profile" {
+            return ConnectorHTTPResponse(statusCode: 200, data: Data(#"""
+            {"account":{"uuid":"6f1b2c3d-0000-4000-8000-000000000001","email":"pat@example.test","full_name":"Pat Q"},
+             "organization":{"uuid":"6f1b2c3d-0000-4000-8000-000000000002","name":"Pat's Organization",
+               "organization_type":"claude_max","rate_limit_tier":"default_claude_max_5x"}}
+            """#.utf8))
+        }
+        return ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"five_hour":{"utilization":20}}"#.utf8))
+    }
+    var profileRequestCount: Int { requests.filter { $0.url.path == "/api/oauth/profile" }.count }
+}
+
+@Test func claudeOAuthConnectorNamesAnUnnamedAccountFromItsLoginOncePerToken() async throws {
+    let credentials = { (token: String) in
+        try claudeCredentialsData(accessToken: token, refreshToken: "r", expiresAt: Date(timeIntervalSince1970: 4_000_000_000))
+    }
+    let store = StubCredentialStore(storage: ["unnamed": try credentials("first")])
+    let http = ClaudeProfileRoutingHTTPClient()
+    let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "unnamed", accountName: "")],
+        httpClient: http, credentialStore: store, profileDisplayStore: ClaudeOAuthProfileDisplayStore(store: store))
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    let first = await connector.refresh(now: now)
+    #expect(first.reports[0].accountName == "pat@example.test")
+    #expect(first.reports[0].limits.allSatisfy { $0.accountName == "pat@example.test" && $0.note == "plan: Max 5x" })
+    _ = await connector.refresh(now: now.addingTimeInterval(60))
+    #expect(http.profileRequestCount == 1)
+
+    try store.save(try credentials("second"), accountID: "unnamed")
+    let renewed = await connector.refresh(now: now.addingTimeInterval(120))
+    #expect(http.profileRequestCount == 2)
+    #expect(renewed.reports[0].accountName == "pat@example.test")
+
+    let snapshot = String(decoding: try JSONEncoder().encode(StoredUsageSnapshot(savedAt: now, refreshResult: renewed)), as: UTF8.self)
+    #expect(!snapshot.contains("Pat Q") && !snapshot.contains("6f1b2c3d"))
+}
+
+@Test func claudeOAuthConnectorKeepsTypedNamesAndSkipsProfileWithoutConsent() async throws {
+    let store = StubCredentialStore(storage: [
+        "typed": try claudeCredentialsData(accessToken: "a", refreshToken: "r", expiresAt: Date(timeIntervalSince1970: 4_000_000_000)),
+        "noConsent": try claudeCredentialsData(accessToken: "b", refreshToken: "r", expiresAt: Date(timeIntervalSince1970: 4_000_000_000),
+            scopes: ["user:inference"]),
+    ])
+    let http = ClaudeProfileRoutingHTTPClient()
+    let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "typed", accountName: "Work"),
+                   ClaudeOAuthAccountConfiguration(accountID: "noConsent", accountName: "")],
+        httpClient: http, credentialStore: store, profileDisplayStore: ClaudeOAuthProfileDisplayStore(store: store))
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    #expect(result.reports.map(\.accountName) == ["Work", Provider.anthropic.accountDisplayName])
+    #expect(result.reports[0].limits.first?.note == "plan: Max 5x")
+    #expect(result.reports[1].limits.first?.note == nil)
+    #expect(http.profileRequestCount == 1)
+}

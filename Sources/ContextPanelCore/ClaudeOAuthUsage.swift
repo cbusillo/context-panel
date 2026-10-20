@@ -84,10 +84,11 @@ public enum ClaudeOAuthUsageParser {
         from data: Data,
         accountID: String,
         accountName: String,
-        observedAt: Date
+        observedAt: Date,
+        planLabel: String? = nil
     ) throws -> ClaudeOAuthUsageResult {
         let payload = try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthUsagePayload.self, from: data)
-        return payload.result(accountID: accountID, accountName: accountName, observedAt: observedAt)
+        return payload.result(accountID: accountID, accountName: accountName, observedAt: observedAt, planLabel: planLabel)
     }
 
     public static func usageLimits(
@@ -280,6 +281,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private let resetReadCooldown: ClaudeResetCreditReadCooldown
     private let identityResolver: ProviderAccountIdentityResolver?
     private let identityMaterialStore: ProviderAccountIdentityMaterialStore?
+    private let profileDisplayStore: ClaudeOAuthProfileDisplayStore?
 
     public init(
         resetReadCooldown: ClaudeResetCreditReadCooldown = .shared,
@@ -288,7 +290,8 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         credentialStore: any ProviderCredentialStoring,
         expirationSkew: TimeInterval = 5 * 60,
         identityResolver: ProviderAccountIdentityResolver? = nil,
-        identityMaterialStore: ProviderAccountIdentityMaterialStore? = nil
+        identityMaterialStore: ProviderAccountIdentityMaterialStore? = nil,
+        profileDisplayStore: ClaudeOAuthProfileDisplayStore? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
@@ -297,6 +300,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         self.resetReadCooldown = resetReadCooldown
         self.identityResolver = identityResolver
         self.identityMaterialStore = identityMaterialStore
+        self.profileDisplayStore = profileDisplayStore
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -315,8 +319,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             var credentials = try loadCredentials(accountID: account.accountID)
             return try await refresh(account: account, credentials: &credentials, now: now, localAccountID: localAccountID)
         } catch {
-            let material = (try? loadCredentials(accountID: account.accountID))?.accessToken.flatMap {
+            let savedAccessToken = (try? loadCredentials(accountID: account.accountID))?.accessToken
+            let material = savedAccessToken.flatMap {
                 identityMaterialStore?.load(provider: .anthropic, configurationID: account.accountID, credential: $0)
+            }
+            let display = savedAccessToken.flatMap {
+                profileDisplayStore?.load(configurationID: account.accountID, credential: $0)
             }
             let historyAccountID = material?.localHistoryID(configurationID: account.accountID) ?? localAccountID
             let identity = if let material, let identityResolver { await identityResolver.resolve(material)?.bound(toLocalAccountID: historyAccountID) } else { nil as SharedProviderAccountIdentity? }
@@ -324,7 +332,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 provider: provider,
                 accountID: historyAccountID,
                 configuredAccountID: account.accountID,
-                accountName: account.accountName,
+                accountName: Self.accountName(account, display: display),
                 generatedAt: now,
                 limits: [],
                 status: .failure,
@@ -375,38 +383,41 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: retryResponse.statusCode)
             }
             return try await usageReport(data: retryResponse.data, accessToken: refreshedToken,
-                account: account, localAccountID: localAccountID, now: now)
+                scopes: credentials.scopes, account: account, localAccountID: localAccountID, now: now)
         }
 
         guard (200..<300).contains(response.statusCode) else {
             throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
         }
         return try await usageReport(data: response.data, accessToken: currentAccessToken,
-            account: account, localAccountID: localAccountID, now: now)
+            scopes: credentials.scopes, account: account, localAccountID: localAccountID, now: now)
     }
 
-    private func usageReport(data: Data, accessToken: String, account: ClaudeOAuthAccountConfiguration,
+    private func usageReport(data: Data, accessToken: String, scopes: [String], account: ClaudeOAuthAccountConfiguration,
         localAccountID: String, now: Date) async throws -> ProviderConnectorReport {
         // Qualify usage before requesting the identity of this exact authenticated login.
         _ = try ClaudeOAuthUsageParser.usageResult(from: data, accountID: localAccountID,
             accountName: account.accountName, observedAt: now)
-        let material = await identityMaterial(accessToken: accessToken, configurationID: account.accountID)
+        let (material, display) = await profileReads(accessToken: accessToken, scopes: scopes,
+            configurationID: account.accountID)
         let historyAccountID = material?.localHistoryID(configurationID: account.accountID) ?? localAccountID
         let identity: SharedProviderAccountIdentity?
         if let material, let identityResolver { identity = await identityResolver.resolve(material)?.bound(toLocalAccountID: historyAccountID) }
         else { identity = nil }
         let accountID = historyAccountID
+        let accountName = Self.accountName(account, display: display)
         let usage = try ClaudeOAuthUsageParser.usageResult(
             from: data,
             accountID: accountID,
-            accountName: account.accountName,
-            observedAt: now
+            accountName: accountName,
+            observedAt: now,
+            planLabel: display?.planLabel
         )
         return ProviderConnectorReport(
             provider: provider,
             accountID: accountID,
             configuredAccountID: account.accountID,
-            accountName: account.accountName,
+            accountName: accountName,
             generatedAt: now,
             limits: usage.limits.map { $0.replacingMissingConfiguredAccountID(with: account.accountID) },
             resetCredits: await resetCredits(account: account, accessToken: accessToken, now: now),
@@ -418,20 +429,39 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         )
     }
 
-    private func identityMaterial(accessToken: String, configurationID: String) async -> ProviderAccountIdentityMaterial? {
-        guard identityResolver != nil else { return nil }
-        do {
-            let profile = try await httpClient.data(for: ConnectorHTTPRequest(
+    /// A typed name overrides; an empty one uses the profile login (#760).
+    private static func accountName(_ account: ClaudeOAuthAccountConfiguration, display: ClaudeOAuthProfileDisplay?) -> String {
+        guard account.accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return account.accountName }
+        return display?.email ?? Provider.anthropic.accountDisplayName
+    }
+
+    /// Identity resolution reads the profile on every refresh, as before. Display alone reads
+    /// it once per access token, and only within the saved `user:profile` consent.
+    private func profileReads(accessToken: String, scopes: [String], configurationID: String) async
+        -> (ProviderAccountIdentityMaterial?, ClaudeOAuthProfileDisplay?) {
+        var display = profileDisplayStore?.load(configurationID: configurationID, credential: accessToken)
+        let needsDisplay = profileDisplayStore != nil && display == nil && scopes.contains("user:profile")
+        guard identityResolver != nil || needsDisplay else { return (nil, display) }
+        var material: ProviderAccountIdentityMaterial?
+        if let profile = try? await httpClient.data(for: ConnectorHTTPRequest(
                 url: ClaudeOAuthMetadata.profileEndpoint, method: "GET",
                 headers: ["Authorization": "Bearer \(accessToken)", "Accept": "application/json",
                     "User-Agent": ClaudeOAuthMetadata.usageUserAgent,
-                    "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader]))
-            if profile.statusCode == 200, let material = ClaudeOAuthAccountIdentityParser.material(from: profile.data) {
-                identityMaterialStore?.save(material, configurationID: configurationID, credential: accessToken)
-                return material
+                    "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader])),
+           profile.statusCode == 200 {
+            if identityResolver != nil, let parsed = ClaudeOAuthAccountIdentityParser.material(from: profile.data) {
+                identityMaterialStore?.save(parsed, configurationID: configurationID, credential: accessToken)
+                material = parsed
             }
-        } catch { }
-        return identityMaterialStore?.load(provider: .anthropic, configurationID: configurationID, credential: accessToken)
+            if let profileDisplayStore, let parsed = ClaudeOAuthProfileDisplay.parse(profile.data) {
+                profileDisplayStore.save(parsed, configurationID: configurationID, credential: accessToken)
+                display = parsed
+            }
+        }
+        if identityResolver != nil, material == nil {
+            material = identityMaterialStore?.load(provider: .anthropic, configurationID: configurationID, credential: accessToken)
+        }
+        return (material, display)
     }
 
     private func resetCredits(
@@ -622,7 +652,7 @@ private struct ClaudeOAuthUsagePayload: Decodable {
         extraUsage = try? container.decode(ClaudeOAuthExtraUsage.self, forKey: .extraUsage)
     }
 
-    func result(accountID: String, accountName: String, observedAt: Date) -> ClaudeOAuthUsageResult {
+    func result(accountID: String, accountName: String, observedAt: Date, planLabel: String? = nil) -> ClaudeOAuthUsageResult {
         var windowsByID: [ClaudeOAuthLimitID: ClaudeOAuthUsageWindow] = [:]
         for structuredLimit in structuredLimits {
             guard let id = structuredLimit.canonicalID,
@@ -659,7 +689,8 @@ private struct ClaudeOAuthUsagePayload: Decodable {
                 limit: 100,
                 resetsAt: window.resetsAt,
                 lastUpdatedAt: observedAt,
-                confidence: .observed
+                confidence: .observed,
+                note: planLabel.map { "plan: \($0)" }
             )
         }
 
