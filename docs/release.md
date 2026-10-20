@@ -102,8 +102,7 @@ TestFlight and App Store releases run on different clocks.
   release pays for one proof round covering whatever changed since the last
   App Store release. Any `ContextPanelCore` change means every device. Agents
   suggest an App Store release when user-facing changes have built up, or when
-  a fix matters to users. Chris decides. Time alone is no reason, per the
-  overall DIRECTION.
+  a fix matters to users. Chris decides.
 - **Fixes users are waiting for** go to the App Store promptly, even alone.
 - **One release at a time per platform:** don't start the next App Store round
   while one is in review, unless it replaces a rejected build.
@@ -115,10 +114,8 @@ For Context Panel, the [recorded Q94 decision](https://github.com/cbusillo/conte
 sets the operator preflight: name Chris's release request or the approved issue
 whose finish line requires the change installed. Post the list of changes since
 the last release on the release's owning issue **before dispatching Ship**.
-Check that every listed change is finished; stop if any is unfinished. An agent
-may suggest a release with that list, but a suggestion alone is not a release
-request. Do not dispatch on a schedule or because time has passed. Apply this
-preflight to standalone workflows too when they publish, upload, distribute or
+Check that every listed change is finished; stop if any is unfinished. Apply
+this preflight to standalone workflows too when they publish, upload, distribute or
 submit a build, including recovery. Artifact-only and dry-run validation remain
 ordinary engineering on their existing guarded paths.
 
