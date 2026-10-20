@@ -4,8 +4,8 @@ CI skips the `shared-view-simulator-references` job when a change cannot affect
 it, so a commit on main may never have run it. App Store submission therefore
 asks GitHub for a passing run of that job on each exact source commit the
 expected-build manifests name. Only runs that check out that commit count: a
-push, a manual dispatch, or the nightly schedule. A pull request run tests a
-merge with its base, not the commit itself.
+push or a manual dispatch. A pull request run tests a merge with its base, not
+the commit itself.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any
 
 JOB_NAME = "shared-view-simulator-references"
 WORKFLOW_PATH = ".github/workflows/ci.yml"
-EXACT_COMMIT_EVENTS = frozenset({"push", "workflow_dispatch", "schedule"})
+EXACT_COMMIT_EVENTS = frozenset({"push", "workflow_dispatch"})
 DEFAULT_REPOSITORY = "cbusillo/context-panel"
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 
@@ -99,7 +99,7 @@ def require_reference_runs(
         details = "\n".join(f"- {commit}: {how_to_get_one(commit)}" for commit in missing)
         raise ReferenceRunError(
             f"no passing {JOB_NAME} run on the submitted source commit "
-            f"(push, dispatch or nightly CI in {repository}):\n{details}"
+            f"(push or dispatch CI in {repository}):\n{details}"
         )
     return found
 

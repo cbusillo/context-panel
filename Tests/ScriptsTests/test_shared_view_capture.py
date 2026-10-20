@@ -1840,6 +1840,54 @@ class SharedViewCaptureTests(unittest.TestCase):
             {item["errorCode"] for item in results.values() if item["status"] != "captured"},
         )
 
+    def capture_watch_references(self, runner: FakeRunner) -> dict[str, dict[str, object]]:
+        self.write_config(("watchos",))
+        results = capture_reference_cells(
+            self.config_path,
+            self.root / "rendered",
+            runner=runner,
+            sleeper=self.sleeps.append,
+            now=lambda: FIXED_NOW,
+            simulator_pins_path=self.write_pins(),
+        )
+        return {key: item for key, item in results.items() if str(item["surface"]).startswith("watchos.")}
+
+    def test_a_reference_cell_that_fails_once_is_retried_in_a_fresh_simulator(self) -> None:
+        runner = FakeRunner(fail_at_call=("launch", 2))
+
+        watch = self.capture_watch_references(runner)
+
+        self.assertEqual({"captured"}, {item["status"] for item in watch.values()})
+        self.assertEqual(2, sum(args[:3] == ["xcrun", "simctl", "create"] for args, _ in runner.calls))
+        self.assertEqual(
+            sorted(f"{item['surface']}/{item['cellID']}.png" for item in watch.values()),
+            sorted(path.relative_to(self.root / "rendered").as_posix() for path in (self.root / "rendered").rglob("*.png")),
+        )
+
+    def test_a_cell_whose_image_failed_to_publish_is_captured_on_retry(self) -> None:
+        real_replace = os.replace
+        failures: list[str] = []
+
+        def fail_first_publish(source, destination):
+            if not failures:
+                failures.append(str(destination))
+                raise OSError("publish failed")
+            return real_replace(source, destination)
+
+        with mock.patch.object(capture_module.os, "replace", side_effect=fail_first_publish):
+            watch = self.capture_watch_references(FakeRunner())
+
+        self.assertEqual(1, len(failures))
+        self.assertEqual({"captured"}, {item["status"] for item in watch.values()})
+
+    def test_a_profile_where_every_cell_fails_is_not_retried(self) -> None:
+        runner = FakeRunner(fail_at="boot")
+
+        watch = self.capture_watch_references(runner)
+
+        self.assertEqual({"unknown"}, {item["status"] for item in watch.values()})
+        self.assertEqual(1, sum(args[:3] == ["xcrun", "simctl", "create"] for args, _ in runner.calls))
+
     def test_reference_cells_refuse_a_simulator_other_than_the_pinned_one(self) -> None:
         self.write_config(("watchos",))
         runner = FakeRunner()

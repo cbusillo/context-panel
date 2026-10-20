@@ -86,10 +86,19 @@ tolerance (the constants live in
 A changed or missing reference fails the job.
 
 The jobs run only when a change can affect them (see
-[`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py)), and every night
-on `main` to catch runner image drift. App Store submission refuses a build
-whose source commit has no passing `shared-view-simulator-references` job; see
-[the release procedure](release.md#app-store-review-submission).
+[`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py)).
+`shared-view-references` runs on pull requests and merge-train candidates.
+`shared-view-simulator-references` takes about an hour, so it does not: it runs
+after a change lands on `main`, one run at a time with a newer merge replacing a
+running one, and on a manual CI run. Nothing waits for it. A failure on `main`
+opens a plan issue titled "Simulator reference images fail on main", or comments
+on the open one, naming the changed cells; the next passing run on `main` closes
+it. Runner image drift shows up in the next of these runs, and at release the
+capture compares every cell with its reference on the current runner. The capture
+retries a failed cell once in a fresh simulator when the rest of its platform
+captured, so one flaky cell does not fail the job. App Store submission refuses
+a build whose source commit has no passing `shared-view-simulator-references`
+job; see [the release procedure](release.md#app-store-review-submission).
 
 Each image shows the surface in the frame its host gives it, not the gallery
 screen: a widget in its family size with the widget corner mask, a Watch
@@ -109,9 +118,11 @@ re-record:
 
 1. For a toolchain change, update the pins file first: the Xcode, each runtime
    and device the runner offers, and each masked region if the device changed.
-2. Download the `shared-view-rendered-*` and `shared-view-simulator-rendered-*`
-   artifacts from the PR's CI run. Each `report.json` lists every cell as
-   matched, changed or missing-reference.
+2. Download the `shared-view-rendered-*` artifact from the PR's CI run. For
+   the simulator cells, run CI on the PR branch by hand
+   (`gh workflow run ci.yml --ref <branch>`) and download its
+   `shared-view-simulator-rendered-*` artifact. Each `report.json` lists every
+   cell as matched, changed or missing-reference.
 3. Look at every changed cell.
 4. Copy them over the references and commit:
 

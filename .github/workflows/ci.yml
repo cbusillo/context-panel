@@ -8,9 +8,6 @@ name: CI
       - main
       - "launchplane/train/**"
   workflow_dispatch:
-  # Nightly reference image check on main, to catch runner image drift.
-  schedule:
-    - cron: "17 7 * * *"
 
 permissions:
   contents: read
@@ -32,6 +29,7 @@ jobs:
     outputs:
       product: ${{ steps.scope.outputs.product }}
       references: ${{ steps.scope.outputs.references }}
+      simulator_references: ${{ steps.scope.outputs.simulator_references }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -142,9 +140,17 @@ jobs:
     # Evidence does, from fresh Release builds of this commit, and compares them
     # with their committed reference images. Xcode, runtimes and devices come from
     # Config/ContextPanelSharedViewSimulators.json
-    # (docs/validation-authority.md#reference-images).
+    # (docs/validation-authority.md#reference-images). It takes about an hour, so
+    # pull requests and merge-train candidates skip it (scripts/ci-change-scope.py)
+    # and nothing waits for it. On a branch, a newer push replaces a running one.
     needs: scope
-    if: ${{ needs.scope.outputs.references != 'false' }}
+    if: ${{ needs.scope.outputs.simulator_references != 'false' }}
+    concurrency:
+      group: shared-view-simulator-references-${{ github.event_name == 'push' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      issues: write
     runs-on: macos-26
     timeout-minutes: 120
     steps:
@@ -222,12 +228,63 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # Nothing waits for this job, so a failure on main opens a plan issue for
+      # an agent to pick up, and the next passing run on main closes it.
+      - name: Open or close the reference failure issue
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Simulator reference images fail on main
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            | jq -r --arg title "$TITLE" 'map(select(.title == $title)) | .[0].number // empty')
+          if [[ "$JOB_STATUS" == 'success' ]]; then
+            if [[ -n "$open" ]]; then
+              gh issue close "$open" --comment "Passing again on ${GITHUB_SHA}: ${RUN_URL}"
+            fi
+            exit 0
+          fi
+          report=.build/shared-view-rendered/report.json
+          if [[ -f "$report" ]]; then
+            cells=$(jq -r '.cells[] | select(.state != "matched")
+              | "- `\(.surface)/\(.cell).png`: \(.state)\(if .changedPixels then " (\(.changedPixels) pixels differ)" else "" end)"' "$report")
+          else
+            cells='- No comparison ran: the build or capture failed. The run log names the failed step and cells.'
+          fi
+          failure="The simulator reference job failed on ${GITHUB_SHA}: ${RUN_URL}"$'\n\n'"${cells}"
+          if [[ -n "$open" ]]; then
+            gh issue comment "$open" --body "$failure"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --label plan --label plan:active --body "$(cat <<EOF
+          ## Why
+
+          ${failure}
+
+          Nothing waits for this job, so this issue is the only signal. App Store submission refuses a commit without a passing run.
+
+          ## Finish line
+
+          - The simulator reference job passes on main; that run closes this issue.
+
+          ## Current Status
+
+          Next action: Next agent: download the run's \`shared-view-simulator-rendered-*\` artifact, then fix the cause or re-record the changed cells (docs/validation-authority.md#reference-images).
+
+          <!-- github-plan:wait {"evidence": "Opened by CI for a failed reference run; no person or event hold.", "state": "clear", "version": 1, "waits": []} -->
+          EOF
+          )"
+
   swift:
-    needs: [scope, swift-tests, macos-release, shared-view-references, shared-view-simulator-references]
+    needs: [scope, swift-tests, macos-release, shared-view-references]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require product tests, release compilation and reference images
+      - name: Require product tests, release compilation and host reference images
         # A job the change scope skipped passes; any other skip or failure does not.
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
@@ -236,13 +293,11 @@ jobs:
           TEST_RESULT: ${{ needs.swift-tests.result }}
           RELEASE_RESULT: ${{ needs.macos-release.result }}
           REFERENCES_RESULT: ${{ needs.shared-view-references.result }}
-          SIMULATOR_REFERENCES_RESULT: ${{ needs.shared-view-simulator-references.result }}
         run: |
           passed() { [[ "$1" == 'success' || ( "$1" == 'skipped' && "$2" == 'false' ) ]]; }
           [[ "$SCOPE_RESULT" == 'success' && "$TEST_RESULT" == 'success' ]]
           passed "$RELEASE_RESULT" "$PRODUCT"
           passed "$REFERENCES_RESULT" "$REFERENCES"
-          passed "$SIMULATOR_REFERENCES_RESULT" "$REFERENCES"
 
   swift-tests:
     needs: scope
