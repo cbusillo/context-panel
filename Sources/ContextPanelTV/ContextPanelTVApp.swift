@@ -8,7 +8,9 @@ private let tvValidationGalleryNavigationValue = "validation-gallery"
 
 @main
 struct ContextPanelTVApp: App {
+    #if !CONTEXT_PANEL_SCREENSHOTS
     @UIApplicationDelegateAdaptor(ContextPanelTVAppDelegate.self) private var appDelegate
+    #endif
     private let launchRequest: TVValidationLaunchRequest
 
     init() {
@@ -21,6 +23,9 @@ struct ContextPanelTVApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if CONTEXT_PANEL_SCREENSHOTS
+            ScreenshotTVRoot()
+            #else
             switch launchRequest {
             case let .sample(sample):
                 TVValidationGalleryView(sample: sample)
@@ -33,6 +38,7 @@ struct ContextPanelTVApp: App {
             case .normal, .invalid:
                 TVRootView(runtimeReceiptRelayProvider: appDelegate.runtimeReceiptRelayProvider)
             }
+            #endif
         }
     }
 }

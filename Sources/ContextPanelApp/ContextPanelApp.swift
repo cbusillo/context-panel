@@ -1182,11 +1182,48 @@ public enum MacValidationGallery {
         )
     }
 
+    /// Offscreen App Store composition. No app lifecycle or installed runtime is opened.
+    @MainActor
+    public static func appStorePresentation(snapshot: WidgetSnapshot, now: Date, detail: Bool) -> some View {
+        MacAppStorePresentation(snapshot: snapshot, now: now, detail: detail)
+    }
+
     /// One app presentation of the gallery without the gallery around it, for the
     /// framed shared-view cell the renderer draws.
     @MainActor
     public static func presentation(route: ValidationGalleryRoute) -> some View {
         MacValidationGalleryPreview(context: ValidationGalleryContext(route: route))
+    }
+}
+
+@MainActor
+private struct MacAppStorePresentation: View {
+    @StateObject private var model: ContextPanelAppModel
+    let snapshot: WidgetSnapshot
+    let now: Date
+    let detail: Bool
+
+    init(snapshot: WidgetSnapshot, now: Date, detail: Bool) {
+        self.snapshot = snapshot; self.now = now; self.detail = detail
+        _model = StateObject(wrappedValue: ContextPanelAppModel.appStoreFixture(snapshot: snapshot, now: now))
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            AccountsSidebar(model: model, snapshot: snapshot.usageSnapshot,
+                selection: .constant(detail ? .providerAccount(.openAI, snapshot.accountOverview(now: now).accounts[0].id) : .overview))
+                .frame(width: 240)
+            Divider()
+            if detail, let account = snapshot.accountOverview(now: now).accounts.first {
+                ScrollView {
+                    AccountDashboardDetail(account: account, overview: snapshot.accountOverview(now: now), now: now)
+                        .padding(24)
+                }.background(CPTheme.background)
+            } else {
+                OverviewDashboard(model: model, snapshot: snapshot.usageSnapshot, presentationDate: now)
+            }
+        }
+        .tint(CPTheme.accent)
     }
 }
 
@@ -5565,6 +5602,7 @@ final class ContextPanelAppModel: ObservableObject {
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let fixedPresentationDate: Date?
+    private var appStoreSnapshot: WidgetSnapshot?
 
     private var presentationDate: Date {
         fixedPresentationDate ?? Date()
@@ -5833,6 +5871,18 @@ final class ContextPanelAppModel: ObservableObject {
         return model
     }
 
+    static func appStoreFixture(snapshot: WidgetSnapshot, now: Date) -> ContextPanelAppModel {
+        let context = ValidationGalleryContext(route: ValidationGalleryRoute(fixtureID: .healthy,
+            family: .systemLarge, appearance: .light, presentation: .overview))
+        let model = validationFixture(context: context)
+        model.appStoreSnapshot = snapshot
+        model.storedSnapshot = StoredUsageSnapshot(savedAt: now, snapshot: snapshot.usageSnapshot, reports: snapshot.reports)
+        model.storeStatus = .healthy
+        model.accountBurnRates = snapshot.accountBurnRates ?? [:]
+        model.lastRefreshAt = now
+        return model
+    }
+
     func loadSnapshot(reloadWidgetTimelines: Bool = true) {
         fastModeForecastSettings = forecastSettingsStore.load()
         widgetPreferences = widgetPreferencesStore.load()
@@ -5939,6 +5989,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func accountOverview(at now: Date) -> AccountOverview {
+        if let appStoreSnapshot { return appStoreSnapshot.accountOverview(now: appStoreSnapshot.generatedAt) }
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
         if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {

@@ -106,6 +106,11 @@ let package = Package(
             exclude: ["Main"]
         ),
         .executableTarget(
+            name: "ContextPanelAppStoreCapture",
+            dependencies: ["ContextPanelApp", "ContextPanelCore", "ContextPanelWidgetUI"],
+            path: "Tools/ContextPanelAppStoreCapture"
+        ),
+        .executableTarget(
             name: "ContextPanelAppMain",
             dependencies: ["ContextPanelApp"],
             path: "Sources/ContextPanelApp/Main"

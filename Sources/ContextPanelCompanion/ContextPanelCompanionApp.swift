@@ -28,9 +28,20 @@ private extension Notification.Name {
     )
 }
 
+
+private func companionPresentationDate(_ date: Date) -> Date {
+    #if CONTEXT_PANEL_SCREENSHOTS
+    ScreenshotFixture.date
+    #else
+    date
+    #endif
+}
+
 @main
 struct ContextPanelCompanionApp: App {
+    #if !CONTEXT_PANEL_SCREENSHOTS
     @UIApplicationDelegateAdaptor(CompanionAppDelegate.self) private var appDelegate
+    #endif
 
     var body: some Scene {
         WindowGroup {
@@ -194,16 +205,16 @@ private struct CompanionRootView: View {
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                                CompanionSyncStatusView(result: model.result, now: context.date)
+                                CompanionSyncStatusView(result: model.result, now: companionPresentationDate(context.date))
                                 #if os(visionOS)
-                                SpatialAccountOverviewPanel(overview: accountOverview(at: context.date), now: context.date,
+                                SpatialAccountOverviewPanel(overview: accountOverview(at: companionPresentationDate(context.date)), now: companionPresentationDate(context.date),
                                     contentWidth: min(geometry.size.width - 2 * pagePadding,
                                         CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, platform: .visionOS)
                                             ?? geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
                                 #else
-                                AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
+                                AccountDashboardPanel(overview: accountOverview(at: companionPresentationDate(context.date)), now: companionPresentationDate(context.date),
                                     compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
@@ -268,14 +279,14 @@ private struct CompanionRootView: View {
                 } else {
                     ScrollView {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let overview = accountOverview(at: context.date)
+                            let overview = accountOverview(at: companionPresentationDate(context.date))
                             switch route {
                             case .deadlines:
-                                AccountDeadlinesPanel(overview: overview, now: context.date,
+                                AccountDeadlinesPanel(overview: overview, now: companionPresentationDate(context.date),
                                     openAccount: { accountPath.append(.account($0)) })
                             case let .account(id):
                                 if let account = overview.accounts.first(where: { $0.id == id }) {
-                                    AccountDashboardDetail(account: account, overview: overview, now: context.date,
+                                    AccountDashboardDetail(account: account, overview: overview, now: companionPresentationDate(context.date),
                                         compact: horizontalSizeClass != .regular)
                                 } else { Text("Account is no longer in this snapshot.") }
                             case .syncAndSettings:
@@ -319,7 +330,7 @@ private struct CompanionRootView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        CompanionSyncStatusView(result: model.result, now: context.date)
+                        CompanionSyncStatusView(result: model.result, now: companionPresentationDate(context.date))
                     }
                     companionContent(layoutMode: layoutMode)
                 }
@@ -395,7 +406,7 @@ private struct CompanionRootView: View {
                 links: CompanionDeepLinks.previewLinks,
                 showsResetCreditSurfaces: true,
                 resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
-                presentationDate: context.date
+                presentationDate: companionPresentationDate(context.date)
             )
             .cpwThemeVariant(previewThemeVariant)
             .background(
@@ -753,7 +764,9 @@ private final class CompanionSyncModel {
     private let refreshSettingsStore: CompanionRefreshSettingsStore?
     private let appearanceSettingsStore: CompanionAppearanceSettingsStore?
     private let displayPreferencesStore: WidgetDisplayPreferencesStore?
+    #if !CONTEXT_PANEL_SCREENSHOTS
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    #endif
     private let presentationPreferencesRemoteStore: CompanionPresentationRemoteStore?
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
@@ -781,6 +794,19 @@ private final class CompanionSyncModel {
         runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
         runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
     ) {
+        #if CONTEXT_PANEL_SCREENSHOTS
+        refreshSettingsStore = nil
+        appearanceSettingsStore = nil
+        displayPreferencesStore = nil
+        presentationPreferencesRemoteStore = nil
+        self.runtimeReceiptRecorder = .disabled()
+        self.runtimeReceiptRelay = nil
+        refreshSettings = .defaultSettings
+        appearanceSettings = .defaultSettings
+        snapshot = ScreenshotFixture.snapshot
+        result = ScreenshotFixture.result
+        hasLoadedDisplayPreferences = true
+        #else
         let deviceClass = companionRuntimeDeviceClass()
         let appSurface = RuntimeSurface.companionApp(for: deviceClass)
         self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
@@ -837,9 +863,11 @@ private final class CompanionSyncModel {
             displayPreferencesStore = nil
             displayPreferencesErrorMessage = "Widget display settings could not be saved because shared app storage is unavailable."
         }
+        #endif
     }
 
     func reload(now: Date = Date()) {
+        #if !CONTEXT_PANEL_SCREENSHOTS
         guard reloadTask == nil else {
             needsReloadAfterCurrentTask = true
             return
@@ -918,6 +946,7 @@ private final class CompanionSyncModel {
             )
             lastWidgetRenderSignature = loadedSignature
         }
+        #endif
     }
 
     func handleCloudKitAccountChange() {
@@ -973,9 +1002,11 @@ private final class CompanionSyncModel {
     }
 
     func registerCloudKitSubscription() {
+        #if !CONTEXT_PANEL_SCREENSHOTS
         Task { [remoteStore] in
             _ = await remoteStore.registerSubscription()
         }
+        #endif
     }
 
     func runPeriodicRefreshLoop() async {

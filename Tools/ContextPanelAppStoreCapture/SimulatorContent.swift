@@ -1,0 +1,37 @@
+#if CONTEXT_PANEL_SCREENSHOTS
+import ContextPanelCore
+import SwiftUI
+
+#if os(watchOS)
+struct ScreenshotWatchRoot: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                WatchUsageContent(result: ScreenshotFixture.result, snapshot: ScreenshotFixture.snapshot,
+                    displayPreferences: .defaultPreferences, syncErrorMessage: nil,
+                    presentationDate: ScreenshotFixture.date)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {} label: { Image(systemName: "arrow.clockwise") }
+                        .accessibilityLabel("Refresh")
+                }
+            }
+        }
+    }
+}
+#elseif os(tvOS)
+import ContextPanelTVSupport
+struct ScreenshotTVRoot: View {
+    @State private var mode = TVPresentationMode.fullDetail.rawValue
+    var body: some View {
+        NavigationStack {
+            TVAccountOverviewContent(overview: ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date),
+                now: ScreenshotFixture.date, presentationModeRawValue: $mode, isRefreshing: false,
+                notice: nil, onRefresh: {}, openAccount: { _ in }, openDeadlines: {}, openDetails: {}, openAbout: {})
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+#endif
+#endif

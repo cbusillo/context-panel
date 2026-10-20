@@ -19,11 +19,15 @@ struct ContextPanelWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if CONTEXT_PANEL_SCREENSHOTS
+            ScreenshotWatchRoot()
+            #else
             if launchRequest == .normal {
                 WatchRootView()
             } else {
                 WatchValidationLaunchView(request: launchRequest)
             }
+            #endif
         }
     }
 }
