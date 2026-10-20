@@ -649,6 +649,15 @@ public extension AccountConfigurationDocument {
 }
 
 public extension LocalProviderAccountConfiguration {
+    /// The typed name, or nil for an unnamed account, which shows its provider login (#760).
+    var typedName: String? { displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : displayName }
+
+    /// The typed name, else the login this account's newest report carried, else the provider name.
+    func presentedName(reports: [StoredProviderReport]) -> String {
+        typedName ?? reports.filter { $0.configuredAccountID == id }.max { $0.generatedAt < $1.generatedAt }?.accountName
+            ?? provider.accountDisplayName
+    }
+
     var isSharedDefaultMembership: Bool {
         AccountConfigurationStore.defaultDocument(now: .distantPast).accounts.contains { $0.id == id }
     }
@@ -658,16 +667,16 @@ public extension Array where Element == LocalProviderAccountConfiguration {
     /// At most one use-last account per provider (#791): marking one moves the mark from the provider's other
     /// accounts. Returns the notice the panel shows when a mark moved.
     @discardableResult
-    mutating func setUseLast(_ accountID: String, _ useLast: Bool) -> String? {
+    mutating func setUseLast(_ accountID: String, _ useLast: Bool, reports: [StoredProviderReport] = []) -> String? {
         guard let index = firstIndex(where: { $0.id == accountID }) else { return nil }
         var previous: [String] = []
         if useLast {
             for other in indices where other != index && self[other].provider == self[index].provider && self[other].useLast == true {
-                previous.append(self[other].displayName)
+                previous.append(self[other].presentedName(reports: reports))
                 self[other].useLast = false
             }
         }
         self[index].useLast = useLast
-        return previous.isEmpty ? nil : "Use last moved from \(previous.joined(separator: ", ")) to \(self[index].displayName)"
+        return previous.isEmpty ? nil : "Use last moved from \(previous.joined(separator: ", ")) to \(self[index].presentedName(reports: reports))"
     }
 }

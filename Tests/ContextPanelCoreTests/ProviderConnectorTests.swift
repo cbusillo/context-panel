@@ -3696,7 +3696,7 @@ private final class ClaudeProfileRoutingHTTPClient: ConnectorHTTPClient, @unchec
         httpClient: http, credentialStore: store, profileDisplayStore: ClaudeOAuthProfileDisplayStore(store: store))
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
-    #expect(result.reports.map(\.accountName) == ["Work", "Claude"])
+    #expect(result.reports.map(\.accountName) == ["Work", Provider.anthropic.accountDisplayName])
     #expect(result.reports[0].limits.first?.note == "plan: Max 5x")
     #expect(result.reports[1].limits.first?.note == nil)
     #expect(http.profileRequestCount == 1)

@@ -432,7 +432,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     /// A typed name overrides; an empty one uses the profile login (#760).
     private static func accountName(_ account: ClaudeOAuthAccountConfiguration, display: ClaudeOAuthProfileDisplay?) -> String {
         guard account.accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return account.accountName }
-        return display?.email ?? "Claude"
+        return display?.email ?? Provider.anthropic.accountDisplayName
     }
 
     /// Identity resolution reads the profile on every refresh, as before. Display alone reads

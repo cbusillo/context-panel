@@ -576,7 +576,7 @@ struct SettingsPane: View {
                             .fixedSize()
                             Toggle(AccountTerms.useLast, isOn: Binding(
                                 get: { account.useLast ?? false },
-                                set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                                set: { model.setUseLast(account.id, useLast: $0, reports: appModel.storedSnapshot?.reports ?? []); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
                             .toggleStyle(.checkbox)
                             .fixedSize()
@@ -765,7 +765,7 @@ struct SettingsPane: View {
                 }
                 ForEach(model.retiredSettingsAccounts) { account in
                     HStack {
-                        Text("\(account.displayName) · retired source, off")
+                        Text("\(account.presentedName(reports: appModel.storedSnapshot?.reports ?? [])) · retired source, off")
                             .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         Spacer()
                         Button(AccountTerms.removeAccount, role: .destructive) {
@@ -1056,7 +1056,12 @@ struct SettingsPane: View {
             case let .alias(id, logical): return model.renameAccount(id, name: value, logicalID: logical)
             }
         }
-        if nameInputError == nil { appModel.loadSnapshot(reloadWidgetTimelines: false) }
+        guard nameInputError == nil else { return }
+        appModel.loadSnapshot(reloadWidgetTimelines: false)
+        // A cleared Claude name takes the cached login on the next read, so read now (#760).
+        if case let .account(id) = field, model.accounts.first(where: { $0.id == id })?.displayName.isEmpty == true {
+            refreshAfterAuthorization()
+        }
     }
 
     private func reloadWidgetPreview() {
@@ -2298,9 +2303,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         // Preserve legacy paused accounts; active accounts keep collecting when hidden.
         saveAccounts()
     }
-    func setUseLast(_ accountID: String, useLast: Bool) {
+    func setUseLast(_ accountID: String, useLast: Bool, reports: [StoredProviderReport]) {
         guard !isRemovingAccount, accounts.contains(where: { $0.id == accountID }) else { return }
-        let notice = accounts.setUseLast(accountID, useLast)
+        let notice = accounts.setUseLast(accountID, useLast, reports: reports)
         useLastNotice = notice.map { (accountID, $0) }
         saveAccounts()
     }
@@ -4004,7 +4009,7 @@ private struct ReconnectAccountRow: View {
         HStack(alignment: .center, spacing: 12) {
             ProviderBadge(provider: account.provider)
             VStack(alignment: .leading, spacing: 4) {
-                Text(account.displayName.isEmpty ? attentionReport?.accountName ?? account.provider.accountDisplayName : account.displayName)
+                Text(account.presentedName(reports: attentionReport.map { [$0] } ?? []))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                 Text(statusText)
