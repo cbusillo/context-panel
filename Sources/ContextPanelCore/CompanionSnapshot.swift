@@ -1106,10 +1106,6 @@ public struct CompanionSyncStoreSet: Sendable {
         )
     }
 
-    private func resolvedStores() -> [CompanionSyncStore] {
-        stores + lazyStores.compactMap { $0.resolve() }
-    }
-
     private static func loadOutcome(storeRole: String, result: CompanionSyncLoadResult) -> CompanionSyncStoreOutcome {
         CompanionSyncStoreOutcome(
             storeRole: storeRole,

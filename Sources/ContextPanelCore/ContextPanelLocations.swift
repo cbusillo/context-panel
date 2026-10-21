@@ -466,13 +466,6 @@ public enum ContextPanelLocations {
         #endif
     }
 
-    private static func hostApplicationSupportDirectory() -> URL {
-        realUserHomeDirectory()
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-    }
-
     private static func environmentFlag(_ name: String) -> Bool {
         guard let value = getenv(name) else { return false }
         return String(cString: value) == "1"
