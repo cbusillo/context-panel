@@ -1,3 +1,4 @@
+import ContextPanelCore
 import XCTest
 
 @MainActor
@@ -18,8 +19,9 @@ final class MacCaptureUITests: XCTestCase {
                 XCTAssertTrue(app.wait(for: .runningForeground, timeout: 90))
                 let window = app.windows.firstMatch
                 XCTAssertTrue(window.waitForExistence(timeout: 30))
-                let account = app.descendants(matching: .any)
-                    .matching(NSPredicate(format: "label CONTAINS[c] %@", "Work")).firstMatch
+                let overview = ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date)
+                let selected = try XCTUnwrap(mode == "detail" ? overview.accounts.first : overview.useNext(provider: .openAI))
+                let account = app.staticTexts.matching(NSPredicate(format: "value == %@", selected.metadata.label)).firstMatch
                 XCTAssertTrue(account.waitForExistence(timeout: 30))
                 let attachment = XCTAttachment(screenshot: window.screenshot())
                 attachment.name = "mac-\(mode)-\(appearance)"

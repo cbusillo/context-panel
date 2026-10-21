@@ -199,8 +199,9 @@ def prepare() -> None:
     tests = "CompanionCaptureUITests"
     spec["targets"][tests] = {
         "type": "bundle.ui-testing", "platform": "iOS", "deploymentTarget": "17.0",
-        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/CompanionCaptureUITests.swift"}],
-        "dependencies": [{"target": TARGETS["ios"]}],
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/CompanionCaptureUITests.swift"},
+                    {"path": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift"}],
+        "dependencies": [{"target": TARGETS["ios"]}, {"target": "ContextPanelCoreCompanion"}],
         "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "GENERATE_INFOPLIST_FILE": True,
             "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": TARGETS["ios"], "TARGETED_DEVICE_FAMILY": "1,2"}}}
     spec["schemes"]["CompanionCapture"] = {"build": {"targets": {TARGETS["ios"]: "all", tests: ["test"]}},
@@ -235,6 +236,23 @@ def build_receipt(platform: str) -> Path:
     return BUILD / platform / "capture-build.json"
 
 
+def ios_testing_identity() -> dict:
+    products = BUILD / "ios/Build/Products"
+    runs = list(products.glob("CompanionCapture_*.xctestrun"))
+    if len(runs) != 1:
+        raise RuntimeError(f"Expected one built fixture UI test configuration; found {runs}")
+    runner = products / "Debug-iphonesimulator/CompanionCaptureUITests-Runner.app"
+    if not runner.is_dir():
+        raise RuntimeError("Fixture UI test runner is missing")
+    return {"xctestrunFile": runs[0].name, "xctestrunSHA256": hashlib.sha256(runs[0].read_bytes()).hexdigest(),
+            "runnerSHA256": bundle_digest(runner)}
+
+
+def verified_build(platform: str, receipt: dict) -> bool:
+    return (receipt["bundleSHA256"] == bundle_digest(app_path(platform))
+            and (platform != "ios" or receipt.get("uiTesting") == ios_testing_identity()))
+
+
 def build(platform: str) -> None:
     source = clean_commit()
     if not PROJECT.exists() or json.loads((BUILD / "prepared.json").read_text())["sourceCommit"] != source:
@@ -246,8 +264,10 @@ def build(platform: str) -> None:
         "-derivedDataPath", str(BUILD / platform), "CODE_SIGNING_ALLOWED=NO", "build-for-testing" if platform == "ios" else "build", timeout=1800)
     if clean_commit() != source:
         raise SystemExit("Source changed during the build")
-    build_receipt(platform).write_text(json.dumps({"sourceCommit": source,
-        "bundleSHA256": bundle_digest(app_path(platform))}) + "\n")
+    receipt = {"sourceCommit": source, "bundleSHA256": bundle_digest(app_path(platform))}
+    if platform == "ios":
+        receipt["uiTesting"] = ios_testing_identity()
+    build_receipt(platform).write_text(json.dumps(receipt) + "\n")
 
 
 def device_inventory(prefix: tuple[str, ...]) -> dict:
@@ -276,7 +296,7 @@ def capture(profile: str, output: Path) -> None:
     app = app_path(platform)
     if not app.is_dir():
         raise SystemExit(f"Build {platform} first")
-    if receipt["sourceCommit"] != source or receipt["bundleSHA256"] != bundle_digest(app):
+    if receipt["sourceCommit"] != source or not verified_build(platform, receipt):
         raise SystemExit("Capture build does not match the current committed source and bundle")
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != bundle_id(TARGETS[platform]):
@@ -302,7 +322,8 @@ def capture(profile: str, output: Path) -> None:
         created_id = udid
         run(*prefix, "boot", udid)
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
-        run(*prefix, "install", udid, str(app))
+        if platform != "ios":
+            run(*prefix, "install", udid, str(app))
         files = []
         launch_arguments = ["--screenshot-detail"] if profile.endswith("-detail") else []
         if profile == "watch-accounts":
@@ -325,8 +346,11 @@ def capture(profile: str, output: Path) -> None:
             width, height = expected_size
             files.append({"file": path.name, "width": width, "height": height,
                           "sha256": hashlib.sha256(data).hexdigest(), "appearance": appearance, "staging": staging})
+        if not verified_build(platform, receipt):
+            raise RuntimeError("Capture products changed while the simulator was running")
         capture_record = {
             "sourceCommit": receipt["sourceCommit"], "bundleSHA256": receipt["bundleSHA256"],
+            "uiTesting": receipt.get("uiTesting"),
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
@@ -376,27 +400,36 @@ def select_attachments(manifest: list, expected: set[str]) -> dict[str, str]:
     return found
 
 
-def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int]) -> None:
-    products = BUILD / "ios/Build/Products"
-    runs = list(products.glob("*.xctestrun"))
-    if len(runs) != 1:
-        raise RuntimeError("Build the app-associated iOS UI capture test first")
-    configuration = plistlib.loads(runs[0].read_bytes())
-    targets = [target for entry in configuration["TestConfigurations"] for target in entry["TestTargets"]]
+def configure_ios_test_run(configuration: dict, detail: bool) -> None:
+    if "TestConfigurations" in configuration:
+        targets = [target for entry in configuration["TestConfigurations"] for target in entry["TestTargets"]]
+    else:
+        targets = [value for value in configuration.values() if isinstance(value, dict)]
     selected = [target for target in targets if target.get("BlueprintName") == "CompanionCaptureUITests"]
     if len(selected) != 1:
         raise RuntimeError("Expected one fixture-only UI test target")
-    selected[0].setdefault("EnvironmentVariables", {})["CP_CAPTURE_DETAIL"] = "true" if detail else "false"
+    target = selected[0]
+    expected_app = "__TESTROOT__/" + app_path("ios").relative_to(BUILD / "ios/Build/Products").as_posix()
+    if target.get("UITargetAppPath") != expected_app or target.get("IsUITestBundle") is not True:
+        raise RuntimeError("UI test is not associated with the fixture app")
+    target.setdefault("EnvironmentVariables", {})["CP_CAPTURE_DETAIL"] = "true" if detail else "false"
+
+
+def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int]) -> None:
+    products = BUILD / "ios/Build/Products"
+    identity = ios_testing_identity()
+    configuration = plistlib.loads((products / identity["xctestrunFile"]).read_bytes())
+    configure_ios_test_run(configuration, detail)
     # Keep relative __TESTROOT__ product paths bound to the verified build tree.
     configured = products / ("capture-" + uuid.uuid4().hex + ".xctestrun")
-    configured.write_bytes(plistlib.dumps(configuration))
     directory.mkdir()
     result = directory / "capture.xcresult"
     try:
-        run("xcodebuild", "-quiet", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={udid}",
+        configured.write_bytes(plistlib.dumps(configuration))
+        run("xcodebuild", "-quiet", "-derivedDataPath", str(BUILD / "ios-test"), "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={udid}",
             "-parallel-testing-enabled", "NO", "-resultBundlePath", str(result), "test-without-building", timeout=600)
     finally:
-        configured.unlink()
+        configured.unlink(missing_ok=True)
     exported = directory / "attachments"
     run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
     found = select_attachments(json.loads((exported / "manifest.json").read_text()), {"native-fixture"})
@@ -446,8 +479,9 @@ def hosted_macos_capture(output: Path) -> None:
     validate_capture_spec(spec, {app})
     spec["targets"][tests] = {
         "type": "bundle.ui-testing", "platform": "macOS", "deploymentTarget": "14.0",
-        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureUITests.swift"}],
-        "dependencies": [{"target": app}],
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureUITests.swift"},
+                    {"path": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift"}],
+        "dependencies": [{"target": app}, {"target": "ContextPanelCore"}],
         "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "GENERATE_INFOPLIST_FILE": True,
                                "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": app}}}
     spec["schemes"][app] = {"build": {"targets": {app: "all", tests: ["test"]}},
@@ -502,21 +536,22 @@ def main() -> None:
     rgb.add_argument("source", type=Path)
     rgb.add_argument("destination", type=Path)
     args = parser.parse_args()
-    if args.command == "prepare":
-        prepare()
-    elif args.command == "build":
-        build(args.platform)
-    elif args.command == "ci-macos":
-        hosted_macos_capture(args.output.resolve())
-    elif args.command == "rgb":
+    if args.command == "rgb":
         rgb_image(args.source, args.destination)
-    else:
-        BUILD.mkdir(parents=True, exist_ok=True)
-        with (BUILD / "capture.lock").open("a") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise SystemExit("Another fixture capture is running; wait for its cleanup")
+        return
+    BUILD.mkdir(parents=True, exist_ok=True)
+    with (BUILD / "capture.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit("Another fixture prepare/build/capture is running; wait for its cleanup")
+        if args.command == "prepare":
+            prepare()
+        elif args.command == "build":
+            build(args.platform)
+        elif args.command == "ci-macos":
+            hosted_macos_capture(args.output.resolve())
+        else:
             capture(args.profile, args.output.resolve())
 
 

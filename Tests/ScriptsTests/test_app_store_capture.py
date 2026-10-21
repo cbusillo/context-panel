@@ -23,8 +23,15 @@ class AppStoreCaptureTests(unittest.TestCase):
         app.mkdir(parents=True)
         (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier":
             identifier or capture.bundle_id(capture.TARGETS["ios"])}))
+        products = capture.BUILD / "ios/Build/Products"
+        runner = products / "Debug-iphonesimulator/CompanionCaptureUITests-Runner.app"
+        runner.mkdir()
+        (runner / "fixture").write_text("fixture runner")
+        (products / "CompanionCapture_fixture.xctestrun").write_bytes(plistlib.dumps({"CompanionCaptureUITests": {
+            "BlueprintName": "CompanionCaptureUITests", "IsUITestBundle": True,
+            "UITargetAppPath": "__TESTROOT__/Debug-iphonesimulator/Context Panel.app"}}))
         capture.build_receipt("ios").write_text(json.dumps({
-            "sourceCommit": self.source, "bundleSHA256": capture.bundle_digest(app)}))
+            "sourceCommit": self.source, "bundleSHA256": capture.bundle_digest(app), "uiTesting": capture.ios_testing_identity()}))
         return app
 
     def test_staging_copies_valid_png_and_falls_back_only_on_temp_save_refusal(self):
@@ -93,7 +100,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_failed_create_and_install_delete_only_newly_observed_owned_device(self):
-        for failure in ("create", "install"):
+        for failure in ("create", "boot"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 owned = "EBA287F0-39CB-4EE1-AD9B-5C987F5C3783"
@@ -220,8 +227,6 @@ class AppStoreCaptureTests(unittest.TestCase):
                         stage = root / f"stage-{len(calls)}"
                         stage.mkdir()
                         return str(stage)
-                    if "spawn" in args:
-                        return "active fixture scene: " + args[-1].split('"')[-2]
                     if "screenshot" in args:
                         Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
                     return "fixture"
@@ -262,6 +267,68 @@ class AppStoreCaptureTests(unittest.TestCase):
             self.assertIs(failure.exception, refusal)
             self.assertTrue(failure.exception.__notes__)
             self.assertTrue((stage / "unexpected-sidecar").exists())
+
+    def test_native_ui_run_configuration_supports_both_xcode_formats_and_refuses_other_apps(self):
+        for version in (1, 2):
+            for other_app in (False, True):
+                with self.subTest(version=version, other_app=other_app):
+                    target = {"BlueprintName": "CompanionCaptureUITests", "IsUITestBundle": True,
+                              "UITargetAppPath": "__TESTROOT__/Debug-iphonesimulator/" + ("Other.app" if other_app else "Context Panel.app")}
+                    configuration = {"CompanionCaptureUITests": target} if version == 1 else {"TestConfigurations": [{"TestTargets": [target]}]}
+                    if other_app:
+                        with self.assertRaises(RuntimeError):
+                            capture.configure_ios_test_run(configuration, True)
+                    else:
+                        capture.configure_ios_test_run(configuration, True)
+                        self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "true")
+                        capture.configure_ios_test_run(configuration, False)
+                        self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "false")
+
+    def test_native_ui_capture_removes_temporary_configuration_and_rejects_wrong_dimensions(self):
+        for outcome in ("success", "test-failure", "wrong-size"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                with patch.object(capture, "BUILD", root / "build"):
+                    self.make_bundle()
+                    products = capture.BUILD / "ios/Build/Products"
+                    (products / "capture-stale.xctestrun").write_text("unrelated incomplete run")
+                    temporary = []
+                    def fake_run(*args, **kwargs):
+                        if args[0] == "xcodebuild":
+                            configured = Path(args[args.index("-xctestrun") + 1])
+                            temporary.append(configured)
+                            target = plistlib.loads(configured.read_bytes())["CompanionCaptureUITests"]
+                            self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "true")
+                            if outcome == "test-failure":
+                                raise subprocess.CalledProcessError(65, args)
+                        else:
+                            exported = Path(args[-1]);exported.mkdir()
+                            (exported / "manifest.json").write_text(json.dumps([{"attachments": [{
+                                "suggestedHumanReadableName": "native-fixture_0_UUID.png", "exportedFileName": "screen.png"}]}]))
+                            (exported / "screen.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", 8 if outcome == "wrong-size" else 7, 9))
+                        return ""
+                    destination = root / "native.png"
+                    with patch.object(capture, "run", side_effect=fake_run):
+                        if outcome == "success":
+                            capture.native_ios_capture("owned", True, root / "result", destination, (7, 9))
+                        else:
+                            with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                                capture.native_ios_capture("owned", True, root / "result", destination, (7, 9))
+                    self.assertTrue(temporary)
+                    self.assertTrue(all(not path.exists() for path in temporary))
+                    self.assertEqual(destination.exists(), outcome == "success")
+                    self.assertNotIn("EnvironmentVariables", plistlib.loads((products / "CompanionCapture_fixture.xctestrun").read_bytes())["CompanionCaptureUITests"])
+
+    def test_test_runner_or_test_configuration_changes_invalidate_capture_identity(self):
+        for changed in ("runner", "configuration"):
+            with tempfile.TemporaryDirectory() as folder:
+                with patch.object(capture, "BUILD", Path(folder) / "build"):
+                    self.make_bundle()
+                    receipt = json.loads(capture.build_receipt("ios").read_text())
+                    products = capture.BUILD / "ios/Build/Products"
+                    path = products / ("Debug-iphonesimulator/CompanionCaptureUITests-Runner.app/fixture" if changed == "runner" else "CompanionCapture_fixture.xctestrun")
+                    path.write_text("changed after build")
+                    self.assertFalse(capture.verified_build("ios", receipt))
 
     def test_native_attachment_selection_accepts_export_suffixes_and_rejects_missing_duplicates(self):
         def manifest(*names):

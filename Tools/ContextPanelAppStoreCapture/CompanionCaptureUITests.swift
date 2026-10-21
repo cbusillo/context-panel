@@ -1,3 +1,4 @@
+import ContextPanelCore
 import XCTest
 
 @MainActor
@@ -18,8 +19,12 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(overview.waitForExistence(timeout: 90))
         XCTAssertTrue(overview.isHittable)
         if ProcessInfo.processInfo.environment["CP_CAPTURE_DETAIL"] == "true" {
-            let studio = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Studio")).firstMatch
+            let account = try XCTUnwrap(ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first)
+            let prefix = "\(account.metadata.provider.accountDisplayName), \(account.metadata.label),"
+            let matches = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
+            let studio = matches.firstMatch
             XCTAssertTrue(studio.waitForExistence(timeout: 30))
+            XCTAssertEqual(matches.count, 1)
             studio.tap()
             let detail = app.descendants(matching: .any).matching(identifier: "screenshot-detail").firstMatch
             XCTAssertTrue(detail.waitForExistence(timeout: 30))

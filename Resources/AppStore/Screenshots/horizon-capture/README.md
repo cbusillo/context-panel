@@ -122,16 +122,14 @@ are candidates; a failed run is not a candidate set. Captures are not formal rel
 No uploader or App Store submission is called by this tool.
 
 
-Q605 staging and native captures: `capture` uses `mktemp -d` in the system
-temporary directory, validates the PNG, copies it to the requested external
-output, then removes that one file and empty temporary directory. Only a
-system-temp screenshot save refused with Cocoa code 513 permits the recorded
-owned fixture-container fallback. Every other refusal stops the run. Device
+## Native capture behavior
+
+Device
 appearance and status are set before launch. iOS uses an app-associated native
 XCTest: activate the fixture, wait for visible overview content, tap the actual
 Studio account when requested, wait for visible detail, then capture the
 simulator screen. The accessibility hierarchy is retained for diagnosis.
-Other simulators use the Q605 temp-staged framebuffer route. Runs are serialized.
+Other simulators use the Q605 temp-staged framebuffer route. Prepare, build and capture share one lock; app, test runner and test-run configuration digests are checked before and after capture.
 A receipt still requires human visual acceptance of the actual image.
 
 Available scenes: `iphone`, `iphone65`, `ipad`, `visionpro`, their `-detail`
@@ -146,3 +144,11 @@ The tool refuses local execution; the fixture app also guards direct launches.
 The generated UI-test scheme passes the verified CI environment to its app. It cannot capture
 Chris's desktop or his running app. This is review artifact collection, with
 no App Store Connect operation. No `ready` or upload is authorized by #744.
+
+The Mac fixture app temporarily chooses a supported hosted-display mode large
+enough for its complete native window and hides its own Dock/menu bar during
+capture. It verifies the window fits before displaying it. The display change
+uses [Core Graphics](https://developer.apple.com/documentation/coregraphics/cgdisplaysetdisplaymode(_:_:_:)),
+which restores the mode when that fixture process exits. This code executes
+only after the isolated hosted-runner check. No persistent desktop preferences
+or permission settings are changed.
