@@ -46,8 +46,8 @@ class AppStoreCaptureTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_failed_create_and_install_delete_only_newly_observed_owned_device(self):
-        for failure in ("create", "install"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
+        for failure, private_default in (("create", False), ("install", False), ("create", True), ("install", True)):
+            with self.subTest(failure=failure, private_default=private_default), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 owned = "EBA287F0-39CB-4EE1-AD9B-5C987F5C3783"
                 calls = []
@@ -60,7 +60,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                     if "list" in args:
                         return json.dumps({"devices": {runtime: devices}})
                     if "create" in args:
-                        devices.append({"udid": owned, "name": args[5], "state": "Creating",
+                        devices.append({"udid": owned, "name": args[args.index("create") + 1], "state": "Creating",
                             "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType." + device})
                     if failure in args:
                         raise subprocess.CalledProcessError(1, args)
@@ -72,7 +72,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                         devices.pop()
                     return ""
 
-                device_set = root / "owned-set"
+                device_set = None if private_default else root / "owned-set"
                 with patch.object(capture, "BUILD", root / "build"), \
                      patch.object(capture, "clean_commit", return_value=self.source), \
                      patch.object(capture, "run", side_effect=fake_run):
@@ -83,7 +83,10 @@ class AppStoreCaptureTests(unittest.TestCase):
                 expected = [("delete", owned)] if failure == "create" else [("shutdown", owned), ("delete", owned)]
                 self.assertEqual(cleanup, expected)
                 self.assertEqual(len(devices), 1)
-                self.assertTrue(all(args[:4] == ("xcrun", "simctl", "--set", str(device_set)) for args in calls))
+                prefix = ("xcrun", "simctl") if private_default else ("xcrun", "simctl", "--set", str(device_set))
+                self.assertTrue(all(args[:len(prefix)] == prefix for args in calls))
+                if private_default:
+                    self.assertTrue(all("--set" not in args for args in calls))
 
     def test_changed_source_or_bundle_cannot_be_captured_under_an_old_build_receipt(self):
         for change in ("source", "bundle"):

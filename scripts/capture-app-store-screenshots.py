@@ -201,8 +201,7 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
     platform, device, expected_size = PROFILES[profile]
     if output.exists():
         raise SystemExit(f"Refusing to overwrite {output}")
-    device_set = device_set or BUILD / "simulators"
-    if not device_set.is_absolute():
+    if device_set is not None and not device_set.is_absolute():
         raise SystemExit("--device-set must be absolute")
     source = clean_commit()
     receipt_path = build_receipt(platform)
@@ -218,8 +217,11 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
     if info.get("CFBundleIdentifier") != bundle_id(TARGETS[platform]):
         raise SystemExit("Refusing a bundle without the capture-only identifier")
     output.mkdir(parents=True)
-    device_set.mkdir(parents=True, exist_ok=True)
-    prefix = ("xcrun", "simctl", "--set", str(device_set))
+    # Q599 authorizes CoreSimulator's normal private storage. Leave --set out
+    # for that supported default; explicit sets remain useful for inert tests.
+    if device_set is not None:
+        device_set.mkdir(parents=True, exist_ok=True)
+    prefix = ("xcrun", "simctl") + (("--set", str(device_set)) if device_set else ())
     name = "CP744-C2-" + uuid.uuid4().hex
     inventory = device_inventory(prefix)
     before = {entry["udid"] for entries in inventory.values() for entry in entries}
@@ -255,13 +257,15 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
                 raise SystemExit(f"Unexpected capture size {(width, height)}; expected {expected_size}")
             files.append({"file": path.name, "width": width, "height": height,
                           "sha256": hashlib.sha256(data).hexdigest(), "appearance": appearance})
-        (output / "capture.json").write_text(json.dumps({
+        capture_record = {
             "sourceCommit": receipt["sourceCommit"], "bundleSHA256": receipt["bundleSHA256"],
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
+            "simulatorUDID": udid,
+            "deviceSet": str(device_set) if device_set else "CoreSimulator default private storage",
             "mechanism": "simctl framebuffer, fixture-only capture build",
             "images": files,
-        }, indent=2) + "\n")
+        }
     finally:
         primary_error = sys.exception()
         try:
@@ -275,10 +279,14 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
                     except subprocess.CalledProcessError:
                         pass  # Deletion can still finish cleanup of our exact owned device.
                 run(*prefix, "delete", owned_id)
+                if any(entry["udid"] == owned_id for entries in device_inventory(prefix).values() for entry in entries):
+                    raise RuntimeError("Owned simulator still exists after delete")
         except Exception as cleanup_error:
             if primary_error is None:
                 raise
             primary_error.add_note(f"Simulator cleanup incomplete: {cleanup_error!r}")
+    capture_record["cleanup"] = "owned simulator deleted; absence verified"
+    (output / "capture.json").write_text(json.dumps(capture_record, indent=2) + "\n")
 
 
 def main() -> None:

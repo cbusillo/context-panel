@@ -40,15 +40,12 @@ comparison. Neither set changes the approved uploader mapping.
 | Vision Pro widgets | Earlier flat compositions only | Actual spatial WidgetKit placement; no compositor or placement proof from a shared-view renderer |
 | Apple TV app | Capture-only tvOS simulator build passed | Launch/capture full native overview including controls, status and account groups |
 
-Simulator creation stopped before any app launch. CoreSimulatorService was
-refused permission to create device data in this task's external-volume device
-set. The underlying log says `Operation not permitted`; the CLI reports
-`Device was allocated but was stuck in creation state`. Readback found no
-remaining devices in that set. No retry through another path, identity, tool,
-or workflow was made. The recovery question is
-[Q599 on #744](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6304544295).
-An approved storage route is needed before simulator capture resumes. This
-question is distinct from later approval of the complete image set.
+The initial external-volume device-set attempt stopped before any app launch
+on CoreSimulator's `Operation not permitted` denial. No devices remained.
+[Chris approved Q599](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305613280)
+on October 20: capture now uses CoreSimulator's normal private internal-disk
+storage. Source, builds and image evidence remain on Developer-Artifacts.
+This recovery approval is separate from later approval of the image set.
 
 Mac desktop WidgetKit placement cannot be supplied by this offscreen tool.
 Do not use Chris's live desktop to fill that gap. If no isolated repository
@@ -100,8 +97,7 @@ uv run scripts/capture-app-store-screenshots.py build tvos
 uv run scripts/capture-app-store-screenshots.py build visionos
 ```
 
-**Do not rerun simulator creation on this host until Q599 is resolved.** The
-following is the continuation interface, not a workaround for that denial:
+Q599 authorizes the default private simulator storage used below:
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolute/new/iphone
@@ -114,7 +110,9 @@ fixture date and timezone; the Python tool does not copy those values. Cleanup
 addresses only a newly observed exact name/type/runtime match by UDID, including
 when creation fails after allocating a device. `--device-set /absolute/path`
 selects a storage location explicitly; it is not permission to bypass a denial.
-Use it for Q599's approved route only after Chris answers. Cleanup failures retain the primary capture error with an added diagnostic;
+The default omits `--set` and uses normal private storage. Cleanup verifies
+the owned UDID is absent before writing a successful capture receipt. Cleanup
+failures retain the primary capture error with an added diagnostic;
 uncertain ownership preserves candidates and fails the command. A successful
 framebuffer PNG still needs visual
 review, particularly on visionOS. Captures are not formal release receipts.
