@@ -382,7 +382,7 @@ private struct CompanionRootView: View {
 
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
             if !model.snapshot.reports.isEmpty {
-                BankedResetDeadlinesView(reports: model.snapshot.reports, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+                BankedResetDeadlinesView(reports: model.snapshot.reports, presentationDate: companionPresentationDate(Date()), maximumAge: SnapshotFreshness.companionProviderMaximumAge)
             }
         }
         .frame(
@@ -418,7 +418,7 @@ private struct CompanionRootView: View {
 
     private var companionForecast: KeepWorkingForecast? {
         guard model.snapshot.state == .ready else { return nil }
-        let forecast = model.snapshot.keepWorkingForecast(presentationDate: Date())
+        let forecast = model.snapshot.keepWorkingForecast(presentationDate: companionPresentationDate(Date()))
         return forecast.remainingPercent == nil ? nil : forecast
     }
 

@@ -11,6 +11,7 @@ See Resources/AppStore/Screenshots/horizon-capture/README.md for operator steps.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import plistlib
@@ -41,15 +42,15 @@ RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0
 def run(*args: str, timeout: int = 180) -> str:
     print("+ " + " ".join(map(str, args)), flush=True)
     result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=timeout)
+                            stderr=subprocess.PIPE, timeout=timeout)
     print(result.stdout, end="", flush=True)
+    print(result.stderr, end="", flush=True)
     result.check_returncode()
     return result.stdout.strip()
 
 
-def prepare() -> None:
-    PROJECT.parent.mkdir(parents=True, exist_ok=True)
-    spec = yaml.safe_load((ROOT / "project.yml").read_text())
+def capture_spec(original: dict) -> dict:
+    spec = copy.deepcopy(original)
     for name, target in spec["targets"].items():
         target.pop("postBuildScripts", None)
         target["dependencies"] = [dependency for dependency in target.get("dependencies", [])
@@ -66,45 +67,132 @@ def prepare() -> None:
     for name, scheme in spec["schemes"].items():
         if name in set(TARGETS.values()):
             scheme["build"]["targets"] = {name: "all"}
+    return spec
+
+
+def validate_capture_spec(spec: dict) -> None:
+    for name, target in spec["targets"].items():
+        settings = target["settings"]["base"]
+        if target.get("postBuildScripts") or settings.get("CODE_SIGN_ENTITLEMENTS"):
+            raise ValueError("Capture targets cannot stamp builds or carry entitlements")
+        if any(dependency.get("embed") for dependency in target.get("dependencies", [])):
+            raise ValueError("Capture targets cannot embed extensions")
+        if name in TARGETS.values():
+            if settings["PRODUCT_BUNDLE_IDENTIFIER"] != bundle_id(name):
+                raise ValueError("Capture bundle identifier was not isolated")
+            if "CONTEXT_PANEL_SCREENSHOTS" not in settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"].split():
+                raise ValueError("Capture condition was not enabled")
+
+
+def clean_commit() -> str:
+    if run("git", "-C", str(ROOT), "status", "--porcelain"):
+        raise SystemExit("Commit source changes before preparing, building or capturing")
+    return run("git", "-C", str(ROOT), "rev-parse", "HEAD")
+
+
+def prepare() -> None:
+    source = clean_commit()
+    PROJECT.parent.mkdir(parents=True, exist_ok=True)
+    spec = capture_spec(yaml.safe_load((ROOT / "project.yml").read_text()))
+    watch = spec["targets"][TARGETS["watchos"]]["settings"]["base"]
+    info = plistlib.loads(Path(watch["INFOPLIST_FILE"]).read_bytes())
+    info.pop("WKCompanionAppBundleIdentifier", None)
+    info["WKWatchOnly"] = True
+    watch_plist = BUILD / "CaptureWatch-Info.plist"
+    watch_plist.write_bytes(plistlib.dumps(info))
+    watch["INFOPLIST_FILE"] = str(watch_plist)
+    validate_capture_spec(spec)
     path = BUILD / "project.yml"
     path.write_text(yaml.safe_dump(spec, sort_keys=False))
     run("xcodegen", "generate", "--spec", str(path), "--project", str(PROJECT.parent),
         "--project-root", str(ROOT))
+    (BUILD / "prepared.json").write_text(json.dumps({"sourceCommit": source}) + "\n")
 
 
 def bundle_id(target: str) -> str:
     return "com.shinycomputers.contextpanel.screenshots." + target.lower()
 
 
+def app_path(platform: str) -> Path:
+    return BUILD / platform / "Build/Products" / f"Debug-{SDKS[platform]}" / "Context Panel.app"
+
+
+def bundle_digest(app: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(app.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(app).as_posix().encode() + b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def build_receipt(platform: str) -> Path:
+    return BUILD / platform / "capture-build.json"
+
+
 def build(platform: str) -> None:
-    if not PROJECT.exists():
-        raise SystemExit("Run prepare first")
+    source = clean_commit()
+    if not PROJECT.exists() or json.loads((BUILD / "prepared.json").read_text())["sourceCommit"] != source:
+        raise SystemExit("Run prepare at the current source commit first")
+    build_receipt(platform).unlink(missing_ok=True)
     run("xcodebuild", "-quiet", "-project", str(PROJECT), "-scheme", TARGETS[platform],
         "-configuration", "Debug", "-sdk", SDKS[platform],
         "-destination", f"generic/platform={dict(ios='iOS Simulator', visionos='visionOS Simulator', watchos='watchOS Simulator', tvos='tvOS Simulator')[platform]}",
         "-derivedDataPath", str(BUILD / platform), "CODE_SIGNING_ALLOWED=NO", "build", timeout=1800)
+    if clean_commit() != source:
+        raise SystemExit("Source changed during the build")
+    build_receipt(platform).write_text(json.dumps({"sourceCommit": source,
+        "bundleSHA256": bundle_digest(app_path(platform))}) + "\n")
 
 
-def capture(profile: str, output: Path) -> None:
+def device_inventory(prefix: tuple[str, ...]) -> dict:
+    return json.loads(run(*prefix, "list", "devices", "--json"))["devices"]
+
+
+def new_owned_device(inventory: dict, before: set[str], name: str, platform: str, device: str) -> dict | None:
+    runtime = "com.apple.CoreSimulator.SimRuntime." + RUNTIMES[platform]
+    matches = [entry for entry in inventory.get(runtime, [])
+               if entry["udid"] not in before and entry["name"] == name
+               and entry.get("deviceTypeIdentifier") == "com.apple.CoreSimulator.SimDeviceType." + device]
+    if len(matches) > 1:
+        raise RuntimeError("Ambiguous simulator create outcome; preserving every candidate")
+    return matches[0] if matches else None
+
+
+def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
     platform, device, expected_size = PROFILES[profile]
     if output.exists():
         raise SystemExit(f"Refusing to overwrite {output}")
-    app = BUILD / platform / "Build/Products" / f"Debug-{SDKS[platform]}" / "Context Panel.app"
+    source = clean_commit()
+    receipt_path = build_receipt(platform)
+    if not receipt_path.is_file():
+        raise SystemExit(f"Build {platform} at this source commit first")
+    receipt = json.loads(receipt_path.read_text())
+    app = app_path(platform)
+    if receipt["sourceCommit"] != source or receipt["bundleSHA256"] != bundle_digest(app):
+        raise SystemExit("Capture build does not match the current committed source and bundle")
     if not app.is_dir():
         raise SystemExit(f"Build {platform} first")
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != bundle_id(TARGETS[platform]):
         raise SystemExit("Refusing a bundle without the capture-only identifier")
     output.mkdir(parents=True)
-    device_set = BUILD / "simulators"
-    device_set.mkdir(exist_ok=True)
+    device_set = device_set or BUILD / "simulators"
+    if not device_set.is_absolute():
+        raise SystemExit("--device-set must be absolute")
+    device_set.mkdir(parents=True, exist_ok=True)
     prefix = ("xcrun", "simctl", "--set", str(device_set))
     name = "CP744-C2-" + uuid.uuid4().hex
-    udid = run(*prefix, "create", name, "com.apple.CoreSimulator.SimDeviceType." + device,
-               "com.apple.CoreSimulator.SimRuntime." + RUNTIMES[platform])
-    uuid.UUID(udid)
-    # Cleanup always addresses only this newly created simulator, never a name or 'booted'.
+    inventory = device_inventory(prefix)
+    before = {entry["udid"] for entries in inventory.values() for entry in entries}
+    if any(entry["name"] == name for entries in inventory.values() for entry in entries):
+        raise SystemExit("Simulator name collision; no device was created")
+    # A failed create can allocate a device. Reconcile only a newly observed exact
+    # name/type/runtime match and delete by UDID; never retry the refused action.
     try:
+        udid = run(*prefix, "create", name, "com.apple.CoreSimulator.SimDeviceType." + device,
+                   "com.apple.CoreSimulator.SimRuntime." + RUNTIMES[platform])
+        uuid.UUID(udid)
         run(*prefix, "boot", udid)
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
         run(*prefix, "install", udid, str(app))
@@ -131,17 +219,23 @@ def capture(profile: str, output: Path) -> None:
             files.append({"file": path.name, "width": width, "height": height,
                           "sha256": hashlib.sha256(data).hexdigest(), "appearance": appearance})
         (output / "capture.json").write_text(json.dumps({
-            "sourceCommit": run("git", "-C", str(ROOT), "rev-parse", "HEAD"),
+            "sourceCommit": receipt["sourceCommit"], "bundleSHA256": receipt["bundleSHA256"],
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
             "fixtureDate": "2026-10-01T14:07:00Z", "mechanism": "simctl framebuffer, fixture-only capture build",
             "images": files,
         }, indent=2) + "\n")
     finally:
-        try:
-            run(*prefix, "shutdown", udid)
-        finally:
-            run(*prefix, "delete", udid)
+        owned = new_owned_device(device_inventory(prefix), before, name, platform, device)
+        if owned:
+            owned_id = owned["udid"]
+            uuid.UUID(owned_id)
+            if owned.get("state") == "Booted":
+                try:
+                    run(*prefix, "shutdown", owned_id)
+                except subprocess.CalledProcessError:
+                    pass  # Still delete our own device; do not mask the capture failure.
+            run(*prefix, "delete", owned_id)
 
 
 def main() -> None:
@@ -153,13 +247,14 @@ def main() -> None:
     capturer = commands.add_parser("capture")
     capturer.add_argument("profile", choices=PROFILES)
     capturer.add_argument("--output", required=True, type=Path)
+    capturer.add_argument("--device-set", type=Path, help="Absolute device set; use only an approved storage route")
     args = parser.parse_args()
     if args.command == "prepare":
         prepare()
     elif args.command == "build":
         build(args.platform)
     else:
-        capture(args.profile, args.output.resolve())
+        capture(args.profile, args.output.resolve(), args.device_set)
 
 
 if __name__ == "__main__":

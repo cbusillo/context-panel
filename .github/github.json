@@ -52,14 +52,9 @@
         "python": {
           "version": "3.13",
           "moduleName": "context-panel",
-          "testRoots": [
-            "Tests"
-          ],
+          "testRoots": ["Tests"],
           "sync": false,
-          "requiredGeneratedState": [
-            ".venv",
-            ".idea"
-          ]
+          "requiredGeneratedState": [".venv", ".idea"]
         }
       }
     },

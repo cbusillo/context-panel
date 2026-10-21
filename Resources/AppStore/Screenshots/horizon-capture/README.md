@@ -8,7 +8,9 @@ account detail. They use six synthetic accounts through the offscreen SwiftUI
 renderer. They capture app content without a title bar, desktop, actual
 WidgetKit placement or signed-runtime evidence. No normal Mac app is launched;
 the renderer creates an AppKit window hierarchy that is never ordered onto a
-display. The content has no lifecycle tasks or account/provider refresh.
+display. The composition uses the production sidebar, overview and account-detail
+components, including the account diagnostics disclosure. It has no lifecycle
+tasks or account/provider refresh.
 
 | Mac app content | Light | Dark |
 | --- | --- | --- |
@@ -73,14 +75,17 @@ AppKit may change the PNG bytes; record the resulting bytes rather than
 claiming cross-host byte identity.
 
 The simulator tool prepares a separate generated project in `.build`, with
-unique capture-only bundle identifiers, no entitlements, no embedded
-extensions, no build-manifest stamping and the `CONTEXT_PANEL_SCREENSHOTS`
+unique capture-only bundle identifiers, a watch-only capture plist, no
+entitlements, no embedded extensions, no build-manifest stamping and the `CONTEXT_PANEL_SCREENSHOTS`
 compilation condition. The shipping project never sets that condition or
 includes the capture fixture source. In capture mode the companion's normal
 root, navigation and layout receive an in-memory fixture; its app delegate,
 stores, runtime receipts, CloudKit subscription and reload are disabled. Watch
 and TV reuse the production content and navigation with inert actions.
-Normal shipping launch paths remain intact.
+Normal shipping launch paths remain intact. Prepare and build require a clean
+committed source tree. Each build records its commit and complete bundle digest;
+capture refuses a different commit, dirty source or altered bundle. If source
+changes, run prepare and the relevant build again.
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py prepare
@@ -100,6 +105,9 @@ uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolut
 Other profiles are `iphone65`, `ipad`, `watch`, `visionpro` and `tvos`. Each run
 owns a newly named simulator and records the returned UDID, fixture time,
 source commit, runtime, device type, image dimensions and checksums. Cleanup
-addresses only that owned UDID. A successful framebuffer PNG still needs visual
+addresses only a newly observed exact name/type/runtime match by UDID, including
+when creation fails after allocating a device. `--device-set /absolute/path`
+selects a storage location explicitly; it is not permission to bypass a denial.
+Use it for Q599's approved route only after Chris answers. A successful framebuffer PNG still needs visual
 review, particularly on visionOS. Captures are not formal release receipts.
 No uploader or App Store submission is called by this tool.

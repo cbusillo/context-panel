@@ -1208,17 +1208,22 @@ private struct MacAppStorePresentation: View {
         _model = StateObject(wrappedValue: ContextPanelAppModel.appStoreFixture(snapshot: snapshot, now: now))
     }
 
+    private var selection: AppNavigationSelection {
+        if detail, let account = snapshot.accountOverview(now: now).accounts.first {
+            return .providerAccount(account.metadata.provider, account.id)
+        }
+        return .overview
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             AccountsSidebar(model: model, snapshot: snapshot.usageSnapshot,
-                selection: .constant(detail ? .providerAccount(.openAI, snapshot.accountOverview(now: now).accounts[0].id) : .overview))
+                selection: .constant(selection), fixedPresentationDate: now)
                 .frame(width: 240)
             Divider()
             if detail, let account = snapshot.accountOverview(now: now).accounts.first {
-                ScrollView {
-                    AccountDashboardDetail(account: account, overview: snapshot.accountOverview(now: now), now: now)
-                        .padding(24)
-                }.background(CPTheme.background)
+                AccountDashboard(model: model, provider: account.metadata.provider, accountID: account.id,
+                    fixedPresentationDate: now)
             } else {
                 OverviewDashboard(model: model, snapshot: snapshot.usageSnapshot, presentationDate: now)
             }
@@ -3104,6 +3109,8 @@ struct AccountsSidebar: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     @Binding var selection: AppNavigationSelection?
+    var fixedPresentationDate: Date? = nil
+    private var presentationDate: Date { fixedPresentationDate ?? Date() }
 
     var body: some View {
         List(selection: Binding(
@@ -3122,14 +3129,14 @@ struct AccountsSidebar: View {
                 }
             }
             Section(AccountTerms.accounts) {
-                let overview = model.accountOverview(at: Date())
-                let totals = overview.providerTotals(now: Date())
+                let overview = model.accountOverview(at: presentationDate)
+                let totals = overview.providerTotals(now: presentationDate)
                 let reports = model.storedSnapshot?.reports ?? []
                 ForEach(Provider.allCases) { provider in
                     let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                     let providerTotal = totals.first(where: { $0.provider == provider })
-                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: Date())
+                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: presentationDate)
                     let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
                     if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
                         Button { selection = .provider(provider) } label: {
@@ -3193,7 +3200,7 @@ struct AccountsSidebar: View {
     }
 
     private func providerAccessibilityLabel(provider: Provider, total: AccountProviderTotal?, resetCredits: ProviderResetCreditSurfaceSummary?) -> String {
-        var parts = [total?.accessibilityText(now: Date()) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
+        var parts = [total?.accessibilityText(now: presentationDate) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
         if let resetCredits { parts.append(resetCreditAccessibilityText(resetCredits)) }
         return parts.joined(separator: ", ")
     }
@@ -3299,13 +3306,15 @@ struct AccountDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let provider: Provider
     let accountID: String
+    var fixedPresentationDate: Date? = nil
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let overview = model.accountOverview(at: context.date)
+            let now = fixedPresentationDate ?? context.date
+            let overview = model.accountOverview(at: now)
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
-                        AccountDashboardDetail(account: account, overview: overview, now: context.date)
+                        AccountDashboardDetail(account: account, overview: overview, now: now)
                     } else {
                         Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
                     }
