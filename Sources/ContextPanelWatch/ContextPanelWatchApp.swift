@@ -61,49 +61,59 @@ private struct WatchValidationLaunchView: View {
 }
 
 @MainActor
+struct WatchRootContent<Content: View>: View {
+    let isLoading: Bool
+    let onRefresh: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        NavigationStack {
+            List {
+                content()
+                Section("About") {
+                    Text(InstalledAppVersion().displayText).font(.footnote)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: onRefresh) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                    .accessibilityLabel("Refresh")
+                }
+            }
+        }
+    }
+}
+
+@MainActor
 private struct WatchRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = WatchSyncModel()
 
     var body: some View {
-        NavigationStack {
-            List {
-                WatchUsageContent(
-                    result: model.displayResult,
-                    snapshot: model.snapshot,
-                    displayPreferences: model.displayPreferences,
-                    syncErrorMessage: model.lastSyncErrorMessage,
-                    presentationDate: Date()
-                )
-                Section("About") {
-                    Text(InstalledAppVersion().displayText)
-                        .font(.footnote)
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        model.reload()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(model.isLoading)
-                    .accessibilityLabel("Refresh")
-                }
-            }
-            .task {
+        WatchRootContent(isLoading: model.isLoading, onRefresh: model.reload) {
+            WatchUsageContent(
+                result: model.displayResult,
+                snapshot: model.snapshot,
+                displayPreferences: model.displayPreferences,
+                syncErrorMessage: model.lastSyncErrorMessage,
+                presentationDate: Date()
+            )
+        }
+        .task {
+            model.reload()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
                 model.reload()
             }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
-                    model.reload()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(
-                for: Notification.Name("CKAccountChangedNotification")
-            )) { _ in
-                model.handleCloudKitAccountChange()
-            }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: Notification.Name("CKAccountChangedNotification")
+        )) { _ in
+            model.handleCloudKitAccountChange()
         }
     }
 }

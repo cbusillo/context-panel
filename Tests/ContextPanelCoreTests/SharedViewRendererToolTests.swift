@@ -175,7 +175,7 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     #expect(try Data(contentsOf: output) == first)
 }
 
-@Test func rendererOutputDoesNotDependOnTheHostTimeZoneOrLocale() throws {
+@Test func renderersPinTimeZoneAndAppStoreCapturePinsFoundationLocale() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -193,8 +193,8 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
             var images: Set<Data> = []
             for (index, host) in hosts.enumerated() {
                 let output = directory.appending(path: "\(executable)-\(presentation)-host-\(index).png")
-                // LANG alone does not change Foundation's locale on macOS. These
-                // launch defaults do; the fixture must consistently override them.
+                // The new capture CLI accepts Foundation launch defaults, so its
+                // locale is varied for real. The legacy CLI covers timezone only.
                 let locales = ["en_US", "ja_JP", "de_DE"]
                 let languages = ["(en)", "(ja)", "(de)"]
                 let arguments = executable == "ContextPanelAppStoreCapture"

@@ -5622,7 +5622,7 @@ final class ContextPanelAppModel: ObservableObject {
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let fixedPresentationDate: Date?
-    private var appStoreSnapshot: WidgetSnapshot?
+    private var fixtureDisplayMetadata: [AccountDisplayMetadata]?
 
     private var presentationDate: Date {
         fixedPresentationDate ?? Date()
@@ -5865,11 +5865,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     static func appStoreFixture(snapshot: WidgetSnapshot, now: Date) -> ContextPanelAppModel {
-        let model = fixture(snapshot: snapshot,
+        fixture(snapshot: snapshot,
             stored: StoredUsageSnapshot(savedAt: now, snapshot: snapshot.usageSnapshot, reports: snapshot.reports),
             now: now, preferences: .defaultPreferences, historyCount: 0)
-        model.appStoreSnapshot = snapshot
-        return model
     }
 
     private static func fixture(snapshot: WidgetSnapshot, stored: StoredUsageSnapshot, now: Date,
@@ -5889,6 +5887,7 @@ final class ContextPanelAppModel: ObservableObject {
         model.fastModeForecastSettings = snapshot.fastModeForecastSettings
         model.observedBurnRates = snapshot.observedBurnRates
         model.accountBurnRates = snapshot.accountBurnRates ?? [:]
+        model.fixtureDisplayMetadata = snapshot.accountDisplayMetadata
         model.errorMessage = snapshot.syncErrorMessage
         model.lastRefreshAt = snapshot.generatedAt
         return model
@@ -6000,14 +5999,13 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func accountOverview(at now: Date) -> AccountOverview {
-        if let appStoreSnapshot { return appStoreSnapshot.accountOverview(now: appStoreSnapshot.generatedAt) }
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
         if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
             return shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
         }
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
-            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
+            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : fixtureDisplayMetadata, now: now,
             accountBurnRates: accountBurnRates)
     }
 

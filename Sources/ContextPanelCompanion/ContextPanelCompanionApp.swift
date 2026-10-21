@@ -29,11 +29,11 @@ private extension Notification.Name {
 }
 
 
-private func companionPresentationDate(_ date: Date) -> Date {
+private var companionFixedPresentationDate: Date? {
     #if CONTEXT_PANEL_SCREENSHOTS
     ScreenshotFixture.date
     #else
-    date
+    nil
     #endif
 }
 
@@ -214,16 +214,16 @@ private struct CompanionRootView: View {
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                                CompanionSyncStatusView(result: model.result, now: companionPresentationDate(context.date))
+                                CompanionSyncStatusView(result: model.result, now: companionFixedPresentationDate ?? context.date)
                                 #if os(visionOS)
-                                SpatialAccountOverviewPanel(overview: accountOverview(at: companionPresentationDate(context.date)), now: companionPresentationDate(context.date),
+                                SpatialAccountOverviewPanel(overview: accountOverview(at: companionFixedPresentationDate ?? context.date), now: companionFixedPresentationDate ?? context.date,
                                     contentWidth: min(geometry.size.width - 2 * pagePadding,
                                         CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, platform: .visionOS)
                                             ?? geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
                                 #else
-                                AccountDashboardPanel(overview: accountOverview(at: companionPresentationDate(context.date)), now: companionPresentationDate(context.date),
+                                AccountDashboardPanel(overview: accountOverview(at: companionFixedPresentationDate ?? context.date), now: companionFixedPresentationDate ?? context.date,
                                     compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
@@ -288,14 +288,14 @@ private struct CompanionRootView: View {
                 } else {
                     ScrollView {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let overview = accountOverview(at: companionPresentationDate(context.date))
+                            let overview = accountOverview(at: companionFixedPresentationDate ?? context.date)
                             switch route {
                             case .deadlines:
-                                AccountDeadlinesPanel(overview: overview, now: companionPresentationDate(context.date),
+                                AccountDeadlinesPanel(overview: overview, now: companionFixedPresentationDate ?? context.date,
                                     openAccount: { accountPath.append(.account($0)) })
                             case let .account(id):
                                 if let account = overview.accounts.first(where: { $0.id == id }) {
-                                    AccountDashboardDetail(account: account, overview: overview, now: companionPresentationDate(context.date),
+                                    AccountDashboardDetail(account: account, overview: overview, now: companionFixedPresentationDate ?? context.date,
                                         compact: horizontalSizeClass != .regular)
                                 } else { Text("Account is no longer in this snapshot.") }
                             case .syncAndSettings:
@@ -339,7 +339,7 @@ private struct CompanionRootView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        CompanionSyncStatusView(result: model.result, now: companionPresentationDate(context.date))
+                        CompanionSyncStatusView(result: model.result, now: companionFixedPresentationDate ?? context.date)
                     }
                     companionContent(layoutMode: layoutMode)
                 }
@@ -391,7 +391,7 @@ private struct CompanionRootView: View {
 
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
             if !model.snapshot.reports.isEmpty {
-                BankedResetDeadlinesView(reports: model.snapshot.reports, presentationDate: companionPresentationDate(Date()), maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+                BankedResetDeadlinesView(reports: model.snapshot.reports, presentationDate: companionFixedPresentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
             }
         }
         .frame(
@@ -415,7 +415,7 @@ private struct CompanionRootView: View {
                 links: CompanionDeepLinks.previewLinks,
                 showsResetCreditSurfaces: true,
                 resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
-                presentationDate: companionPresentationDate(context.date)
+                presentationDate: companionFixedPresentationDate ?? context.date
             )
             .cpwThemeVariant(previewThemeVariant)
             .background(
@@ -427,7 +427,7 @@ private struct CompanionRootView: View {
 
     private var companionForecast: KeepWorkingForecast? {
         guard model.snapshot.state == .ready else { return nil }
-        let forecast = model.snapshot.keepWorkingForecast(presentationDate: companionPresentationDate(Date()))
+        let forecast = model.snapshot.keepWorkingForecast(presentationDate: companionFixedPresentationDate ?? Date())
         return forecast.remainingPercent == nil ? nil : forecast
     }
 

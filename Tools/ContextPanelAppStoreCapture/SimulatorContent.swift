@@ -12,18 +12,10 @@ extension View {
 #if os(watchOS)
 struct ScreenshotWatchRoot: View {
     var body: some View {
-        NavigationStack {
-            List {
-                WatchUsageContent(result: ScreenshotFixture.result, snapshot: ScreenshotFixture.snapshot,
-                    displayPreferences: .defaultPreferences, syncErrorMessage: nil,
-                    presentationDate: ScreenshotFixture.date)
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {} label: { Image(systemName: "arrow.clockwise") }
-                        .accessibilityLabel("Refresh")
-                }
-            }
+        WatchRootContent(isLoading: false, onRefresh: {}) {
+            WatchUsageContent(result: ScreenshotFixture.result, snapshot: ScreenshotFixture.snapshot,
+                displayPreferences: .defaultPreferences, syncErrorMessage: nil,
+                presentationDate: ScreenshotFixture.date)
         }
     }
 }
