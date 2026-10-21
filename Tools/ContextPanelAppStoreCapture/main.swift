@@ -13,6 +13,21 @@ for flag in ["-AppleLocale", "-AppleLanguages"] {
         arguments.removeSubrange(index ... index + 1)
     }
 }
+if arguments == ["check-fixture"] {
+    ScreenshotFixture.configureProcess()
+    let original = ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date)
+    let companion = ScreenshotFixture.companionWidgetSnapshot.accountOverview(now: ScreenshotFixture.date)
+    let originalStates = Dictionary(uniqueKeysWithValues: original.accounts.map { ($0.metadata.label, $0.state) })
+    let companionStates = Dictionary(uniqueKeysWithValues: companion.accounts.map { ($0.metadata.label, $0.state) })
+    guard originalStates == companionStates,
+          ScreenshotFixture.smallWidgetAccountLabels(in: ScreenshotFixture.snapshot)
+            == ScreenshotFixture.smallWidgetAccountLabels(in: ScreenshotFixture.companionWidgetSnapshot) else {
+        fputs("Fixture transport changed account state or widget forecasts.\n", stderr)
+        exit(65)
+    }
+    print("Fixture transport preserves account state and widget forecasts.")
+    exit(0)
+}
 guard arguments.count == 3, ["overview", "detail"].contains(arguments[0]),
       ["light", "dark"].contains(arguments[1]), !FileManager.default.fileExists(atPath: arguments[2]) else {
     fputs("usage: ContextPanelAppStoreCapture overview|detail light|dark NEW.png\n", stderr)

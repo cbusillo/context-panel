@@ -12,6 +12,11 @@ private struct RendererRun {
 
 private final class TestBundleToken {}
 
+@Test func appStoreFixtureSurvivesCompanionTransport() throws {
+    let result = try runRenderer(["check-fixture"], executable: "ContextPanelAppStoreCapture")
+    #expect(result.status == 0, "\(result.output)")
+}
+
 private func builtProductsDirectory() throws -> URL {
     var url = Bundle(for: TestBundleToken.self).bundleURL
     while url.pathExtension != "xctest", url.path != "/" {

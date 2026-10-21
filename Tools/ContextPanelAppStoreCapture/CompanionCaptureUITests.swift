@@ -7,6 +7,9 @@ final class CompanionCaptureUITests: XCTestCase {
         ScreenshotFixture.configureProcess()
         continueAfterFailure = false
         let app = XCUIApplication()
+        if !(ProcessInfo.processInfo.environment["CP_CAPTURE_WIDGET"] ?? "").isEmpty {
+            XCTAssertFalse(ScreenshotFixture.smallWidgetAccountLabels.isEmpty)
+        }
         let capturesDetail = ProcessInfo.processInfo.environment["CP_CAPTURE_DETAIL"] == "true"
         if capturesDetail { app.launchArguments = ["--screenshot-detail"] }
         app.launch()
@@ -19,7 +22,11 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(app.frame.intersects(content.frame))
         let widgetMode = ProcessInfo.processInfo.environment["CP_CAPTURE_WIDGET"] ?? ""
         if !widgetMode.isEmpty {
+            #if os(visionOS)
+            try placeSpatialFixtureWidget()
+            #else
             try placeFixtureWidget(reusing: widgetMode == "present")
+            #endif
         }
         let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         image.name = "native-fixture"
@@ -27,6 +34,48 @@ final class CompanionCaptureUITests: XCTestCase {
         add(image)
     }
 
+    #if os(visionOS)
+    private func placeSpatialFixtureWidget() throws {
+        let gallery = XCUIApplication(bundleIdentifier: "com.apple.RealityWidgets")
+        gallery.launch()
+        let foreground = gallery.wait(for: .runningForeground, timeout: 60)
+        recordHierarchy(gallery, name: "spatial-widget-gallery")
+        XCTAssertTrue(foreground)
+        let search = gallery.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 30))
+        search.tap()
+        search.typeText("Context Panel")
+        let result = gallery.buttons["Context Panel"].firstMatch
+        let found = result.waitForExistence(timeout: 30)
+        recordHierarchy(gallery, name: "spatial-widget-search")
+        XCTAssertTrue(found)
+        result.tap()
+        let add = addWidgetButton(gallery)
+        let preview = add.waitForExistence(timeout: 30)
+        recordHierarchy(gallery, name: "spatial-widget-preview")
+        XCTAssertTrue(preview)
+        add.tap()
+        let done = gallery.buttons["Done"].firstMatch
+        let placed = done.waitForExistence(timeout: 30)
+        recordHierarchy(gallery, name: "spatial-widget-placement")
+        XCTAssertTrue(placed)
+        done.tap()
+        XCTAssertTrue(add.waitForNonExistence(timeout: 15))
+        let label = try XCTUnwrap(ScreenshotFixture.smallWidgetAccountLabels.first)
+        let hosts = [gallery, XCUIApplication(bundleIdentifier: "com.apple.chrono.WidgetRenderer-Default"),
+                     XCUIApplication(bundleIdentifier: "com.apple.RealityLauncher")]
+        let predicate = NSPredicate(format: "label == %@", label)
+        let host = try XCTUnwrap(hosts.first(where: {
+            $0.descendants(matching: .any).matching(predicate).firstMatch.waitForExistence(timeout: 15)
+        }))
+        recordHierarchy(host, name: "spatial-widget-placed")
+        for label in ScreenshotFixture.smallWidgetAccountLabels {
+            XCTAssertTrue(host.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch.exists)
+        }
+    }
+    #endif
+
+    #if !os(visionOS)
     private func placeFixtureWidget(reusing: Bool) throws {
         let home = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCUIDevice.shared.press(.home)
@@ -90,6 +139,8 @@ final class CompanionCaptureUITests: XCTestCase {
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 10))
     }
+
+    #endif
 
     private func addWidgetButton(_ home: XCUIApplication) -> XCUIElement {
         home.buttons.matching(NSPredicate(format: "label MATCHES %@", #"^\s*Add Widget\s*$"#)).firstMatch

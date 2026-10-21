@@ -20,7 +20,9 @@ final class MacCaptureUITests: XCTestCase {
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         finder.activate()
         record(finder, name: "desktop")
-        finder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+        let desktop = finder.scrollViews["desktop"].firstMatch
+        XCTAssertTrue(desktop.waitForExistence(timeout: 15))
+        desktop.rightClick()
         let edit = finder.menuItems.matching(NSPredicate(format: "label BEGINSWITH %@", "Edit Widgets")).firstMatch
         let foundEdit = edit.waitForExistence(timeout: 15)
         record(finder, name: "desktop-menu")

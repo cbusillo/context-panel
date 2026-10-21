@@ -18,20 +18,20 @@ SPEC.loader.exec_module(capture)
 class AppStoreCaptureTests(unittest.TestCase):
     source = "fixture-source"
 
-    def make_bundle(self, identifier=None):
-        app = capture.app_path("ios")
+    def make_bundle(self, identifier=None, platform="ios"):
+        app = capture.app_path(platform)
         app.mkdir(parents=True)
         (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier":
             identifier or capture.bundle_id(capture.TARGETS["ios"])}))
-        products = capture.BUILD / "ios/Build/Products"
-        runner = products / "Debug-iphonesimulator/CompanionCaptureUITests-Runner.app"
+        products = capture.BUILD / platform / "Build/Products"
+        runner = products / ("Debug-" + capture.SDKS[platform]) / "CompanionCaptureUITests-Runner.app"
         runner.mkdir()
         (runner / "fixture").write_text("fixture runner")
         (products / "CompanionCapture_fixture.xctestrun").write_bytes(plistlib.dumps({"CompanionCaptureUITests": {
             "BlueprintName": "CompanionCaptureUITests", "IsUITestBundle": True,
-            "UITargetAppPath": "__TESTROOT__/Debug-iphonesimulator/Context Panel.app"}}))
-        capture.build_receipt("ios").write_text(json.dumps({
-            "sourceCommit": self.source, "bundleSHA256": capture.bundle_digest(app), "uiTesting": capture.ios_testing_identity()}))
+            "UITargetAppPath": "__TESTROOT__/" + app.relative_to(products).as_posix()}}))
+        capture.build_receipt(platform).write_text(json.dumps({
+            "sourceCommit": self.source, "bundleSHA256": capture.bundle_digest(app), "uiTesting": capture.companion_testing_identity(platform)}))
         return app
 
     def test_staging_copies_valid_png_and_falls_back_only_on_temp_save_refusal(self):
@@ -235,7 +235,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                      patch.object(capture, "clean_commit", return_value=self.source), \
                      patch.object(capture, "run", side_effect=fake_run), \
                      patch.object(capture.time, "sleep"), \
-                     patch.object(capture, "native_ios_capture", side_effect=lambda udid, detail, directory, path, size, **kwargs: path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))):
+                     patch.object(capture, "native_companion_capture", side_effect=lambda udid, detail, directory, path, size, **kwargs: path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))):
                     self.make_bundle()
                     try:
                         raise ValueError("unrelated caller exception")
@@ -277,19 +277,19 @@ class AppStoreCaptureTests(unittest.TestCase):
                     configuration = {"CompanionCaptureUITests": target} if version == 1 else {"TestConfigurations": [{"TestTargets": [target]}]}
                     if other_app:
                         with self.assertRaises(RuntimeError):
-                            capture.configure_ios_test_run(configuration, True)
+                            capture.configure_companion_test_run(configuration, True)
                     else:
-                        capture.configure_ios_test_run(configuration, True)
+                        capture.configure_companion_test_run(configuration, True)
                         self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "true")
-                        capture.configure_ios_test_run(configuration, False)
+                        capture.configure_companion_test_run(configuration, False)
                         self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "false")
                         for mode in ("place", "present"):
-                            capture.configure_ios_test_run(configuration, False, mode)
+                            capture.configure_companion_test_run(configuration, False, mode)
                             self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"], mode)
                             with self.assertRaises(ValueError):
-                                capture.configure_ios_test_run(configuration, True, mode)
+                                capture.configure_companion_test_run(configuration, True, mode)
                         with self.assertRaises(ValueError):
-                            capture.configure_ios_test_run(configuration, False, "unrelated")
+                            capture.configure_companion_test_run(configuration, False, "unrelated")
 
     def test_native_ui_capture_removes_temporary_configuration_and_rejects_wrong_dimensions(self):
         for outcome in ("success", "test-failure", "wrong-size"):
@@ -317,10 +317,10 @@ class AppStoreCaptureTests(unittest.TestCase):
                     destination = root / "native.png"
                     with patch.object(capture, "run", side_effect=fake_run):
                         if outcome == "success":
-                            capture.native_ios_capture("owned", True, root / "result", destination, (7, 9))
+                            capture.native_companion_capture("owned", True, root / "result", destination, (7, 9))
                         else:
                             with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
-                                capture.native_ios_capture("owned", True, root / "result", destination, (7, 9))
+                                capture.native_companion_capture("owned", True, root / "result", destination, (7, 9))
                     self.assertTrue(temporary)
                     self.assertTrue(all(not path.exists() for path in temporary))
                     self.assertEqual(destination.exists(), outcome == "success")
@@ -435,3 +435,17 @@ class AppStoreCaptureTests(unittest.TestCase):
                     changed["screenPoints"] = [1600, 450]
                 with self.assertRaises(ValueError):
                     capture.native_mac_crop(changed, data)
+
+    def test_vision_test_products_and_configuration_are_bound_to_their_fixture_app(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(capture, "BUILD", Path(folder) / "build"):
+            app = self.make_bundle(platform="visionos")
+            receipt = json.loads(capture.build_receipt("visionos").read_text())
+            products = capture.BUILD / "visionos/Build/Products"
+            path = products / capture.companion_testing_identity("visionos")["xctestrunFile"]
+            configuration = plistlib.loads(path.read_bytes())
+            capture.configure_companion_test_run(configuration, False, "place", platform="visionos")
+            self.assertTrue(capture.verified_build("visionos", receipt))
+            self.assertEqual(configuration["CompanionCaptureUITests"]["EnvironmentVariables"]["CP_CAPTURE_WIDGET"], "place")
+            runner = products / ("Debug-" + capture.SDKS["visionos"]) / "CompanionCaptureUITests-Runner.app/fixture"
+            runner.write_text("changed runner")
+            self.assertFalse(capture.verified_build("visionos", receipt))

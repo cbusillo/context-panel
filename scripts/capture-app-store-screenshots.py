@@ -40,7 +40,7 @@ PROFILES = {
 }
 PROFILES.update({name + "-detail": PROFILES[name] for name in ("iphone", "iphone65", "ipad", "visionpro")})
 PROFILES["watch-accounts"] = PROFILES["watch"]
-PROFILES.update({name + "-widget": PROFILES[name] for name in ("iphone", "iphone65", "ipad")})
+PROFILES.update({name + "-widget": PROFILES[name] for name in ("iphone", "iphone65", "ipad", "visionpro")})
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
 
 
@@ -243,12 +243,13 @@ def prepare() -> None:
     validate_capture_spec(spec, widget_host=TARGETS["ios"])
     tests = "CompanionCaptureUITests"
     spec["targets"][tests] = {
-        "type": "bundle.ui-testing", "platform": "iOS", "deploymentTarget": "17.0",
+        "type": "bundle.ui-testing", "platform": "auto", "supportedDestinations": ["iOS", "visionOS"],
+        "deploymentTarget": {"iOS": "17.0", "visionOS": "26.0"},
         "sources": [{"path": "Tools/ContextPanelAppStoreCapture/CompanionCaptureUITests.swift"},
                     {"path": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift"}],
         "dependencies": [{"target": TARGETS["ios"]}, {"target": "ContextPanelCoreCompanion"}],
         "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "GENERATE_INFOPLIST_FILE": True,
-            "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": TARGETS["ios"], "TARGETED_DEVICE_FAMILY": "1,2"}}}
+            "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": TARGETS["ios"], "TARGETED_DEVICE_FAMILY": "1,2,7"}}}
     spec["schemes"]["CompanionCapture"] = {"build": {"targets": {TARGETS["ios"]: "all", tests: ["test"]}},
         "test": {"targets": [tests]}}
     path = BUILD / "project.yml"
@@ -281,12 +282,12 @@ def build_receipt(platform: str) -> Path:
     return BUILD / platform / "capture-build.json"
 
 
-def ios_testing_identity() -> dict:
-    products = BUILD / "ios/Build/Products"
+def companion_testing_identity(platform: str = "ios") -> dict:
+    products = BUILD / platform / "Build/Products"
     runs = list(products.glob("CompanionCapture_*.xctestrun"))
     if len(runs) != 1:
         raise RuntimeError(f"Expected one built fixture UI test configuration; found {runs}")
-    runner = products / "Debug-iphonesimulator/CompanionCaptureUITests-Runner.app"
+    runner = products / ("Debug-" + SDKS[platform]) / "CompanionCaptureUITests-Runner.app"
     if not runner.is_dir():
         raise RuntimeError("Fixture UI test runner is missing")
     return {"xctestrunFile": runs[0].name, "xctestrunSHA256": hashlib.sha256(runs[0].read_bytes()).hexdigest(),
@@ -295,7 +296,7 @@ def ios_testing_identity() -> dict:
 
 def verified_build(platform: str, receipt: dict) -> bool:
     return (receipt["bundleSHA256"] == bundle_digest(app_path(platform))
-            and (platform != "ios" or receipt.get("uiTesting") == ios_testing_identity()))
+            and (platform not in {"ios", "visionos"} or receipt.get("uiTesting") == companion_testing_identity(platform)))
 
 
 def build(platform: str) -> None:
@@ -303,15 +304,15 @@ def build(platform: str) -> None:
     if not PROJECT.exists() or json.loads((BUILD / "prepared.json").read_text())["sourceCommit"] != source:
         raise SystemExit("Run prepare at the current source commit first")
     build_receipt(platform).unlink(missing_ok=True)
-    run("xcodebuild", "-quiet", "-project", str(PROJECT), "-scheme", "CompanionCapture" if platform == "ios" else TARGETS[platform],
+    run("xcodebuild", "-quiet", "-project", str(PROJECT), "-scheme", "CompanionCapture" if platform in {"ios", "visionos"} else TARGETS[platform],
         "-configuration", "Debug", "-sdk", SDKS[platform],
         "-destination", f"generic/platform={dict(ios='iOS Simulator', visionos='visionOS Simulator', watchos='watchOS Simulator', tvos='tvOS Simulator')[platform]}",
-        "-derivedDataPath", str(BUILD / platform), "CODE_SIGNING_ALLOWED=NO", "build-for-testing" if platform == "ios" else "build", timeout=1800)
+        "-derivedDataPath", str(BUILD / platform), "CODE_SIGNING_ALLOWED=NO", "build-for-testing" if platform in {"ios", "visionos"} else "build", timeout=1800)
     if clean_commit() != source:
         raise SystemExit("Source changed during the build")
     receipt = {"sourceCommit": source, "bundleSHA256": bundle_digest(app_path(platform))}
-    if platform == "ios":
-        receipt["uiTesting"] = ios_testing_identity()
+    if platform in {"ios", "visionos"}:
+        receipt["uiTesting"] = companion_testing_identity(platform)
     build_receipt(platform).write_text(json.dumps(receipt) + "\n")
 
 
@@ -367,7 +368,7 @@ def capture(profile: str, output: Path) -> None:
         created_id = udid
         run(*prefix, "boot", udid)
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
-        if platform != "ios":
+        if platform not in {"ios", "visionos"}:
             run(*prefix, "install", udid, str(app))
         files = []
         launch_arguments = ["--screenshot-detail"] if profile.endswith("-detail") else []
@@ -380,9 +381,10 @@ def capture(profile: str, output: Path) -> None:
                 run(*prefix, "status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi",
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
             path = output / f"{profile}-app-{appearance}.png"
-            if platform == "ios":
-                native_ios_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size,
-                                   widget=("place" if not files else "present") if profile.endswith("-widget") else None)
+            if platform in {"ios", "visionos"}:
+                native_companion_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size,
+                                   widget=("place" if not files else "present") if profile.endswith("-widget") else None,
+                                   platform=platform)
                 staging = "native XCTest simulator screen attachment"
             else:
                 run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]), *launch_arguments)
@@ -401,7 +403,7 @@ def capture(profile: str, output: Path) -> None:
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
             "deviceSet": "CoreSimulator default private storage",
-            "mechanism": "native XCTest simulator framebuffer" if platform == "ios" else "simctl framebuffer via temporary PNG staging; fixture-only capture build",
+            "mechanism": "native XCTest simulator framebuffer" if platform in {"ios", "visionos"} else "simctl framebuffer via temporary PNG staging; fixture-only capture build",
             "images": files,
         }
     except BaseException as error:
@@ -446,7 +448,7 @@ def select_attachments(manifest: list, expected: set[str]) -> dict[str, str]:
     return found
 
 
-def configure_ios_test_run(configuration: dict, detail: bool, widget: str | None = None) -> None:
+def configure_companion_test_run(configuration: dict, detail: bool, widget: str | None = None, platform: str = "ios") -> None:
     if widget not in {None, "place", "present"} or (detail and widget is not None):
         raise ValueError("Select one fixture screen: overview, detail or widget placement")
     if "TestConfigurations" in configuration:
@@ -457,25 +459,26 @@ def configure_ios_test_run(configuration: dict, detail: bool, widget: str | None
     if len(selected) != 1:
         raise RuntimeError("Expected one fixture-only UI test target")
     target = selected[0]
-    expected_app = "__TESTROOT__/" + app_path("ios").relative_to(BUILD / "ios/Build/Products").as_posix()
+    expected_app = "__TESTROOT__/" + app_path(platform).relative_to(BUILD / platform / "Build/Products").as_posix()
     if target.get("UITargetAppPath") != expected_app or target.get("IsUITestBundle") is not True:
         raise RuntimeError("UI test is not associated with the fixture app")
     target.setdefault("EnvironmentVariables", {})["CP_CAPTURE_DETAIL"] = "true" if detail else "false"
     target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"] = widget or ""
 
 
-def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: str | None = None) -> None:
-    products = BUILD / "ios/Build/Products"
-    identity = ios_testing_identity()
+def native_companion_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: str | None = None, platform: str = "ios") -> None:
+    products = BUILD / platform / "Build/Products"
+    identity = companion_testing_identity(platform)
     configuration = plistlib.loads((products / identity["xctestrunFile"]).read_bytes())
-    configure_ios_test_run(configuration, detail, widget)
+    configure_companion_test_run(configuration, detail, widget, platform)
     # Keep relative __TESTROOT__ product paths bound to the verified build tree.
     configured = products / ("capture-" + uuid.uuid4().hex + ".xctestrun")
     directory.mkdir()
     result = directory / "capture.xcresult"
     try:
         configured.write_bytes(plistlib.dumps(configuration))
-        run("xcodebuild", "-quiet", "-derivedDataPath", str(BUILD / "ios-test"), "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={udid}",
+        destination_platform = "visionOS" if platform == "visionos" else "iOS"
+        run("xcodebuild", "-quiet", "-derivedDataPath", str(BUILD / (platform + "-test")), "-xctestrun", str(configured), "-destination", f"platform={destination_platform} Simulator,id={udid}",
             "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
             "-resultBundlePath", str(result), "test-without-building", timeout=600)
     finally:

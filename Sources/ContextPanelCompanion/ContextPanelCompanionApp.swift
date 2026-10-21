@@ -231,6 +231,9 @@ private struct CompanionRootView: View {
                                             ?? geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
+                                    #if CONTEXT_PANEL_SCREENSHOTS
+                                    .accessibilityIdentifier("screenshot-overview")
+                                    #endif
                                 #else
                                 AccountDashboardPanel(overview: accountOverview(at: companionFixedPresentationDate ?? context.date), now: companionFixedPresentationDate ?? context.date,
                                     compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),

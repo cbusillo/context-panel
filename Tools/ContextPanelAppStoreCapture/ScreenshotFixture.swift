@@ -16,10 +16,7 @@ enum ScreenshotFixture {
 
     static let date = ContextPanelDateFormatting.date(from: "2026-10-01T14:07:00Z")!
     static let snapshot: WidgetSnapshot = makeSnapshot()
-    static let result = CompanionSyncLoadResult(
-        document: CompanionSyncDocument(storedSnapshot: stored, publishedAt: date,
-            accountDisplayMetadata: snapshot.accountDisplayMetadata,
-            accountBurnRates: snapshot.accountBurnRates), status: .healthy)
+    static let result = makeCompanionResult()
     static let stored = StoredUsageSnapshot(savedAt: date, snapshot: snapshot.usageSnapshot, reports: snapshot.reports)
 
     static var widgetMaximumAge: TimeInterval {
@@ -34,16 +31,51 @@ enum ScreenshotFixture {
         #if os(macOS)
         snapshot
         #else
-        .fromCompanionSync(result, now: date,
-            stalenessPolicy: .appDefault(maximumAge: widgetMaximumAge))
+        companionWidgetSnapshot
         #endif
     }
 
+    static var companionWidgetSnapshot: WidgetSnapshot {
+        .fromCompanionSync(result, now: date,
+            stalenessPolicy: .appDefault(maximumAge: SnapshotFreshness.companionProviderMaximumAge))
+    }
+
     static var smallWidgetAccountLabels: [String] {
-        widgetSnapshot.accountOverview(now: date, widgetsOnly: true, maximumAge: widgetMaximumAge)
+        smallWidgetAccountLabels(in: widgetSnapshot)
+    }
+
+    static func smallWidgetAccountLabels(in value: WidgetSnapshot) -> [String] {
+        value.accountOverview(now: date, widgetsOnly: true, maximumAge: widgetMaximumAge)
             .widgetPicks.compactMap { pick in
                 pick.account?.glanceAccessibilityText(now: date, isNext: pick.isRecommendation)
             }
+    }
+
+    private static func makeCompanionResult() -> CompanionSyncLoadResult {
+        // Use Core's transport identity conversion for every synthetic account,
+        // metadata row and burn-rate key, just as a companion publication does.
+        let metadata = snapshot.accountDisplayMetadata?.map { entry in
+            let source = snapshot.limits.first {
+                $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
+            }!
+            let transported = CompanionLimit(limit: source)
+            let id = AccountDisplayMetadata.safeID(entry.provider, transported.companionAccountID)
+            return AccountDisplayMetadata(id: id, configurationID: id,
+                provider: entry.provider, label: entry.label, isEnabled: entry.isEnabled,
+                showInWidgets: entry.showInWidgets, useLast: entry.useLast,
+                sourceConfigured: entry.sourceConfigured, readState: entry.readState)
+        }
+        var rates: [String: [String: ObservedBurnRate]] = [:]
+        for source in snapshot.limits {
+            guard let rate = snapshot.accountBurnRates?[source.accountID]?[source.id] else { continue }
+            let transported = CompanionLimit(limit: source).usageLimit
+            rates[transported.accountID, default: [:]][transported.id] = ObservedBurnRate(
+                limitID: transported.id, unitsPerHour: rate.unitsPerHour,
+                observedDurationHours: rate.observedDurationHours, sampleCount: rate.sampleCount)
+        }
+        return CompanionSyncLoadResult(document: CompanionSyncDocument(
+            storedSnapshot: stored, publishedAt: date,
+            accountDisplayMetadata: metadata, accountBurnRates: rates), status: .healthy)
     }
 
     private static func makeSnapshot() -> WidgetSnapshot {

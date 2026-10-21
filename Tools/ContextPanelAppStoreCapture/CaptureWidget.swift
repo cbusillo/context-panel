@@ -25,6 +25,9 @@ private struct CaptureWidgetContent: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
+        #if os(visionOS)
+        let dark = CompanionAppearanceSettings.defaultSettings.resolvedVisionOSWidgetAppearance == .dark
+        #endif
         ContextPanelWidgetContentView(
             family: family,
             snapshot: ScreenshotFixture.widgetSnapshot,
@@ -41,6 +44,11 @@ private struct CaptureWidgetContent: View {
             .environment(\.locale, ScreenshotFixture.locale)
             .environment(\.timeZone, ScreenshotFixture.timeZone)
             .containerBackground(CPWTheme.surface, for: .widget)
+            #if os(visionOS)
+            .cpwThemeVariant(dark ? .dark : .light)
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .preferredColorScheme(dark ? .dark : .light)
+            #endif
     }
 }
 
