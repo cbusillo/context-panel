@@ -32,6 +32,11 @@ enum MacCaptureApplication {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         app.presentationOptions = [.hideDock, .hideMenuBar]
+        if arguments.contains("widgets") {
+            app.activate(ignoringOtherApps: true)
+            app.run()
+            return
+        }
         let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         let frame = NSRect(x: 40, y: 40, width: 1280, height: 800)
         guard NSScreen.screens.contains(where: { $0.frame.contains(frame) }) else {

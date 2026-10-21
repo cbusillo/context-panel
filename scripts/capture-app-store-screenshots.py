@@ -165,9 +165,16 @@ def fixture_widget_spec(host: str, mac: bool = False) -> dict:
         "info": {"path": str(BUILD / (host + "-Widget-Info.plist")), "properties": {
             "CFBundleDisplayName": "Context Panel", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1", "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"}}},
-        "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "PRODUCT_NAME": "CaptureWidget",
+        "settings": {"base": {**fixture_signing(mac, extension=mac), "PRODUCT_NAME": "CaptureWidget",
             "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(host) + ".widget", "SKIP_INSTALL": True,
             "APPLICATION_EXTENSION_API_ONLY": True, **({} if mac else {"TARGETED_DEVICE_FAMILY": "1,2,7"})}}}
+
+
+def fixture_signing(mac: bool, extension: bool = False) -> dict:
+    if not mac:
+        return {"CODE_SIGNING_ALLOWED": "NO"}
+    return {"CODE_SIGNING_ALLOWED": "YES", "CODE_SIGN_IDENTITY": "-",
+            **({"CODE_SIGN_ENTITLEMENTS": str(BUILD / "CaptureWidget.entitlements")} if extension else {})}
 
 
 def add_fixture_widget(spec: dict, host: str, mac: bool = False) -> None:
@@ -183,14 +190,15 @@ def validate_capture_spec(spec: dict, roots: set[str] | None = None, widget_host
         embeds = [d for d in spec["targets"][widget_host]["dependencies"] if d.get("embed")]
         if embeds != [{"target": "CaptureWidget", "embed": True}]:
             raise ValueError("Fixture host must embed exactly its fixture widget")
-    for settings in [spec["settings"], *(target["settings"] for target in spec["targets"].values())]:
+    mac_widgets = widget_host == "MacCaptureApp"
+    for name, settings in [(None, spec["settings"]), *((name, target["settings"]) for name, target in spec["targets"].items())]:
         if settings.get("configs"):
             raise ValueError("Capture projects cannot inherit shipping configuration overrides")
-        for key, value in settings["base"].items():
-            if key == "CODE_SIGNING_ALLOWED" and value == "NO":
-                continue
-            if key.startswith(("CODE_SIGN", "PROVISIONING_PROFILE")) or key == "DEVELOPMENT_TEAM":
-                raise ValueError("Capture projects cannot carry signing or provisioning settings")
+        signing = {key: value for key, value in settings["base"].items()
+                   if key.startswith(("CODE_SIGN", "PROVISIONING_PROFILE")) or key == "DEVELOPMENT_TEAM"}
+        expected = fixture_signing(mac_widgets and name in {widget_host, "CaptureWidget"}, extension=name == "CaptureWidget" and mac_widgets)
+        if signing != expected:
+            raise ValueError("Capture projects permit only unsigned simulators or exact hosted fixture ad-hoc signing")
     for name, target in spec["targets"].items():
         if name == "CaptureWidget" and widget_host in roots:
             if target != fixture_widget_spec(widget_host, spec["targets"][widget_host]["platform"] == "macOS"):
@@ -481,13 +489,18 @@ def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Pa
         stream.write(data)
 
 
-def rgb_image(source: Path, destination: Path) -> None:
+def rgb_image(source: Path, destination: Path, crop: tuple[int, int, int, int] | None = None) -> None:
     from PIL import Image
     import io
     with Image.open(source) as image:
         rgba = image.convert("RGBA")
         if rgba.getchannel("A").getextrema() != (255, 255):
             raise SystemExit("Refusing to flatten a transparent capture")
+        if crop is not None:
+            left, top, right, bottom = crop
+            if not (0 <= left < right <= rgba.width and 0 <= top < bottom <= rgba.height):
+                raise SystemExit("Native capture does not contain the requested crop")
+            rgba = rgba.crop(crop)
         output = io.BytesIO()
         rgba.convert("RGB").save(output, format="PNG", icc_profile=image.info.get("icc_profile"))
     with destination.open("xb") as stream:
@@ -517,7 +530,9 @@ def hosted_macos_capture(output: Path) -> None:
         "dependencies": [{"target": "MacFixtureViews"}, *libraries],
         "settings": {"base": {"PRODUCT_NAME": "Context Panel Fixture", "GENERATE_INFOPLIST_FILE": True}}}
     spec = capture_spec(original, {app})
-    validate_capture_spec(spec, {app})
+    spec["targets"][app]["settings"]["base"].update(fixture_signing(True))
+    add_fixture_widget(spec, app, mac=True)
+    validate_capture_spec(spec, {app}, widget_host=app)
     spec["targets"][tests] = {
         "type": "bundle.ui-testing", "platform": "macOS", "deploymentTarget": "14.0",
         "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureUITests.swift"},
@@ -530,6 +545,7 @@ def hosted_macos_capture(output: Path) -> None:
             "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}}}
     directory = BUILD / "macos-project"
     directory.mkdir(parents=True, exist_ok=True)
+    (BUILD / "CaptureWidget.entitlements").write_bytes(plistlib.dumps({"com.apple.security.app-sandbox": True}))
     path = directory / "project.yml"
     path.write_text(yaml.safe_dump(spec, sort_keys=False))
     run("xcodegen", "generate", "--spec", str(path), "--project", str(directory), "--project-root", str(ROOT))
@@ -538,22 +554,25 @@ def hosted_macos_capture(output: Path) -> None:
     run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
         "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
         "-derivedDataPath", str(BUILD / "macos-ci"), "-resultBundlePath", str(result),
-        "CODE_SIGNING_ALLOWED=NO", "test", timeout=1200)
+        "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-", "-collect-test-diagnostics", "never", "test", timeout=1200)
     exported = output / "attachments"
     run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
     expected = {f"mac-{mode}-{appearance}" for mode in ("overview", "detail") for appearance in ("light", "dark")}
+    expected.add("mac-widget-desktop")
     images = []
     found = select_attachments(json.loads((exported / "manifest.json").read_text()), expected)
     for name, filename in found.items():
         destination = output / (name + ".png")
         raw = exported / filename
-        rgb_image(raw, destination)
+        crop = (0, 0, 1440, 900) if name == "mac-widget-desktop" else None
+        rgb_image(raw, destination, crop=crop)
         data = destination.read_bytes()
         width, height = struct.unpack(">II", data[16:24])
-        if (width, height) not in {(1280, 800), (2560, 1600)}:
+        if (width, height) not in {(1280, 800), (1440, 900), (2560, 1600)}:
             raise SystemExit(f"Unexpected native Mac window size: {width}x{height}")
         images.append({"file": destination.name, "width": width, "height": height,
-                       "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest()})
+                       "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest(),
+                       "crop": list(crop) if crop else None})
     expected -= set(found)
     if expected or clean_commit() != source:
         raise SystemExit(f"Missing native captures or changed source: {expected}")

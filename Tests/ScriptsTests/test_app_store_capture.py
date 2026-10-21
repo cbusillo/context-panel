@@ -395,3 +395,24 @@ class AppStoreCaptureTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         capture.validate_capture_spec(model, widget_host=host)
+
+    def test_hosted_widget_signing_cannot_use_a_team_profile_or_shipping_entitlements(self):
+        host = "MacCaptureApp"
+        original = {"name": "Fixture", "options": {}, "targets": {
+            host: {"type": "application", "platform": "macOS", "sources": [], "settings": {"base": {}}}}}
+        for fault in (None, "team", "identity", "entitlements"):
+            with self.subTest(fault=fault):
+                model = capture.capture_spec(original, {host})
+                model["targets"][host]["settings"]["base"].update(capture.fixture_signing(True))
+                capture.add_fixture_widget(model, host, mac=True)
+                if fault == "team":
+                    model["targets"][host]["settings"]["base"]["DEVELOPMENT_TEAM"] = "production-team"
+                elif fault == "identity":
+                    model["targets"][host]["settings"]["base"]["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+                elif fault == "entitlements":
+                    model["targets"]["CaptureWidget"]["settings"]["base"]["CODE_SIGN_ENTITLEMENTS"] = "production.entitlements"
+                if fault is None:
+                    capture.validate_capture_spec(model, {host}, widget_host=host)
+                else:
+                    with self.assertRaises(ValueError):
+                        capture.validate_capture_spec(model, {host}, widget_host=host)
