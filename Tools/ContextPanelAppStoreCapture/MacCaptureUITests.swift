@@ -93,13 +93,31 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertFalse(done.exists)
         let placed = NSPredicate(format: "identifier BEGINSWITH %@ AND identifier CONTAINS %@",
             "widget-local:", ScreenshotFixture.widgetKind)
-        let widgetHost = try XCTUnwrap(findOwner(stage: "placed-widget", baseline: baseline, interactive: false) {
-            $0.windows.containing(placed).firstMatch
-        }).app
-        record(widgetHost, name: "widget-placed")
-        let widgets = widgetHost.windows.containing(placed).allElementsBoundByIndex
-        XCTAssertEqual(widgets.count, families.count)
-        for widget in widgets { _ = try waitForWidgetPixels(widget) }
+        record(gallery, name: "desktop-after-placement")
+        let groups = gallery.groups.matching(placed)
+        let rendered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == %d", families.count), object: groups)
+        XCTAssertEqual(XCTWaiter.wait(for: [rendered], timeout: 60), .completed)
+        let owners = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == galleryMatch.identifier }
+        XCTAssertEqual(owners.count, 1)
+        let ownerPID = try XCTUnwrap(owners.first).processIdentifier
+        let nativeWindows: [(number: Int, frame: CGRect)] = visibleWindows().compactMap { window in
+            guard window[kCGWindowOwnerPID as String] as? pid_t == ownerPID,
+                  let number = window[kCGWindowNumber as String] as? Int, !baseline.contains(number),
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+            return (number, frame)
+        }
+        let widgets = try groups.allElementsBoundByIndex.map { group -> (number: Int, frame: CGRect) in
+            let matches = nativeWindows.filter { $0.frame.contains(group.frame) }
+            XCTAssertEqual(matches.count, 1, "Each placed fixture group must belong to one new native window")
+            return try XCTUnwrap(matches.first)
+        }
+        XCTAssertEqual(Set(widgets.map(\.number)).count, families.count)
+        XCTAssertTrue(desktop.frame.contains(center))
+        XCTAssertTrue(widgets.allSatisfy { !$0.frame.contains(center) })
+        nativeCoordinate(center, relativeTo: reference).hover()
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        for widget in widgets { _ = try waitForWidgetPixels(widget.frame) }
         let screenshot = XCUIScreen.main.screenshot()
         let display = CGMainDisplayID()
         let points = CGDisplayBounds(display).size
@@ -121,7 +139,7 @@ final class MacCaptureUITests: XCTestCase {
         app.terminate()
     }
 
-    private func waitForWidgetPixels(_ widget: XCUIElement) throws -> XCUIScreenshot {
+    private func waitForWidgetPixels(_ frame: CGRect) throws -> XCUIScreenshot {
         let deadline = Date().addingTimeInterval(30)
         repeat {
             let screenshot = XCUIScreen.main.screenshot()
@@ -131,7 +149,7 @@ final class MacCaptureUITests: XCTestCase {
             XCTAssertEqual(image.height, CGDisplayPixelsHigh(display))
             let bounds = CGDisplayBounds(display)
             let scale = CGFloat(image.width) / bounds.width
-            let crop = widget.frame.offsetBy(dx: -bounds.minX, dy: -bounds.minY)
+            let crop = frame.offsetBy(dx: -bounds.minX, dy: -bounds.minY)
                 .applying(CGAffineTransform(scaleX: scale, y: scale))
             let pixels = try XCTUnwrap(image.cropping(to: crop))
             let request = VNRecognizeTextRequest()
@@ -213,7 +231,7 @@ final class MacCaptureUITests: XCTestCase {
         }
     }
 
-    private func findOwner(stage: String, baseline: Set<Int>, interactive: Bool = true,
+    private func findOwner(stage: String, baseline: Set<Int>,
                            query: (XCUIApplication) -> XCUIElement)
         -> (identifier: String, app: XCUIApplication, element: XCUIElement)? {
         let processes = NSWorkspace.shared.runningApplications.map {
@@ -235,7 +253,7 @@ final class MacCaptureUITests: XCTestCase {
             for (identifier, app) in hosts where app.state != .notRunning {
                 if Date() >= deadline { break }
                 let element = query(app)
-                if element.exists && !element.frame.isEmpty && (!interactive || element.isHittable) {
+                if element.exists && !element.frame.isEmpty && element.isHittable {
                     found = (identifier, app, element)
                     break
                 }

@@ -546,7 +546,7 @@ def native_mac_crop(geometry: dict, data: bytes) -> tuple[int, int, int, int]:
         raise ValueError("Native display point-to-pixel scales disagree")
     if not any(math.isclose(scale, supported) for supported in (1, 2)):
         raise ValueError("Native desktop scale has no supported App Store crop")
-    crop = (0, 0, round(1440 * scale), round(900 * scale))
+    crop = (0, 0, round(1280 * scale), round(800 * scale))
     if pixels[0] < crop[2] or pixels[1] < crop[3]:
         raise ValueError("Native desktop is smaller than the complete screenshot region")
     for box in boxes:
