@@ -27,9 +27,9 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 90))
         let identifier = capturesDetail ? "screenshot-detail" : "screenshot-overview"
         let content = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-        let contentExists = content.waitForExistence(timeout: 90)
+        _ = content.waitForExistence(timeout: 90)
         recordHierarchy(app, name: capturesDetail ? "detail" : "overview")
-        XCTAssertTrue(contentExists)
+        XCTAssertTrue(content.exists)
         XCTAssertTrue(app.frame.intersects(content.frame))
         let widgetMode = ProcessInfo.processInfo.environment["CP_CAPTURE_WIDGET"] ?? ""
         if !widgetMode.isEmpty {
@@ -58,19 +58,19 @@ final class CompanionCaptureUITests: XCTestCase {
         search.typeText("Context Panel")
         let result = gallery.collectionViews["LibraryAppsListView"].cells
             .containing(.staticText, identifier: "Context Panel").firstMatch
-        let found = result.waitForExistence(timeout: 30)
+        _ = result.waitForExistence(timeout: 30)
         recordHierarchy(gallery, name: "spatial-widget-search")
-        XCTAssertTrue(found)
+        XCTAssertTrue(result.exists)
         result.tap()
         let add = addWidgetButton(gallery)
-        let preview = add.waitForExistence(timeout: 30)
+        _ = add.waitForExistence(timeout: 30)
         recordHierarchy(gallery, name: "spatial-widget-preview")
-        XCTAssertTrue(preview)
+        XCTAssertTrue(add.exists)
         add.tap()
         let done = gallery.buttons["Done"].firstMatch
-        let placed = done.waitForExistence(timeout: 30)
+        _ = done.waitForExistence(timeout: 30)
         recordHierarchy(gallery, name: "spatial-widget-placement")
-        XCTAssertTrue(placed)
+        XCTAssertTrue(done.exists)
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 15))
         recordHierarchy(gallery, name: "spatial-after-done")
@@ -141,43 +141,43 @@ final class CompanionCaptureUITests: XCTestCase {
 
     private func addFixtureWidget(_ home: XCUIApplication) throws {
         let background = home.otherElements["Home screen icons"].firstMatch
-        let foundBackground = background.waitForExistence(timeout: 30)
+        _ = background.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "home")
-        XCTAssertTrue(foundBackground)
+        XCTAssertTrue(background.exists)
         background.press(forDuration: 2)
         let edit = home.buttons["Edit"].firstMatch
-        let foundToolbar = edit.waitForExistence(timeout: 10)
+        _ = edit.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "home-edit")
-        XCTAssertTrue(foundToolbar)
+        XCTAssertTrue(edit.exists)
         try showFirstHomePage(home)
         try removeStockWidgetsIfPresent(home)
         edit.tap()
         let addWidget = addWidgetButton(home)
-        let foundAdd = addWidget.waitForExistence(timeout: 10)
+        _ = addWidget.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "edit-menu")
-        XCTAssertTrue(foundAdd)
+        XCTAssertTrue(addWidget.exists)
         addWidget.tap()
         let search = home.searchFields.firstMatch
-        let foundSearch = search.waitForExistence(timeout: 30)
+        _ = search.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "widget-gallery")
-        XCTAssertTrue(foundSearch)
+        XCTAssertTrue(search.exists)
         search.tap()
         search.typeText("Context Panel")
         let result = home.cells["Context Panel"].firstMatch
-        let foundResult = result.waitForExistence(timeout: 30)
+        _ = result.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "widget-search")
-        XCTAssertTrue(foundResult)
+        XCTAssertTrue(result.exists)
         result.tap()
         let add = addWidgetButton(home)
-        let foundPreview = add.waitForExistence(timeout: 30)
+        _ = add.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "widget-preview")
-        XCTAssertTrue(foundPreview)
+        XCTAssertTrue(add.exists)
         add.tap()
         XCTAssertTrue(add.waitForNonExistence(timeout: 15))
         let done = home.buttons["Done"].firstMatch
-        let foundDone = done.waitForExistence(timeout: 10)
+        _ = done.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "widget-added")
-        XCTAssertTrue(foundDone)
+        XCTAssertTrue(done.exists)
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 10))
     }
@@ -194,9 +194,9 @@ final class CompanionCaptureUITests: XCTestCase {
             XCTAssertTrue(home.frame.contains(widget.frame))
             widget.buttons["DeleteButton"].tap()
             let confirmation = home.alerts.firstMatch
-            let found = confirmation.waitForExistence(timeout: 10)
+            _ = confirmation.waitForExistence(timeout: 10)
             recordHierarchy(home, name: "remove-stock-" + name)
-            XCTAssertTrue(found)
+            XCTAssertTrue(confirmation.exists)
             let remove = confirmation.buttons["Remove"].firstMatch
             XCTAssertTrue(remove.exists)
             remove.tap()

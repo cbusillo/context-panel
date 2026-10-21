@@ -586,10 +586,21 @@ def hosted_macos_capture(output: Path) -> None:
     run("xcodegen", "generate", "--spec", str(path), "--project", str(directory), "--project-root", str(ROOT))
     output.mkdir(parents=True)
     result = output / "capture.xcresult"
-    run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
-        "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
-        "-derivedDataPath", str(BUILD / "macos-ci"), "-resultBundlePath", str(result),
-        "-collect-test-diagnostics", "never", "test", timeout=1200)
+    try:
+        run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
+            "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
+            "-derivedDataPath", str(BUILD / "macos-ci"), "-resultBundlePath", str(result),
+            "-collect-test-diagnostics", "never", "test", timeout=1200)
+    except BaseException as error:
+        try:
+            events = run("log", "show", "--style", "ndjson", "--last", "10m", "--predicate",
+                         'process IN {"WindowManager", "NotificationCenter", "chronod", "CaptureWidget"} OR subsystem BEGINSWITH "com.apple.chrono" OR eventMessage CONTAINS[c] "com.apple.notificationcenterui"', timeout=60)
+            (output / "widget-events.ndjson").write_text(events)
+            disabled = run("launchctl", "print-disabled", f"gui/{os.getuid()}")
+            (output / "disabled-services.txt").write_text(disabled)
+        except BaseException as diagnostic_error:
+            error.add_note(f"Isolated hosted widget log collection failed: {diagnostic_error}")
+        raise
     exported = output / "attachments"
     run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
     expected = {f"mac-{mode}-{appearance}" for mode in ("overview", "detail") for appearance in ("light", "dark")}
