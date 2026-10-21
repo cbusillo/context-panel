@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "approval": "unapproved; incomplete set; no ready or upload",
-  "sourceCommit": "9ecdd7303376752847b09f5ff88c61def3f63a2a",
+  "sourceCommit": "77a3cc65960b10af706a1fe51cdc6548d9c95c46",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "hostOS": "27.2",
   "xcode": "Xcode 27.0\nBuild version 27A266a",
