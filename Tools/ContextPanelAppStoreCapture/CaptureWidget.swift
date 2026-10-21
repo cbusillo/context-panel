@@ -57,7 +57,7 @@ struct CaptureWidget: Widget {
     init() { ScreenshotFixture.configureProcess() }
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "ContextPanelFixture", provider: CaptureProvider()) { _ in
+        StaticConfiguration(kind: ScreenshotFixture.widgetKind, provider: CaptureProvider()) { _ in
             CaptureWidgetContent()
         }
         .configurationDisplayName("Context Panel")

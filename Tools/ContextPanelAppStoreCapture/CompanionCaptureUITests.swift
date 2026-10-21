@@ -1,5 +1,8 @@
 import ContextPanelCore
 import XCTest
+#if os(visionOS)
+import Vision
+#endif
 
 @MainActor
 final class CompanionCaptureUITests: XCTestCase {
@@ -69,18 +72,51 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(gallery, name: "spatial-widget-placement")
         XCTAssertTrue(placed)
         done.tap()
-        XCTAssertTrue(add.waitForNonExistence(timeout: 15))
-        let label = try XCTUnwrap(ScreenshotFixture.smallWidgetAccountLabels.first)
-        let hosts = [gallery, XCUIApplication(bundleIdentifier: "com.apple.chrono.WidgetRenderer-Default"),
-                     XCUIApplication(bundleIdentifier: "com.apple.RealityLauncher")]
-        let predicate = NSPredicate(format: "label == %@", label)
-        let host = try XCTUnwrap(hosts.first(where: {
-            $0.descendants(matching: .any).matching(predicate).firstMatch.waitForExistence(timeout: 15)
-        }))
-        recordHierarchy(host, name: "spatial-widget-placed")
-        for label in ScreenshotFixture.smallWidgetAccountLabels {
-            XCTAssertTrue(host.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch.exists)
+        XCTAssertTrue(done.waitForNonExistence(timeout: 15))
+        recordHierarchy(gallery, name: "spatial-after-done")
+        let chrome = XCUIApplication(bundleIdentifier: "com.apple.RealityChrome")
+        recordHierarchy(chrome, name: "spatial-window-chrome")
+        let widget = gallery.windows.matching(NSPredicate(format: "identifier ENDSWITH %@",
+            " - " + ScreenshotFixture.widgetKind)).firstMatch
+        XCTAssertTrue(widget.waitForExistence(timeout: 30))
+        try waitForSpatialWidgetPixels(widget)
+        recordHierarchy(gallery, name: "spatial-widget-placed")
+    }
+
+    private func waitForSpatialWidgetPixels(_ widget: XCUIElement) throws {
+        let names = ScreenshotFixture.smallWidgetAccountNames
+        XCTAssertFalse(names.isEmpty)
+        let deadline = Date().addingTimeInterval(30)
+        var evidence: XCUIScreenshot?
+        var recognized = ""
+        var ready = false
+        repeat {
+            let screenshot = widget.screenshot()
+            evidence = screenshot
+            let image = try XCTUnwrap(screenshot.image.cgImage)
+            XCTAssertEqual(Double(image.width) / Double(image.height),
+                           Double(widget.frame.width / widget.frame.height), accuracy: 0.01)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            recognized = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let compact = recognized.replacingOccurrences(of: " ", with: "").lowercased()
+            ready = names.allSatisfy { compact.contains($0.replacingOccurrences(of: " ", with: "").lowercased()) }
+            if ready { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        } while Date() < deadline
+        let text = XCTAttachment(string: recognized)
+        text.name = "placed-widget-recognized-text"
+        text.lifetime = .keepAlways
+        add(text)
+        if let evidence {
+            let image = XCTAttachment(screenshot: evidence)
+            image.name = "placed-widget-plane"
+            image.lifetime = .keepAlways
+            add(image)
         }
+        XCTAssertTrue(ready, "The placed widget must render its fixture account names")
     }
     #endif
 
@@ -114,6 +150,7 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(home, name: "home-edit")
         XCTAssertTrue(foundToolbar)
         try showFirstHomePage(home)
+        try removeStockWidgetsIfPresent(home)
         edit.tap()
         let addWidget = addWidgetButton(home)
         let foundAdd = addWidget.waitForExistence(timeout: 10)
@@ -143,6 +180,28 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(foundDone)
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 10))
+    }
+
+    private func removeStockWidgetsIfPresent(_ home: XCUIApplication) throws {
+        let icons = home.otherElements["Home screen icons"].icons
+        func stock(_ name: String) -> XCUIElement {
+            icons.matching(NSPredicate(format: "label == %@ AND value CONTAINS %@", name, "Widget")).firstMatch
+        }
+        guard stock("News").exists else { return }
+        for name in ["News", "Reminders", "Calendar"] {
+            let widget = stock(name)
+            XCTAssertTrue(widget.exists)
+            XCTAssertTrue(home.frame.contains(widget.frame))
+            widget.buttons["DeleteButton"].tap()
+            let confirmation = home.alerts.firstMatch
+            let found = confirmation.waitForExistence(timeout: 10)
+            recordHierarchy(home, name: "remove-stock-" + name)
+            XCTAssertTrue(found)
+            let remove = confirmation.buttons["Remove"].firstMatch
+            XCTAssertTrue(remove.exists)
+            remove.tap()
+            XCTAssertTrue(widget.waitForNonExistence(timeout: 10))
+        }
     }
 
     private func showFirstHomePage(_ home: XCUIApplication) throws {

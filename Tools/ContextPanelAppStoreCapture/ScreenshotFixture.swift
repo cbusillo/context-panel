@@ -3,6 +3,7 @@ import Foundation
 
 // Compiled into disposable capture targets only. No stores, credentials, or network.
 enum ScreenshotFixture {
+    static let widgetKind = "ContextPanelFixture"
     static let locale = Locale(identifier: "en_US")
     static let timeZone = TimeZone.gmt
     static func configureProcess() {
@@ -42,6 +43,11 @@ enum ScreenshotFixture {
 
     static var smallWidgetAccountLabels: [String] {
         smallWidgetAccountLabels(in: widgetSnapshot)
+    }
+
+    static var smallWidgetAccountNames: [String] {
+        widgetSnapshot.accountOverview(now: date, widgetsOnly: true, maximumAge: widgetMaximumAge)
+            .widgetPicks.compactMap { $0.account?.metadata.label }
     }
 
     static func smallWidgetAccountLabels(in value: WidgetSnapshot) -> [String] {

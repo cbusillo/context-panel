@@ -409,6 +409,14 @@ def capture(profile: str, output: Path) -> None:
         }
     except BaseException as error:
         primary_error = error
+        if profile.endswith("-widget") and created_id is not None:
+            try:
+                events = run(*prefix, "spawn", created_id, "log", "show", "--style", "ndjson", "--last", "15m",
+                             "--predicate", 'process IN {"chronod", "RealityWidgets", "CaptureWidget"} OR subsystem BEGINSWITH "com.apple.chrono" OR subsystem == "com.apple.WidgetKit"',
+                             timeout=60)
+                (output / "widget-events.ndjson").write_text(events)
+            except BaseException as diagnostic_error:
+                error.add_note(f"Owned widget event log collection failed: {diagnostic_error}")
         raise
     finally:
         try:

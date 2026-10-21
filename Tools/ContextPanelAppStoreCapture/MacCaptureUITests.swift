@@ -1,6 +1,7 @@
 import ContextPanelCore
 import AppKit
 import CoreGraphics
+import Vision
 import XCTest
 
 @MainActor
@@ -25,8 +26,7 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(desktop.waitForExistence(timeout: 15))
         let baseline = Set(visibleWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
         desktop.rightClick()
-        finder.typeKey("e", modifierFlags: [])
-        finder.typeKey(.return, modifierFlags: [])
+        try clickVisibleWidgetMenu(desktop)
         let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search", baseline: baseline) { $0.searchFields.firstMatch })
         let gallery = galleryMatch.app
         let search = galleryMatch.element
@@ -80,6 +80,43 @@ final class MacCaptureUITests: XCTestCase {
 
     private func visibleWindows() -> [[String: Any]] {
         CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+    }
+
+    private func clickVisibleWidgetMenu(_ desktop: XCUIElement) throws {
+        let screenshot = XCUIScreen.main.screenshot()
+        let image = try XCTUnwrap(screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let display = CGMainDisplayID()
+        XCTAssertEqual(image.width, CGDisplayPixelsWide(display))
+        XCTAssertEqual(image.height, CGDisplayPixelsHigh(display))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        let observations = request.results ?? []
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }
+        let metadata = XCTAttachment(string: text.joined(separator: "\n"))
+        metadata.name = "native-menu-recognized-text"
+        metadata.lifetime = .keepAlways
+        add(metadata)
+        let frame = XCTAttachment(screenshot: screenshot)
+        frame.name = "native-menu"
+        frame.lifetime = .keepAlways
+        add(frame)
+        let matches = observations.filter {
+            $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("Edit Widgets") == true
+        }
+        XCTAssertEqual(matches.count, 1)
+        let box = try XCTUnwrap(matches.first).boundingBox
+        let bounds = CGDisplayBounds(display)
+        let point = CGPoint(x: bounds.minX + box.midX * bounds.width,
+                            y: bounds.minY + (1 - box.midY) * bounds.height)
+        XCTAssertTrue(desktop.frame.contains(point))
+        let transform = XCTAttachment(string: "pixels=\(image.width)x\(image.height) displayPoints=\(bounds) OCRBox=\(box) click=\(point)")
+        transform.name = "native-menu-pixel-to-point-transform"
+        transform.lifetime = .keepAlways
+        add(transform)
+        desktop.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: point.x - desktop.frame.minX, dy: point.y - desktop.frame.minY)).click()
     }
 
     private func windowHosts(baseline: Set<Int>) -> [(String, XCUIApplication)] {
