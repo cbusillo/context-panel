@@ -363,6 +363,8 @@ class AppStoreCaptureTests(unittest.TestCase):
                         if args[0] == "xcodebuild":
                             if not passes:
                                 raise subprocess.CalledProcessError(65, args)
+                        elif "launch" in args:
+                            self.assertEqual(args[3:5], ("owned", capture.bundle_id(capture.TARGETS["visionos"])))
                         else:
                             exported = Path(args[-1])
                             exported.mkdir()
@@ -380,7 +382,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                         path.write_bytes(data)
                         return "system temporary directory"
 
-                    with patch.object(capture, "run", side_effect=fake_run), patch.object(capture, "capture_png", side_effect=framebuffer) as save:
+                    with patch.object(capture, "run", side_effect=fake_run), patch.object(capture.time, "sleep"), patch.object(capture, "capture_png", side_effect=framebuffer) as save:
                         if passes:
                             capture.native_companion_capture("owned", False, root / "result", destination, (7, 9), "place", "visionos")
                             self.assertEqual(destination.read_bytes(), data)

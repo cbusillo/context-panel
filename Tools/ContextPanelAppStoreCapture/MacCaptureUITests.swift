@@ -225,7 +225,9 @@ final class MacCaptureUITests: XCTestCase {
             evidence.name = ordinaryWidget ? "ordinary-featured-photos-widget" : "unexpected-system-dialog"
             evidence.lifetime = .keepAlways
             self.add(evidence)
-            if ordinaryWidget { return false }
+            // This is a desktop widget, not an interruption. Claim it so XCTest
+            // does not try its Notification Center swipe-to-dismiss handler.
+            if ordinaryWidget { return true }
             XCTFail("Capture stopped at an unexpected system dialog: \(alert.label)")
             return true // Prevent the default interruption handler from dismissing it.
         }

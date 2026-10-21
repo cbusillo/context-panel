@@ -498,6 +498,11 @@ def native_companion_capture(udid: str, detail: bool, directory: Path, destinati
     if platform == "visionos":
         # xrOS XCTest exports a 1x1 screen attachment. Use the Q605 framebuffer
         # transport after successful native scene placement, without rescaling.
+        # XCTest teardown exposes Home. Reactivate only our fixture app; the
+        # placed WidgetKit scene persists independently of its gallery.
+        run("xcrun", "simctl", "launch", udid, bundle_id(TARGETS[platform]),
+            *(["--screenshot-detail"] if detail else []))
+        time.sleep(6)
         return capture_png(("xcrun", "simctl"), udid, bundle_id(TARGETS[platform]), destination, size)
     found = select_attachments(json.loads((exported / "manifest.json").read_text()), {"native-fixture"})
     data = (exported / found["native-fixture"]).read_bytes()
