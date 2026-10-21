@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "approval": "unapproved native app and widget candidates; remaining WidgetKit placements in progress; no ready/upload/submission",
+  "approval": "unapproved native app and widget candidates; Mac WidgetKit placement in progress; no ready/upload/submission",
   "fixtureSource": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift at each recorded sourceCommit",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "assets": [
@@ -432,6 +432,29 @@
       "cleanup": "owned simulator deleted; absence verified",
       "presentation": "overview",
       "surface": "visionos.app"
+    },
+    {
+      "file": "visionpro-widget-dark.png",
+      "width": 3840,
+      "height": 2160,
+      "appearance": "dark",
+      "staging": "system temporary directory",
+      "rawSHA256": "2bbc9b4c2a9edc8e96be9ce942c496c9149a0429b7c8752064d035bb4781b2d7",
+      "sha256": "73ed6ae01f052483390d5df791ee0377a16d89fd5b49861c49852df25efe4747",
+      "sourceCommit": "b50d3f167366197a5c160c0209adcdc3dd12ecb0",
+      "bundleSHA256": "f79034a6ac4dba5c17fc67525a5769ff69a5c074e8221596718ecc6fc9120a93",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_xrsimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "4ead7b90edb1fa277c2df3ebd3354ab130926a1e276662f41d71f99ee8a1a36d",
+        "runnerSHA256": "6930edf4d48b4f2a388bb5d8d2a7ff0ec544235420c521f412131c481279e44c"
+      },
+      "runtime": "xrOS-27-0",
+      "mechanism": "native XCTest scene placement/navigation; simctl framebuffer via temporary PNG staging",
+      "profile": "visionpro-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "presentation": "native spatial widget and app overview",
+      "surface": "visionos.widget",
+      "visualReview": "Actual placed WidgetKit scene beside the native fixture app in the stock simulator room; gallery and Home dismissed; native glass appearance retained."
     },
     {
       "file": "watch-accounts-dark.png",

@@ -26,6 +26,7 @@ spatial app window in the simulator's stock room environment.
 | Watch Studio account card | — | [Image](watch-accounts-dark.png) |
 | Vision Pro spatial overview | — | [Image](visionpro-overview-dark.png) |
 | Vision Pro spatial Studio detail | — | [Image](visionpro-detail-dark.png) |
+| Vision Pro actual spatial widget and app | — | [Image](visionpro-widget-dark.png) |
 | Apple TV native Accounts board | — | [Image](tvos-overview-dark.png) |
 
 [manifest.json](manifest.json) records every image's dimensions, SHA-256,
@@ -43,7 +44,7 @@ account, credential, saved production snapshot, CloudKit subscription or
 provider refresh supplies these images. They are image review evidence, not
 signed-runtime or physical-device qualification.
 
-Home-screen samples, cropped Mac frames and incomplete capture runs are
+Rejected Home-screen samples, incomplete Mac crops and failed capture runs are
 excluded. Every selected image was checked for the intended native screen,
 forecast and account text, clipping, contrast and OS context. Vision Pro uses
 one app-owned dark appearance; duplicate light-labelled frames are excluded.
@@ -53,7 +54,6 @@ one app-owned dark appearance; duplicate light-labelled frames are excluded.
 | Surface | Next capture |
 | --- | --- |
 | Mac widgets | Actual fixture-only WidgetKit placement on the isolated hosted Mac |
-| Vision Pro widgets | Actual spatial WidgetKit placement in an owned fixture simulator |
 
 The app-window and shared-view images do not establish WidgetKit placement.
 Never use Chris's running apps, desktop, browser or real account data to fill

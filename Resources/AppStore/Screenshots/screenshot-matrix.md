@@ -3,9 +3,9 @@
 ## Horizon Native App Review Candidates
 
 The [native capture index](horizon-capture/README.md) contains fixture-only,
-OS-composited Horizon app images for all six platforms plus the required
-6.5-inch iPhone Home Screen widget pair. These are unapproved. Remaining
-WidgetKit placement is work in progress. No uploader mapping,
+OS-composited Horizon app images for all six platforms, Home Screen widgets
+for both iPhone display groups and iPad, and a spatial Vision Pro widget.
+These are unapproved. Mac WidgetKit placement is work in progress. No uploader mapping,
 App Store upload or submission has changed.
 
 The table below is generated from [the capture manifest](horizon-capture/manifest.json),
@@ -38,6 +38,7 @@ are excluded.
 | [tvos-overview-dark.png](horizon-capture/tvos-overview-dark.png) | 1920 × 1080 | `510ef7a1ac0f864f7780a93b2f3c67d6b286e85fbed5f9254d15c467148cb3e8` |
 | [visionpro-detail-dark.png](horizon-capture/visionpro-detail-dark.png) | 3840 × 2160 | `28b11d8304794e971596be4b049f9a1fa24d3f1a7652a7ea471930e1a0c2e98e` |
 | [visionpro-overview-dark.png](horizon-capture/visionpro-overview-dark.png) | 3840 × 2160 | `688d383cb935b9d3b471615b2778ba1f2841af12d71f6e90c07195c6525be511` |
+| [visionpro-widget-dark.png](horizon-capture/visionpro-widget-dark.png) | 3840 × 2160 | `73ed6ae01f052483390d5df791ee0377a16d89fd5b49861c49852df25efe4747` |
 | [watch-accounts-dark.png](horizon-capture/watch-accounts-dark.png) | 410 × 502 | `cf774e779c54d21fdc5fddcfee638cda2607a93a9f0d54eb04d202948099186a` |
 | [watch-overview-dark.png](horizon-capture/watch-overview-dark.png) | 410 × 502 | `2deec3480d14b57ed4829eebe2d6fcba2aa193eaa21d394b550caf3f5ca17955` |
 

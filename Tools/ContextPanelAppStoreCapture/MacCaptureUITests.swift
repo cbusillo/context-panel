@@ -24,8 +24,14 @@ final class MacCaptureUITests: XCTestCase {
         record(finder, name: "desktop")
         let desktop = finder.scrollViews["desktop"].firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 15))
+        let center = CGPoint(x: desktop.frame.midX, y: desktop.frame.midY)
+        let stockWidgets = XCUIApplication(bundleIdentifier: "com.apple.notificationcenterui").windows
+            .containing(NSPredicate(format: "identifier BEGINSWITH %@", "widget-local:"))
+        for window in stockWidgets.allElementsBoundByIndex {
+            XCTAssertFalse(window.frame.contains(center), "The desktop click must avoid native widget windows")
+        }
         let baseline = Set(visibleWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
-        desktop.rightClick()
+        desktop.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
         try clickVisibleWidgetMenu(desktop)
         let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search", baseline: baseline) { $0.searchFields.firstMatch })
         let gallery = galleryMatch.app
@@ -225,9 +231,7 @@ final class MacCaptureUITests: XCTestCase {
             evidence.name = ordinaryWidget ? "ordinary-featured-photos-widget" : "unexpected-system-dialog"
             evidence.lifetime = .keepAlways
             self.add(evidence)
-            // This is a desktop widget, not an interruption. Claim it so XCTest
-            // does not try its Notification Center swipe-to-dismiss handler.
-            if ordinaryWidget { return true }
+            if ordinaryWidget { return false }
             XCTFail("Capture stopped at an unexpected system dialog: \(alert.label)")
             return true // Prevent the default interruption handler from dismissing it.
         }
