@@ -47,8 +47,15 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 30))
         result.click()
         record(gallery, name: "widget-preview")
+        let done = gallery.buttons["widget-add-sheet-done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 15))
+        // Notification Center also exposes its full-screen overlay as a dialog.
+        // Scope the gallery to the native controls without the menu-bar overlay.
         let sheets = gallery.descendants(matching: .dialog).allElementsBoundByIndex
-            .filter { $0.searchFields.firstMatch.exists }
+            .filter {
+                $0.frame.contains(search.frame) && $0.frame.contains(done.frame)
+                    && !$0.frame.intersects(reference.frame)
+            }
         XCTAssertEqual(sheets.count, 1)
         let sheetFrame = try XCTUnwrap(sheets.first).frame
         XCTAssertFalse(reference.frame.intersects(sheetFrame))
@@ -78,7 +85,6 @@ final class MacCaptureUITests: XCTestCase {
             preview.buttons.firstMatch.click()
         }
         record(gallery, name: "widget-added")
-        let done = gallery.buttons["Done"].firstMatch
         XCTAssertTrue(done.waitForExistence(timeout: 15))
         done.click()
         XCTAssertTrue(search.waitForNonExistence(timeout: 15))
