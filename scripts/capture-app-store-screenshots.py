@@ -397,7 +397,7 @@ def hosted_macos_capture(output: Path) -> None:
     original["targets"][app] = {
         "type": "application", "platform": "macOS", "deploymentTarget": "14.0",
         "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureMain.swift"}],
-        "dependencies": [{"target": "MacFixtureViews"}],
+        "dependencies": [{"target": "MacFixtureViews"}, *libraries],
         "settings": {"base": {"PRODUCT_NAME": "Context Panel Fixture", "GENERATE_INFOPLIST_FILE": True}}}
     spec = capture_spec(original, {app})
     validate_capture_spec(spec, {app})
