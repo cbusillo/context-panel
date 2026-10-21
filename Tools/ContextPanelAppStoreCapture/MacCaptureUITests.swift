@@ -47,15 +47,25 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 30))
         result.click()
         record(gallery, name: "widget-preview")
-        let addWidget = gallery.buttons["Add Widget"].firstMatch
-        XCTAssertTrue(addWidget.waitForExistence(timeout: 15))
-        addWidget.click()
+        for window in stockWidgets.allElementsBoundByIndex {
+            let remove = window.buttons["Remove"].firstMatch
+            XCTAssertTrue(remove.exists)
+            remove.click()
+            XCTAssertTrue(window.waitForNonExistence(timeout: 10))
+        }
+        for family in ["systemSmall", "systemMedium", "systemLarge"] {
+            let preview = gallery.groups.matching(NSPredicate(format: "identifier ENDSWITH %@",
+                ScreenshotFixture.widgetKind + ":" + family)).firstMatch
+            XCTAssertTrue(preview.waitForExistence(timeout: 15))
+            preview.buttons.firstMatch.click()
+        }
         record(gallery, name: "widget-added")
         let done = gallery.buttons["Done"].firstMatch
         XCTAssertTrue(done.waitForExistence(timeout: 15))
         done.click()
         XCTAssertTrue(search.waitForNonExistence(timeout: 15))
-        XCTAssertFalse(addWidget.exists)
+        XCTAssertFalse(gallery.groups.matching(NSPredicate(format: "identifier ENDSWITH %@",
+            ScreenshotFixture.widgetKind + ":systemSmall")).firstMatch.exists)
         XCTAssertFalse(done.exists)
         let labels = ScreenshotFixture.smallWidgetAccountLabels
         let label = try XCTUnwrap(labels.first)

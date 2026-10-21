@@ -14,11 +14,11 @@ spatial app window in the simulator's stock room environment.
 | --- | --- | --- |
 | Mac overview and sidebar | [Image](mac-overview-light.png) | [Image](mac-overview-dark.png) |
 | Mac Studio account and sidebar | [Image](mac-detail-light.png) | [Image](mac-detail-dark.png) |
-| iPhone, existing 6.1-inch display group, overview | [Image](iphone-overview-light.png) | [Image](iphone-overview-dark.png) |
-| iPhone, existing 6.1-inch display group, Studio detail | [Image](iphone-detail-light.png) | [Image](iphone-detail-dark.png) |
-| iPhone, existing display group, actual Home Screen widget | [Image](iphone-widget-light.png) | [Image](iphone-widget-dark.png) |
-| iPhone, required 6.5-inch display group, overview | [Image](iphone65-overview-light.png) | [Image](iphone65-overview-dark.png) |
-| iPhone, required 6.5-inch display group, actual Home Screen widget | [Image](iphone65-widget-light.png) | [Image](iphone65-widget-dark.png) |
+| iPhone 17 Pro, Dynamic Island medium display, overview | [Image](iphone-overview-light.png) | [Image](iphone-overview-dark.png) |
+| iPhone 17 Pro, Dynamic Island medium display, Studio detail | [Image](iphone-detail-light.png) | [Image](iphone-detail-dark.png) |
+| iPhone 17 Pro, Dynamic Island medium display, actual Home Screen widget | [Image](iphone-widget-light.png) | [Image](iphone-widget-dark.png) |
+| iPhone 14 Plus, Face ID large display, overview | [Image](iphone65-overview-light.png) | [Image](iphone65-overview-dark.png) |
+| iPhone 14 Plus, Face ID large display, actual Home Screen widget | [Image](iphone65-widget-light.png) | [Image](iphone65-widget-dark.png) |
 | iPad overview | [Image](ipad-overview-light.png) | [Image](ipad-overview-dark.png) |
 | iPad Studio detail | [Image](ipad-detail-light.png) | [Image](ipad-detail-dark.png) |
 | iPad actual Home Screen widget | [Image](ipad-widget-light.png) | [Image](ipad-widget-dark.png) |
@@ -34,7 +34,10 @@ source commit and capture mechanism. The [screenshot matrix](../screenshot-matri
 contains the image links and checksums together. All selected files are RGB
 PNGs without an alpha channel. Removing an opaque alpha channel preserves
 all RGB pixels and the source ICC profile; transparent inputs are refused.
-Dimensions were checked against [Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/).
+Dimensions and current display-group names were checked on October 21, 2026
+against [Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/).
+The `iphone65` file slug retains the earlier uploader terminology; the actual
+capture device is iPhone 14 Plus. Uploader mappings remain unchanged.
 
 The fixture has six synthetic accounts across OpenAI, Anthropic and Google.
 Its presentation clock, locale and timezone come from
