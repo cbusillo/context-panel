@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "approval": "unapproved native app candidates; actual WidgetKit placement pending; no ready/upload/submission",
+  "approval": "unapproved native app and widget candidates; remaining WidgetKit placements in progress; no ready/upload/submission",
   "fixtureSource": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift at each recorded sourceCommit",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "assets": [
@@ -185,6 +185,50 @@
       "cleanup": "owned simulator deleted; absence verified",
       "presentation": "overview",
       "surface": "ios.app.iphone"
+    },
+    {
+      "file": "iphone65-widget-dark.png",
+      "width": 1284,
+      "height": 2778,
+      "sha256": "62af05ca8fde9ad6e8a0cf6f20c9b65c1a80e1fddb2f65a98bd54107d4c35c75",
+      "appearance": "dark",
+      "staging": "native XCTest simulator screen attachment",
+      "rawSHA256": "182225a0efd69446e4126565f69e545c270024f4935118c233ee1d595ce05c43",
+      "sourceCommit": "988b5a645d314e3e5eded7b0e122074c4bdb21f4",
+      "bundleSHA256": "73225f23eae060cac2f1bac56384c3da34b2411a79f99dc92556ae3221f8223a",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_iphonesimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "c6e34d3f331adca5f8c4b6d7a7b372370e00364198a9c706ed83c924e47e1343",
+        "runnerSHA256": "bff37d88f943e35e45fab7bbb941a4c6a8f575ce9d79460743106334fedbde25"
+      },
+      "runtime": "iOS-27-0",
+      "mechanism": "native XCTest simulator framebuffer",
+      "profile": "iphone65-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "surface": "widget",
+      "presentation": "native Home Screen, system small WidgetKit, fixture Use next accounts"
+    },
+    {
+      "file": "iphone65-widget-light.png",
+      "width": 1284,
+      "height": 2778,
+      "sha256": "f14a3f6337e41fb217a3a3ff59bee5136c86a150e3be8f07a5a6baaf46c67432",
+      "appearance": "light",
+      "staging": "native XCTest simulator screen attachment",
+      "rawSHA256": "44c1aa061582627ffe4f1e8667b4e3bddc781cb81fb2238a3c514da92ef85adf",
+      "sourceCommit": "988b5a645d314e3e5eded7b0e122074c4bdb21f4",
+      "bundleSHA256": "73225f23eae060cac2f1bac56384c3da34b2411a79f99dc92556ae3221f8223a",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_iphonesimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "c6e34d3f331adca5f8c4b6d7a7b372370e00364198a9c706ed83c924e47e1343",
+        "runnerSHA256": "bff37d88f943e35e45fab7bbb941a4c6a8f575ce9d79460743106334fedbde25"
+      },
+      "runtime": "iOS-27-0",
+      "mechanism": "native XCTest simulator framebuffer",
+      "profile": "iphone65-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "surface": "widget",
+      "presentation": "native Home Screen, system small WidgetKit, fixture Use next accounts"
     },
     {
       "file": "mac-detail-dark.png",

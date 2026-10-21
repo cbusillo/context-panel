@@ -42,6 +42,7 @@ PROFILES.update({name + "-detail": PROFILES[name] for name in ("iphone", "iphone
 PROFILES["watch-accounts"] = PROFILES["watch"]
 PROFILES.update({name + "-widget": PROFILES[name] for name in ("iphone", "iphone65", "ipad", "visionpro")})
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
+CAPTURE_VERSION = {"MARKETING_VERSION": "1.0", "CURRENT_PROJECT_VERSION": "1"}
 
 
 def run(*args: str, timeout: int = 180) -> str:
@@ -164,9 +165,9 @@ def fixture_widget_spec(host: str, mac: bool = False) -> dict:
         "dependencies": [{"target": "ContextPanelCore" if mac else "ContextPanelCoreCompanion"},
                          {"target": "ContextPanelWidgetUI" if mac else "ContextPanelWidgetUICompanion"}],
         "info": {"path": str(BUILD / (host + "-Widget-Info.plist")), "properties": {
-            "CFBundleDisplayName": "Context Panel", "CFBundleShortVersionString": "1.0",
-            "CFBundleVersion": "1", "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"}}},
-        "settings": {"base": {**fixture_signing(mac, extension=mac), "PRODUCT_NAME": "CaptureWidget",
+            "CFBundleDisplayName": "Context Panel", "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+            "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)", "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"}}},
+        "settings": {"base": {**fixture_signing(mac, extension=mac), **CAPTURE_VERSION, "PRODUCT_NAME": "CaptureWidget",
             "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(host) + ".widget", "SKIP_INSTALL": True,
             "APPLICATION_EXTENSION_API_ONLY": True, **({} if mac else {"TARGETED_DEVICE_FAMILY": "1,2,7"})}}}
 
@@ -554,7 +555,7 @@ def hosted_macos_capture(output: Path) -> None:
                     {"path": "Resources/Assets.xcassets"}],
         "dependencies": [{"target": "MacFixtureViews"}, *libraries],
         "settings": {"base": {"PRODUCT_NAME": "Context Panel", "GENERATE_INFOPLIST_FILE": True,
-            "INFOPLIST_KEY_CFBundleDisplayName": "Context Panel"}}}
+            "INFOPLIST_KEY_CFBundleDisplayName": "Context Panel", **CAPTURE_VERSION}}}
     spec = capture_spec(original, {app})
     spec["targets"][app]["settings"]["base"].update(fixture_signing(True))
     add_fixture_widget(spec, app, mac=True)

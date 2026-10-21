@@ -13,6 +13,7 @@ final class MacCaptureUITests: XCTestCase {
             throw XCTSkip("Native Mac UI capture requires an isolated GitHub-hosted runner")
         }
         continueAfterFailure = false
+        stopOnUnexpectedDialog()
         let app = XCUIApplication()
         app.launchEnvironment = ["GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"]
         app.launchArguments = ["widgets"]
@@ -23,20 +24,21 @@ final class MacCaptureUITests: XCTestCase {
         let desktop = finder.scrollViews["desktop"].firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 15))
         desktop.rightClick()
-        let edit = finder.menuItems.matching(NSPredicate(format: "label BEGINSWITH %@", "Edit Widgets")).firstMatch
-        let foundEdit = edit.waitForExistence(timeout: 15)
-        record(finder, name: "desktop-menu")
-        XCTAssertTrue(foundEdit)
-        edit.click()
-        let hosts = [("finder", finder), ("notificationcenter", XCUIApplication(bundleIdentifier: "com.apple.notificationcenterui")),
-                     ("dock", XCUIApplication(bundleIdentifier: "com.apple.dock")), ("controlcenter", XCUIApplication(bundleIdentifier: "com.apple.controlcenter"))]
-        for (name, host) in hosts where host.state != .notRunning { record(host, name: "gallery-host-\(name)") }
-        let running = XCTAttachment(string: NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier).sorted().joined(separator: "\n"))
-        running.name = "hosted-system-applications"
-        running.lifetime = .keepAlways
-        add(running)
-        let gallery = try XCTUnwrap(hosts.map(\.1).first(where: { $0.searchFields.firstMatch.waitForExistence(timeout: 10) }))
-        let search = gallery.searchFields.firstMatch
+        let menu = findOwner(stage: "desktop-menu") { $0.menuItems["Edit Widgets…"].firstMatch }
+        let menuRoute: String
+        if let menu {
+            menuRoute = "native AX menu in " + menu.identifier
+            menu.element.click()
+        } else {
+            // The retained native screenshot proves this menu is open, but its
+            // owner may expose no AX menu. Use its ordinary keyboard selection.
+            menuRoute = "native menu keyboard selection after no AX owner"
+            finder.typeKey("e", modifierFlags: [])
+            finder.typeKey(.return, modifierFlags: [])
+        }
+        let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search") { $0.searchFields.firstMatch })
+        let gallery = galleryMatch.app
+        let search = galleryMatch.element
         search.click()
         search.typeText("Context Panel")
         record(gallery, name: "widget-search")
@@ -54,9 +56,9 @@ final class MacCaptureUITests: XCTestCase {
         let labels = ScreenshotFixture.smallWidgetAccountLabels
         let label = try XCTUnwrap(labels.first)
         let predicate = NSPredicate(format: "label == %@", label)
-        let widgetHost = try XCTUnwrap(hosts.map(\.1).first(where: {
-            $0.descendants(matching: .any).matching(predicate).firstMatch.waitForExistence(timeout: 10)
-        }))
+        let widgetHost = try XCTUnwrap(findOwner(stage: "placed-widget", interactive: false) {
+            $0.descendants(matching: .any).matching(predicate).firstMatch
+        }).app
         for label in labels {
             XCTAssertTrue(widgetHost.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch.waitForExistence(timeout: 15))
         }
@@ -71,6 +73,7 @@ final class MacCaptureUITests: XCTestCase {
             "screenPoints": [points.width, points.height],
             "screenPixels": [CGDisplayPixelsWide(display), CGDisplayPixelsHigh(display)],
             "backingScaleFactor": NSScreen.main?.backingScaleFactor ?? 0,
+            "menuRoute": menuRoute,
             "widgetPoints": [widget.frame.minX, widget.frame.minY, widget.frame.maxX, widget.frame.maxY]]
         let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
         let metadata = XCTAttachment(string: try XCTUnwrap(String(data: data, encoding: .utf8)))
@@ -82,6 +85,61 @@ final class MacCaptureUITests: XCTestCase {
         image.lifetime = .keepAlways
         add(image)
         app.terminate()
+    }
+
+    private func systemHosts() -> [(String, XCUIApplication)] {
+        let running = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy != .prohibited || ($0.bundleIdentifier?.localizedCaseInsensitiveContains("widget") == true)
+        }.compactMap(\.bundleIdentifier)
+        let identifiers = Set(running + ["com.apple.finder", "com.apple.WindowManager", "com.apple.notificationcenterui",
+                                       "com.apple.dock", "com.apple.controlcenter", "com.apple.systemuiserver"])
+        return identifiers.sorted().map { ($0, XCUIApplication(bundleIdentifier: $0)) }
+    }
+
+    private func findOwner(stage: String, interactive: Bool = true,
+                           query: (XCUIApplication) -> XCUIElement)
+        -> (identifier: String, app: XCUIApplication, element: XCUIElement)? {
+        let deadline = Date().addingTimeInterval(15)
+        var hosts: [(String, XCUIApplication)] = []
+        var found: (identifier: String, app: XCUIApplication, element: XCUIElement)?
+        repeat {
+            hosts = systemHosts()
+            for (identifier, app) in hosts where app.state != .notRunning {
+                let element = query(app)
+                if element.exists && !element.frame.isEmpty && (!interactive || element.isHittable) {
+                    found = (identifier, app, element)
+                    break
+                }
+            }
+            if found != nil { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        let owner = XCTAttachment(string: "Matched owner: \(found?.identifier ?? "no AX owner")\n" + hosts.map(\.0).joined(separator: "\n"))
+        owner.name = stage + "-system-applications"
+        owner.lifetime = .keepAlways
+        add(owner)
+        for (identifier, app) in hosts where app.state != .notRunning {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = stage + "-" + identifier + "-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screen.name = stage + "-screen"
+        screen.lifetime = .keepAlways
+        add(screen)
+        return found
+    }
+
+    private func stopOnUnexpectedDialog() {
+        addUIInterruptionMonitor(withDescription: "Capture has no permission-grant authority") { alert in
+            let evidence = XCTAttachment(string: alert.debugDescription)
+            evidence.name = "unexpected-system-dialog"
+            evidence.lifetime = .keepAlways
+            self.add(evidence)
+            XCTFail("Capture stopped at an unexpected system dialog: \(alert.label)")
+            return true // Prevent the default interruption handler from dismissing it.
+        }
     }
 
     private func record(_ app: XCUIApplication, name: String) {
@@ -103,6 +161,7 @@ final class MacCaptureUITests: XCTestCase {
             throw XCTSkip("Native Mac UI capture requires an isolated GitHub-hosted runner")
         }
         continueAfterFailure = false
+        stopOnUnexpectedDialog()
         let app = XCUIApplication()
         app.launchEnvironment = ["GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"]
         for mode in ["overview", "detail"] {

@@ -3,8 +3,9 @@
 ## Horizon Native App Review Candidates
 
 The [native capture index](horizon-capture/README.md) contains fixture-only,
-OS-composited Horizon app images for all six platforms. These are unapproved.
-Actual WidgetKit placement remains work in progress. No uploader mapping,
+OS-composited Horizon app images for all six platforms plus the required
+6.5-inch iPhone Home Screen widget pair. These are unapproved. Remaining
+WidgetKit placement is work in progress. No uploader mapping,
 App Store upload or submission has changed.
 
 The table below is generated from [the capture manifest](horizon-capture/manifest.json),
@@ -24,6 +25,8 @@ are excluded.
 | [iphone-overview-light.png](horizon-capture/iphone-overview-light.png) | 1206 × 2622 | `45591127bcee6c6358875c310e6011ea3870f4bbd8bc42ba5936a45f933ce042` |
 | [iphone65-overview-dark.png](horizon-capture/iphone65-overview-dark.png) | 1284 × 2778 | `ab48dcd8e74261a0a9b2b0067375320d6a6564736fd3f2a484d8306e5aa987a1` |
 | [iphone65-overview-light.png](horizon-capture/iphone65-overview-light.png) | 1284 × 2778 | `c1a033d338b41f5c6ab47c21e04de67972bb0dada814f7e1d90eb6972956b53f` |
+| [iphone65-widget-dark.png](horizon-capture/iphone65-widget-dark.png) | 1284 × 2778 | `62af05ca8fde9ad6e8a0cf6f20c9b65c1a80e1fddb2f65a98bd54107d4c35c75` |
+| [iphone65-widget-light.png](horizon-capture/iphone65-widget-light.png) | 1284 × 2778 | `f14a3f6337e41fb217a3a3ff59bee5136c86a150e3be8f07a5a6baaf46c67432` |
 | [mac-detail-dark.png](horizon-capture/mac-detail-dark.png) | 1280 × 800 | `5c0a252d9da652e2598cc066685aa7f56c7c7b939b70d01b4aa3f413752fa930` |
 | [mac-detail-light.png](horizon-capture/mac-detail-light.png) | 1280 × 800 | `0bc31997a2e27b3815b9f45aec8a0f8aab8c79569a16776b726066c59381cbaf` |
 | [mac-overview-dark.png](horizon-capture/mac-overview-dark.png) | 1280 × 800 | `777be94dd9ff20a58a09e549a8cdb09352c150e85b29e7edcc47b08cb839899b` |

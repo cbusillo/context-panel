@@ -6,6 +6,14 @@ final class CompanionCaptureUITests: XCTestCase {
     func testNativeFixtureScreen() throws {
         ScreenshotFixture.configureProcess()
         continueAfterFailure = false
+        addUIInterruptionMonitor(withDescription: "Capture has no permission-grant authority") { alert in
+            let evidence = XCTAttachment(string: alert.debugDescription)
+            evidence.name = "unexpected-system-dialog"
+            evidence.lifetime = .keepAlways
+            self.add(evidence)
+            XCTFail("Capture stopped at an unexpected system dialog: \(alert.label)")
+            return true
+        }
         let app = XCUIApplication()
         if !(ProcessInfo.processInfo.environment["CP_CAPTURE_WIDGET"] ?? "").isEmpty {
             XCTAssertFalse(ScreenshotFixture.smallWidgetAccountLabels.isEmpty)
