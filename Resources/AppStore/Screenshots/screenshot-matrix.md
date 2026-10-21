@@ -1,5 +1,21 @@
 # App Store Screenshot Matrix
 
+## Horizon Full-App Capture Preparation
+
+The [CP744-C2 capture index](horizon-capture/README.md) links four new Mac
+app-content images with the production sidebar and Horizon overview/detail,
+and records the remaining app and OS-placement gaps for every platform.
+[Its manifest](horizon-capture/manifest.json) is the single source for their
+2880 × 1800 dimensions, SHA-256 checksums and source provenance. These images
+remain unapproved and lack native title-bar/desktop composition.
+
+Isolated iOS, watchOS, tvOS and visionOS capture builds passed. Simulator
+creation then stopped on an external-volume permission denial before any app
+launch. [Q599](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6304544295)
+asks Chris to settle the safe simulator storage route before retrying. The
+complete six-platform set, OS placement, image approval and upload remain
+outstanding. No `ready`, upload mapping change, App Store upload or submission.
+
 ## Horizon Draft Review Set
 
 Repo-only Horizon candidates for [#744](https://github.com/cbusillo/context-panel/issues/744)

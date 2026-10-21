@@ -28,7 +28,8 @@
     "agentAccountSnapshot": "docs/provider-usage-access.md#agent-readable-account-snapshot",
     "repoSettings": "docs/repo-settings.md",
     "sharedAccountIdentity": "docs/shared-account-identity.md",
-    "releaseCompletion": "docs/release.md#definition-of-released"
+    "releaseCompletion": "docs/release.md#definition-of-released",
+    "appStoreCapture": "Resources/AppStore/Screenshots/horizon-capture/README.md"
   },
   "qualityGate": {
     "build": {
@@ -51,9 +52,14 @@
         "python": {
           "version": "3.13",
           "moduleName": "context-panel",
-          "testRoots": ["Tests"],
+          "testRoots": [
+            "Tests"
+          ],
           "sync": false,
-          "requiredGeneratedState": [".venv", ".idea"]
+          "requiredGeneratedState": [
+            ".venv",
+            ".idea"
+          ]
         }
       }
     },
@@ -130,7 +136,8 @@
       "appStoreReviewReleaseEvidenceDefault": "enforce",
       "releaseEvidenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_release_evidence_gate.py Tests/ScriptsTests/test_submit_app_store_review.py Tests/ScriptsTests/test_submission_evidence_bundle.py Tests/ScriptsTests/test_release_workflows.py",
       "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration|retired|settingsAccounts)\"",
-      "appStoreReleaseStatusTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_app_store_release_status"
+      "appStoreReleaseStatusTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_app_store_release_status",
+      "appStoreCaptureTests": "uv run --no-project --with PyYAML python -m unittest Tests.ScriptsTests.test_app_store_capture"
     },
     "docsRequiredWhen": [
       "provider behavior changes",

@@ -62,8 +62,9 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
 }
 
 @Test func appStoreDraftImageBytesMatchTheirRecordedIdentity() throws {
+    for folder in ["horizon-draft", "horizon-capture"] {
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appending(path: "Resources/AppStore/Screenshots/horizon-draft")
+        .appending(path: "Resources/AppStore/Screenshots/\(folder)")
     let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appending(path: "manifest.json"))) as? [String: Any])
     let assets = try #require(manifest["assets"] as? [[String: Any]])
     #expect(!assets.isEmpty)
@@ -75,6 +76,7 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         let bitmap = try #require(NSBitmapImageRep(data: data))
         #expect(bitmap.pixelsWide == asset["width"] as? Int, "\(file)")
         #expect(bitmap.pixelsHigh == asset["height"] as? Int, "\(file)")
+    }
     }
 }
 
