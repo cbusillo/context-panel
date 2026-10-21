@@ -214,10 +214,18 @@ final class MacCaptureUITests: XCTestCase {
 
     private func stopOnUnexpectedDialog() {
         addUIInterruptionMonitor(withDescription: "Capture has no permission-grant authority") { alert in
+            let photos = alert.groups.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+                "widget-local:com.apple.Photos:")).firstMatch
+            let ordinaryWidget = alert.elementType == .window && alert.title == "Featured"
+                && !alert.isEnabled && photos.exists && alert.buttons.count == 0
+                && alert.textFields.count == 0 && alert.secureTextFields.count == 0
+                && alert.alerts.count == 0 && alert.sheets.count == 0
+                && alert.descendants(matching: .dialog).count == 0
             let evidence = XCTAttachment(string: alert.debugDescription)
-            evidence.name = "unexpected-system-dialog"
+            evidence.name = ordinaryWidget ? "ordinary-featured-photos-widget" : "unexpected-system-dialog"
             evidence.lifetime = .keepAlways
             self.add(evidence)
+            if ordinaryWidget { return false }
             XCTFail("Capture stopped at an unexpected system dialog: \(alert.label)")
             return true // Prevent the default interruption handler from dismissing it.
         }
