@@ -47,11 +47,14 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 30))
         result.click()
         record(gallery, name: "widget-preview")
-        for window in stockWidgets.allElementsBoundByIndex {
-            let remove = window.buttons["Remove"].firstMatch
+        let editableStocks = gallery.groups.matching(NSPredicate(format: "identifier BEGINSWITH %@", "widget-local:"))
+        for stock in editableStocks.allElementsBoundByIndex {
+            let remove = stock.buttons["minus"].firstMatch
+            _ = remove.waitForExistence(timeout: 10)
+            record(gallery, name: "stock-before-removal-" + stock.label)
             XCTAssertTrue(remove.exists)
             remove.click()
-            XCTAssertTrue(window.waitForNonExistence(timeout: 10))
+            XCTAssertTrue(stock.waitForNonExistence(timeout: 10))
         }
         for family in ["systemSmall", "systemMedium", "systemLarge"] {
             let preview = gallery.groups.matching(NSPredicate(format: "identifier ENDSWITH %@",
