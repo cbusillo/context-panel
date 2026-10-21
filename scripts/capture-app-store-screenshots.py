@@ -279,6 +279,9 @@ def capture(profile: str, output: Path) -> None:
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
         run(*prefix, "install", udid, str(app))
         files = []
+        run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]))
+        # Cold simulators can return a launch PID before the first scene is drawn.
+        time.sleep(20)
         for appearance in (["dark"] if platform in {"watchos", "tvos"} else ["light", "dark"]):
             if platform not in {"watchos", "tvos"}:
                 run(*prefix, "ui", udid, "appearance", appearance)

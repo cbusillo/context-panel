@@ -116,6 +116,7 @@ returned UDID, it reconciles only a newly observed exact name/type/runtime match
 A returned pre-existing UDID is refused before boot/install or cleanup. The tool
 verifies the owned UDID is absent before recording success. Cleanup failures retain the primary capture error with an added diagnostic;
 uncertain ownership preserves candidates and fails the command. A successful
-framebuffer PNG still needs visual
-review, particularly on visionOS. Captures are not formal release receipts.
+framebuffer PNG still needs visual review, particularly after cold launch and on
+visionOS. Only images listed in a completed `capture.json` and visually accepted
+are candidates; a failed run is not a candidate set. Captures are not formal release receipts.
 No uploader or App Store submission is called by this tool.

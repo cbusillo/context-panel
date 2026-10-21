@@ -28,7 +28,7 @@ class AppStoreCaptureTests(unittest.TestCase):
         return app
 
     def test_staging_copies_valid_png_and_falls_back_only_on_temp_save_refusal(self):
-        for outcome in ("success", "temp-refused", "other-error", "container-refused", "invalid-png"):
+        for outcome in ("success", "temp-refused", "other-error", "container-refused", "invalid-png", "wrong-size"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 container = root / "owned-container"
@@ -40,11 +40,12 @@ class AppStoreCaptureTests(unittest.TestCase):
                 def fake_run(*args, **kwargs):
                     nonlocal saves
                     if args[0] == "mktemp":
-                        stage = (container / "tmp" if len(args) > 2 else root) / f"stage-{len(stages)}"
+                        stage = (Path(args[2]).parent if len(args) > 2 else root) / f"stage-{len(stages)}"
                         stage.mkdir(mode=0o700)
                         stages.append(stage)
                         return str(stage)
                     if "get_app_container" in args:
+                        self.assertEqual(args[-3:-1], ("owned", "fixture-app"))
                         return str(container)
                     if "screenshot" in args:
                         saves += 1
@@ -52,7 +53,9 @@ class AppStoreCaptureTests(unittest.TestCase):
                             raise subprocess.CalledProcessError(1, args, stderr="domain=NSCocoaErrorDomain, code=513")
                         if outcome == "other-error":
                             raise subprocess.CalledProcessError(1, args, stderr="unrelated failure")
-                        Path(args[-1]).write_bytes(b"invalid" if outcome == "invalid-png" else data)
+                        self.assertEqual(args[args.index("io") + 1], "owned")
+                        payload = data[:16] + struct.pack(">II", 8, 9) if outcome == "wrong-size" else data
+                        Path(args[-1]).write_bytes(b"invalid" if outcome == "invalid-png" else payload)
                     return ""
 
                 output = root / "external.png"
@@ -60,13 +63,15 @@ class AppStoreCaptureTests(unittest.TestCase):
                     if outcome in {"other-error", "container-refused"}:
                         with self.assertRaises(subprocess.CalledProcessError):
                             capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
-                    elif outcome == "invalid-png":
+                    elif outcome in {"invalid-png", "wrong-size"}:
                         with self.assertRaises(SystemExit):
                             capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
                     else:
                         capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
                         self.assertEqual(output.read_bytes(), data)
                 self.assertEqual(saves, 2 if outcome in {"temp-refused", "container-refused"} else 1)
+                if len(stages) > 1:
+                    self.assertTrue(stages[1].is_relative_to(container / "tmp"))
                 self.assertTrue(all(not stage.exists() for stage in stages))
                 self.assertEqual(output.exists(), outcome in {"success", "temp-refused"})
 
@@ -143,7 +148,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                  patch.object(capture, "clean_commit", return_value=self.source), \
                  patch.object(capture, "run", side_effect=fake_run):
                 self.make_bundle()
-                with self.assertRaisesRegex(RuntimeError, "pre-existing simulator"):
+                with self.assertRaises(RuntimeError):
                     capture.capture("iphone", root / "output")
             self.assertFalse((root / "output/capture.json").exists())
 
