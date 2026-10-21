@@ -1062,7 +1062,6 @@ def ensure_build(
                 "limit": 20,
             },
         )
-        last_payload = payload
         included = included_by_id(payload)
         builds = [
             build
@@ -1072,15 +1071,15 @@ def ensure_build(
             == platform
         ]
         if builds:
-            last_build = select_build_for_marketing_version(payload, builds, args.version)
-            attributes = last_build.get("attributes", {})
+            build = select_build_for_marketing_version(payload, builds, args.version)
+            attributes = build.get("attributes", {})
             if attributes.get("processingState") == "VALID":
-                validate_build_marketing_version(payload, last_build, args.version, args.build_number)
+                validate_build_marketing_version(payload, build, args.version, args.build_number)
                 break
             if time.monotonic() >= deadline:
                 raise AppStoreConnectError(
                     f"build {args.build_number} is not valid: {attributes.get('processingState')}",
-                    payload=last_build,
+                    payload=build,
                 )
             print(
                 f"Build {args.build_number} is {attributes.get('processingState')}; "
@@ -1089,16 +1088,13 @@ def ensure_build(
         else:
             if time.monotonic() >= deadline:
                 raise AppStoreConnectError(
-                    f"missing {platform} build {args.build_number}", payload=last_payload
+                    f"missing {platform} build {args.build_number}", payload=payload
                 )
             print(
                 f"{platform} build {args.build_number} is not visible yet; "
                 f"waiting {poll_interval}s for App Store Connect processing"
             )
         time.sleep(max(1, poll_interval))
-    if last_build is None:
-        raise AppStoreConnectError(f"missing {platform} build {args.build_number}", payload=last_payload)
-    build = last_build
     attributes = build["attributes"]
     if args.non_exempt_encryption is not None and attributes.get("usesNonExemptEncryption") != args.non_exempt_encryption:
         if allow_updates:

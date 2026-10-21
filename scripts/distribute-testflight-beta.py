@@ -214,7 +214,6 @@ def ensure_build(
     poll_seconds: int,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + max(0, wait_timeout_seconds)
-    last_payload: dict[str, Any] | None = None
     while True:
         payload = client.request(
             "GET",
@@ -228,7 +227,6 @@ def ensure_build(
                 "limit": 200,
             },
         )
-        last_payload = payload
         builds = payload.get("data") or []
         matching_builds = matching_platform_builds(payload, builds, marketing_version, build_number, platform)
         if matching_builds:
@@ -280,7 +278,7 @@ def ensure_build(
                 validate_build_marketing_version(payload, relevant_builds[0], marketing_version, build_number)
             if time.monotonic() >= deadline:
                 platform_suffix = f" for platform {platform}" if platform else ""
-                raise AppStoreConnectError(f"missing build {build_number}{platform_suffix}", payload=last_payload)
+                raise AppStoreConnectError(f"missing build {build_number}{platform_suffix}", payload=payload)
             platform_suffix = f" for platform {platform}" if platform else ""
             print(f"Build {build_number}{platform_suffix} is not visible yet; waiting {poll_seconds}s")
         time.sleep(max(1, poll_seconds))
