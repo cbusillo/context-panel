@@ -45,10 +45,10 @@ RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0
 CAPTURE_VERSION = {"MARKETING_VERSION": "1.0", "CURRENT_PROJECT_VERSION": "1"}
 
 
-def run(*args: str, timeout: int = 180) -> str:
+def run(*args: str, timeout: int = 180, env: dict[str, str] | None = None) -> str:
     print("+ " + " ".join(map(str, args)), flush=True)
     result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=timeout)
+                            stderr=subprocess.PIPE, timeout=timeout, env=env)
     print(result.stdout, end="", flush=True)
     print(result.stderr, end="", flush=True)
     result.check_returncode()
@@ -532,22 +532,29 @@ def rgb_image(source: Path, destination: Path, crop: tuple[int, int, int, int] |
 
 
 def native_mac_crop(geometry: dict, data: bytes) -> tuple[int, int, int, int]:
-    crop = (0, 0, 1440, 900)
     if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
         raise ValueError("Native desktop screenshot is not a PNG")
     pixels = struct.unpack(">II", data[16:24])
-    if tuple(geometry["screenPixels"]) != pixels or pixels[0] < crop[2] or pixels[1] < crop[3]:
+    if tuple(geometry["screenPixels"]) != pixels:
         raise ValueError("Native screenshot does not match the recorded display pixels")
     width, height = geometry["screenPoints"]
-    box = geometry["widgetPoints"]
-    if not all(math.isfinite(value) for value in (width, height, *box)) or width <= 0 or height <= 0:
+    boxes = geometry["widgetsPoints"]
+    if not boxes or not all(math.isfinite(value) for value in (width, height)) or width <= 0 or height <= 0:
         raise ValueError("Invalid native desktop geometry")
     scale = pixels[0] / width
     if not math.isclose(scale, pixels[1] / height, rel_tol=1e-6):
         raise ValueError("Native display point-to-pixel scales disagree")
-    left, top, right, bottom = (value * scale for value in box)
-    if not (0 <= left < right <= crop[2] and 0 <= top < bottom <= crop[3]):
-        raise ValueError("The complete native widget is outside the screenshot crop")
+    if not any(math.isclose(scale, supported) for supported in (1, 2)):
+        raise ValueError("Native desktop scale has no supported App Store crop")
+    crop = (0, 0, round(1440 * scale), round(900 * scale))
+    if pixels[0] < crop[2] or pixels[1] < crop[3]:
+        raise ValueError("Native desktop is smaller than the complete screenshot region")
+    for box in boxes:
+        if len(box) != 4 or not all(math.isfinite(value) for value in box):
+            raise ValueError("Invalid native widget geometry")
+        left, top, right, bottom = (value * scale for value in box)
+        if not (0 <= left < right <= crop[2] and 0 <= top < bottom <= crop[3]):
+            raise ValueError("A complete native widget is outside the screenshot crop")
     return crop
 
 
@@ -636,8 +643,7 @@ def hosted_macos_capture(output: Path) -> None:
         "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "GENERATE_INFOPLIST_FILE": True,
                                "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": app}}}
     spec["schemes"][app] = {"build": {"targets": {app: "all", tests: ["test"]}},
-        "test": {"targets": [tests], "environmentVariables": {
-            "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}}}
+        "test": {"targets": [tests]}}
     directory = BUILD / "macos-project"
     directory.mkdir(parents=True, exist_ok=True)
     (BUILD / "CaptureWidget.entitlements").write_bytes(plistlib.dumps({"com.apple.security.app-sandbox": True}))
@@ -651,7 +657,9 @@ def hosted_macos_capture(output: Path) -> None:
         run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
             "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
             "-derivedDataPath", str(BUILD / "macos-ci"), "-resultBundlePath", str(result),
-            "-collect-test-diagnostics", "never", "test", timeout=1200)
+            "-collect-test-diagnostics", "never", "test", timeout=1200,
+            env={**os.environ, "TEST_RUNNER_GITHUB_ACTIONS": os.environ["GITHUB_ACTIONS"],
+                 "TEST_RUNNER_RUNNER_ENVIRONMENT": os.environ["RUNNER_ENVIRONMENT"]})
     except BaseException as error:
         try:
             events = run("log", "show", "--style", "ndjson", "--last", "10m", "--predicate",
@@ -676,7 +684,7 @@ def hosted_macos_capture(output: Path) -> None:
         rgb_image(raw, destination, crop=crop)
         data = destination.read_bytes()
         width, height = struct.unpack(">II", data[16:24])
-        if (width, height) not in {(1280, 800), (1440, 900), (2560, 1600)}:
+        if (width, height) not in {(1280, 800), (1440, 900), (2560, 1600), (2880, 1800)}:
             raise SystemExit(f"Unexpected native Mac window size: {width}x{height}")
         images.append({"file": destination.name, "width": width, "height": height,
                        "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest(),

@@ -514,19 +514,27 @@ class AppStoreCaptureTests(unittest.TestCase):
                         capture.validate_capture_spec(model, {host}, widget_host=host)
 
     def test_native_desktop_crop_checks_real_pixels_and_complete_widget_in_points(self):
-        data = b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", 1600, 900)
+        reference = None
         for scale in (1, 2):
-            geometry = {"screenPixels": [1600, 900], "screenPoints": [1600 / scale, 900 / scale],
-                        "widgetPoints": [20, 20, 200, 200]}
+            pixels = (1600 * scale, 900 * scale)
+            data = b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *pixels)
+            geometry = {"screenPixels": list(pixels), "screenPoints": [1600, 900],
+                        "widgetsPoints": [[20, 20, 200, 200], [220, 20, 580, 200], [20, 220, 380, 580]]}
             crop = capture.native_mac_crop(geometry, data)
-            self.assertLessEqual(crop[2], 1600)
-            self.assertLessEqual(crop[3], 900)
-            for fault in ("pixels", "clipped", "nonuniform"):
+            region = tuple(value / scale for value in crop)
+            if reference is None:
+                reference = region
+            self.assertEqual(region, reference)
+            self.assertLessEqual(crop[2], pixels[0])
+            self.assertLessEqual(crop[3], pixels[1])
+            for fault in ("pixels", "last-clipped", "nonuniform", "no-widgets"):
                 changed = dict(geometry)
                 if fault == "pixels":
-                    changed["screenPixels"] = [3200, 1800]
-                elif fault == "clipped":
-                    changed["widgetPoints"] = [0, 0, 1600 / scale, 900 / scale]
+                    changed["screenPixels"] = [pixels[0] + 1, pixels[1]]
+                elif fault == "last-clipped":
+                    changed["widgetsPoints"] = [*geometry["widgetsPoints"][:-1], [0, 0, 1600, 900]]
+                elif fault == "no-widgets":
+                    changed["widgetsPoints"] = []
                 else:
                     changed["screenPoints"] = [1600, 450]
                 with self.assertRaises(ValueError):

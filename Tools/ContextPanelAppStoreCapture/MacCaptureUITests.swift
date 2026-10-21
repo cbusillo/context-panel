@@ -16,7 +16,7 @@ final class MacCaptureUITests: XCTestCase {
         continueAfterFailure = false
         stopOnUnexpectedDialog()
         let app = XCUIApplication()
-        app.launchEnvironment = ["GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"]
+        app.launchEnvironment = environment.filter { ["GITHUB_ACTIONS", "RUNNER_ENVIRONMENT"].contains($0.key) }
         app.launchArguments = ["widgets"]
         app.launch()
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
@@ -33,9 +33,9 @@ final class MacCaptureUITests: XCTestCase {
             XCTAssertFalse(window.frame.contains(center), "The desktop click must avoid native widget windows")
             XCTAssertFalse(window.frame.intersects(reference.frame), "The coordinate reference must avoid native widget windows")
         }
+        let originalStockCount = stockWidgets.count
         let baseline = Set(visibleWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
-        reference.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-            dx: center.x - reference.frame.minX, dy: center.y - reference.frame.minY)).rightClick()
+        nativeCoordinate(center, relativeTo: reference).rightClick()
         try clickVisibleWidgetMenu(desktop, reference: reference)
         let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search", baseline: baseline) { $0.searchFields.firstMatch })
         let gallery = galleryMatch.app
@@ -47,16 +47,31 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 30))
         result.click()
         record(gallery, name: "widget-preview")
+        let sheets = gallery.descendants(matching: .dialog).allElementsBoundByIndex
+            .filter { $0.searchFields.firstMatch.exists }
+        XCTAssertEqual(sheets.count, 1)
+        let sheetFrame = try XCTUnwrap(sheets.first).frame
+        XCTAssertFalse(reference.frame.intersects(sheetFrame))
         let editableStocks = gallery.groups.matching(NSPredicate(format: "identifier BEGINSWITH %@", "widget-local:"))
-        for stock in editableStocks.allElementsBoundByIndex {
+        let stockIDs = editableStocks.allElementsBoundByIndex.map(\.identifier)
+        XCTAssertEqual(stockIDs.count, originalStockCount)
+        XCTAssertEqual(Set(stockIDs).count, stockIDs.count)
+        for (index, identifier) in stockIDs.enumerated() {
+            let stock = gallery.groups.matching(identifier: identifier).firstMatch
             let remove = stock.buttons["minus"].firstMatch
             _ = remove.waitForExistence(timeout: 10)
             record(gallery, name: "stock-before-removal-" + stock.label)
             XCTAssertTrue(remove.exists)
-            remove.click()
+            let point = CGPoint(x: remove.frame.midX, y: remove.frame.midY)
+            XCTAssertTrue(stock.frame.contains(point))
+            XCTAssertFalse(sheetFrame.contains(point))
+            nativeCoordinate(point, relativeTo: reference).click()
             XCTAssertTrue(stock.waitForNonExistence(timeout: 10))
+            XCTAssertEqual(editableStocks.count, stockIDs.count - index - 1)
         }
-        for family in ["systemSmall", "systemMedium", "systemLarge"] {
+        XCTAssertEqual(editableStocks.count, 0)
+        let families = ["systemSmall", "systemMedium", "systemLarge"]
+        for family in families {
             let preview = gallery.groups.matching(NSPredicate(format: "identifier ENDSWITH %@",
                 ScreenshotFixture.widgetKind + ":" + family)).firstMatch
             XCTAssertTrue(preview.waitForExistence(timeout: 15))
@@ -70,28 +85,24 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertFalse(gallery.groups.matching(NSPredicate(format: "identifier ENDSWITH %@",
             ScreenshotFixture.widgetKind + ":systemSmall")).firstMatch.exists)
         XCTAssertFalse(done.exists)
-        let labels = ScreenshotFixture.smallWidgetAccountLabels
-        let label = try XCTUnwrap(labels.first)
-        let predicate = NSPredicate(format: "label == %@", label)
+        let placed = NSPredicate(format: "identifier BEGINSWITH %@ AND identifier CONTAINS %@",
+            "widget-local:", ScreenshotFixture.widgetKind)
         let widgetHost = try XCTUnwrap(findOwner(stage: "placed-widget", baseline: baseline, interactive: false) {
-            $0.descendants(matching: .any).matching(predicate).firstMatch
+            $0.windows.containing(placed).firstMatch
         }).app
-        for label in labels {
-            XCTAssertTrue(widgetHost.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch.waitForExistence(timeout: 15))
-        }
         record(widgetHost, name: "widget-placed")
-        var containers = widgetHost.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Context Panel"))
-        for label in labels { containers = containers.containing(NSPredicate(format: "label == %@", label)) }
-        let widget = try XCTUnwrap(containers.allElementsBoundByIndex.filter { !$0.frame.isEmpty }
-            .min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }))
-        let screenshot = try waitForWidgetPixels(widget)
+        let widgets = widgetHost.windows.containing(placed).allElementsBoundByIndex
+        XCTAssertEqual(widgets.count, families.count)
+        for widget in widgets { _ = try waitForWidgetPixels(widget) }
+        let screenshot = XCUIScreen.main.screenshot()
         let display = CGMainDisplayID()
         let points = CGDisplayBounds(display).size
         let geometry: [String: Any] = [
             "screenPoints": [points.width, points.height],
             "screenPixels": [CGDisplayPixelsWide(display), CGDisplayPixelsHigh(display)],
             "backingScaleFactor": NSScreen.main?.backingScaleFactor ?? 0,
-            "widgetPoints": [widget.frame.minX, widget.frame.minY, widget.frame.maxX, widget.frame.maxY]]
+            "widgetsPoints": widgets.map { [$0.frame.minX, $0.frame.minY, $0.frame.maxX, $0.frame.maxY] },
+            "frontmostApplication": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"]
         let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
         let metadata = XCTAttachment(string: try XCTUnwrap(String(data: data, encoding: .utf8)))
         metadata.name = "mac-widget-geometry"
@@ -138,6 +149,11 @@ final class MacCaptureUITests: XCTestCase {
         } while true
     }
 
+    private func nativeCoordinate(_ point: CGPoint, relativeTo reference: XCUIElement) -> XCUICoordinate {
+        reference.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: point.x - reference.frame.minX, dy: point.y - reference.frame.minY))
+    }
+
     private func visibleWindows() -> [[String: Any]] {
         CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
     }
@@ -175,8 +191,7 @@ final class MacCaptureUITests: XCTestCase {
         transform.name = "native-menu-pixel-to-point-transform"
         transform.lifetime = .keepAlways
         add(transform)
-        reference.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: point.x - reference.frame.minX, dy: point.y - reference.frame.minY)).click()
+        nativeCoordinate(point, relativeTo: reference).click()
     }
 
     private func windowHosts(baseline: Set<Int>) -> [(String, XCUIApplication)] {
@@ -267,7 +282,7 @@ final class MacCaptureUITests: XCTestCase {
         continueAfterFailure = false
         stopOnUnexpectedDialog()
         let app = XCUIApplication()
-        app.launchEnvironment = ["GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"]
+        app.launchEnvironment = environment.filter { ["GITHUB_ACTIONS", "RUNNER_ENVIRONMENT"].contains($0.key) }
         for mode in ["overview", "detail"] {
             for appearance in ["light", "dark"] {
                 app.launchArguments = [mode, appearance]
