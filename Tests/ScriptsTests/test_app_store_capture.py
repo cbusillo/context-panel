@@ -66,7 +66,14 @@ class AppStoreCaptureTests(unittest.TestCase):
                     return ""
 
                 output = root / "external.png"
-                with patch.object(capture, "run", side_effect=fake_run):
+                original_rmdir = Path.rmdir
+
+                def cleanup_after_copy(directory):
+                    if outcome == "success" or (outcome == "temp-refused" and saves == 2):
+                        self.assertEqual(output.read_bytes(), data)
+                    original_rmdir(directory)
+
+                with patch.object(capture, "run", side_effect=fake_run), patch.object(Path, "rmdir", cleanup_after_copy):
                     if outcome in {"other-error", "container-refused"}:
                         with self.assertRaises(subprocess.CalledProcessError):
                             capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
@@ -263,7 +270,7 @@ class AppStoreCaptureTests(unittest.TestCase):
             refusal = subprocess.CalledProcessError(1, "screenshot", stderr="permission denied")
             with patch.object(capture, "run", side_effect=[str(stage), refusal]):
                 with self.assertRaises(subprocess.CalledProcessError) as failure:
-                    capture.staged_png(("fake",), "owned", (7, 9))
+                    capture.staged_png(("fake",), "owned", root / "external.png", (7, 9))
             self.assertIs(failure.exception, refusal)
             self.assertTrue(failure.exception.__notes__)
             self.assertTrue((stage / "unexpected-sidecar").exists())

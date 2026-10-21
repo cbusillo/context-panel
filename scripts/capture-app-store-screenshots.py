@@ -55,8 +55,8 @@ def run(*args: str, timeout: int = 180) -> str:
     return result.stdout.strip()
 
 
-def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
-               parent: Path | None = None) -> bytes | None:
+def staged_png(prefix: tuple[str, ...], udid: str, destination: Path, size: tuple[int, int],
+               parent: Path | None = None) -> bool:
     # Q605: normal system temp first; container staging only after a save refusal.
     arguments = (str(parent / "cp744.XXXXXX"),) if parent else ()
     directory = Path(run("mktemp", "-d", *arguments))
@@ -70,7 +70,7 @@ def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
         except subprocess.CalledProcessError as error:
             primary_error = error
             if parent is None and "NSCocoaErrorDomain, code=513" in (error.stderr or ""):
-                return None
+                return False
             raise
         data = image.read_bytes()
         if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
@@ -78,7 +78,9 @@ def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
         dimensions = struct.unpack(">II", data[16:24])
         if dimensions != size:
             raise SystemExit(f"Unexpected capture size {dimensions}; expected {size}")
-        return data
+        with destination.open("xb") as output:
+            output.write(data)
+        return True
     except BaseException as error:
         primary_error = error
         raise
@@ -95,16 +97,14 @@ def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
 
 def capture_png(prefix: tuple[str, ...], udid: str, identifier: str,
                 destination: Path, size: tuple[int, int]) -> str:
-    data = staged_png(prefix, udid, size)
+    saved = staged_png(prefix, udid, destination, size)
     staging = "system temporary directory"
-    if data is None:
+    if not saved:
         container = Path(run(*prefix, "get_app_container", udid, identifier, "data"))
         if not container.is_absolute() or not container.is_dir():
             raise RuntimeError("Owned fixture-app data container unavailable")
-        data = staged_png(prefix, udid, size, container / "tmp")
+        staged_png(prefix, udid, destination, size, container / "tmp")
         staging = "owned fixture-app temporary directory after system-temp save refusal"
-    with destination.open("xb") as output:
-        output.write(data)
     return staging
 
 

@@ -24,15 +24,19 @@ final class MacCaptureUITests: XCTestCase {
         record(finder, name: "desktop")
         let desktop = finder.scrollViews["desktop"].firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 15))
+        let reference = finder.menuBars.firstMatch
+        XCTAssertTrue(reference.waitForExistence(timeout: 15))
         let center = CGPoint(x: desktop.frame.midX, y: desktop.frame.midY)
         let stockWidgets = XCUIApplication(bundleIdentifier: "com.apple.notificationcenterui").windows
             .containing(NSPredicate(format: "identifier BEGINSWITH %@", "widget-local:"))
         for window in stockWidgets.allElementsBoundByIndex {
             XCTAssertFalse(window.frame.contains(center), "The desktop click must avoid native widget windows")
+            XCTAssertFalse(window.frame.intersects(reference.frame), "The coordinate reference must avoid native widget windows")
         }
         let baseline = Set(visibleWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
-        desktop.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-        try clickVisibleWidgetMenu(desktop)
+        reference.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: center.x - reference.frame.minX, dy: center.y - reference.frame.minY)).rightClick()
+        try clickVisibleWidgetMenu(desktop, reference: reference)
         let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search", baseline: baseline) { $0.searchFields.firstMatch })
         let gallery = galleryMatch.app
         let search = galleryMatch.element
@@ -125,7 +129,7 @@ final class MacCaptureUITests: XCTestCase {
         CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
     }
 
-    private func clickVisibleWidgetMenu(_ desktop: XCUIElement) throws {
+    private func clickVisibleWidgetMenu(_ desktop: XCUIElement, reference: XCUIElement) throws {
         let screenshot = XCUIScreen.main.screenshot()
         let image = try XCTUnwrap(screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let display = CGMainDisplayID()
@@ -154,12 +158,12 @@ final class MacCaptureUITests: XCTestCase {
         let point = CGPoint(x: bounds.minX + box.midX * bounds.width,
                             y: bounds.minY + (1 - box.midY) * bounds.height)
         XCTAssertTrue(desktop.frame.contains(point))
-        let transform = XCTAttachment(string: "pixels=\(image.width)x\(image.height) displayPoints=\(bounds) OCRBox=\(box) click=\(point)")
+        let transform = XCTAttachment(string: "pixels=\(image.width)x\(image.height) displayPoints=\(bounds) reference=\(reference.frame) OCRBox=\(box) click=\(point)")
         transform.name = "native-menu-pixel-to-point-transform"
         transform.lifetime = .keepAlways
         add(transform)
-        desktop.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: point.x - desktop.frame.minX, dy: point.y - desktop.frame.minY)).click()
+        reference.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: point.x - reference.frame.minX, dy: point.y - reference.frame.minY)).click()
     }
 
     private func windowHosts(baseline: Set<Int>) -> [(String, XCUIApplication)] {
@@ -220,19 +224,11 @@ final class MacCaptureUITests: XCTestCase {
 
     private func stopOnUnexpectedDialog() {
         addUIInterruptionMonitor(withDescription: "Capture has no permission-grant authority") { alert in
-            let photos = alert.groups.matching(NSPredicate(format: "identifier BEGINSWITH %@",
-                "widget-local:com.apple.Photos:")).firstMatch
-            let ordinaryWidget = alert.elementType == .window && alert.title == "Featured"
-                && !alert.isEnabled && photos.exists && alert.buttons.count == 0
-                && alert.textFields.count == 0 && alert.secureTextFields.count == 0
-                && alert.alerts.count == 0 && alert.sheets.count == 0
-                && alert.descendants(matching: .dialog).count == 0
             let evidence = XCTAttachment(string: alert.debugDescription)
-            evidence.name = ordinaryWidget ? "ordinary-featured-photos-widget" : "unexpected-system-dialog"
+            evidence.name = "unexpected-system-dialog"
             evidence.lifetime = .keepAlways
             self.add(evidence)
-            if ordinaryWidget { return false }
-            XCTFail("Capture stopped at an unexpected system dialog: \(alert.label)")
+            XCTFail("Capture stopped at an unexpected UI interruption: \(alert.label)")
             return true // Prevent the default interruption handler from dismissing it.
         }
     }
