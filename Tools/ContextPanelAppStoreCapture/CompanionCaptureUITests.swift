@@ -13,7 +13,6 @@ final class CompanionCaptureUITests: XCTestCase {
             add(hierarchy)
         }
         app.launch()
-        app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 90))
         let overview = app.descendants(matching: .any).matching(identifier: "screenshot-overview").firstMatch
         XCTAssertTrue(overview.waitForExistence(timeout: 90))

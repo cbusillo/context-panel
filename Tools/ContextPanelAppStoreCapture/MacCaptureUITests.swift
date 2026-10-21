@@ -20,9 +20,19 @@ final class MacCaptureUITests: XCTestCase {
                 let window = app.windows.firstMatch
                 XCTAssertTrue(window.waitForExistence(timeout: 30))
                 let overview = ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date)
-                let selected = try XCTUnwrap(mode == "detail" ? overview.accounts.first : overview.useNext(provider: .openAI))
-                let account = app.staticTexts.matching(NSPredicate(format: "value == %@", selected.metadata.label)).firstMatch
+                let selected = try XCTUnwrap(overview.accounts.first)
+                let account: XCUIElement
+                if mode == "detail" {
+                    account = window.staticTexts.matching(NSPredicate(format: "value == %@", selected.metadata.label)).firstMatch
+                } else {
+                    let prefix = "\(selected.metadata.provider.accountDisplayName), \(selected.metadata.label),"
+                    let rows = window.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
+                    account = rows.firstMatch
+                    XCTAssertTrue(account.waitForExistence(timeout: 30))
+                    XCTAssertEqual(rows.count, 1)
+                }
                 XCTAssertTrue(account.waitForExistence(timeout: 30))
+                XCTAssertTrue(window.frame.contains(account.frame))
                 let attachment = XCTAttachment(screenshot: window.screenshot())
                 attachment.name = "mac-\(mode)-\(appearance)"
                 attachment.lifetime = .keepAlways
