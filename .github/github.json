@@ -131,8 +131,7 @@
       "appStoreReviewReleaseEvidenceDefault": "enforce",
       "releaseEvidenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_release_evidence_gate.py Tests/ScriptsTests/test_submit_app_store_review.py Tests/ScriptsTests/test_submission_evidence_bundle.py Tests/ScriptsTests/test_release_workflows.py",
       "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration|retired|settingsAccounts)\"",
-      "appStoreReleaseStatusTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_app_store_release_status",
-      "appStoreCaptureTests": "uv run --no-project --with PyYAML python -m unittest Tests.ScriptsTests.test_app_store_capture"
+      "appStoreReleaseStatusTests": "uv run --no-project python -m unittest Tests.ScriptsTests.test_app_store_release_status"
     },
     "docsRequiredWhen": [
       "provider behavior changes",

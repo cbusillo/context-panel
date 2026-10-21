@@ -197,12 +197,10 @@ def new_owned_device(inventory: dict, before: set[str], name: str, platform: str
     return matches[0] if matches else None
 
 
-def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
+def capture(profile: str, output: Path) -> None:
     platform, device, expected_size = PROFILES[profile]
     if output.exists():
         raise SystemExit(f"Refusing to overwrite {output}")
-    if device_set is not None and not device_set.is_absolute():
-        raise SystemExit("--device-set must be absolute")
     source = clean_commit()
     receipt_path = build_receipt(platform)
     if not receipt_path.is_file():
@@ -217,11 +215,8 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
     if info.get("CFBundleIdentifier") != bundle_id(TARGETS[platform]):
         raise SystemExit("Refusing a bundle without the capture-only identifier")
     output.mkdir(parents=True)
-    # Q599 authorizes CoreSimulator's normal private storage. Leave --set out
-    # for that supported default; explicit sets remain useful for inert tests.
-    if device_set is not None:
-        device_set.mkdir(parents=True, exist_ok=True)
-    prefix = ("xcrun", "simctl") + (("--set", str(device_set)) if device_set else ())
+    # Q599 authorizes CoreSimulator's normal private storage.
+    prefix = ("xcrun", "simctl")
     name = "CP744-C2-" + uuid.uuid4().hex
     inventory = device_inventory(prefix)
     before = {entry["udid"] for entries in inventory.values() for entry in entries}
@@ -229,10 +224,13 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
         raise SystemExit("Simulator name collision; no device was created")
     # A failed create can allocate a device. Reconcile only a newly observed exact
     # name/type/runtime match and delete by UDID; never retry the refused action.
+    created_id = None
+    primary_error = None
     try:
         udid = run(*prefix, "create", name, "com.apple.CoreSimulator.SimDeviceType." + device,
                    "com.apple.CoreSimulator.SimRuntime." + RUNTIMES[platform])
         uuid.UUID(udid)
+        created_id = udid
         run(*prefix, "boot", udid)
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
         run(*prefix, "install", udid, str(app))
@@ -262,14 +260,18 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
-            "deviceSet": str(device_set) if device_set else "CoreSimulator default private storage",
+            "deviceSet": "CoreSimulator default private storage",
             "mechanism": "simctl framebuffer, fixture-only capture build",
             "images": files,
         }
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        primary_error = sys.exception()
         try:
             owned = new_owned_device(device_inventory(prefix), before, name, platform, device)
+            if created_id is not None and (owned is None or owned["udid"] != created_id):
+                raise RuntimeError("Created simulator identity is unavailable; cleanup not verified")
             if owned:
                 owned_id = owned["udid"]
                 uuid.UUID(owned_id)
@@ -298,14 +300,13 @@ def main() -> None:
     capturer = commands.add_parser("capture")
     capturer.add_argument("profile", choices=PROFILES)
     capturer.add_argument("--output", required=True, type=Path)
-    capturer.add_argument("--device-set", type=Path, help="Absolute device set; use only an approved storage route")
     args = parser.parse_args()
     if args.command == "prepare":
         prepare()
     elif args.command == "build":
         build(args.platform)
     else:
-        capture(args.profile, args.output.resolve(), args.device_set)
+        capture(args.profile, args.output.resolve())
 
 
 if __name__ == "__main__":

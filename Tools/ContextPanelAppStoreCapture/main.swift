@@ -13,17 +13,16 @@ for flag in ["-AppleLocale", "-AppleLanguages"] {
         arguments.removeSubrange(index ... index + 1)
     }
 }
-guard arguments.count == 3, ["overview", "detail", "overview-window", "detail-window"].contains(arguments[0]),
+guard arguments.count == 3, ["overview", "detail"].contains(arguments[0]),
       ["light", "dark"].contains(arguments[1]), !FileManager.default.fileExists(atPath: arguments[2]) else {
-    fputs("usage: ContextPanelAppStoreCapture overview|detail|overview-window|detail-window light|dark NEW.png\n", stderr)
+    fputs("usage: ContextPanelAppStoreCapture overview|detail light|dark NEW.png\n", stderr)
     exit(64)
 }
 ScreenshotFixture.configureProcess()
 let dark = arguments[1] == "dark"
-let includesWindow = arguments[0].hasSuffix("-window")
 let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
 let canvas = NSRect(x: 0, y: 0, width: 1440, height: 900)
-let size = includesWindow ? NSWindow.contentRect(forFrameRect: canvas, styleMask: style).size : canvas.size
+let size = NSWindow.contentRect(forFrameRect: canvas, styleMask: style).size
 let content = MacValidationGallery.appStorePresentation(snapshot: ScreenshotFixture.snapshot,
     now: ScreenshotFixture.date, detail: arguments[0].hasPrefix("detail"))
 let host = NSHostingView(rootView: content
@@ -45,7 +44,10 @@ host.layoutSubtreeIfNeeded()
 guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2880, pixelsHigh: 1800,
     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { exit(70) }
-let renderedView = includesWindow ? (host.superview ?? host) : host
+guard let renderedView = host.superview else {
+    fputs("native window frame unavailable\n", stderr)
+    exit(70)
+}
 renderedView.layoutSubtreeIfNeeded()
 bitmap.size = renderedView.bounds.size
 renderedView.cacheDisplay(in: renderedView.bounds, to: bitmap)

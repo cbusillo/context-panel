@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import plistlib
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -44,8 +45,8 @@ class AppStoreCaptureTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_failed_create_and_install_delete_only_newly_observed_owned_device(self):
-        for failure, private_default in (("create", False), ("install", False), ("create", True), ("install", True)):
-            with self.subTest(failure=failure, private_default=private_default), tempfile.TemporaryDirectory() as folder:
+        for failure in ("create", "install"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 owned = "EBA287F0-39CB-4EE1-AD9B-5C987F5C3783"
                 calls = []
@@ -70,21 +71,18 @@ class AppStoreCaptureTests(unittest.TestCase):
                         devices.pop()
                     return ""
 
-                device_set = None if private_default else root / "owned-set"
                 with patch.object(capture, "BUILD", root / "build"), \
                      patch.object(capture, "clean_commit", return_value=self.source), \
                      patch.object(capture, "run", side_effect=fake_run):
                     self.make_bundle()
                     with self.assertRaises(subprocess.CalledProcessError):
-                        capture.capture("iphone", root / "output", device_set)
+                        capture.capture("iphone", root / "output")
                 cleanup = [args[-2:] for args in calls if "delete" in args or "shutdown" in args]
                 expected = [("delete", owned)] if failure == "create" else [("shutdown", owned), ("delete", owned)]
                 self.assertEqual(cleanup, expected)
                 self.assertEqual(len(devices), 1)
-                prefix = ("xcrun", "simctl") if private_default else ("xcrun", "simctl", "--set", str(device_set))
-                self.assertTrue(all(args[:len(prefix)] == prefix for args in calls))
-                if private_default:
-                    self.assertTrue(all("--set" not in args for args in calls))
+                self.assertTrue(all(args[:2] == ("xcrun", "simctl") for args in calls))
+                self.assertTrue(all("--set" not in args for args in calls))
 
     def test_changed_source_or_bundle_cannot_be_captured_under_an_old_build_receipt(self):
         for change in ("source", "bundle"):
@@ -99,14 +97,6 @@ class AppStoreCaptureTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         capture.capture("iphone", root / "output")
                     run.assert_not_called()
-
-    def test_relative_device_set_has_no_side_effects(self):
-        with tempfile.TemporaryDirectory() as folder, patch.object(capture, "run") as run:
-            output = Path(folder) / "output"
-            with self.assertRaises(SystemExit):
-                capture.capture("iphone", output, Path("relative-device-set"))
-            self.assertFalse(output.exists())
-            run.assert_not_called()
 
     def test_cleanup_failure_keeps_the_original_create_error(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -129,6 +119,46 @@ class AppStoreCaptureTests(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError) as failure:
                     capture.capture("iphone", root / "output")
                 self.assertTrue(failure.exception.__notes__)
+
+    def test_success_never_publishes_a_receipt_without_verified_cleanup(self):
+        for fault in ("missing-identity", "cleanup-error-in-outer-except"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                owned = "EBA287F0-39CB-4EE1-AD9B-5C987F5C3783"
+                platform, device, size = capture.PROFILES["iphone"]
+                runtime = "com.apple.CoreSimulator.SimRuntime." + capture.RUNTIMES[platform]
+                devices = []
+                reads = 0
+
+                def fake_run(*args, **kwargs):
+                    nonlocal reads
+                    if "list" in args:
+                        reads += 1
+                        if reads > 1:
+                            if fault == "cleanup-error-in-outer-except":
+                                raise RuntimeError("cleanup inventory unavailable")
+                            for entry in devices:
+                                entry.pop("deviceTypeIdentifier", None)
+                        return json.dumps({"devices": {runtime: devices}})
+                    if "create" in args:
+                        devices.append({"udid": owned, "name": args[args.index("create") + 1],
+                            "state": "Booted", "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType." + device})
+                        return owned
+                    if "screenshot" in args:
+                        Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
+                    return "fixture"
+
+                with patch.object(capture, "BUILD", root / "build"), \
+                     patch.object(capture, "clean_commit", return_value=self.source), \
+                     patch.object(capture, "run", side_effect=fake_run), \
+                     patch.object(capture.time, "sleep"):
+                    self.make_bundle()
+                    try:
+                        raise ValueError("unrelated caller exception")
+                    except ValueError:
+                        with self.assertRaises(RuntimeError):
+                            capture.capture("iphone", root / "output")
+                    self.assertFalse((root / "output/capture.json").exists())
 
     def test_generated_capture_model_is_enforced_before_xcodegen(self):
         original = {"name": "Fixture", "options": {}, "targets": {

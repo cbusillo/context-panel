@@ -67,10 +67,10 @@ From a clean committed source tree on a host whose OS/fonts match the manifest:
 
 ```sh
 swift build --product ContextPanelAppStoreCapture --scratch-path .build/app-store-capture
-.build/app-store-capture/debug/ContextPanelAppStoreCapture overview-window light /absolute/new/mac-overview-light.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture overview-window dark /absolute/new/mac-overview-dark.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture detail-window light /absolute/new/mac-detail-light.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture detail-window dark /absolute/new/mac-detail-dark.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture overview light /absolute/new/mac-overview-light.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture overview dark /absolute/new/mac-overview-dark.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture detail light /absolute/new/mac-detail-light.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture detail dark /absolute/new/mac-detail-dark.png
 ```
 
 The renderer refuses existing output files. Its fixture uses no credentials,
@@ -118,9 +118,8 @@ owns a newly named simulator and records the returned UDID, built source commit 
 runtime, device type, image dimensions and checksums. The built source owns the
 fixture date and timezone; the Python tool does not copy those values. Cleanup
 addresses only a newly observed exact name/type/runtime match by UDID, including
-when creation fails after allocating a device. `--device-set /absolute/path`
-selects a storage location explicitly; it is not permission to bypass a denial.
-The default omits `--set` and uses normal private storage. Cleanup verifies
+when creation fails after allocating a device. The tool always uses normal
+private storage, without a second device-set option. Cleanup verifies
 the owned UDID is absent before writing a successful capture receipt. Cleanup
 failures retain the primary capture error with an added diagnostic;
 uncertain ownership preserves candidates and fails the command. A successful
