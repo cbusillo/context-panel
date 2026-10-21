@@ -103,7 +103,7 @@ final class CompanionCaptureUITests: XCTestCase {
     }
 
     private func addFixtureWidget(_ home: XCUIApplication) throws {
-        let icon = home.icons["Context Panel"].firstMatch
+        let icon = home.otherElements["Home screen icons"].icons["Context Panel"].firstMatch
         let foundIcon = icon.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "home")
         XCTAssertTrue(foundIcon)
