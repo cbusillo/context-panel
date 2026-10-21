@@ -3,16 +3,17 @@
 Prepared for [#744](https://github.com/cbusillo/context-panel/issues/744),
 October 20, 2026, CP744-C2. **Incomplete, unapproved, repo only.**
 
-The four Mac images now include the production account sidebar, overview and
-account detail. They use six synthetic accounts through the offscreen SwiftUI
-renderer. They capture app content without a title bar, desktop, actual
-WidgetKit placement or signed-runtime evidence. No normal Mac app is launched;
+The four Mac images include the production account sidebar, overview,
+account detail and native AppKit title bar/window controls. They use six synthetic accounts through the offscreen SwiftUI
+renderer. They capture a complete inactive window frame offscreen, without
+a desktop, actual WidgetKit placement or signed-runtime evidence. No normal Mac app is launched;
 the renderer creates an AppKit window hierarchy that is never ordered onto a
-display. The composition uses the production sidebar, overview and account-detail
+display. The native frame is rendered as AppKit views, not through screen capture or
+the WindowServer compositor. The composition uses the production sidebar, overview and account-detail
 components, including the account diagnostics disclosure. It has no lifecycle
 tasks or account/provider refresh.
 
-| Mac app content | Light | Dark |
+| Mac window | Light | Dark |
 | --- | --- | --- |
 | Overview and sidebar | [Image](mac-overview-light.png) | [Image](mac-overview-dark.png) |
 | Studio account and sidebar | [Image](mac-detail-light.png) | [Image](mac-detail-dark.png) |
@@ -31,9 +32,9 @@ comparison. Neither set changes the approved uploader mapping.
 
 | Platform/surface | Current evidence | Remaining work |
 | --- | --- | --- |
-| Mac app | Four offscreen app-content images above | Chris reviews the concrete images; native title-bar/window capture remains absent |
+| Mac app | Four offscreen native-frame images above | Chris reviews the concrete images; no desktop/WidgetKit placement proof |
 | Mac widgets | Earlier draft compositions only | Actual WidgetKit placement in an isolated fixture environment; never Chris's desktop |
-| iPhone and iPad app | Capture-only iOS simulator build passed | Launch and capture complete native navigation with fixture data at both iPhone display sizes and iPad size |
+| iPhone and iPad app | Capture-only iOS simulator build passed | Private-storage iPhone fixture launch passed; PNG output blocked on Q602. Capture native navigation at both iPhone sizes and iPad size |
 | iPhone/iPad widgets | Earlier draft covers no placed widgets | Capture actual widget placement in owned fixture simulators; the tool does not yet automate placement |
 | Watch app | Capture-only watchOS simulator build passed | Launch/capture native navigation, status, headline and account list |
 | Vision Pro app | Capture-only visionOS simulator build passed | Capture spatial app context; framebuffer capture may omit spatial windows and cannot be assumed sufficient |
@@ -45,7 +46,14 @@ on CoreSimulator's `Operation not permitted` denial. No devices remained.
 [Chris approved Q599](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305613280)
 on October 20: capture now uses CoreSimulator's normal private internal-disk
 storage. Source, builds and image evidence remain on Developer-Artifacts.
-This recovery approval is separate from later approval of the image set.
+The subsequent iPhone PNG-file write to the external evidence directory was
+also refused with `NSCocoaErrorDomain code=513` / `NSPOSIXErrorDomain code=1`
+and `Operation not permitted`. That newly created simulator was deleted and
+its absence verified; all 31 pre-existing devices remain. Capture stopped.
+[Q602](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305731155)
+asks to stream PNG bytes through the supported `simctl` stdout form and let the
+repository process write them externally. No alternate route has been run.
+Both recovery approvals are separate from later approval of the image set.
 
 Mac desktop WidgetKit placement cannot be supplied by this offscreen tool.
 Do not use Chris's live desktop to fill that gap. If no isolated repository
@@ -59,10 +67,10 @@ From a clean committed source tree on a host whose OS/fonts match the manifest:
 
 ```sh
 swift build --product ContextPanelAppStoreCapture --scratch-path .build/app-store-capture
-.build/app-store-capture/debug/ContextPanelAppStoreCapture overview light /absolute/new/mac-overview-light.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture overview dark /absolute/new/mac-overview-dark.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture detail light /absolute/new/mac-detail-light.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture detail dark /absolute/new/mac-detail-dark.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture overview-window light /absolute/new/mac-overview-light.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture overview-window dark /absolute/new/mac-overview-dark.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture detail-window light /absolute/new/mac-detail-light.png
+.build/app-store-capture/debug/ContextPanelAppStoreCapture detail-window dark /absolute/new/mac-detail-dark.png
 ```
 
 The renderer refuses existing output files. Its fixture uses no credentials,
@@ -97,7 +105,9 @@ uv run scripts/capture-app-store-screenshots.py build tvos
 uv run scripts/capture-app-store-screenshots.py build visionos
 ```
 
-Q599 authorizes the default private simulator storage used below:
+Q599 authorizes default private simulator storage. **Do not run the following
+capture command until Q602 authorizes recovery from the external PNG-output
+denial and the tool has been updated for that approved transport:**
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolute/new/iphone

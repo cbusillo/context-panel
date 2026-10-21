@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "approval": "unapproved; incomplete set; no ready or upload",
-  "sourceCommit": "77a3cc65960b10af706a1fe51cdc6548d9c95c46",
+  "sourceCommit": "881bd8a83ad0a61e0b3efb9d6c714ce4232343a6",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "hostOS": "27.2",
   "xcode": "Xcode 27.0\nBuild version 27A266a",
@@ -10,41 +10,41 @@
       "file": "mac-detail-dark.png",
       "width": 2880,
       "height": 1800,
-      "sha256": "35b890cbeeeae5d3b1eb5966c944bca05574d6d63b136ca924e76c1e2e1a0fe0",
+      "sha256": "27ebb8a81c1a3bf57a2034bdbf5182f24527ad8e155f6ab6e8050f0044adaf59",
       "surface": "macos.app",
       "presentation": "detail",
       "appearance": "dark",
-      "mechanism": "offscreen NSHostingView of production sidebar and Horizon panels; no title bar or OS placement"
+      "mechanism": "offscreen AppKit native window frame with production sidebar and Horizon panels; inactive chrome; no desktop or OS widget placement"
     },
     {
       "file": "mac-detail-light.png",
       "width": 2880,
       "height": 1800,
-      "sha256": "2c3be02c4ed5474d829a914b0c6a141a1105a6bc29566e47f4a62d488c6ccc57",
+      "sha256": "348580f570c331d59d04a49f36a1a7950692f672d3fcc61ceac2bd505342a358",
       "surface": "macos.app",
       "presentation": "detail",
       "appearance": "light",
-      "mechanism": "offscreen NSHostingView of production sidebar and Horizon panels; no title bar or OS placement"
+      "mechanism": "offscreen AppKit native window frame with production sidebar and Horizon panels; inactive chrome; no desktop or OS widget placement"
     },
     {
       "file": "mac-overview-dark.png",
       "width": 2880,
       "height": 1800,
-      "sha256": "e239775d083f31d879b297c655b1587a9b28bb03b2ce55c6df52698ad584fc81",
+      "sha256": "e50b6f134faa79871c759ca530f2bd251a923cbea193a03860c1178cd819b6a6",
       "surface": "macos.app",
       "presentation": "overview",
       "appearance": "dark",
-      "mechanism": "offscreen NSHostingView of production sidebar and Horizon panels; no title bar or OS placement"
+      "mechanism": "offscreen AppKit native window frame with production sidebar and Horizon panels; inactive chrome; no desktop or OS widget placement"
     },
     {
       "file": "mac-overview-light.png",
       "width": 2880,
       "height": 1800,
-      "sha256": "e6716702cb83f26051e8544c4c57bb737e111abe46da3c280a3f074c7fa15533",
+      "sha256": "cbfdb19229a5fafc4d46671e0d3b74b9d7ff9f0a8ed616c2f1e3a132345c11a5",
       "surface": "macos.app",
       "presentation": "overview",
       "appearance": "light",
-      "mechanism": "offscreen NSHostingView of production sidebar and Horizon panels; no title bar or OS placement"
+      "mechanism": "offscreen AppKit native window frame with production sidebar and Horizon panels; inactive chrome; no desktop or OS widget placement"
     }
   ]
 }
