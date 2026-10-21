@@ -694,8 +694,9 @@ invent unconfigured accounts. Membership and states use the shared
 `AccountBurnRateEstimator`, matching the account overview.
 
 Windows include their own observation time, unit, used/limit quantities,
-nullable `remainingFraction` and `period` (`fiveHour`, `weekly`, `daily`, or
-`availability`; null when the period is unknown),
+nullable `remainingFraction` and `period` (from
+[`MainLimitWindow`](../Sources/ContextPanelCore/MainLimitSummary.swift);
+null when the period is unknown),
 `naturalResetAt` and nullable `burn` (units per hour, observation duration,
 sample count). Burn is null when there is insufficient history or the account
 is not current. A burn `sampleCount` of zero means a whole-window average rather
@@ -721,8 +722,8 @@ fraction measures that limiting window, which can change between readings; it
 is not a weekly allowance or a burn-rate sample. Read the `windows` entries
 with `period: fiveHour` and `period: weekly` for their separate remaining
 fractions and resets. Retain each matching entry when model-specific windows
-share a period. Weekly pacing and banked-reset burn summaries use the weekly
-window's own `burn`, not changes in the headline. The headline label is null
+share a period. For weekly pacing and banked-reset burn summaries, read the
+weekly window's own `burn`, not changes in the headline. The headline label is null
 without a limiting window. These are additive schema 1 fields; older readers
 retain all existing fields, and consumers of older snapshots treat missing
 fields as unknown.

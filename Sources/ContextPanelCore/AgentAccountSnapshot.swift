@@ -345,8 +345,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     remainingFraction: account.remainingFraction, limitingWindowID: account.limitingWindow?.id,
                     observedAt: account.observedAt, windows: limits.map { limit in
                         let rate = canonical.accountBurnRates?[limit.accountID]?[limit.id]
-                        return Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id), label: ConnectorRedactor.safeErrorDescription(limit.label),
-                            period: MainLimitWindow.infer(from: limit), remainingFraction: limit.remainingCapacityRatio,
+                        let id = AccountDisplayMetadata.safeID(limit.provider, limit.id)
+                        let window = account.windows.first { $0.id == id }
+                        return Window(id: id, label: ConnectorRedactor.safeErrorDescription(limit.label),
+                            period: window?.period, remainingFraction: window?.remainingFraction,
                             unit: limit.unit, used: limit.used, limit: limit.limit, naturalResetAt: limit.resetsAt,
                             observedAt: limit.lastUpdatedAt,
                             burn: rate.flatMap { $0.sampleCount > 0 ? Burn(unitsPerHour: $0.unitsPerHour,
@@ -393,10 +395,12 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 windows: row.limits.map { limit in
                     let estimate = current && limit.presentationAssumption == nil ? rates[row.id]?[limit.id] : nil
                     let burn = estimate.flatMap { $0.sampleCount > 0 ? $0 : nil }
+                    let id = AccountDisplayMetadata.safeID(row.provider, limit.id)
+                    let window = shared?.windows.first { $0.id == id }
                     return Window(
-                        id: ConnectorRedactor.localAccountID(provider: row.provider, stableID: limit.id),
+                        id: id,
                         label: ConnectorRedactor.safeErrorDescription(limit.label),
-                        period: MainLimitWindow.infer(from: limit), remainingFraction: limit.remainingCapacityRatio,
+                        period: window?.period, remainingFraction: window?.remainingFraction,
                         unit: limit.unit, used: limit.used, limit: limit.limit,
                         naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
                         burn: burn.map { Burn(unitsPerHour: $0.unitsPerHour,

@@ -35,19 +35,42 @@ func agentSnapshotNamesHeadlineWindowAndExportsIndependentWindowCapacity(shared:
         configuration: [account], publisherID: "fixture")) : nil
     let snapshot = AgentAccountSnapshot(configuration: config, stored: stored, history: [], now: agentNow,
         sharedDocument: document)
+    let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+        metadata: AccountDisplayMetadata.local(configuration: config.accounts, stored: stored, now: agentNow), now: agentNow)
+    let headlineWindow = try #require(overview.accounts.first?.limitingWindow)
     let row = try #require(snapshot.accounts.first)
     let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any])
     let limiting = try #require(limits.min { ($0.remainingCapacityRatio ?? 1) < ($1.remainingCapacityRatio ?? 1) })
-    #expect(object["limitingWindowLabel"] as? String == limiting.displayLabel)
+    #expect(object["limitingWindowLabel"] as? String == headlineWindow.label)
     #expect(row.remainingFraction == limiting.remainingCapacityRatio)
     let windows = try #require(object["windows"] as? [[String: Any]])
-    for (index, limit) in limits.enumerated() {
-        #expect(windows[index]["period"] as? String == MainLimitWindow.infer(from: limit)?.rawValue)
-        #expect(windows[index]["remainingFraction"] as? Double == limit.remainingCapacityRatio)
+    for limit in limits {
+        let period = try #require(MainLimitWindow.infer(from: limit)?.rawValue)
+        let window = try #require(windows.first { $0["period"] as? String == period })
+        #expect(window["remainingFraction"] as? Double == limit.remainingCapacityRatio)
     }
     let limitingWindow = try #require(windows.first { $0["id"] as? String == row.limitingWindowID })
     #expect(limitingWindow["remainingFraction"] as? Double == row.remainingFraction)
-    #expect(windows[0]["remainingFraction"] as? Double != windows[1]["remainingFraction"] as? Double)
+}
+
+@Test(arguments: [(-1, 100), (0, 0)])
+func agentSnapshotWindowCapacityMatchesHeadlineForDecodedQuantities(quantities: (used: Int, limit: Int)) throws {
+    let account = agentConfiguration("a")
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [account])
+    var payload = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(
+        agentLimit(account.id, used: 10, at: agentNow))) as? [String: Any])
+    payload["used"] = quantities.used
+    payload["limit"] = quantities.limit
+    let limit = try JSONDecoder().decode(UsageLimit.self, from: JSONSerialization.data(withJSONObject: payload))
+    let report = StoredProviderReport(provider: .openAI, accountID: account.id, configuredAccountID: account.id,
+        accountName: "Ignored", generatedAt: agentNow, status: .healthy, errorMessage: nil)
+    let stored = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow, limits: [limit]), reports: [report])
+    let snapshot = AgentAccountSnapshot(configuration: config, stored: stored, history: [], now: agentNow)
+    let row = try #require(snapshot.accounts.first)
+    let fraction = try #require(row.windows.first?.remainingFraction)
+    #expect(fraction == row.remainingFraction)
+    #expect((0...1).contains(fraction))
+    #expect(throws: Never.self) { _ = try JSONEncoder().encode(snapshot) }
 }
 
 @Test func agentSnapshotAppCommandEmitsTheSharedProjectionWithoutWriting() throws {
