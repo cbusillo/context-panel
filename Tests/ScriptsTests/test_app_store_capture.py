@@ -5,6 +5,7 @@ from pathlib import Path
 import plistlib
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -26,6 +27,17 @@ class AppStoreCaptureTests(unittest.TestCase):
         capture.build_receipt("ios").write_text(json.dumps({
             "sourceCommit": self.source, "bundleSHA256": capture.bundle_digest(app)}))
         return app
+
+    def test_stdout_transport_preserves_binary_bytes_and_never_overwrites(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "image.png"
+            payload = b"\x89PNG\r\n\x1a\n\xff\x00"
+            capture.run(sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))",
+                        payload.hex(), stdout_path=output)
+            self.assertEqual(output.read_bytes(), payload)
+            with self.assertRaises(FileExistsError):
+                capture.run(sys.executable, "-c", "raise SystemExit(1)", stdout_path=output)
+            self.assertEqual(output.read_bytes(), payload)
 
     def test_existing_output_and_non_capture_bundle_never_launch_a_simulator(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -171,7 +183,8 @@ class AppStoreCaptureTests(unittest.TestCase):
                     if "delete" in args:
                         devices[:] = [entry for entry in devices if entry["udid"] != args[-1]]
                     if "screenshot" in args:
-                        Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
+                        self.assertEqual(args[-1], "-")
+                        kwargs["stdout_path"].write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
                     return "fixture"
 
                 with patch.object(capture, "BUILD", root / "build"), \

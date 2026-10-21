@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import nullcontext
 import hashlib
 import json
 import plistlib
@@ -38,14 +39,15 @@ PROFILES = {
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
 
 
-def run(*args: str, timeout: int = 180) -> str:
+def run(*args: str, timeout: int = 180, stdout_path: Path | None = None) -> str:
     print("+ " + " ".join(map(str, args)), flush=True)
-    result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=timeout)
-    print(result.stdout, end="", flush=True)
+    with stdout_path.open("xb") if stdout_path else nullcontext(subprocess.PIPE) as destination:
+        result = subprocess.run(args, text=True, stdout=destination,
+                                stderr=subprocess.PIPE, timeout=timeout)
+    print(result.stdout or "", end="", flush=True)
     print(result.stderr, end="", flush=True)
     result.check_returncode()
-    return result.stdout.strip()
+    return (result.stdout or "").strip()
 
 
 def unsigned_settings(settings: dict) -> dict:
@@ -248,7 +250,7 @@ def capture(profile: str, output: Path) -> None:
             # A short settle is only for SwiftUI layout/transition; images need visual review.
             time.sleep(6)
             path = output / f"{profile}-app-{appearance}.png"
-            run(*prefix, "io", udid, "screenshot", "--type=png", "--mask=ignored", str(path))
+            run(*prefix, "io", udid, "screenshot", "--type=png", "--mask=ignored", "-", stdout_path=path)
             data = path.read_bytes()
             if data[:8] != b"\x89PNG\r\n\x1a\n":
                 raise SystemExit("simctl did not produce a PNG")
@@ -263,7 +265,7 @@ def capture(profile: str, output: Path) -> None:
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
             "deviceSet": "CoreSimulator default private storage",
-            "mechanism": "simctl framebuffer, fixture-only capture build",
+            "mechanism": "simctl framebuffer streamed through stdout; repository process saves PNG; fixture-only capture build",
             "images": files,
         }
     except BaseException as error:

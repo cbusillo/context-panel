@@ -50,9 +50,10 @@ The subsequent iPhone PNG-file write to the external evidence directory was
 also refused with `NSCocoaErrorDomain code=513` / `NSPOSIXErrorDomain code=1`
 and `Operation not permitted`. That newly created simulator was deleted and
 its absence verified; all 31 pre-existing devices remain. Capture stopped.
-[Q602](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305731155)
-asks to stream PNG bytes through the supported `simctl` stdout form and let the
-repository process write them externally. No alternate route has been run.
+[Chris approved Q602](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6306472402).
+The tool streams PNG bytes through the supported `simctl` stdout form. The
+repository process opens the external file exclusively and saves the bytes;
+CoreSimulator receives no external output pathname.
 Both recovery approvals are separate from later approval of the image set.
 
 Mac desktop WidgetKit placement cannot be supplied by this offscreen tool.
@@ -105,9 +106,8 @@ uv run scripts/capture-app-store-screenshots.py build tvos
 uv run scripts/capture-app-store-screenshots.py build visionos
 ```
 
-Q599 authorizes default private simulator storage. **Do not run the following
-capture command until Q602 authorizes recovery from the external PNG-output
-denial and the tool has been updated for that approved transport:**
+Q599 authorizes default private simulator storage and Q602 authorizes stdout
+PNG transport. Capture only with this fixture tool:
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolute/new/iphone
