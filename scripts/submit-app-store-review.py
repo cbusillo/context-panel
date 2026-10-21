@@ -392,16 +392,6 @@ def app_store_version(
     return versions[0] if versions else None
 
 
-def app_store_version_id(
-    client: ASCClient,
-    app_id: str,
-    version_string: str,
-    platform: str = "MAC_OS",
-) -> str | None:
-    version = app_store_version(client, app_id, version_string, platform)
-    return version["id"] if version else None
-
-
 def active_review_version_ids(client: ASCClient, app_id: str, platform: str = "MAC_OS") -> set[str]:
     submissions = paginated_get(
         client,
@@ -675,26 +665,6 @@ def cancel_unowned_review_submission_if_still_empty(
         )
         return False
     return cancel_unowned_review_submission(client, submission_id)
-
-
-def cancel_app_store_version_submission(
-    client: ASCClient, version_id: str, version_string: str, dry_run: bool = False
-) -> None:
-    payload = client.request(
-        "GET",
-        f"/appStoreVersions/{version_id}/relationships/appStoreVersionSubmission",
-    )
-    submission = payload.get("data")
-    if not submission:
-        raise AppStoreConnectError(
-            f"App Store version {version_string} was already submitted, but no submitted version review was found to cancel"
-        )
-    submission_id = submission["id"]
-    if dry_run:
-        print(f"Dry run: would cancel submitted App Store version {version_string} review: {submission_id}")
-        return
-    client.request("DELETE", f"/appStoreVersionSubmissions/{submission_id}", allowed=(204,))
-    print(f"Canceled submitted App Store version {version_string} review: {submission_id}")
 
 
 def wait_for_editable_version(
@@ -1078,8 +1048,6 @@ def ensure_build(
     wait_timeout = DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS if wait_timeout_seconds is None else wait_timeout_seconds
     poll_interval = DEFAULT_BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
     deadline = time.monotonic() + max(0, wait_timeout)
-    last_payload: dict[str, Any] | None = None
-    last_build: dict[str, Any] | None = None
     platform = namespace_platform(args)
     while True:
         payload = client.request(
@@ -1094,7 +1062,6 @@ def ensure_build(
                 "limit": 20,
             },
         )
-        last_payload = payload
         included = included_by_id(payload)
         builds = [
             build
@@ -1104,15 +1071,15 @@ def ensure_build(
             == platform
         ]
         if builds:
-            last_build = select_build_for_marketing_version(payload, builds, args.version)
-            attributes = last_build.get("attributes", {})
+            build = select_build_for_marketing_version(payload, builds, args.version)
+            attributes = build.get("attributes", {})
             if attributes.get("processingState") == "VALID":
-                validate_build_marketing_version(payload, last_build, args.version, args.build_number)
+                validate_build_marketing_version(payload, build, args.version, args.build_number)
                 break
             if time.monotonic() >= deadline:
                 raise AppStoreConnectError(
                     f"build {args.build_number} is not valid: {attributes.get('processingState')}",
-                    payload=last_build,
+                    payload=build,
                 )
             print(
                 f"Build {args.build_number} is {attributes.get('processingState')}; "
@@ -1121,16 +1088,13 @@ def ensure_build(
         else:
             if time.monotonic() >= deadline:
                 raise AppStoreConnectError(
-                    f"missing {platform} build {args.build_number}", payload=last_payload
+                    f"missing {platform} build {args.build_number}", payload=payload
                 )
             print(
                 f"{platform} build {args.build_number} is not visible yet; "
                 f"waiting {poll_interval}s for App Store Connect processing"
             )
         time.sleep(max(1, poll_interval))
-    if last_build is None:
-        raise AppStoreConnectError(f"missing {platform} build {args.build_number}", payload=last_payload)
-    build = last_build
     attributes = build["attributes"]
     if args.non_exempt_encryption is not None and attributes.get("usesNonExemptEncryption") != args.non_exempt_encryption:
         if allow_updates:
