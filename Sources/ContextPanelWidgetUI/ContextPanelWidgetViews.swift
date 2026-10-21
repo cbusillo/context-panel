@@ -1619,35 +1619,6 @@ struct CPWEmptyRow: View {
     }
 }
 
-struct CPWFastModeCard: View {
-    @Environment(\.cpwThemeVariant) private var themeVariant
-    let snapshot: WidgetSnapshot
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(CPWTheme.fastModeColor(snapshot.fastModeStatus))
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(snapshot.fastModeVerdict)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
-                    .lineLimit(1)
-                Text(snapshot.fastModeDetail)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
-        .background(CPWTheme.line(variant: themeVariant).opacity(0.65))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
 struct CPWUsagePressureBar: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
     let usedRatio: Double?
@@ -1851,23 +1822,6 @@ struct CPWSectionHeader<Accessory: View>: View {
     }
 }
 
-struct CPWLabel: View {
-    @Environment(\.cpwThemeVariant) private var themeVariant
-    let text: String
-
-    init(_ text: String) {
-        self.text = text
-    }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.8)
-            .textCase(.uppercase)
-            .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
-    }
-}
-
 public enum CPWTheme {
     // Exposed so platform widget targets can apply the shared surface behind the rendered content.
     public static let surface = surface(variant: .adaptive)
@@ -1925,19 +1879,6 @@ public enum CPWTheme {
             Color(red: 139 / 255, green: 102 / 255, blue: 51 / 255)
         case .google:
             Color(red: 35 / 255, green: 116 / 255, blue: 106 / 255)
-        }
-    }
-
-    static func fastModeColor(_ recommendation: FastModeRecommendation?) -> Color {
-        switch recommendation {
-        case .safeThroughReset:
-            statusColor(.healthy)
-        case .safeForLimitedTime:
-            statusColor(.close)
-        case .saveFastMode, .limited:
-            statusColor(.limited)
-        case .needsCalibration, nil:
-            statusColor(.unknown)
         }
     }
 
