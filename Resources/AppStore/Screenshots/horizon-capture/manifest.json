@@ -1,21 +1,16 @@
 {
   "schemaVersion": 1,
   "approval": "unapproved; incomplete set; no ready or upload",
-  "sourceCommit": "8789dac6598cc57585fadb2b24697cb684f370c9",
+  "sourceCommit": "f50186b8d90ed3153abba02b0cb9f05175f635c1",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "hostOS": "27.2",
   "xcode": "Xcode 27.0\nBuild version 27A266a",
-  "sourceSHA256": {
-    "Tools/ContextPanelAppStoreCapture/main.swift": "3ff7913216717fddf211647e572ff4e26c81cc7b1c953244de08535d547e1cea",
-    "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift": "cbbd19cb32e06de397395456b3e3ea8a696b486737028541aef4a5d528eaad52",
-    "Sources/ContextPanelApp/ContextPanelApp.swift": "8bcdefeca6d865f5e6c48696ff374e876c3008854a10402a5b0a6c4573144b5e"
-  },
   "assets": [
     {
       "file": "mac-detail-dark.png",
       "width": 2880,
       "height": 1800,
-      "sha256": "31c7899db2008a8c9c2268280fe44cdfa507a8203efc491c32bca5c696dd7241",
+      "sha256": "35b890cbeeeae5d3b1eb5966c944bca05574d6d63b136ca924e76c1e2e1a0fe0",
       "surface": "macos.app",
       "presentation": "detail",
       "appearance": "dark",
@@ -25,7 +20,7 @@
       "file": "mac-detail-light.png",
       "width": 2880,
       "height": 1800,
-      "sha256": "2cb76e1dfdc733c6c4f3abffbfcd178a8a1fc03920caaf7b6e84da997756a164",
+      "sha256": "2c3be02c4ed5474d829a914b0c6a141a1105a6bc29566e47f4a62d488c6ccc57",
       "surface": "macos.app",
       "presentation": "detail",
       "appearance": "light",
