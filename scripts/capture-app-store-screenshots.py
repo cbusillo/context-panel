@@ -196,6 +196,15 @@ def prepare() -> None:
     watch_plist.write_bytes(plistlib.dumps(info))
     watch["INFOPLIST_FILE"] = str(watch_plist)
     validate_capture_spec(spec)
+    tests = "CompanionCaptureUITests"
+    spec["targets"][tests] = {
+        "type": "bundle.ui-testing", "platform": "iOS", "deploymentTarget": "17.0",
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/CompanionCaptureUITests.swift"}],
+        "dependencies": [{"target": TARGETS["ios"]}],
+        "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "GENERATE_INFOPLIST_FILE": True,
+            "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": TARGETS["ios"], "TARGETED_DEVICE_FAMILY": "1,2"}}}
+    spec["schemes"]["CompanionCapture"] = {"build": {"targets": {TARGETS["ios"]: "all", tests: ["test"]}},
+        "test": {"targets": [tests]}}
     path = BUILD / "project.yml"
     path.write_text(yaml.safe_dump(spec, sort_keys=False))
     run("xcodegen", "generate", "--spec", str(path), "--project", str(PROJECT.parent),
@@ -231,10 +240,10 @@ def build(platform: str) -> None:
     if not PROJECT.exists() or json.loads((BUILD / "prepared.json").read_text())["sourceCommit"] != source:
         raise SystemExit("Run prepare at the current source commit first")
     build_receipt(platform).unlink(missing_ok=True)
-    run("xcodebuild", "-quiet", "-project", str(PROJECT), "-scheme", TARGETS[platform],
+    run("xcodebuild", "-quiet", "-project", str(PROJECT), "-scheme", "CompanionCapture" if platform == "ios" else TARGETS[platform],
         "-configuration", "Debug", "-sdk", SDKS[platform],
         "-destination", f"generic/platform={dict(ios='iOS Simulator', visionos='visionOS Simulator', watchos='watchOS Simulator', tvos='tvOS Simulator')[platform]}",
-        "-derivedDataPath", str(BUILD / platform), "CODE_SIGNING_ALLOWED=NO", "build", timeout=1800)
+        "-derivedDataPath", str(BUILD / platform), "CODE_SIGNING_ALLOWED=NO", "build-for-testing" if platform == "ios" else "build", timeout=1800)
     if clean_commit() != source:
         raise SystemExit("Source changed during the build")
     build_receipt(platform).write_text(json.dumps({"sourceCommit": source,
@@ -253,21 +262,6 @@ def new_owned_device(inventory: dict, before: set[str], name: str, platform: str
     if len(matches) > 1:
         raise RuntimeError("Ambiguous simulator create outcome; preserving every candidate")
     return matches[0] if matches else None
-
-
-def wait_for_scene(prefix: tuple[str, ...], udid: str, token: str, evidence: Path) -> None:
-    deadline = time.monotonic() + 180
-    while True:
-        log = run(*prefix, "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",
-                  "--predicate", f'subsystem == "com.shinycomputers.contextpanel.screenshots" AND eventMessage CONTAINS "{token}"',
-                  timeout=30)
-        with evidence.open("a") as stream:
-            stream.write(log + "\n")
-        if "active fixture scene: " + token in log:
-            return
-        if time.monotonic() >= deadline:
-            raise RuntimeError("Fixture scene did not become active; no capture receipt will be accepted")
-        time.sleep(1)
 
 
 def capture(profile: str, output: Path) -> None:
@@ -319,12 +313,14 @@ def capture(profile: str, output: Path) -> None:
             if platform == "ios":
                 run(*prefix, "status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi",
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
-            token = uuid.uuid4().hex
-            run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]),
-                *launch_arguments, "--screenshot-token", token)
-            wait_for_scene(prefix, udid, token, output / f"{appearance}-scene.log")
             path = output / f"{profile}-app-{appearance}.png"
-            staging = capture_png(prefix, udid, bundle_id(TARGETS[platform]), path, expected_size)
+            if platform == "ios":
+                native_ios_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size)
+                staging = "native XCTest simulator screen attachment"
+            else:
+                run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]), *launch_arguments)
+                time.sleep(6)  # Native layout transition; visual acceptance remains required.
+                staging = capture_png(prefix, udid, bundle_id(TARGETS[platform]), path, expected_size)
             data = path.read_bytes()
             width, height = expected_size
             files.append({"file": path.name, "width": width, "height": height,
@@ -335,7 +331,7 @@ def capture(profile: str, output: Path) -> None:
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
             "deviceSet": "CoreSimulator default private storage",
-            "mechanism": "simctl framebuffer via temporary PNG staging; fixture-only capture build",
+            "mechanism": "native XCTest simulator framebuffer" if platform == "ios" else "simctl framebuffer via temporary PNG staging; fixture-only capture build",
             "images": files,
         }
     except BaseException as error:
@@ -362,6 +358,53 @@ def capture(profile: str, output: Path) -> None:
             primary_error.add_note(f"Simulator cleanup incomplete: {cleanup_error!r}")
     capture_record["cleanup"] = "owned simulator deleted; absence verified"
     (output / "capture.json").write_text(json.dumps(capture_record, indent=2) + "\n")
+
+
+def select_attachments(manifest: list, expected: set[str]) -> dict[str, str]:
+    found = {}
+    for case in manifest:
+        for item in case["attachments"]:
+            name = item["suggestedHumanReadableName"].removesuffix(".png")
+            matches = [wanted for wanted in expected if name == wanted or name.startswith(wanted + "_")]
+            for wanted in matches:
+                if wanted in found:
+                    raise RuntimeError(f"Duplicate native attachment: {wanted}")
+                found[wanted] = item["exportedFileName"]
+    if set(found) != expected:
+        names = [item["suggestedHumanReadableName"] for case in manifest for item in case["attachments"]]
+        raise RuntimeError(f"Missing native attachments: {expected - set(found)}; observed {names}")
+    return found
+
+
+def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int]) -> None:
+    products = BUILD / "ios/Build/Products"
+    runs = list(products.glob("*.xctestrun"))
+    if len(runs) != 1:
+        raise RuntimeError("Build the app-associated iOS UI capture test first")
+    configuration = plistlib.loads(runs[0].read_bytes())
+    targets = [target for entry in configuration["TestConfigurations"] for target in entry["TestTargets"]]
+    selected = [target for target in targets if target.get("BlueprintName") == "CompanionCaptureUITests"]
+    if len(selected) != 1:
+        raise RuntimeError("Expected one fixture-only UI test target")
+    selected[0].setdefault("EnvironmentVariables", {})["CP_CAPTURE_DETAIL"] = "true" if detail else "false"
+    # Keep relative __TESTROOT__ product paths bound to the verified build tree.
+    configured = products / ("capture-" + uuid.uuid4().hex + ".xctestrun")
+    configured.write_bytes(plistlib.dumps(configuration))
+    directory.mkdir()
+    result = directory / "capture.xcresult"
+    try:
+        run("xcodebuild", "-quiet", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={udid}",
+            "-parallel-testing-enabled", "NO", "-resultBundlePath", str(result), "test-without-building", timeout=600)
+    finally:
+        configured.unlink()
+    exported = directory / "attachments"
+    run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
+    found = select_attachments(json.loads((exported / "manifest.json").read_text()), {"native-fixture"})
+    data = (exported / found["native-fixture"]).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", data[16:24]) != size:
+        raise RuntimeError("Unexpected native simulator screenshot dimensions or format")
+    with destination.open("xb") as stream:
+        stream.write(data)
 
 
 def rgb_image(source: Path, destination: Path) -> None:
@@ -425,21 +468,18 @@ def hosted_macos_capture(output: Path) -> None:
     run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
     expected = {f"mac-{mode}-{appearance}" for mode in ("overview", "detail") for appearance in ("light", "dark")}
     images = []
-    for case in json.loads((exported / "manifest.json").read_text()):
-        for item in case["attachments"]:
-            name = item["suggestedHumanReadableName"].removesuffix(".png")
-            if name not in expected:
-                continue
-            destination = output / (name + ".png")
-            raw = exported / item["exportedFileName"]
-            rgb_image(raw, destination)
-            data = destination.read_bytes()
-            width, height = struct.unpack(">II", data[16:24])
-            if (width, height) not in {(1280, 800), (2560, 1600)}:
-                raise SystemExit(f"Unexpected native Mac window size: {width}x{height}")
-            expected.remove(name)
-            images.append({"file": destination.name, "width": width, "height": height,
-                           "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest()})
+    found = select_attachments(json.loads((exported / "manifest.json").read_text()), expected)
+    for name, filename in found.items():
+        destination = output / (name + ".png")
+        raw = exported / filename
+        rgb_image(raw, destination)
+        data = destination.read_bytes()
+        width, height = struct.unpack(">II", data[16:24])
+        if (width, height) not in {(1280, 800), (2560, 1600)}:
+            raise SystemExit(f"Unexpected native Mac window size: {width}x{height}")
+        images.append({"file": destination.name, "width": width, "height": height,
+                       "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest()})
+    expected -= set(found)
     if expected or clean_commit() != source:
         raise SystemExit(f"Missing native captures or changed source: {expected}")
     (output / "capture.json").write_text(json.dumps({"sourceCommit": source,

@@ -109,7 +109,7 @@ let package = Package(
             name: "ContextPanelAppStoreCapture",
             dependencies: ["ContextPanelApp", "ContextPanelCore"],
             path: "Tools/ContextPanelAppStoreCapture",
-            exclude: ["MacCaptureMain.swift", "MacCaptureUITests.swift"]
+            exclude: ["MacCaptureMain.swift", "MacCaptureUITests.swift", "CompanionCaptureUITests.swift"]
         ),
         .executableTarget(
             name: "ContextPanelAppMain",

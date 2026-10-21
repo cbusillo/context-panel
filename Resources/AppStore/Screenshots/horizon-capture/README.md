@@ -127,8 +127,11 @@ temporary directory, validates the PNG, copies it to the requested external
 output, then removes that one file and empty temporary directory. Only a
 system-temp screenshot save refused with Cocoa code 513 permits the recorded
 owned fixture-container fallback. Every other refusal stops the run. Device
-appearance and status are set before launch; a unique fixture scene-active
-log marker is required before each framebuffer capture. Runs are serialized.
+appearance and status are set before launch. iOS uses an app-associated native
+XCTest: activate the fixture, wait for visible overview content, tap the actual
+Studio account when requested, wait for visible detail, then capture the
+simulator screen. The accessibility hierarchy is retained for diagnosis.
+Other simulators use the Q605 temp-staged framebuffer route. Runs are serialized.
 A receipt still requires human visual acceptance of the actual image.
 
 Available scenes: `iphone`, `iphone65`, `ipad`, `visionpro`, their `-detail`

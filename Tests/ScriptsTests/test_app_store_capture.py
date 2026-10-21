@@ -229,7 +229,8 @@ class AppStoreCaptureTests(unittest.TestCase):
                 with patch.object(capture, "BUILD", root / "build"), \
                      patch.object(capture, "clean_commit", return_value=self.source), \
                      patch.object(capture, "run", side_effect=fake_run), \
-                     patch.object(capture.time, "sleep"):
+                     patch.object(capture.time, "sleep"), \
+                     patch.object(capture, "native_ios_capture", side_effect=lambda udid, detail, directory, path, size: path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))):
                     self.make_bundle()
                     try:
                         raise ValueError("unrelated caller exception")
@@ -262,21 +263,14 @@ class AppStoreCaptureTests(unittest.TestCase):
             self.assertTrue(failure.exception.__notes__)
             self.assertTrue((stage / "unexpected-sidecar").exists())
 
-    def test_scene_readiness_requires_the_current_launch_and_keeps_evidence(self):
-        with tempfile.TemporaryDirectory() as folder:
-            log = Path(folder) / "scene.log"
-            with patch.object(capture, "run", side_effect=["active fixture scene: older", "active fixture scene: current"]), \
-                 patch.object(capture.time, "sleep"):
-                capture.wait_for_scene(("fake",), "owned", "current", log)
-            self.assertIn("older", log.read_text())
-            self.assertIn("current", log.read_text())
-            with patch.object(capture, "run", return_value="active fixture scene: older"), \
-                 patch.object(capture.time, "monotonic", side_effect=[0, 181]):
-                with self.assertRaises(RuntimeError):
-                    capture.wait_for_scene(("fake",), "owned", "current", log)
-            with patch.object(capture, "run", side_effect=subprocess.CalledProcessError(1, "log", stderr="permission denied")):
-                with self.assertRaises(subprocess.CalledProcessError):
-                    capture.wait_for_scene(("fake",), "owned", "current", log)
+    def test_native_attachment_selection_accepts_export_suffixes_and_rejects_missing_duplicates(self):
+        def manifest(*names):
+            return [{"attachments": [{"suggestedHumanReadableName": name, "exportedFileName": str(index)+".png"}
+                                     for index, name in enumerate(names)]}]
+        self.assertEqual(capture.select_attachments(manifest("wanted_1_UUID.png", "other"), {"wanted"}), {"wanted": "0.png"})
+        for value in (manifest("other"), manifest("wanted.png", "wanted_2_UUID.png")):
+            with self.assertRaises(RuntimeError):
+                capture.select_attachments(value, {"wanted"})
 
     def test_native_mac_capture_refuses_local_ui_before_any_command(self):
         with patch.dict(capture.os.environ, {}, clear=True), patch.object(capture, "run") as run:

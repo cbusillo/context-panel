@@ -236,6 +236,9 @@ private struct CompanionRootView: View {
                                     compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
+                                    #if CONTEXT_PANEL_SCREENSHOTS
+                                    .accessibilityIdentifier("screenshot-overview")
+                                    #endif
                                 #endif
                             }
                         }
@@ -306,6 +309,9 @@ private struct CompanionRootView: View {
                                 if let account = overview.accounts.first(where: { $0.id == id }) {
                                     AccountDashboardDetail(account: account, overview: overview, now: companionFixedPresentationDate ?? context.date,
                                         compact: horizontalSizeClass != .regular)
+                                        #if CONTEXT_PANEL_SCREENSHOTS
+                                        .accessibilityIdentifier("screenshot-detail")
+                                        #endif
                                 } else { Text("Account is no longer in this snapshot.") }
                             case .syncAndSettings:
                                 EmptyView()
