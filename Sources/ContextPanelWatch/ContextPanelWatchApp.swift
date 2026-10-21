@@ -12,12 +12,14 @@ struct ContextPanelWatchApp: App {
     init() {
         #if CONTEXT_PANEL_SCREENSHOTS
         ScreenshotFixture.configureProcess()
-        #endif
+        launchRequest = .normal
+        #else
         let request = WatchValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments)
         guard request != .invalid else {
             exit(EX_USAGE)
         }
         launchRequest = request
+        #endif
     }
 
     var body: some Scene {

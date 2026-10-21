@@ -12,10 +12,20 @@ extension View {
 #if os(watchOS)
 struct ScreenshotWatchRoot: View {
     var body: some View {
-        WatchRootContent(isLoading: false, onRefresh: {}) {
-            WatchUsageContent(result: ScreenshotFixture.result, snapshot: ScreenshotFixture.snapshot,
-                displayPreferences: .defaultPreferences, syncErrorMessage: nil,
-                presentationDate: ScreenshotFixture.date)
+        ScrollViewReader { scroll in
+            WatchRootContent(isLoading: false, onRefresh: {}) {
+                WatchUsageContent(result: ScreenshotFixture.result, snapshot: ScreenshotFixture.snapshot,
+                    displayPreferences: .defaultPreferences, syncErrorMessage: nil,
+                    presentationDate: ScreenshotFixture.date)
+            }
+            .onAppear {
+                if CommandLine.arguments.contains("--screenshot-accounts"),
+                   let account = ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        scroll.scrollTo(account.id, anchor: .top)
+                    }
+                }
+            }
         }
     }
 }

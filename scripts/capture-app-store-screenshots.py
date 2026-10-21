@@ -35,6 +35,8 @@ PROFILES = {
     "watch": ("watchos", "Apple-Watch-Ultra-2-49mm", (410, 502)),
     "tvos": ("tvos", "Apple-TV-4K-3rd-generation-1080p", (1920, 1080)),
 }
+PROFILES.update({name + "-detail": PROFILES[name] for name in ("iphone", "iphone65", "ipad", "visionpro")})
+PROFILES["watch-accounts"] = PROFILES["watch"]
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
 
 
@@ -279,16 +281,18 @@ def capture(profile: str, output: Path) -> None:
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
         run(*prefix, "install", udid, str(app))
         files = []
-        run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]))
+        launch_arguments = ["--screenshot-detail"] if profile.endswith("-detail") else []
+        if profile == "watch-accounts":
+            launch_arguments = ["--screenshot-accounts"]
+        run(*prefix, "launch", udid, bundle_id(TARGETS[platform]), *launch_arguments)
         # Cold simulators can return a launch PID before the first scene is drawn.
         time.sleep(20)
-        for appearance in (["dark"] if platform in {"watchos", "tvos"} else ["light", "dark"]):
+        for appearance in (["dark"] if platform in {"watchos", "tvos", "visionos"} else ["light", "dark"]):
             if platform not in {"watchos", "tvos"}:
                 run(*prefix, "ui", udid, "appearance", appearance)
             if platform == "ios":
                 run(*prefix, "status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi",
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
-            run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]))
             # simctl screenshot is a framebuffer capture, not a Mac desktop capture.
             # A short settle is only for SwiftUI layout/transition; images need visual review.
             time.sleep(6)

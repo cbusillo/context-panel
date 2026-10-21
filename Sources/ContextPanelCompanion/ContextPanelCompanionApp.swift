@@ -146,6 +146,15 @@ private struct CompanionRootView: View {
     @State private var accountPath: [CompanionAccountRoute] = []
     @State private var showsAbout = false
 
+    #if CONTEXT_PANEL_SCREENSHOTS
+    init() {
+        if CommandLine.arguments.contains("--screenshot-detail"),
+           let account = ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first {
+            _accountPath = State(initialValue: [.account(account.id)])
+        }
+    }
+    #endif
+
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
         model.appearanceSettings.visionOSAppAppearance.cpwThemeVariant
