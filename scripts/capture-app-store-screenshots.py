@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-from contextlib import nullcontext
 import hashlib
 import json
 import plistlib
@@ -39,20 +38,56 @@ PROFILES = {
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
 
 
-def run(*args: str, timeout: int = 180, stdout_path: Path | None = None) -> str:
+def run(*args: str, timeout: int = 180) -> str:
     print("+ " + " ".join(map(str, args)), flush=True)
-    with stdout_path.open("xb") if stdout_path else nullcontext(subprocess.PIPE) as destination:
+    result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, timeout=timeout)
+    print(result.stdout, end="", flush=True)
+    print(result.stderr, end="", flush=True)
+    result.check_returncode()
+    return result.stdout.strip()
+
+
+def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
+               parent: Path | None = None) -> bytes | None:
+    # Q605: normal system temp first; container staging only after a save refusal.
+    arguments = (str(parent / "cp744.XXXXXX"),) if parent else ()
+    directory = Path(run("mktemp", "-d", *arguments))
+    if not directory.is_absolute() or not directory.is_dir():
+        raise RuntimeError("mktemp did not return a temporary directory")
+    image = directory / "capture.png"
+    try:
         try:
-            result = subprocess.run(args, text=True, stdout=destination,
-                                    stderr=subprocess.PIPE, timeout=timeout)
-            print(result.stdout or "", end="", flush=True)
-            print(result.stderr, end="", flush=True)
-            result.check_returncode()
-        except BaseException:
-            if stdout_path:
-                stdout_path.unlink(missing_ok=True)
+            run(*prefix, "io", udid, "screenshot", "--type=png", "--mask=ignored", str(image))
+        except subprocess.CalledProcessError as error:
+            if parent is None and "NSCocoaErrorDomain, code=513" in (error.stderr or ""):
+                return None
             raise
-    return (result.stdout or "").strip()
+        data = image.read_bytes()
+        if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
+            raise SystemExit("simctl did not produce a PNG")
+        dimensions = struct.unpack(">II", data[16:24])
+        if dimensions != size:
+            raise SystemExit(f"Unexpected capture size {dimensions}; expected {size}")
+        return data
+    finally:
+        image.unlink(missing_ok=True)
+        directory.rmdir()
+
+
+def capture_png(prefix: tuple[str, ...], udid: str, identifier: str,
+                destination: Path, size: tuple[int, int]) -> str:
+    data = staged_png(prefix, udid, size)
+    staging = "system temporary directory"
+    if data is None:
+        container = Path(run(*prefix, "get_app_container", udid, identifier, "data"))
+        if not container.is_absolute() or not container.is_dir():
+            raise RuntimeError("Owned fixture-app data container unavailable")
+        data = staged_png(prefix, udid, size, container / "tmp")
+        staging = "owned fixture-app temporary directory after system-temp save refusal"
+    with destination.open("xb") as output:
+        output.write(data)
+    return staging
 
 
 def unsigned_settings(settings: dict) -> dict:
@@ -255,22 +290,18 @@ def capture(profile: str, output: Path) -> None:
             # A short settle is only for SwiftUI layout/transition; images need visual review.
             time.sleep(6)
             path = output / f"{profile}-app-{appearance}.png"
-            run(*prefix, "io", udid, "screenshot", "--type=png", "--mask=ignored", "-", stdout_path=path)
+            staging = capture_png(prefix, udid, bundle_id(TARGETS[platform]), path, expected_size)
             data = path.read_bytes()
-            if data[:8] != b"\x89PNG\r\n\x1a\n":
-                raise SystemExit("simctl did not produce a PNG")
-            width, height = struct.unpack(">II", data[16:24])
-            if (width, height) != expected_size:
-                raise SystemExit(f"Unexpected capture size {(width, height)}; expected {expected_size}")
+            width, height = expected_size
             files.append({"file": path.name, "width": width, "height": height,
-                          "sha256": hashlib.sha256(data).hexdigest(), "appearance": appearance})
+                          "sha256": hashlib.sha256(data).hexdigest(), "appearance": appearance, "staging": staging})
         capture_record = {
             "sourceCommit": receipt["sourceCommit"], "bundleSHA256": receipt["bundleSHA256"],
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
             "deviceSet": "CoreSimulator default private storage",
-            "mechanism": "simctl framebuffer streamed through stdout; repository process saves PNG; fixture-only capture build",
+            "mechanism": "simctl framebuffer via temporary PNG staging; fixture-only capture build",
             "images": files,
         }
     except BaseException as error:

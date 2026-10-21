@@ -5,7 +5,6 @@ from pathlib import Path
 import plistlib
 import struct
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -28,20 +27,48 @@ class AppStoreCaptureTests(unittest.TestCase):
             "sourceCommit": self.source, "bundleSHA256": capture.bundle_digest(app)}))
         return app
 
-    def test_stdout_transport_preserves_binary_bytes_and_never_overwrites(self):
-        with tempfile.TemporaryDirectory() as folder:
-            output = Path(folder) / "image.png"
-            payload = b"\x89PNG\r\n\x1a\n\xff\x00"
-            capture.run(sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))",
-                        payload.hex(), stdout_path=output)
-            self.assertEqual(output.read_bytes(), payload)
-            with self.assertRaises(FileExistsError):
-                capture.run(sys.executable, "-c", "raise SystemExit(1)", stdout_path=output)
-            self.assertEqual(output.read_bytes(), payload)
-            failed = Path(folder) / "failed.png"
-            with self.assertRaises(subprocess.CalledProcessError):
-                capture.run(sys.executable, "-c", "raise SystemExit(1)", stdout_path=failed)
-            self.assertFalse(failed.exists())
+    def test_staging_copies_valid_png_and_falls_back_only_on_temp_save_refusal(self):
+        for outcome in ("success", "temp-refused", "other-error", "container-refused", "invalid-png"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                container = root / "owned-container"
+                (container / "tmp").mkdir(parents=True)
+                data = b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", 7, 9)
+                stages = []
+                saves = 0
+
+                def fake_run(*args, **kwargs):
+                    nonlocal saves
+                    if args[0] == "mktemp":
+                        stage = (container / "tmp" if len(args) > 2 else root) / f"stage-{len(stages)}"
+                        stage.mkdir(mode=0o700)
+                        stages.append(stage)
+                        return str(stage)
+                    if "get_app_container" in args:
+                        return str(container)
+                    if "screenshot" in args:
+                        saves += 1
+                        if outcome in {"temp-refused", "container-refused"} and (saves == 1 or outcome == "container-refused"):
+                            raise subprocess.CalledProcessError(1, args, stderr="domain=NSCocoaErrorDomain, code=513")
+                        if outcome == "other-error":
+                            raise subprocess.CalledProcessError(1, args, stderr="unrelated failure")
+                        Path(args[-1]).write_bytes(b"invalid" if outcome == "invalid-png" else data)
+                    return ""
+
+                output = root / "external.png"
+                with patch.object(capture, "run", side_effect=fake_run):
+                    if outcome in {"other-error", "container-refused"}:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
+                    elif outcome == "invalid-png":
+                        with self.assertRaises(SystemExit):
+                            capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
+                    else:
+                        capture.capture_png(("xcrun", "simctl"), "owned", "fixture-app", output, (7, 9))
+                        self.assertEqual(output.read_bytes(), data)
+                self.assertEqual(saves, 2 if outcome in {"temp-refused", "container-refused"} else 1)
+                self.assertTrue(all(not stage.exists() for stage in stages))
+                self.assertEqual(output.exists(), outcome in {"success", "temp-refused"})
 
     def test_existing_output_and_non_capture_bundle_never_launch_a_simulator(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -184,8 +211,12 @@ class AppStoreCaptureTests(unittest.TestCase):
                         return owned
                     if "delete" in args:
                         devices[:] = [entry for entry in devices if entry["udid"] != args[-1]]
+                    if args[0] == "mktemp":
+                        stage = root / f"stage-{len(calls)}"
+                        stage.mkdir()
+                        return str(stage)
                     if "screenshot" in args:
-                        kwargs["stdout_path"].write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
+                        Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
                     return "fixture"
 
                 with patch.object(capture, "BUILD", root / "build"), \

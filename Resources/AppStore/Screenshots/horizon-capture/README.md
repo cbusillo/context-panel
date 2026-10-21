@@ -34,23 +34,22 @@ comparison. Neither set changes the approved uploader mapping.
 | --- | --- | --- |
 | Mac app | Four offscreen native-frame images above | Chris reviews the concrete images; no desktop/WidgetKit placement proof |
 | Mac widgets | Earlier draft compositions only | Actual WidgetKit placement in an isolated fixture environment; never Chris's desktop |
-| iPhone and iPad app | Capture-only iOS simulator build passed | Private-storage iPhone fixture launch passed; approved stdout attempt was denied too. Capture native navigation at both iPhone sizes and iPad size |
+| iPhone and iPad app | Capture-only iOS simulator build passed | Private-storage fixture launch passed; Q605 temp staging is implemented. Capture native navigation at both iPhone sizes and iPad size |
 | iPhone/iPad widgets | Earlier draft covers no placed widgets | Capture actual widget placement in owned fixture simulators; the tool does not yet automate placement |
 | Watch app | Capture-only watchOS simulator build passed | Launch/capture native navigation, status, headline and account list |
 | Vision Pro app | Capture-only visionOS simulator build passed | Capture spatial app context; framebuffer capture may omit spatial windows and cannot be assumed sufficient |
 | Vision Pro widgets | Earlier flat compositions only | Actual spatial WidgetKit placement; no compositor or placement proof from a shared-view renderer |
 | Apple TV app | Capture-only tvOS simulator build passed | Launch/capture full native overview including controls, status and account groups |
 
-[Q599 approved private CoreSimulator storage](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305613280),
-and [Q602 approved stdout PNG transport](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6306472402).
-The first approved stdout invocation still failed: the installed CLI treated
-`-` as a filename in the external worktree and returned a file-write permission
-denial (`NSCocoaErrorDomain 513`, `NSPOSIXErrorDomain 1`). No PNG was produced.
-**Capture is stopped again.** [Q605](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6306623312)
-owns the exact failure, read-only investigation and the proposed recovery. No other backend, descriptor type or
-staging route may be tried without the recorded recovery decision. This is
-separate from later image approval. The created simulator was deleted and
-absence verified; all 31 pre-existing devices remain.
+[Q605's exact decision](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6307013529)
+authorizes a simpler capture path: `mktemp -d` in the system temp directory,
+normal PNG file output, validation/copy to Developer-Artifacts, then removal of
+the temp file and folder. Only a refused temp screenshot save permits the
+approved fallback to a fresh directory inside the owned fixture-app container.
+Any other refusal stops. There is no stdout transport or persistent internal
+image directory. Earlier failed attempts and decisions remain on #744.
+Both staging routes delete only their own PNG and newly created empty folder;
+owned-simulator cleanup still verifies absence before recording success.
 
 Mac desktop WidgetKit placement cannot be supplied by this offscreen tool.
 Do not use Chris's live desktop to fill that gap. If no isolated repository
@@ -102,8 +101,7 @@ uv run scripts/capture-app-store-screenshots.py build tvos
 uv run scripts/capture-app-store-screenshots.py build visionos
 ```
 
-The command below records the approved stdout attempt. It failed on this
-host. Do not rerun capture before the recorded Q605 recovery decision:
+Use only this fixture-only capture command and the Q605 staging order:
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolute/new/iphone
