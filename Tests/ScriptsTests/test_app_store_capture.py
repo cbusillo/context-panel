@@ -99,11 +99,50 @@ class AppStoreCaptureTests(unittest.TestCase):
                         capture.capture("iphone", root / "output")
                     run.assert_not_called()
 
+    def test_relative_device_set_has_no_side_effects(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(capture, "run") as run:
+            output = Path(folder) / "output"
+            with self.assertRaises(SystemExit):
+                capture.capture("iphone", output, Path("relative-device-set"))
+            self.assertFalse(output.exists())
+            run.assert_not_called()
+
+    def test_cleanup_failure_keeps_the_original_create_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reads = 0
+
+            def fake_run(*args, **kwargs):
+                nonlocal reads
+                if "list" in args:
+                    reads += 1
+                    if reads > 1:
+                        raise RuntimeError("cleanup inventory unavailable")
+                    return json.dumps({"devices": {}})
+                raise subprocess.CalledProcessError(13, args)
+
+            with patch.object(capture, "BUILD", root / "build"), \
+                 patch.object(capture, "clean_commit", return_value=self.source), \
+                 patch.object(capture, "run", side_effect=fake_run):
+                self.make_bundle()
+                with self.assertRaises(subprocess.CalledProcessError) as failure:
+                    capture.capture("iphone", root / "output")
+                self.assertTrue(failure.exception.__notes__)
+
     def test_generated_capture_model_is_enforced_before_xcodegen(self):
         original = yaml.safe_load((capture.ROOT / "project.yml").read_text())
-        model = capture.capture_spec(original)
-        capture.validate_capture_spec(model)
-        target = next(iter(model["targets"].values()))
-        target["dependencies"].append({"target": "unexpected-extension", "embed": True})
-        with self.assertRaises(ValueError):
-            capture.validate_capture_spec(model)
+        for fault in ("embed", "signing", "configuration", "source-plist"):
+            with self.subTest(fault=fault):
+                model = capture.capture_spec(original)
+                capture.validate_capture_spec(model)
+                target = next(iter(model["targets"].values()))
+                if fault == "embed":
+                    target["dependencies"].append({"target": "unexpected-extension", "embed": True})
+                elif fault == "signing":
+                    target["settings"]["base"]["CODE_SIGN_ENTITLEMENTS"] = "unexpected.entitlements"
+                elif fault == "configuration":
+                    target["settings"]["configs"] = {"Release": {"CODE_SIGN_ENTITLEMENTS": "unexpected.entitlements"}}
+                else:
+                    target["info"] = {"path": "Config/source.plist"}
+                with self.assertRaises(ValueError):
+                    capture.validate_capture_spec(model)

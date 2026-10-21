@@ -10,6 +10,9 @@ struct ContextPanelWatchApp: App {
     private let launchRequest: WatchValidationLaunchRequest
 
     init() {
+        #if CONTEXT_PANEL_SCREENSHOTS
+        ScreenshotFixture.configureProcess()
+        #endif
         let request = WatchValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments)
         guard request != .invalid else {
             exit(EX_USAGE)
@@ -21,6 +24,8 @@ struct ContextPanelWatchApp: App {
         WindowGroup {
             #if CONTEXT_PANEL_SCREENSHOTS
             ScreenshotWatchRoot()
+                .environment(\.locale, Locale(identifier: "en_US_POSIX"))
+                .environment(\.timeZone, .gmt)
             #else
             if launchRequest == .normal {
                 WatchRootView()

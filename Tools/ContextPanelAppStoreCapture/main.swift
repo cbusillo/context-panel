@@ -11,11 +11,7 @@ guard arguments.count == 3, ["overview", "detail"].contains(arguments[0]),
     fputs("usage: ContextPanelAppStoreCapture overview|detail light|dark NEW.png\n", stderr)
     exit(64)
 }
-setenv("TZ", "UTC", 1)
-tzset()
-NSTimeZone.default = .gmt
-UserDefaults.standard.setVolatileDomain(["AppleLocale": "en_US_POSIX", "AppleLanguages": ["en-US"]],
-    forName: UserDefaults.argumentDomain)
+ScreenshotFixture.configureProcess()
 let dark = arguments[1] == "dark"
 let size = CGSize(width: 1440, height: 900)
 let content = MacValidationGallery.appStorePresentation(snapshot: ScreenshotFixture.snapshot,

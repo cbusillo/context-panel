@@ -3,6 +3,15 @@ import Foundation
 
 // Compiled into disposable capture targets only. No stores, credentials, or network.
 enum ScreenshotFixture {
+    static func configureProcess() {
+        setenv("TZ", "UTC", 1)
+        tzset()
+        NSTimeZone.default = .gmt
+        UserDefaults.standard.setVolatileDomain(
+            ["AppleLocale": "en_US_POSIX", "AppleLanguages": ["en-US"]],
+            forName: UserDefaults.argumentDomain)
+    }
+
     static let date = ContextPanelDateFormatting.date(from: "2026-10-01T14:07:00Z")!
     static let snapshot: WidgetSnapshot = makeSnapshot()
     static let result = CompanionSyncLoadResult(

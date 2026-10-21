@@ -39,13 +39,23 @@ private func companionPresentationDate(_ date: Date) -> Date {
 
 @main
 struct ContextPanelCompanionApp: App {
+    #if CONTEXT_PANEL_SCREENSHOTS
+    init() { ScreenshotFixture.configureProcess() }
+    #endif
+
     #if !CONTEXT_PANEL_SCREENSHOTS
     @UIApplicationDelegateAdaptor(CompanionAppDelegate.self) private var appDelegate
     #endif
 
     var body: some Scene {
         WindowGroup {
+            #if CONTEXT_PANEL_SCREENSHOTS
             CompanionRootView()
+                .environment(\.locale, Locale(identifier: "en_US_POSIX"))
+                .environment(\.timeZone, .gmt)
+            #else
+            CompanionRootView()
+            #endif
         }
     }
 }

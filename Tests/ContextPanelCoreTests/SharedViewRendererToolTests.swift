@@ -23,10 +23,11 @@ private func builtProductsDirectory() throws -> URL {
 
 private func runRenderer(
     _ arguments: [String],
-    environment: [String: String] = [:]
+    environment: [String: String] = [:],
+    executable: String = "ContextPanelSharedViewRenderer"
 ) throws -> RendererRun {
     let process = Process()
-    process.executableURL = try builtProductsDirectory().appending(path: "ContextPanelSharedViewRenderer")
+    process.executableURL = try builtProductsDirectory().appending(path: executable)
     process.arguments = arguments
     process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
     let pipe = Pipe()
@@ -186,12 +187,17 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
         ["TZ": "America/Los_Angeles", "LANG": "de_DE.UTF-8"],
     ]
 
-    var images: Set<Data> = []
-    for (index, host) in hosts.enumerated() {
-        let output = directory.appending(path: "host-\(index).png")
-        let run = try runRenderer(try rendererArguments(cell: cell, output: output), environment: host)
-        #expect(run.status == 0, "\(host): \(run.output)")
-        images.insert(try Data(contentsOf: output))
+    for executable in ["ContextPanelSharedViewRenderer", "ContextPanelAppStoreCapture"] {
+        var images: Set<Data> = []
+        for (index, host) in hosts.enumerated() {
+            let output = directory.appending(path: "\(executable)-host-\(index).png")
+            let arguments = executable == "ContextPanelAppStoreCapture"
+                ? ["overview", "light", output.path]
+                : try rendererArguments(cell: cell, output: output)
+            let run = try runRenderer(arguments, environment: host, executable: executable)
+            #expect(run.status == 0, "\(host): \(run.output)")
+            images.insert(try Data(contentsOf: output))
+        }
+        #expect(images.count == 1)
     }
-    #expect(images.count == 1)
 }

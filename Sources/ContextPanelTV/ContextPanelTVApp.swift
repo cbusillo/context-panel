@@ -14,6 +14,9 @@ struct ContextPanelTVApp: App {
     private let launchRequest: TVValidationLaunchRequest
 
     init() {
+        #if CONTEXT_PANEL_SCREENSHOTS
+        ScreenshotFixture.configureProcess()
+        #endif
         let request = TVValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments)
         guard request != .invalid else {
             exit(EX_USAGE)
@@ -25,6 +28,8 @@ struct ContextPanelTVApp: App {
         WindowGroup {
             #if CONTEXT_PANEL_SCREENSHOTS
             ScreenshotTVRoot()
+                .environment(\.locale, Locale(identifier: "en_US_POSIX"))
+                .environment(\.timeZone, .gmt)
             #else
             switch launchRequest {
             case let .sample(sample):

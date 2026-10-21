@@ -74,7 +74,10 @@ manifest's fixture time in UTC and US English. Changes in macOS fonts or
 AppKit may change the PNG bytes; record the resulting bytes rather than
 claiming cross-host byte identity.
 
-The simulator tool prepares a separate generated project in `.build`, with
+The simulator tool prepares a separate generated project in `.build`, retaining
+only the three capture apps and their static-library dependencies. It discards
+shipping configuration/signing overrides, unused extension targets and their
+source-tree plist generation. The project has
 unique capture-only bundle identifiers, a watch-only capture plist, no
 entitlements, no embedded extensions, no build-manifest stamping and the `CONTEXT_PANEL_SCREENSHOTS`
 compilation condition. The shipping project never sets that condition or
@@ -82,7 +85,9 @@ includes the capture fixture source. In capture mode the companion's normal
 root, navigation and layout receive an in-memory fixture; its app delegate,
 stores, runtime receipts, CloudKit subscription and reload are disabled. Watch
 and TV reuse the production content and navigation with inert actions.
-Normal shipping launch paths remain intact. Prepare and build require a clean
+The fixture initializes UTC and US English in each capture process before views
+or models are constructed. Mac and simulator date formatting use the same clock
+and timezone. Normal shipping launch paths remain intact. Prepare and build require a clean
 committed source tree. Each build records its commit and complete bundle digest;
 capture refuses a different commit, dirty source or altered bundle. If source
 changes, run prepare and the relevant build again.
@@ -108,6 +113,8 @@ source commit, runtime, device type, image dimensions and checksums. Cleanup
 addresses only a newly observed exact name/type/runtime match by UDID, including
 when creation fails after allocating a device. `--device-set /absolute/path`
 selects a storage location explicitly; it is not permission to bypass a denial.
-Use it for Q599's approved route only after Chris answers. A successful framebuffer PNG still needs visual
+Use it for Q599's approved route only after Chris answers. Cleanup failures retain the primary capture error with an added diagnostic;
+uncertain ownership preserves candidates and fails the command. A successful
+framebuffer PNG still needs visual
 review, particularly on visionOS. Captures are not formal release receipts.
 No uploader or App Store submission is called by this tool.

@@ -18,6 +18,7 @@ import plistlib
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import uuid
 import time
 
@@ -49,32 +50,65 @@ def run(*args: str, timeout: int = 180) -> str:
     return result.stdout.strip()
 
 
+def unsigned_settings(settings: dict) -> dict:
+    base = {key: value for key, value in settings.get("base", {}).items()
+            if not key.startswith(("CODE_SIGN", "PROVISIONING_PROFILE")) and key != "DEVELOPMENT_TEAM"}
+    return {"base": {**base, "CODE_SIGNING_ALLOWED": "NO"}}
+
+
 def capture_spec(original: dict) -> dict:
-    spec = copy.deepcopy(original)
-    for name, target in spec["targets"].items():
+    roots = set(TARGETS.values())
+    selected = set()
+
+    def select(name: str) -> None:
+        if name in selected:
+            return
+        target = original["targets"][name]
+        if name not in roots and target["type"] != "library.static":
+            raise ValueError(f"Unexpected non-library capture dependency: {name}")
+        selected.add(name)
+        for dependency in target.get("dependencies", []):
+            if "target" in dependency and not dependency.get("embed"):
+                select(dependency["target"])
+
+    for name in roots:
+        select(name)
+    spec = {"name": original["name"], "options": copy.deepcopy(original["options"]),
+            "settings": unsigned_settings(original.get("settings", {})), "targets": {}, "schemes": {}}
+    for name, original_target in original["targets"].items():
+        if name not in selected:
+            continue
+        target = copy.deepcopy(original_target)
         target.pop("postBuildScripts", None)
         target["dependencies"] = [dependency for dependency in target.get("dependencies", [])
                                   if not dependency.get("embed")]
-        settings = target.setdefault("settings", {}).setdefault("base", {})
-        settings["CODE_SIGN_ENTITLEMENTS"] = ""
+        target["settings"] = unsigned_settings(target.get("settings", {}))
+        settings = target["settings"]["base"]
         if "INFOPLIST_FILE" in settings:
             settings["INFOPLIST_FILE"] = str(ROOT / settings["INFOPLIST_FILE"])
-        if name in set(TARGETS.values()):
+        if name in roots:
             target["sources"] += [{"path": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift"},
                                    {"path": "Tools/ContextPanelAppStoreCapture/SimulatorContent.swift"}]
             settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] = "$(inherited) CONTEXT_PANEL_SCREENSHOTS"
             settings["PRODUCT_BUNDLE_IDENTIFIER"] = bundle_id(name)
-    for name, scheme in spec["schemes"].items():
-        if name in set(TARGETS.values()):
-            scheme["build"]["targets"] = {name: "all"}
+            spec["schemes"][name] = {"build": {"targets": {name: "all"}}}
+        spec["targets"][name] = target
     return spec
 
 
 def validate_capture_spec(spec: dict) -> None:
+    for settings in [spec["settings"], *(target["settings"] for target in spec["targets"].values())]:
+        if settings.get("configs"):
+            raise ValueError("Capture projects cannot inherit shipping configuration overrides")
+        for key, value in settings["base"].items():
+            if key == "CODE_SIGNING_ALLOWED" and value == "NO":
+                continue
+            if key.startswith(("CODE_SIGN", "PROVISIONING_PROFILE")) or key == "DEVELOPMENT_TEAM":
+                raise ValueError("Capture projects cannot carry signing or provisioning settings")
     for name, target in spec["targets"].items():
         settings = target["settings"]["base"]
-        if target.get("postBuildScripts") or settings.get("CODE_SIGN_ENTITLEMENTS"):
-            raise ValueError("Capture targets cannot stamp builds or carry entitlements")
+        if target.get("postBuildScripts") or target.get("info"):
+            raise ValueError("Capture targets cannot stamp builds or generate source-tree plists")
         if any(dependency.get("embed") for dependency in target.get("dependencies", [])):
             raise ValueError("Capture targets cannot embed extensions")
         if name in TARGETS.values():
@@ -82,6 +116,8 @@ def validate_capture_spec(spec: dict) -> None:
                 raise ValueError("Capture bundle identifier was not isolated")
             if "CONTEXT_PANEL_SCREENSHOTS" not in settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"].split():
                 raise ValueError("Capture condition was not enabled")
+        elif target["type"] != "library.static":
+            raise ValueError("Capture project retained an unrelated target")
 
 
 def clean_commit() -> str:
@@ -106,6 +142,8 @@ def prepare() -> None:
     path.write_text(yaml.safe_dump(spec, sort_keys=False))
     run("xcodegen", "generate", "--spec", str(path), "--project", str(PROJECT.parent),
         "--project-root", str(ROOT))
+    if clean_commit() != source:
+        raise SystemExit("Project generation changed source; preserve it for review")
     (BUILD / "prepared.json").write_text(json.dumps({"sourceCommit": source}) + "\n")
 
 
@@ -163,23 +201,23 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
     platform, device, expected_size = PROFILES[profile]
     if output.exists():
         raise SystemExit(f"Refusing to overwrite {output}")
+    device_set = device_set or BUILD / "simulators"
+    if not device_set.is_absolute():
+        raise SystemExit("--device-set must be absolute")
     source = clean_commit()
     receipt_path = build_receipt(platform)
     if not receipt_path.is_file():
         raise SystemExit(f"Build {platform} at this source commit first")
     receipt = json.loads(receipt_path.read_text())
     app = app_path(platform)
-    if receipt["sourceCommit"] != source or receipt["bundleSHA256"] != bundle_digest(app):
-        raise SystemExit("Capture build does not match the current committed source and bundle")
     if not app.is_dir():
         raise SystemExit(f"Build {platform} first")
+    if receipt["sourceCommit"] != source or receipt["bundleSHA256"] != bundle_digest(app):
+        raise SystemExit("Capture build does not match the current committed source and bundle")
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != bundle_id(TARGETS[platform]):
         raise SystemExit("Refusing a bundle without the capture-only identifier")
     output.mkdir(parents=True)
-    device_set = device_set or BUILD / "simulators"
-    if not device_set.is_absolute():
-        raise SystemExit("--device-set must be absolute")
     device_set.mkdir(parents=True, exist_ok=True)
     prefix = ("xcrun", "simctl", "--set", str(device_set))
     name = "CP744-C2-" + uuid.uuid4().hex
@@ -222,20 +260,26 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
             "sourceCommit": receipt["sourceCommit"], "bundleSHA256": receipt["bundleSHA256"],
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
-            "fixtureDate": "2026-10-01T14:07:00Z", "mechanism": "simctl framebuffer, fixture-only capture build",
+            "fixtureDate": "2026-10-01T14:07:00Z", "timeZone": "UTC", "mechanism": "simctl framebuffer, fixture-only capture build",
             "images": files,
         }, indent=2) + "\n")
     finally:
-        owned = new_owned_device(device_inventory(prefix), before, name, platform, device)
-        if owned:
-            owned_id = owned["udid"]
-            uuid.UUID(owned_id)
-            if owned.get("state") == "Booted":
-                try:
-                    run(*prefix, "shutdown", owned_id)
-                except subprocess.CalledProcessError:
-                    pass  # Still delete our own device; do not mask the capture failure.
-            run(*prefix, "delete", owned_id)
+        primary_error = sys.exception()
+        try:
+            owned = new_owned_device(device_inventory(prefix), before, name, platform, device)
+            if owned:
+                owned_id = owned["udid"]
+                uuid.UUID(owned_id)
+                if owned.get("state") == "Booted":
+                    try:
+                        run(*prefix, "shutdown", owned_id)
+                    except subprocess.CalledProcessError:
+                        pass  # Deletion can still finish cleanup of our exact owned device.
+                run(*prefix, "delete", owned_id)
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(f"Simulator cleanup incomplete: {cleanup_error!r}")
 
 
 def main() -> None:

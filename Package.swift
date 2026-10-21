@@ -168,6 +168,7 @@ let package = Package(
                 "ContextPanelApp",
                 "ContextPanelCore",
                 "ContextPanelSharedViewRenderer",
+                "ContextPanelAppStoreCapture",
                 "ContextPanelCloudKitSync",
                 "ContextPanelCompanionSupport",
                 "ContextPanelSettingsUI",
