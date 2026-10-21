@@ -34,27 +34,23 @@ comparison. Neither set changes the approved uploader mapping.
 | --- | --- | --- |
 | Mac app | Four offscreen native-frame images above | Chris reviews the concrete images; no desktop/WidgetKit placement proof |
 | Mac widgets | Earlier draft compositions only | Actual WidgetKit placement in an isolated fixture environment; never Chris's desktop |
-| iPhone and iPad app | Capture-only iOS simulator build passed | Private-storage iPhone fixture launch passed; PNG output blocked on Q602. Capture native navigation at both iPhone sizes and iPad size |
+| iPhone and iPad app | Capture-only iOS simulator build passed | Private-storage iPhone fixture launch passed; approved stdout attempt was denied too. Capture native navigation at both iPhone sizes and iPad size |
 | iPhone/iPad widgets | Earlier draft covers no placed widgets | Capture actual widget placement in owned fixture simulators; the tool does not yet automate placement |
 | Watch app | Capture-only watchOS simulator build passed | Launch/capture native navigation, status, headline and account list |
 | Vision Pro app | Capture-only visionOS simulator build passed | Capture spatial app context; framebuffer capture may omit spatial windows and cannot be assumed sufficient |
 | Vision Pro widgets | Earlier flat compositions only | Actual spatial WidgetKit placement; no compositor or placement proof from a shared-view renderer |
 | Apple TV app | Capture-only tvOS simulator build passed | Launch/capture full native overview including controls, status and account groups |
 
-The initial external-volume device-set attempt stopped before any app launch
-on CoreSimulator's `Operation not permitted` denial. No devices remained.
-[Chris approved Q599](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305613280)
-on October 20: capture now uses CoreSimulator's normal private internal-disk
-storage. Source, builds and image evidence remain on Developer-Artifacts.
-The subsequent iPhone PNG-file write to the external evidence directory was
-also refused with `NSCocoaErrorDomain code=513` / `NSPOSIXErrorDomain code=1`
-and `Operation not permitted`. That newly created simulator was deleted and
-its absence verified; all 31 pre-existing devices remain. Capture stopped.
-[Chris approved Q602](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6306472402).
-The tool streams PNG bytes through the supported `simctl` stdout form. The
-repository process opens the external file exclusively and saves the bytes;
-CoreSimulator receives no external output pathname.
-Both recovery approvals are separate from later approval of the image set.
+[Q599 approved private CoreSimulator storage](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6305613280),
+and [Q602 approved stdout PNG transport](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6306472402).
+The first approved stdout invocation still failed: the installed CLI treated
+`-` as a filename in the external worktree and returned a file-write permission
+denial (`NSCocoaErrorDomain 513`, `NSPOSIXErrorDomain 1`). No PNG was produced.
+**Capture is stopped again.** [Q605](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6306623312)
+owns the exact failure, read-only investigation and the proposed recovery. No other backend, descriptor type or
+staging route may be tried without the recorded recovery decision. This is
+separate from later image approval. The created simulator was deleted and
+absence verified; all 31 pre-existing devices remain.
 
 Mac desktop WidgetKit placement cannot be supplied by this offscreen tool.
 Do not use Chris's live desktop to fill that gap. If no isolated repository
@@ -106,8 +102,8 @@ uv run scripts/capture-app-store-screenshots.py build tvos
 uv run scripts/capture-app-store-screenshots.py build visionos
 ```
 
-Q599 authorizes default private simulator storage and Q602 authorizes stdout
-PNG transport. Capture only with this fixture tool:
+The command below records the approved stdout attempt. It failed on this
+host. Do not rerun capture before the recorded Q605 recovery decision:
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolute/new/iphone

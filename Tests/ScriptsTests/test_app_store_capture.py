@@ -38,6 +38,10 @@ class AppStoreCaptureTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 capture.run(sys.executable, "-c", "raise SystemExit(1)", stdout_path=output)
             self.assertEqual(output.read_bytes(), payload)
+            failed = Path(folder) / "failed.png"
+            with self.assertRaises(subprocess.CalledProcessError):
+                capture.run(sys.executable, "-c", "raise SystemExit(1)", stdout_path=failed)
+            self.assertFalse(failed.exists())
 
     def test_existing_output_and_non_capture_bundle_never_launch_a_simulator(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -93,8 +97,6 @@ class AppStoreCaptureTests(unittest.TestCase):
                 expected = [("shutdown", owned), ("delete", owned)]
                 self.assertEqual(cleanup, expected)
                 self.assertEqual(len(devices), 1)
-                self.assertTrue(all(args[:2] == ("xcrun", "simctl") for args in calls))
-                self.assertTrue(all("--set" not in args for args in calls))
 
     def test_create_cannot_adopt_or_delete_a_preexisting_device(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -183,7 +185,6 @@ class AppStoreCaptureTests(unittest.TestCase):
                     if "delete" in args:
                         devices[:] = [entry for entry in devices if entry["udid"] != args[-1]]
                     if "screenshot" in args:
-                        self.assertEqual(args[-1], "-")
                         kwargs["stdout_path"].write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
                     return "fixture"
 

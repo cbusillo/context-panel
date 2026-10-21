@@ -42,11 +42,16 @@ RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0
 def run(*args: str, timeout: int = 180, stdout_path: Path | None = None) -> str:
     print("+ " + " ".join(map(str, args)), flush=True)
     with stdout_path.open("xb") if stdout_path else nullcontext(subprocess.PIPE) as destination:
-        result = subprocess.run(args, text=True, stdout=destination,
-                                stderr=subprocess.PIPE, timeout=timeout)
-    print(result.stdout or "", end="", flush=True)
-    print(result.stderr, end="", flush=True)
-    result.check_returncode()
+        try:
+            result = subprocess.run(args, text=True, stdout=destination,
+                                    stderr=subprocess.PIPE, timeout=timeout)
+            print(result.stdout or "", end="", flush=True)
+            print(result.stderr, end="", flush=True)
+            result.check_returncode()
+        except BaseException:
+            if stdout_path:
+                stdout_path.unlink(missing_ok=True)
+            raise
     return (result.stdout or "").strip()
 
 
