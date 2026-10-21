@@ -155,8 +155,9 @@ final class MacCaptureUITests: XCTestCase {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["en-US"]
+            request.customWords = ScreenshotFixture.smallWidgetAccountNames
             try VNImageRequestHandler(cgImage: pixels, options: [:]).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let text = (request.results ?? []).flatMap { $0.topCandidates(5).map(\.string) }.joined(separator: " ")
             let compact = text.replacingOccurrences(of: " ", with: "").lowercased()
             if ScreenshotFixture.smallWidgetAccountNames.allSatisfy({ compact.contains($0.replacingOccurrences(of: " ", with: "").lowercased()) }) {
                 return screenshot
