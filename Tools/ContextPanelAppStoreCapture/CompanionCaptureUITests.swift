@@ -4,6 +4,7 @@ import XCTest
 @MainActor
 final class CompanionCaptureUITests: XCTestCase {
     func testNativeFixtureScreen() throws {
+        ScreenshotFixture.configureProcess()
         continueAfterFailure = false
         let app = XCUIApplication()
         let capturesDetail = ProcessInfo.processInfo.environment["CP_CAPTURE_DETAIL"] == "true"

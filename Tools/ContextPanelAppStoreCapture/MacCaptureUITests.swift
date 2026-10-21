@@ -6,6 +6,7 @@ import XCTest
 @MainActor
 final class MacCaptureUITests: XCTestCase {
     func testCaptureNativeWidgetPlacement() throws {
+        ScreenshotFixture.configureProcess()
         let environment = ProcessInfo.processInfo.environment
         guard environment["GITHUB_ACTIONS"] == "true",
               environment["RUNNER_ENVIRONMENT"] == "github-hosted" else {
@@ -93,6 +94,7 @@ final class MacCaptureUITests: XCTestCase {
     }
 
     func testCaptureNativeFixtureWindows() throws {
+        ScreenshotFixture.configureProcess()
         let environment = ProcessInfo.processInfo.environment
         guard environment["GITHUB_ACTIONS"] == "true",
               environment["RUNNER_ENVIRONMENT"] == "github-hosted" else {
