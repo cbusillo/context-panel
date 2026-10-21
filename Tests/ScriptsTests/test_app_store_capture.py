@@ -352,6 +352,55 @@ class AppStoreCaptureTests(unittest.TestCase):
                 capture.hosted_macos_capture(Path("unused-output"))
             run.assert_not_called()
 
+    def test_hosted_widget_service_starts_only_existing_definition_and_preserves_refusals(self):
+        for outcome in ("absent", "stopped", "running", "refused", "wrong-definition"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                definition = root / "agent.plist"
+                definition.write_bytes(plistlib.dumps({"Label": "unrelated" if outcome == "wrong-definition"
+                    else "com.apple.notificationcenterui.agent"}))
+                running = outcome == "running"
+                loaded = outcome != "absent"
+                mutation_count = 0
+                refusal = subprocess.CalledProcessError(1, (), stderr="Operation not permitted")
+
+                def fake_run(*args, **kwargs):
+                    nonlocal running, loaded, mutation_count
+                    action = args[1]
+                    if action == "print-disabled":
+                        return "disabled services = {}"
+                    if action == "print":
+                        if not loaded:
+                            raise subprocess.CalledProcessError(113, args, stderr="Could not find service")
+                        return "state = running" if running else "state = waiting"
+                    mutation_count += 1
+                    if outcome == "refused":
+                        raise refusal
+                    if action in {"bootstrap", "kickstart"}:
+                        loaded = running = True
+                    return ""
+
+                with patch.dict(capture.os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}), patch.object(capture, "run", side_effect=fake_run):
+                    if outcome == "wrong-definition":
+                        with self.assertRaises(RuntimeError):
+                            capture.prepare_hosted_widget_service(root, definition)
+                        self.assertEqual(mutation_count, 0)
+                    elif outcome == "refused":
+                        with self.assertRaises(subprocess.CalledProcessError) as caught:
+                            capture.prepare_hosted_widget_service(root, definition)
+                        self.assertIs(caught.exception, refusal)
+                        self.assertEqual(mutation_count, 1)
+                        self.assertEqual(json.loads((root / "notification-center-setup.json").read_text())[-1]["stderr"], refusal.stderr)
+                    else:
+                        capture.prepare_hosted_widget_service(root, definition)
+                        self.assertTrue(running)
+
+    def test_widget_service_cannot_touch_local_launchd(self):
+        with patch.dict(capture.os.environ, {}, clear=True), patch.object(capture, "run") as run:
+            with self.assertRaises(SystemExit):
+                capture.prepare_hosted_widget_service(Path("unused-output"))
+            run.assert_not_called()
+
     def test_generated_capture_model_is_enforced_before_xcodegen(self):
         original = {"name": "Fixture", "options": {}, "targets": {
             name: {"type": "application", "sources": [], "settings": {"base": {}}}

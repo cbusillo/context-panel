@@ -114,7 +114,9 @@ before project generation; the fixture app also guards direct launch. The
 app temporarily chooses a supported display mode that fits its entire window
 and hides its own Dock/menu bar during capture. [Core Graphics restores the
 mode when the process exits](https://developer.apple.com/documentation/coregraphics/cgdisplaysetdisplaymode(_:_:_:)).
-No persistent desktop preference or permission setting is changed. The
+The disposable hosted VM starts its existing per-user Notification Center agent
+for desktop widgets and records the setup. The VM is discarded after the job;
+no Chris-host desktop preference or permission setting is changed. The
 [successful native Mac capture run](https://github.com/cbusillo/context-panel/actions/runs/39545237236)
 is retained in each Mac image's provenance.
 

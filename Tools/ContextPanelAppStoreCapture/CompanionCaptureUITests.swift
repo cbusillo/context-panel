@@ -76,6 +76,18 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(gallery, name: "spatial-after-done")
         let chrome = XCUIApplication(bundleIdentifier: "com.apple.RealityChrome")
         recordHierarchy(chrome, name: "spatial-window-chrome")
+        let library = gallery.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "com.apple.RealityWidgets:SFBSystemService-"))
+            .containing(.collectionView, identifier: "LibraryAppsListView")
+        XCTAssertEqual(library.count, 1)
+        let libraryID = library.element.identifier
+        let libraryChrome = chrome.otherElements.matching(NSPredicate(format: "identifier ENDSWITH %@", libraryID))
+            .containing(.button, identifier: "CloseButton")
+        XCTAssertEqual(libraryChrome.count, 1)
+        XCTContext.runActivity(named: "spatial-library-close") { _ in
+            libraryChrome.element.buttons["CloseButton"].tap()
+        }
+        XCTAssertTrue(gallery.collectionViews["LibraryAppsListView"].waitForNonExistence(timeout: 15))
         let widget = gallery.windows.matching(NSPredicate(format: "identifier ENDSWITH %@",
             " - " + ScreenshotFixture.widgetKind)).firstMatch
         XCTAssertTrue(widget.waitForExistence(timeout: 30))
@@ -91,15 +103,36 @@ final class CompanionCaptureUITests: XCTestCase {
         var recognized = ""
         var ready = false
         repeat {
-            let screenshot = widget.screenshot()
+            let screenshot = XCTContext.runActivity(named: "spatial-element-screenshot") { _ in widget.screenshot() }
             evidence = screenshot
+            let plane = XCTAttachment(screenshot: screenshot)
+            plane.name = "placed-widget-plane-before-ocr"
+            plane.lifetime = .keepAlways
+            add(plane)
             let image = try XCTUnwrap(screenshot.image.cgImage)
+            let dimensions = XCTAttachment(string: "image=\(image.width)x\(image.height) widgetFrame=\(widget.frame)")
+            dimensions.name = "placed-widget-plane-geometry"
+            dimensions.lifetime = .keepAlways
+            add(dimensions)
+            XCTAssertGreaterThan(image.width, 1)
+            XCTAssertGreaterThan(image.height, 1)
             XCTAssertEqual(Double(image.width) / Double(image.height),
                            Double(widget.frame.width / widget.frame.height), accuracy: 0.01)
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["en-US"]
-            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            do {
+                try XCTContext.runActivity(named: "spatial-vision-ocr") { _ in
+                    try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+                }
+            } catch {
+                let detail = error as NSError
+                let failure = XCTAttachment(string: "\(String(reflecting: error)) type=\(type(of: error)) domain=\(detail.domain) code=\(detail.code) userInfo=\(detail.userInfo)")
+                failure.name = "placed-widget-ocr-error"
+                failure.lifetime = .keepAlways
+                add(failure)
+                throw error
+            }
             recognized = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             let compact = recognized.replacingOccurrences(of: " ", with: "").lowercased()
             ready = names.allSatisfy { compact.contains($0.replacingOccurrences(of: " ", with: "").lowercased()) }

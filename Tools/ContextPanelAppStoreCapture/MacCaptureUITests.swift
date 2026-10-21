@@ -45,6 +45,8 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 15))
         done.click()
         XCTAssertTrue(search.waitForNonExistence(timeout: 15))
+        XCTAssertFalse(addWidget.exists)
+        XCTAssertFalse(done.exists)
         let labels = ScreenshotFixture.smallWidgetAccountLabels
         let label = try XCTUnwrap(labels.first)
         let predicate = NSPredicate(format: "label == %@", label)
@@ -59,6 +61,7 @@ final class MacCaptureUITests: XCTestCase {
         for label in labels { containers = containers.containing(NSPredicate(format: "label == %@", label)) }
         let widget = try XCTUnwrap(containers.allElementsBoundByIndex.filter { !$0.frame.isEmpty }
             .min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }))
+        let screenshot = try waitForWidgetPixels(widget)
         let display = CGMainDisplayID()
         let points = CGDisplayBounds(display).size
         let geometry: [String: Any] = [
@@ -71,11 +74,45 @@ final class MacCaptureUITests: XCTestCase {
         metadata.name = "mac-widget-geometry"
         metadata.lifetime = .keepAlways
         add(metadata)
-        let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let image = XCTAttachment(screenshot: screenshot)
         image.name = "mac-widget-desktop"
         image.lifetime = .keepAlways
         add(image)
         app.terminate()
+    }
+
+    private func waitForWidgetPixels(_ widget: XCUIElement) throws -> XCUIScreenshot {
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            let screenshot = XCUIScreen.main.screenshot()
+            let image = try XCTUnwrap(screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+            let display = CGMainDisplayID()
+            XCTAssertEqual(image.width, CGDisplayPixelsWide(display))
+            XCTAssertEqual(image.height, CGDisplayPixelsHigh(display))
+            let bounds = CGDisplayBounds(display)
+            let scale = CGFloat(image.width) / bounds.width
+            let crop = widget.frame.offsetBy(dx: -bounds.minX, dy: -bounds.minY)
+                .applying(CGAffineTransform(scaleX: scale, y: scale))
+            let pixels = try XCTUnwrap(image.cropping(to: crop))
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            try VNImageRequestHandler(cgImage: pixels, options: [:]).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let compact = text.replacingOccurrences(of: " ", with: "").lowercased()
+            if ScreenshotFixture.smallWidgetAccountNames.allSatisfy({ compact.contains($0.replacingOccurrences(of: " ", with: "").lowercased()) }) {
+                return screenshot
+            }
+            if Date() >= deadline {
+                let evidence = XCTAttachment(screenshot: screenshot)
+                evidence.name = "placed-widget-pixel-failure"
+                evidence.lifetime = .keepAlways
+                add(evidence)
+                XCTFail("The desktop widget must render its fixture account names; OCR: \(text)")
+                return screenshot
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        } while true
     }
 
     private func visibleWindows() -> [[String: Any]] {

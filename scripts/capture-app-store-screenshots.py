@@ -540,9 +540,58 @@ def native_mac_crop(geometry: dict, data: bytes) -> tuple[int, int, int, int]:
     return crop
 
 
-def hosted_macos_capture(output: Path) -> None:
+def require_hosted_mac() -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
         raise SystemExit("Native Mac UI capture requires an isolated GitHub-hosted runner")
+
+
+def prepare_hosted_widget_service(output: Path, definition: Path = Path(
+        "/System/Library/LaunchAgents/com.apple.notificationcenterui.plist")) -> None:
+    require_hosted_mac()
+    label = "com.apple.notificationcenterui.agent"
+    if plistlib.loads(definition.read_bytes()).get("Label") != label:
+        raise RuntimeError("The runner's existing Notification Center agent definition does not match")
+    domain = f"gui/{os.getuid()}"
+    service = f"{domain}/{label}"
+    journal = []
+
+    def command(*arguments: str) -> str:
+        try:
+            result = run("launchctl", *arguments)
+            journal.append({"arguments": arguments, "stdout": result, "returncode": 0})
+            return result
+        except subprocess.CalledProcessError as error:
+            journal.append({"arguments": arguments, "stdout": error.stdout,
+                            "stderr": error.stderr, "returncode": error.returncode})
+            raise
+        finally:
+            (output / "notification-center-setup.json").write_text(json.dumps(journal, indent=2) + "\n")
+
+    command("print-disabled", domain)
+    try:
+        state = command("print", service)
+        loaded = True
+    except subprocess.CalledProcessError as error:
+        if "Could not find service" not in ((error.stdout or "") + (error.stderr or "")):
+            raise
+        state, loaded = "", False
+    command("enable", service)
+    if not loaded:
+        command("bootstrap", domain, str(definition))
+    elif "state = running" not in state:
+        command("kickstart", "-p", service)
+    deadline = time.monotonic() + 30
+    while True:
+        state = command("print", service)
+        if "state = running" in state:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("The hosted Notification Center agent did not reach running state")
+        time.sleep(1)
+
+
+def hosted_macos_capture(output: Path) -> None:
+    require_hosted_mac()
     import yaml
     if output.exists():
         raise SystemExit("Refusing to overwrite Mac capture output")
@@ -586,6 +635,7 @@ def hosted_macos_capture(output: Path) -> None:
     run("xcodegen", "generate", "--spec", str(path), "--project", str(directory), "--project-root", str(ROOT))
     output.mkdir(parents=True)
     result = output / "capture.xcresult"
+    prepare_hosted_widget_service(output)
     try:
         run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
             "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
