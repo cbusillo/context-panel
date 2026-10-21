@@ -22,8 +22,6 @@ import sys
 import uuid
 import time
 
-import yaml
-
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / ".build/app-store-capture"
 PROJECT = BUILD / "project/ContextPanel.xcodeproj"
@@ -127,6 +125,8 @@ def clean_commit() -> str:
 
 
 def prepare() -> None:
+    import yaml
+
     source = clean_commit()
     PROJECT.parent.mkdir(parents=True, exist_ok=True)
     spec = capture_spec(yaml.safe_load((ROOT / "project.yml").read_text()))

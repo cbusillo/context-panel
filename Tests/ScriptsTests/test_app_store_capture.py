@@ -8,8 +8,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import yaml
-
 SPEC = importlib.util.spec_from_file_location(
     "app_store_capture", Path(__file__).resolve().parents[2] / "scripts/capture-app-store-screenshots.py")
 capture = importlib.util.module_from_spec(SPEC)
@@ -133,7 +131,10 @@ class AppStoreCaptureTests(unittest.TestCase):
                 self.assertTrue(failure.exception.__notes__)
 
     def test_generated_capture_model_is_enforced_before_xcodegen(self):
-        original = yaml.safe_load((capture.ROOT / "project.yml").read_text())
+        original = {"name": "Fixture", "options": {}, "targets": {
+            name: {"type": "application", "sources": [], "settings": {"base": {}}}
+            for name in set(capture.TARGETS.values())
+        }}
         for fault in ("embed", "signing", "configuration", "source-plist"):
             with self.subTest(fault=fault):
                 model = capture.capture_spec(original)
