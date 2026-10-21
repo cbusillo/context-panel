@@ -120,3 +120,25 @@ framebuffer PNG still needs visual review, particularly after cold launch and on
 visionOS. Only images listed in a completed `capture.json` and visually accepted
 are candidates; a failed run is not a candidate set. Captures are not formal release receipts.
 No uploader or App Store submission is called by this tool.
+
+
+Q605 staging and native captures: `capture` uses `mktemp -d` in the system
+temporary directory, validates the PNG, copies it to the requested external
+output, then removes that one file and empty temporary directory. Only a
+system-temp screenshot save refused with Cocoa code 513 permits the recorded
+owned fixture-container fallback. Every other refusal stops the run. Device
+appearance and status are set before launch; a unique fixture scene-active
+log marker is required before each framebuffer capture. Runs are serialized.
+A receipt still requires human visual acceptance of the actual image.
+
+Available scenes: `iphone`, `iphone65`, `ipad`, `visionpro`, their `-detail`
+variants, `watch`, `watch-accounts`, and `tvos`. These are fixture-only apps.
+`rgb SOURCE NEW.png` removes a fully opaque alpha channel losslessly for App
+Store compatibility; transparent captures are refused.
+
+For actual Mac compositor evidence, manually dispatch CI on the PR branch with
+`app_store_mac_capture=true`. Its optional job runs `ci-macos` on an isolated
+GitHub-hosted macOS runner and attaches four native XCTest window screenshots.
+Both the tool and the fixture app refuse local execution. It cannot capture
+Chris's desktop or his running app. This is review artifact collection, with
+no App Store Connect operation. No `ready` or upload is authorized by #744.

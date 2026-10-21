@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["PyYAML>=6"]
+# dependencies = ["PyYAML>=6", "Pillow>=11"]
 # ///
 """Build disposable fixture-only apps and capture owned headless simulators.
 
@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
+import os
 import hashlib
 import json
 import plistlib
@@ -98,8 +100,8 @@ def unsigned_settings(settings: dict) -> dict:
     return {"base": {**base, "CODE_SIGNING_ALLOWED": "NO"}}
 
 
-def capture_spec(original: dict) -> dict:
-    roots = set(TARGETS.values())
+def capture_spec(original: dict, roots: set[str] | None = None) -> dict:
+    roots = roots if roots is not None else set(TARGETS.values())
     selected = set()
 
     def select(name: str) -> None:
@@ -138,7 +140,8 @@ def capture_spec(original: dict) -> dict:
     return spec
 
 
-def validate_capture_spec(spec: dict) -> None:
+def validate_capture_spec(spec: dict, roots: set[str] | None = None) -> None:
+    roots = roots if roots is not None else set(TARGETS.values())
     for settings in [spec["settings"], *(target["settings"] for target in spec["targets"].values())]:
         if settings.get("configs"):
             raise ValueError("Capture projects cannot inherit shipping configuration overrides")
@@ -153,7 +156,7 @@ def validate_capture_spec(spec: dict) -> None:
             raise ValueError("Capture targets cannot stamp builds or generate source-tree plists")
         if any(dependency.get("embed") for dependency in target.get("dependencies", [])):
             raise ValueError("Capture targets cannot embed extensions")
-        if name in TARGETS.values():
+        if name in roots:
             if settings["PRODUCT_BUNDLE_IDENTIFIER"] != bundle_id(name):
                 raise ValueError("Capture bundle identifier was not isolated")
             if "CONTEXT_PANEL_SCREENSHOTS" not in settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"].split():
@@ -241,6 +244,21 @@ def new_owned_device(inventory: dict, before: set[str], name: str, platform: str
     return matches[0] if matches else None
 
 
+def wait_for_scene(prefix: tuple[str, ...], udid: str, token: str, evidence: Path) -> None:
+    deadline = time.monotonic() + 90
+    while True:
+        log = run(*prefix, "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",
+                  "--predicate", f'subsystem == "com.shinycomputers.contextpanel.screenshots" AND eventMessage CONTAINS "{token}"',
+                  timeout=30)
+        with evidence.open("a") as stream:
+            stream.write(log + "\n")
+        if "active fixture scene: " + token in log:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Fixture scene did not become active; no capture receipt will be accepted")
+        time.sleep(1)
+
+
 def capture(profile: str, output: Path) -> None:
     platform, device, expected_size = PROFILES[profile]
     if output.exists():
@@ -284,18 +302,16 @@ def capture(profile: str, output: Path) -> None:
         launch_arguments = ["--screenshot-detail"] if profile.endswith("-detail") else []
         if profile == "watch-accounts":
             launch_arguments = ["--screenshot-accounts"]
-        run(*prefix, "launch", udid, bundle_id(TARGETS[platform]), *launch_arguments)
-        # Cold simulators can return a launch PID before the first scene is drawn.
-        time.sleep(20)
         for appearance in (["dark"] if platform in {"watchos", "tvos", "visionos"} else ["light", "dark"]):
             if platform not in {"watchos", "tvos"}:
                 run(*prefix, "ui", udid, "appearance", appearance)
             if platform == "ios":
                 run(*prefix, "status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi",
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
-            # simctl screenshot is a framebuffer capture, not a Mac desktop capture.
-            # A short settle is only for SwiftUI layout/transition; images need visual review.
-            time.sleep(6)
+            token = uuid.uuid4().hex
+            run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]),
+                *launch_arguments, "--screenshot-token", token)
+            wait_for_scene(prefix, udid, token, output / f"{appearance}-scene.log")
             path = output / f"{profile}-app-{appearance}.png"
             staging = capture_png(prefix, udid, bundle_id(TARGETS[platform]), path, expected_size)
             data = path.read_bytes()
@@ -337,6 +353,89 @@ def capture(profile: str, output: Path) -> None:
     (output / "capture.json").write_text(json.dumps(capture_record, indent=2) + "\n")
 
 
+def rgb_image(source: Path, destination: Path) -> None:
+    from PIL import Image
+    import io
+    with Image.open(source) as image:
+        rgba = image.convert("RGBA")
+        if rgba.getchannel("A").getextrema() != (255, 255):
+            raise SystemExit("Refusing to flatten a transparent capture")
+        output = io.BytesIO()
+        rgba.convert("RGB").save(output, format="PNG", icc_profile=image.info.get("icc_profile"))
+    with destination.open("xb") as stream:
+        stream.write(output.getvalue())
+
+
+def hosted_macos_capture(output: Path) -> None:
+    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
+        raise SystemExit("Native Mac UI capture requires an isolated GitHub-hosted runner")
+    import yaml
+    if output.exists():
+        raise SystemExit("Refusing to overwrite Mac capture output")
+    source = clean_commit()
+    original = yaml.safe_load((ROOT / "project.yml").read_text())
+    shipping = original["targets"]["ContextPanel"]
+    libraries = [d for d in shipping["dependencies"] if not d.get("embed")]
+    original["targets"]["MacFixtureViews"] = {
+        "type": "library.static", "platform": "macOS", "deploymentTarget": "14.0",
+        "sources": [{"path": "Sources/ContextPanelApp", "excludes": ["Main"]}],
+        "dependencies": libraries,
+        "settings": {"base": {"PRODUCT_NAME": "ContextPanelApp", "PRODUCT_MODULE_NAME": "ContextPanelApp", "SKIP_INSTALL": True}}}
+    app = "MacCaptureApp"
+    tests = "MacCaptureUITests"
+    original["targets"][app] = {
+        "type": "application", "platform": "macOS", "deploymentTarget": "14.0",
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureMain.swift"}],
+        "dependencies": [{"target": "MacFixtureViews"}],
+        "settings": {"base": {"PRODUCT_NAME": "Context Panel Fixture", "GENERATE_INFOPLIST_FILE": True}}}
+    spec = capture_spec(original, {app})
+    validate_capture_spec(spec, {app})
+    spec["targets"][tests] = {
+        "type": "bundle.ui-testing", "platform": "macOS", "deploymentTarget": "14.0",
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureUITests.swift"}],
+        "dependencies": [{"target": app}],
+        "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "GENERATE_INFOPLIST_FILE": True,
+                               "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(tests), "TEST_TARGET_NAME": app}}}
+    spec["schemes"][app] = {"build": {"targets": {app: "all", tests: ["test"]}},
+        "test": {"targets": [tests], "environmentVariables": {
+            "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}}}
+    directory = BUILD / "macos-project"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "project.yml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False))
+    run("xcodegen", "generate", "--spec", str(path), "--project", str(directory), "--project-root", str(ROOT))
+    output.mkdir(parents=True)
+    result = output / "capture.xcresult"
+    run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
+        "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
+        "-derivedDataPath", str(BUILD / "macos-ci"), "-resultBundlePath", str(result),
+        "CODE_SIGNING_ALLOWED=NO", "test", timeout=1200)
+    exported = output / "attachments"
+    run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
+    expected = {f"mac-{mode}-{appearance}" for mode in ("overview", "detail") for appearance in ("light", "dark")}
+    images = []
+    for case in json.loads((exported / "manifest.json").read_text()):
+        for item in case["attachments"]:
+            name = item["suggestedHumanReadableName"].removesuffix(".png")
+            if name not in expected:
+                continue
+            destination = output / (name + ".png")
+            raw = exported / item["exportedFileName"]
+            rgb_image(raw, destination)
+            data = destination.read_bytes()
+            width, height = struct.unpack(">II", data[16:24])
+            if (width, height) not in {(1280, 800), (2560, 1600)}:
+                raise SystemExit(f"Unexpected native Mac window size: {width}x{height}")
+            expected.remove(name)
+            images.append({"file": destination.name, "width": width, "height": height,
+                           "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest()})
+    if expected or clean_commit() != source:
+        raise SystemExit(f"Missing native captures or changed source: {expected}")
+    (output / "capture.json").write_text(json.dumps({"sourceCommit": source,
+        "mechanism": "XCTest native window screenshot on isolated GitHub-hosted runner",
+        "xcode": run("xcodebuild", "-version"), "os": run("sw_vers"), "images": images}, indent=2) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -346,13 +445,28 @@ def main() -> None:
     capturer = commands.add_parser("capture")
     capturer.add_argument("profile", choices=PROFILES)
     capturer.add_argument("--output", required=True, type=Path)
+    mac = commands.add_parser("ci-macos")
+    mac.add_argument("--output", required=True, type=Path)
+    rgb = commands.add_parser("rgb")
+    rgb.add_argument("source", type=Path)
+    rgb.add_argument("destination", type=Path)
     args = parser.parse_args()
     if args.command == "prepare":
         prepare()
     elif args.command == "build":
         build(args.platform)
+    elif args.command == "ci-macos":
+        hosted_macos_capture(args.output.resolve())
+    elif args.command == "rgb":
+        rgb_image(args.source, args.destination)
     else:
-        capture(args.profile, args.output.resolve())
+        BUILD.mkdir(parents=True, exist_ok=True)
+        with (BUILD / "capture.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SystemExit("Another fixture capture is running; wait for its cleanup")
+            capture(args.profile, args.output.resolve())
 
 
 if __name__ == "__main__":

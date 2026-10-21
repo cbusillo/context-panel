@@ -1,11 +1,30 @@
 #if CONTEXT_PANEL_SCREENSHOTS || os(macOS)
 import ContextPanelCore
 import SwiftUI
+import OSLog
 
 extension View {
     func appStoreScreenshotEnvironment() -> some View {
         environment(\.locale, ScreenshotFixture.locale)
             .environment(\.timeZone, ScreenshotFixture.timeZone)
+            .modifier(ScreenshotReadiness())
+    }
+}
+
+private struct ScreenshotReadiness: ViewModifier {
+    @Environment(\.scenePhase) private var phase
+    func body(content: Content) -> some View {
+        content.task(id: phase) {
+            guard phase == .active,
+                  let index = CommandLine.arguments.firstIndex(of: "--screenshot-token"),
+                  CommandLine.arguments.indices.contains(index + 1) else { return }
+            // Let the active scene finish its first layout before publishing readiness.
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            let token = CommandLine.arguments[index + 1]
+            Logger(subsystem: "com.shinycomputers.contextpanel.screenshots", category: "readiness")
+                .notice("active fixture scene: \(token, privacy: .public)")
+        }
     }
 }
 

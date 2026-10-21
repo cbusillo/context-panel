@@ -220,6 +220,8 @@ class AppStoreCaptureTests(unittest.TestCase):
                         stage = root / f"stage-{len(calls)}"
                         stage.mkdir()
                         return str(stage)
+                    if "spawn" in args:
+                        return "active fixture scene: " + args[-1].split('"')[-2]
                     if "screenshot" in args:
                         Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
                     return "fixture"
@@ -245,6 +247,28 @@ class AppStoreCaptureTests(unittest.TestCase):
                         self.assertTrue(record["cleanup"])
                     self.assertEqual(devices, [foreign])
                     self.assertEqual([args[-1] for args in calls if "delete" in args], [owned])
+
+    def test_scene_readiness_requires_the_current_launch_and_keeps_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "scene.log"
+            with patch.object(capture, "run", side_effect=["active fixture scene: older", "active fixture scene: current"]), \
+                 patch.object(capture.time, "sleep"):
+                capture.wait_for_scene(("fake",), "owned", "current", log)
+            self.assertIn("older", log.read_text())
+            self.assertIn("current", log.read_text())
+            with patch.object(capture, "run", return_value="active fixture scene: older"), \
+                 patch.object(capture.time, "monotonic", side_effect=[0, 91]):
+                with self.assertRaises(RuntimeError):
+                    capture.wait_for_scene(("fake",), "owned", "current", log)
+            with patch.object(capture, "run", side_effect=subprocess.CalledProcessError(1, "log", stderr="permission denied")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    capture.wait_for_scene(("fake",), "owned", "current", log)
+
+    def test_native_mac_capture_refuses_local_ui_before_any_command(self):
+        with patch.dict(capture.os.environ, {}, clear=True), patch.object(capture, "run") as run:
+            with self.assertRaises(SystemExit):
+                capture.hosted_macos_capture(Path("unused-output"))
+            run.assert_not_called()
 
     def test_generated_capture_model_is_enforced_before_xcodegen(self):
         original = {"name": "Fixture", "options": {}, "targets": {
