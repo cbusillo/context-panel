@@ -248,6 +248,20 @@ class AppStoreCaptureTests(unittest.TestCase):
                     self.assertEqual(devices, [foreign])
                     self.assertEqual([args[-1] for args in calls if "delete" in args], [owned])
 
+    def test_temporary_cleanup_failure_preserves_the_original_save_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            stage = root / "stage"
+            stage.mkdir()
+            (stage / "unexpected-sidecar").write_text("preserve")
+            refusal = subprocess.CalledProcessError(1, "screenshot", stderr="permission denied")
+            with patch.object(capture, "run", side_effect=[str(stage), refusal]):
+                with self.assertRaises(subprocess.CalledProcessError) as failure:
+                    capture.staged_png(("fake",), "owned", (7, 9))
+            self.assertIs(failure.exception, refusal)
+            self.assertTrue(failure.exception.__notes__)
+            self.assertTrue((stage / "unexpected-sidecar").exists())
+
     def test_scene_readiness_requires_the_current_launch_and_keeps_evidence(self):
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / "scene.log"
@@ -257,7 +271,7 @@ class AppStoreCaptureTests(unittest.TestCase):
             self.assertIn("older", log.read_text())
             self.assertIn("current", log.read_text())
             with patch.object(capture, "run", return_value="active fixture scene: older"), \
-                 patch.object(capture.time, "monotonic", side_effect=[0, 91]):
+                 patch.object(capture.time, "monotonic", side_effect=[0, 181]):
                 with self.assertRaises(RuntimeError):
                     capture.wait_for_scene(("fake",), "owned", "current", log)
             with patch.object(capture, "run", side_effect=subprocess.CalledProcessError(1, "log", stderr="permission denied")):

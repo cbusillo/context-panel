@@ -29,8 +29,7 @@
     "repoSettings": "docs/repo-settings.md",
     "sharedAccountIdentity": "docs/shared-account-identity.md",
     "releaseCompletion": "docs/release.md#definition-of-released",
-    "appStoreCapture": "Resources/AppStore/Screenshots/horizon-capture/README.md",
-    "nativeMacCapture": ".github/workflows/ci.yml optional app_store_mac_capture input; fixture-only XCTest windows on GitHub-hosted macos-26; no App Store upload"
+    "appStoreCapture": "Resources/AppStore/Screenshots/horizon-capture/README.md"
   },
   "qualityGate": {
     "build": {

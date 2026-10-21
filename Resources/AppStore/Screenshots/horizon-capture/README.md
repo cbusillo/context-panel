@@ -139,6 +139,7 @@ Store compatibility; transparent captures are refused.
 For actual Mac compositor evidence, manually dispatch CI on the PR branch with
 `app_store_mac_capture=true`. Its optional job runs `ci-macos` on an isolated
 GitHub-hosted macOS runner and attaches four native XCTest window screenshots.
-Both the tool and the fixture app refuse local execution. It cannot capture
+The tool refuses local execution; the fixture app also guards direct launches.
+The generated UI-test scheme passes the verified CI environment to its app. It cannot capture
 Chris's desktop or his running app. This is review artifact collection, with
 no App Store Connect operation. No `ready` or upload is authorized by #744.

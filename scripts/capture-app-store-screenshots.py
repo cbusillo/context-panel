@@ -60,10 +60,12 @@ def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
     if not directory.is_absolute() or not directory.is_dir():
         raise RuntimeError("mktemp did not return a temporary directory")
     image = directory / "capture.png"
+    primary_error = None
     try:
         try:
             run(*prefix, "io", udid, "screenshot", "--type=png", "--mask=ignored", str(image))
         except subprocess.CalledProcessError as error:
+            primary_error = error
             if parent is None and "NSCocoaErrorDomain, code=513" in (error.stderr or ""):
                 return None
             raise
@@ -74,9 +76,18 @@ def staged_png(prefix: tuple[str, ...], udid: str, size: tuple[int, int],
         if dimensions != size:
             raise SystemExit(f"Unexpected capture size {dimensions}; expected {size}")
         return data
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        image.unlink(missing_ok=True)
-        directory.rmdir()
+        try:
+            image.unlink(missing_ok=True)
+            directory.rmdir()
+        except Exception as cleanup_error:
+            if primary_error is not None:
+                primary_error.add_note(f"Temporary staging cleanup incomplete: {cleanup_error!r}")
+                raise primary_error
+            raise
 
 
 def capture_png(prefix: tuple[str, ...], udid: str, identifier: str,
@@ -245,7 +256,7 @@ def new_owned_device(inventory: dict, before: set[str], name: str, platform: str
 
 
 def wait_for_scene(prefix: tuple[str, ...], udid: str, token: str, evidence: Path) -> None:
-    deadline = time.monotonic() + 90
+    deadline = time.monotonic() + 180
     while True:
         log = run(*prefix, "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",
                   "--predicate", f'subsystem == "com.shinycomputers.contextpanel.screenshots" AND eventMessage CONTAINS "{token}"',
