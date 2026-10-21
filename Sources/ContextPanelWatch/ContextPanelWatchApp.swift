@@ -93,7 +93,7 @@ private struct WatchRootView: View {
     @State private var model = WatchSyncModel()
 
     var body: some View {
-        WatchRootContent(isLoading: model.isLoading, onRefresh: model.reload) {
+        WatchRootContent(isLoading: model.isLoading, onRefresh: { model.reload() }) {
             WatchUsageContent(
                 result: model.displayResult,
                 snapshot: model.snapshot,
