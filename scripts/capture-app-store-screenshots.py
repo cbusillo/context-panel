@@ -383,10 +383,9 @@ def capture(profile: str, output: Path) -> None:
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
             path = output / f"{profile}-app-{appearance}.png"
             if platform in {"ios", "visionos"}:
-                native_companion_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size,
+                staging = native_companion_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size,
                                    widget=("place" if not files else "present") if profile.endswith("-widget") else None,
                                    platform=platform)
-                staging = "native XCTest simulator screen attachment"
             else:
                 run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]), *launch_arguments)
                 time.sleep(6)  # Native layout transition; visual acceptance remains required.
@@ -404,7 +403,9 @@ def capture(profile: str, output: Path) -> None:
             "runtime": RUNTIMES[platform], "deviceType": device,
             "simulatorUDID": udid,
             "deviceSet": "CoreSimulator default private storage",
-            "mechanism": "native XCTest simulator framebuffer" if platform in {"ios", "visionos"} else "simctl framebuffer via temporary PNG staging; fixture-only capture build",
+            "mechanism": ("native XCTest simulator framebuffer" if platform == "ios" else
+                          "native XCTest scene placement/navigation; simctl framebuffer via temporary PNG staging" if platform == "visionos" else
+                          "simctl framebuffer via temporary PNG staging; fixture-only capture build"),
             "images": files,
         }
     except BaseException as error:
@@ -475,7 +476,7 @@ def configure_companion_test_run(configuration: dict, detail: bool, widget: str 
     target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"] = widget or ""
 
 
-def native_companion_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: str | None = None, platform: str = "ios") -> None:
+def native_companion_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: str | None = None, platform: str = "ios") -> str:
     products = BUILD / platform / "Build/Products"
     identity = companion_testing_identity(platform)
     configuration = plistlib.loads((products / identity["xctestrunFile"]).read_bytes())
@@ -494,12 +495,17 @@ def native_companion_capture(udid: str, detail: bool, directory: Path, destinati
         configured.unlink(missing_ok=True)
     exported = directory / "attachments"
     run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
+    if platform == "visionos":
+        # xrOS XCTest exports a 1x1 screen attachment. Use the Q605 framebuffer
+        # transport after successful native scene placement, without rescaling.
+        return capture_png(("xcrun", "simctl"), udid, bundle_id(TARGETS[platform]), destination, size)
     found = select_attachments(json.loads((exported / "manifest.json").read_text()), {"native-fixture"})
     data = (exported / found["native-fixture"]).read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", data[16:24]) != size:
         raise RuntimeError("Unexpected native simulator screenshot dimensions or format")
     with destination.open("xb") as stream:
         stream.write(data)
+    return "native XCTest simulator screen attachment"
 
 
 def rgb_image(source: Path, destination: Path, crop: tuple[int, int, int, int] | None = None) -> None:

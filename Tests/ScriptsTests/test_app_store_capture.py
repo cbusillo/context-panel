@@ -352,6 +352,44 @@ class AppStoreCaptureTests(unittest.TestCase):
                 capture.hosted_macos_capture(Path("unused-output"))
             run.assert_not_called()
 
+    def test_spatial_capture_uses_full_framebuffer_only_after_native_test_passes(self):
+        for passes in (False, True):
+            with self.subTest(passes=passes), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                with patch.object(capture, "BUILD", root / "build"):
+                    self.make_bundle(platform="visionos")
+
+                    def fake_run(*args, **kwargs):
+                        if args[0] == "xcodebuild":
+                            if not passes:
+                                raise subprocess.CalledProcessError(65, args)
+                        else:
+                            exported = Path(args[-1])
+                            exported.mkdir()
+                            (exported / "manifest.json").write_text(json.dumps([{"attachments": [{
+                                "suggestedHumanReadableName": "native-fixture.png", "exportedFileName": "screen.png"}]}]))
+                            (exported / "screen.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", 1, 1))
+                        return ""
+
+                    destination = root / "room.png"
+                    data = b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", 7, 9)
+
+                    def framebuffer(prefix, udid, identifier, path, size):
+                        self.assertEqual(udid, "owned")
+                        self.assertEqual(size, (7, 9))
+                        path.write_bytes(data)
+                        return "system temporary directory"
+
+                    with patch.object(capture, "run", side_effect=fake_run), patch.object(capture, "capture_png", side_effect=framebuffer) as save:
+                        if passes:
+                            capture.native_companion_capture("owned", False, root / "result", destination, (7, 9), "place", "visionos")
+                            self.assertEqual(destination.read_bytes(), data)
+                            save.assert_called_once()
+                        else:
+                            with self.assertRaises(subprocess.CalledProcessError):
+                                capture.native_companion_capture("owned", False, root / "result", destination, (7, 9), "place", "visionos")
+                            save.assert_not_called()
+
     def test_hosted_widget_service_starts_only_existing_definition_and_preserves_refusals(self):
         for outcome in ("absent", "stopped", "running", "refused", "wrong-definition"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as folder:
