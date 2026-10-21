@@ -108,8 +108,9 @@ uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolut
 ```
 
 Other profiles are `iphone65`, `ipad`, `watch`, `visionpro` and `tvos`. Each run
-owns a newly named simulator and records the returned UDID, fixture time,
-source commit, runtime, device type, image dimensions and checksums. Cleanup
+owns a newly named simulator and records the returned UDID, built source commit and bundle digest,
+runtime, device type, image dimensions and checksums. The built source owns the
+fixture date and timezone; the Python tool does not copy those values. Cleanup
 addresses only a newly observed exact name/type/runtime match by UDID, including
 when creation fails after allocating a device. `--device-set /absolute/path`
 selects a storage location explicitly; it is not permission to bypass a denial.

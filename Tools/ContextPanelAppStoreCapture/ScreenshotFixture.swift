@@ -3,12 +3,14 @@ import Foundation
 
 // Compiled into disposable capture targets only. No stores, credentials, or network.
 enum ScreenshotFixture {
+    static let locale = Locale(identifier: "en_US")
+    static let timeZone = TimeZone.gmt
     static func configureProcess() {
-        setenv("TZ", "UTC", 1)
+        setenv("TZ", timeZone.identifier, 1)
         tzset()
-        NSTimeZone.default = .gmt
+        NSTimeZone.default = timeZone
         UserDefaults.standard.setVolatileDomain(
-            ["AppleLocale": "en_US_POSIX", "AppleLanguages": ["en-US"]],
+            ["AppleLocale": locale.identifier, "AppleLanguages": ["en-US"]],
             forName: UserDefaults.argumentDomain)
     }
 

@@ -24,8 +24,7 @@ struct ContextPanelWatchApp: App {
         WindowGroup {
             #if CONTEXT_PANEL_SCREENSHOTS
             ScreenshotWatchRoot()
-                .environment(\.locale, Locale(identifier: "en_US_POSIX"))
-                .environment(\.timeZone, .gmt)
+                .appStoreScreenshotEnvironment()
             #else
             if launchRequest == .normal {
                 WatchRootView()

@@ -166,6 +166,14 @@ import ContextPanelTVSupport
     #expect(model.lastRefreshText == "1m ago")
     #expect(model.providerAccessAlerts == snapshot.providerAccessAlerts)
     #expect(model.currentSnapshot == snapshot.usageSnapshot.presented(at: presentationDate))
+    let later = presentationDate.addingTimeInterval(30 * 86_400)
+    let isolatedSnapshot = WidgetSnapshot(state: .ready, generatedAt: later, limits: [], status: .healthy, message: "")
+    let isolatedModel = ContextPanelAppModel.appStoreFixture(snapshot: isolatedSnapshot, now: later)
+    #expect(isolatedModel.observedBurnRates == isolatedSnapshot.observedBurnRates)
+    #expect(isolatedModel.fastModeForecastSettings == isolatedSnapshot.fastModeForecastSettings)
+    #expect(isolatedModel.lastRefreshAt == isolatedSnapshot.generatedAt)
+    #expect(isolatedModel.relativeTime(later) != isolatedModel.relativeTime(later.addingTimeInterval(-90)))
+
 }
 
 @MainActor

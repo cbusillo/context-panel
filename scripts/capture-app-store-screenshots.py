@@ -241,8 +241,7 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
             if platform == "ios":
                 run(*prefix, "status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi",
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
-            run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]),
-                "-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", appearance.capitalize())
+            run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]))
             # simctl screenshot is a framebuffer capture, not a Mac desktop capture.
             # A short settle is only for SwiftUI layout/transition; images need visual review.
             time.sleep(6)
@@ -260,7 +259,7 @@ def capture(profile: str, output: Path, device_set: Path | None = None) -> None:
             "sourceCommit": receipt["sourceCommit"], "bundleSHA256": receipt["bundleSHA256"],
             "xcode": run("xcodebuild", "-version"), "profile": profile,
             "runtime": RUNTIMES[platform], "deviceType": device,
-            "fixtureDate": "2026-10-01T14:07:00Z", "timeZone": "UTC", "mechanism": "simctl framebuffer, fixture-only capture build",
+            "mechanism": "simctl framebuffer, fixture-only capture build",
             "images": files,
         }, indent=2) + "\n")
     finally:

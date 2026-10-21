@@ -467,14 +467,10 @@ struct AppRoot: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            AccountsSidebar(model: model, snapshot: snapshot, selection: $selection)
-                .frame(width: 240)
-            Divider()
+        AppLayout(model: model, snapshot: snapshot, selection: $selection) {
             MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview, openLimit: { selection = .mainLimit($0) })
                 .frame(minWidth: 760)
         }
-        .tint(CPTheme.accent)
         .onReceive(model.$navigationRequest.compactMap { $0 }) { request in
             selection = request
             model.clearNavigationRequest()
@@ -488,6 +484,25 @@ struct AppRoot: View {
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             model.loadSnapshot(reloadWidgetTimelines: false)
         }
+    }
+}
+
+private struct AppLayout<Detail: View>: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    @Binding var selection: AppNavigationSelection?
+    var fixedPresentationDate: Date? = nil
+    @ViewBuilder let detail: () -> Detail
+
+    var body: some View {
+        HStack(spacing: 0) {
+            AccountsSidebar(model: model, snapshot: snapshot, selection: $selection,
+                fixedPresentationDate: fixedPresentationDate)
+                .frame(width: 240)
+            Divider()
+            detail()
+        }
+        .tint(CPTheme.accent)
     }
 }
 
@@ -1216,11 +1231,8 @@ private struct MacAppStorePresentation: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            AccountsSidebar(model: model, snapshot: snapshot.usageSnapshot,
-                selection: .constant(selection), fixedPresentationDate: now)
-                .frame(width: 240)
-            Divider()
+        AppLayout(model: model, snapshot: snapshot.usageSnapshot,
+            selection: .constant(selection), fixedPresentationDate: now) {
             if detail, let account = snapshot.accountOverview(now: now).accounts.first {
                 AccountDashboard(model: model, provider: account.metadata.provider, accountID: account.id,
                     fixedPresentationDate: now)
@@ -1228,7 +1240,6 @@ private struct MacAppStorePresentation: View {
                 OverviewDashboard(model: model, snapshot: snapshot.usageSnapshot, presentationDate: now)
             }
         }
-        .tint(CPTheme.accent)
     }
 }
 
@@ -5849,46 +5860,37 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     static func validationFixture(context: ValidationGalleryContext) -> ContextPanelAppModel {
-        let validationDirectory = FileManager.default.temporaryDirectory.appending(
-            path: "ContextPanelValidationGallery",
-            directoryHint: .isDirectory
-        )
-        let refreshService = SnapshotRefreshService(
-            accountStore: AccountConfigurationStore(
-                configurationURL: validationDirectory.appending(path: "accounts.json")
-            ),
-            stores: SnapshotRefreshStores(
-                primary: JSONSnapshotStore(rootDirectory: validationDirectory)
-            ),
-            promptCacheTelemetryMirror: { _, _ in },
-            promptCacheTelemetryReader: { _ in [] }
-        )
-        let model = ContextPanelAppModel(
-            refreshService: refreshService,
-            runtimeReceiptRecorder: .disabled(),
-            enablesRuntimeReceiptRelay: false,
-            fixedPresentationDate: context.presentationDate
-        )
-        model.storedSnapshot = context.storedSnapshot
-        model.storeStatus = context.snapshot.status
-        model.historyCount = 3
-        model.widgetPreferences = context.displayPreferences
-        model.fastModeForecastSettings = context.snapshot.fastModeForecastSettings
-        model.observedBurnRates = context.snapshot.observedBurnRates
-        model.errorMessage = context.snapshot.syncErrorMessage
-        model.lastRefreshAt = context.snapshot.generatedAt
-        return model
+        fixture(snapshot: context.snapshot, stored: context.storedSnapshot,
+            now: context.presentationDate, preferences: context.displayPreferences, historyCount: 3)
     }
 
     static func appStoreFixture(snapshot: WidgetSnapshot, now: Date) -> ContextPanelAppModel {
-        let context = ValidationGalleryContext(route: ValidationGalleryRoute(fixtureID: .healthy,
-            family: .systemLarge, appearance: .light, presentation: .overview))
-        let model = validationFixture(context: context)
+        let model = fixture(snapshot: snapshot,
+            stored: StoredUsageSnapshot(savedAt: now, snapshot: snapshot.usageSnapshot, reports: snapshot.reports),
+            now: now, preferences: .defaultPreferences, historyCount: 0)
         model.appStoreSnapshot = snapshot
-        model.storedSnapshot = StoredUsageSnapshot(savedAt: now, snapshot: snapshot.usageSnapshot, reports: snapshot.reports)
-        model.storeStatus = .healthy
+        return model
+    }
+
+    private static func fixture(snapshot: WidgetSnapshot, stored: StoredUsageSnapshot, now: Date,
+                                preferences: WidgetDisplayPreferences, historyCount: Int) -> ContextPanelAppModel {
+        let validationDirectory = FileManager.default.temporaryDirectory.appending(
+            path: "ContextPanelValidationGallery", directoryHint: .isDirectory)
+        let refreshService = SnapshotRefreshService(
+            accountStore: AccountConfigurationStore(configurationURL: validationDirectory.appending(path: "accounts.json")),
+            stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: validationDirectory)),
+            promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+        let model = ContextPanelAppModel(refreshService: refreshService, runtimeReceiptRecorder: .disabled(),
+            enablesRuntimeReceiptRelay: false, fixedPresentationDate: now)
+        model.storedSnapshot = stored
+        model.storeStatus = snapshot.status
+        model.historyCount = historyCount
+        model.widgetPreferences = preferences
+        model.fastModeForecastSettings = snapshot.fastModeForecastSettings
+        model.observedBurnRates = snapshot.observedBurnRates
         model.accountBurnRates = snapshot.accountBurnRates ?? [:]
-        model.lastRefreshAt = now
+        model.errorMessage = snapshot.syncErrorMessage
+        model.lastRefreshAt = snapshot.generatedAt
         return model
     }
 

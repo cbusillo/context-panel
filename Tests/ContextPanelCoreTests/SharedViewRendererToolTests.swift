@@ -188,16 +188,23 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     ]
 
     for executable in ["ContextPanelSharedViewRenderer", "ContextPanelAppStoreCapture"] {
-        var images: Set<Data> = []
-        for (index, host) in hosts.enumerated() {
-            let output = directory.appending(path: "\(executable)-host-\(index).png")
-            let arguments = executable == "ContextPanelAppStoreCapture"
-                ? ["overview", "light", output.path]
-                : try rendererArguments(cell: cell, output: output)
-            let run = try runRenderer(arguments, environment: host, executable: executable)
-            #expect(run.status == 0, "\(host): \(run.output)")
-            images.insert(try Data(contentsOf: output))
+        let presentations = executable == "ContextPanelAppStoreCapture" ? ["overview", "detail"] : ["overview"]
+        for presentation in presentations {
+            var images: Set<Data> = []
+            for (index, host) in hosts.enumerated() {
+                let output = directory.appending(path: "\(executable)-\(presentation)-host-\(index).png")
+                // LANG alone does not change Foundation's locale on macOS. These
+                // launch defaults do; the fixture must consistently override them.
+                let locales = ["en_US", "ja_JP", "de_DE"]
+                let languages = ["(en)", "(ja)", "(de)"]
+                let arguments = executable == "ContextPanelAppStoreCapture"
+                    ? [presentation, "light", output.path, "-AppleLocale", locales[index], "-AppleLanguages", languages[index]]
+                    : try rendererArguments(cell: cell, output: output)
+                let run = try runRenderer(arguments, environment: host, executable: executable)
+                #expect(run.status == 0, "\(host): \(run.output)")
+                images.insert(try Data(contentsOf: output))
+            }
+            #expect(images.count == 1)
         }
-        #expect(images.count == 1)
     }
 }

@@ -4,8 +4,15 @@ import ContextPanelApp
 import ContextPanelCore
 import SwiftUI
 
-// Offscreen only. Never creates a window or registers an app/extension bundle.
-let arguments = Array(CommandLine.arguments.dropFirst())
+// Offscreen only. Never displays a window or registers an app/extension bundle.
+var arguments = Array(CommandLine.arguments.dropFirst())
+// Foundation reads these normal launch-default arguments before main. The fixture
+// overrides them; accept them here to exercise real foreign host locales.
+for flag in ["-AppleLocale", "-AppleLanguages"] {
+    if let index = arguments.firstIndex(of: flag), index + 1 < arguments.count {
+        arguments.removeSubrange(index ... index + 1)
+    }
+}
 guard arguments.count == 3, ["overview", "detail"].contains(arguments[0]),
       ["light", "dark"].contains(arguments[1]), !FileManager.default.fileExists(atPath: arguments[2]) else {
     fputs("usage: ContextPanelAppStoreCapture overview|detail light|dark NEW.png\n", stderr)
@@ -20,8 +27,7 @@ let host = NSHostingView(rootView: content
     .frame(width: size.width, height: size.height)
     .background(Color(nsColor: .windowBackgroundColor))
     .environment(\.colorScheme, dark ? .dark : .light)
-    .environment(\.locale, Locale(identifier: "en_US_POSIX"))
-    .environment(\.timeZone, .gmt))
+    .appStoreScreenshotEnvironment())
 host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
 host.frame = NSRect(origin: .zero, size: size)
 // AppKit-backed List needs a window hierarchy even for an offscreen bitmap.

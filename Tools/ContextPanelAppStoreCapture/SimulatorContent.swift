@@ -1,6 +1,13 @@
-#if CONTEXT_PANEL_SCREENSHOTS
+#if CONTEXT_PANEL_SCREENSHOTS || os(macOS)
 import ContextPanelCore
 import SwiftUI
+
+extension View {
+    func appStoreScreenshotEnvironment() -> some View {
+        environment(\.locale, ScreenshotFixture.locale)
+            .environment(\.timeZone, ScreenshotFixture.timeZone)
+    }
+}
 
 #if os(watchOS)
 struct ScreenshotWatchRoot: View {

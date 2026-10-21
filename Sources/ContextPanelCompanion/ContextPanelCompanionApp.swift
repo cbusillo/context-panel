@@ -51,8 +51,7 @@ struct ContextPanelCompanionApp: App {
         WindowGroup {
             #if CONTEXT_PANEL_SCREENSHOTS
             CompanionRootView()
-                .environment(\.locale, Locale(identifier: "en_US_POSIX"))
-                .environment(\.timeZone, .gmt)
+                .appStoreScreenshotEnvironment()
             #else
             CompanionRootView()
             #endif

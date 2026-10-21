@@ -28,8 +28,7 @@ struct ContextPanelTVApp: App {
         WindowGroup {
             #if CONTEXT_PANEL_SCREENSHOTS
             ScreenshotTVRoot()
-                .environment(\.locale, Locale(identifier: "en_US_POSIX"))
-                .environment(\.timeZone, .gmt)
+                .appStoreScreenshotEnvironment()
             #else
             switch launchRequest {
             case let .sample(sample):
