@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "approval": "unapproved native app and widget candidates; Mac WidgetKit placement in progress; no ready/upload/submission",
+  "approval": "complete unapproved Horizon native app and OS-composited widget review set; no ready/upload/submission",
   "fixtureSource": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift at each recorded sourceCommit",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "assets": [
@@ -381,6 +381,60 @@
       "appearance": "light",
       "presentation": "overview",
       "surface": "macos.app"
+    },
+    {
+      "file": "mac-widget-desktop.png",
+      "width": 1280,
+      "height": 800,
+      "sha256": "39f7962761fd1185e2fbb8d399c40dccfc147e8abe999077c1b345eb85c7812e",
+      "rawSHA256": "15cd7b3183ceddfb974e447bab666b15449b3bd0d88dc70980dfc271d81ffe35",
+      "crop": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "geometry": {
+        "backingScaleFactor": 1,
+        "frontmostApplication": "com.apple.notificationcenterui",
+        "screenPixels": [
+          1600,
+          900
+        ],
+        "screenPoints": [
+          1600,
+          900
+        ],
+        "widgetsPoints": [
+          [
+            8,
+            218,
+            368,
+            578
+          ],
+          [
+            188,
+            38,
+            548,
+            218
+          ],
+          [
+            8,
+            38,
+            188,
+            218
+          ]
+        ]
+      },
+      "sourceCommit": "65c6dd7bbc6790dfd2ea3069473b56e11007f2c2",
+      "xcode": "Xcode 26.6\nBuild version 17F113",
+      "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83",
+      "mechanism": "XCTest native desktop screenshot on isolated GitHub-hosted runner; native pixel crop",
+      "profile": "macos-widget",
+      "captureRun": "https://github.com/cbusillo/context-panel/actions/runs/39582398246",
+      "appearance": "light",
+      "presentation": "actual native desktop WidgetKit small, medium and large; gallery closed; fixture accounts verified in each native window",
+      "surface": "widget"
     },
     {
       "file": "tvos-overview-dark.png",

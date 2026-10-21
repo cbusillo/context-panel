@@ -1,10 +1,10 @@
-# Horizon native app capture candidates
+# Horizon native app and widget review set
 
 Prepared for [#744](https://github.com/cbusillo/context-panel/issues/744),
-October 21, 2026, CP744-C2. **Unapproved. Actual WidgetKit placement is still
-in progress. No ready, App Store upload or submission.**
+October 21, 2026, CP744-C2. **Complete set of 27 unapproved images.
+No ready, App Store upload or submission.**
 
-These images show the native Horizon apps with synthetic account data. Mac
+These images show the native Horizon apps with synthetic account data. Mac app
 images are XCTest screenshots of complete native windows on an isolated
 GitHub-hosted Mac. iPhone, iPad, Watch and TV images include native navigation
 and system chrome in owned simulators. Vision Pro images include the actual
@@ -14,6 +14,7 @@ spatial app window in the simulator's stock room environment.
 | --- | --- | --- |
 | Mac overview and sidebar | [Image](mac-overview-light.png) | [Image](mac-overview-dark.png) |
 | Mac Studio account and sidebar | [Image](mac-detail-light.png) | [Image](mac-detail-dark.png) |
+| Mac actual desktop widgets, small, medium and large | [Image](mac-widget-desktop.png) | — |
 | iPhone 17 Pro, Dynamic Island medium display, overview | [Image](iphone-overview-light.png) | [Image](iphone-overview-dark.png) |
 | iPhone 17 Pro, Dynamic Island medium display, Studio detail | [Image](iphone-detail-light.png) | [Image](iphone-detail-dark.png) |
 | iPhone 17 Pro, Dynamic Island medium display, actual Home Screen widget | [Image](iphone-widget-light.png) | [Image](iphone-widget-dark.png) |
@@ -52,24 +53,18 @@ excluded. Every selected image was checked for the intended native screen,
 forecast and account text, clipping, contrast and OS context. Vision Pro uses
 one app-owned dark appearance; duplicate light-labelled frames are excluded.
 
-## Remaining OS placement
-
-| Surface | Next capture |
-| --- | --- |
-| Mac widgets | Actual fixture-only WidgetKit placement on the isolated hosted Mac |
-
-The app-window and shared-view images do not establish WidgetKit placement.
-Never use Chris's running apps, desktop, browser or real account data to fill
-a gap. If a capture can only be made from his live desktop, stop that capture
-and post an Owner question on #744 describing exactly what is needed. Any new
-permission or authorization refusal stops and is reported on #744.
+Never use Chris's running apps, desktop, browser or real account data for
+recaptures. If a capture can only use his live desktop, stop and post an
+Owner question on #744 describing exactly what is needed. Any new permission
+or authorization refusal stops and is reported on #744.
 
 ## Capture tooling
 
 The repository tool generates a separate Xcode project under `.build`, with
 capture-only bundle identifiers and synthetic fixtures. Shipping entitlements,
 embedded shipping extensions, account stores and build stamping are excluded.
-iOS has an app-associated capture UI test. The shipping project does not set
+iOS and Vision Pro have app-associated capture UI tests. The shipping project
+does not set
 `CONTEXT_PANEL_SCREENSHOTS` or include the fixture sources.
 
 Prepare, build and capture require a clean committed tree and share one lock.
@@ -117,11 +112,24 @@ before project generation; the fixture app also guards direct launch. The
 app temporarily chooses a supported display mode that fits its entire window
 and hides its own Dock/menu bar during capture. [Core Graphics restores the
 mode when the process exits](https://developer.apple.com/documentation/coregraphics/cgdisplaysetdisplaymode(_:_:_:)).
+The actual Mac widget capture adds small, medium and large through the native
+gallery, closes it, binds each fixture accessibility group to a distinct new
+window from the same process, and checks Core-generated account labels in
+each widget. The final frame requires visual acceptance of every account row,
+ring and layout. A pointer hover to verified empty wallpaper clears the Dock
+tooltip.
+The final 1280×800-point crop keeps native pixels and every complete widget;
+it excludes the observed Dock and never resizes or paints the desktop.
+The test runner receives the actual hosted flags through xcodebuild’s
+TEST_RUNNER_ environment transport.
+
 The disposable hosted VM starts its existing per-user Notification Center agent
 for desktop widgets and records the setup. The VM is discarded after the job;
 no Chris-host desktop preference or permission setting is changed. The
 [successful native Mac capture run](https://github.com/cbusillo/context-panel/actions/runs/39545237236)
-is retained in each Mac image's provenance.
+is retained in each app image's provenance. The
+[successful desktop widget run](https://github.com/cbusillo/context-panel/actions/runs/39582398246)
+is recorded separately in the widget image's provenance.
 
 `rgb SOURCE NEW.png` performs the lossless opaque-alpha removal used for the
 selected native images. It refuses existing output files and transparency.

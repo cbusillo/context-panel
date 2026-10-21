@@ -1,11 +1,11 @@
 # App Store Screenshot Matrix
 
-## Horizon Native App Review Candidates
+## Horizon Native App and Widget Review Set
 
-The [native capture index](horizon-capture/README.md) contains fixture-only,
-OS-composited Horizon app images for all six platforms, Home Screen widgets
-for both iPhone display groups and iPad, and a spatial Vision Pro widget.
-These are unapproved. Mac WidgetKit placement is work in progress. No uploader mapping,
+The [native capture index](horizon-capture/README.md) contains 27 fixture-only,
+OS-composited Horizon images: native apps on all six platforms, actual Mac
+desktop widgets, Home Screen widgets for both iPhone display groups and iPad,
+and a spatial Vision Pro widget. These are unapproved. No uploader mapping,
 App Store upload or submission has changed.
 
 The table below is generated from [the capture manifest](horizon-capture/manifest.json),
@@ -35,6 +35,7 @@ are excluded.
 | [mac-detail-light.png](horizon-capture/mac-detail-light.png) | 1280 × 800 | `0bc31997a2e27b3815b9f45aec8a0f8aab8c79569a16776b726066c59381cbaf` |
 | [mac-overview-dark.png](horizon-capture/mac-overview-dark.png) | 1280 × 800 | `777be94dd9ff20a58a09e549a8cdb09352c150e85b29e7edcc47b08cb839899b` |
 | [mac-overview-light.png](horizon-capture/mac-overview-light.png) | 1280 × 800 | `93c13afa29c92c268e86a090aeb894267f4164e00221c0a6e14c32b6c0976de1` |
+| [mac-widget-desktop.png](horizon-capture/mac-widget-desktop.png) | 1280 × 800 | `39f7962761fd1185e2fbb8d399c40dccfc147e8abe999077c1b345eb85c7812e` |
 | [tvos-overview-dark.png](horizon-capture/tvos-overview-dark.png) | 1920 × 1080 | `510ef7a1ac0f864f7780a93b2f3c67d6b286e85fbed5f9254d15c467148cb3e8` |
 | [visionpro-detail-dark.png](horizon-capture/visionpro-detail-dark.png) | 3840 × 2160 | `28b11d8304794e971596be4b049f9a1fa24d3f1a7652a7ea471930e1a0c2e98e` |
 | [visionpro-overview-dark.png](horizon-capture/visionpro-overview-dark.png) | 3840 × 2160 | `688d383cb935b9d3b471615b2778ba1f2841af12d71f6e90c07195c6525be511` |
