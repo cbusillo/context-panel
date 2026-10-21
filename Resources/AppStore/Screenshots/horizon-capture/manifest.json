@@ -83,6 +83,50 @@
       "surface": "ios.app.ipad"
     },
     {
+      "file": "ipad-widget-dark.png",
+      "width": 2048,
+      "height": 2732,
+      "sha256": "09a732c7895e278c1f9c09acef84a9cc3e34667f7c1a652d7208ae85488dea87",
+      "appearance": "dark",
+      "staging": "native XCTest simulator screen attachment",
+      "rawSHA256": "6fd832b294fd4e108fc1f2bee493ea6f0c52d7eaad4a8c9a22710694aac9a5e4",
+      "sourceCommit": "c2d0ce935d49d852ac69a729400a908541529c31",
+      "bundleSHA256": "9acb9b95b978528d1b77f666d2d5a44f677487e1847e6d83a52e20974a02ba8b",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_iphonesimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "c6e34d3f331adca5f8c4b6d7a7b372370e00364198a9c706ed83c924e47e1343",
+        "runnerSHA256": "c4fc3ae74099575565e27f507744fa480dd4072e3299054797e3ede1474e28ef"
+      },
+      "runtime": "iOS-27-0",
+      "mechanism": "native XCTest simulator framebuffer",
+      "profile": "ipad-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "surface": "widget",
+      "presentation": "native Home Screen, system small WidgetKit, fixture Use next accounts; stock widgets removed only in owned simulator"
+    },
+    {
+      "file": "ipad-widget-light.png",
+      "width": 2048,
+      "height": 2732,
+      "sha256": "621ebc119abbc74cca67a81493eeee435421d14ce23e19e7f5ea140918db48c7",
+      "appearance": "light",
+      "staging": "native XCTest simulator screen attachment",
+      "rawSHA256": "54a54cfd24b8e26adec21605334c70888fddf8d6c4046277e9f34960cbceaa77",
+      "sourceCommit": "c2d0ce935d49d852ac69a729400a908541529c31",
+      "bundleSHA256": "9acb9b95b978528d1b77f666d2d5a44f677487e1847e6d83a52e20974a02ba8b",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_iphonesimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "c6e34d3f331adca5f8c4b6d7a7b372370e00364198a9c706ed83c924e47e1343",
+        "runnerSHA256": "c4fc3ae74099575565e27f507744fa480dd4072e3299054797e3ede1474e28ef"
+      },
+      "runtime": "iOS-27-0",
+      "mechanism": "native XCTest simulator framebuffer",
+      "profile": "ipad-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "surface": "widget",
+      "presentation": "native Home Screen, system small WidgetKit, fixture Use next accounts; stock widgets removed only in owned simulator"
+    },
+    {
       "file": "iphone-detail-dark.png",
       "width": 1206,
       "height": 2622,

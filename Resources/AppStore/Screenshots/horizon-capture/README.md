@@ -21,6 +21,7 @@ spatial app window in the simulator's stock room environment.
 | iPhone, required 6.5-inch display group, actual Home Screen widget | [Image](iphone65-widget-light.png) | [Image](iphone65-widget-dark.png) |
 | iPad overview | [Image](ipad-overview-light.png) | [Image](ipad-overview-dark.png) |
 | iPad Studio detail | [Image](ipad-detail-light.png) | [Image](ipad-detail-dark.png) |
+| iPad actual Home Screen widget | [Image](ipad-widget-light.png) | [Image](ipad-widget-dark.png) |
 | Watch overview and deadlines | — | [Image](watch-overview-dark.png) |
 | Watch Studio account card | — | [Image](watch-accounts-dark.png) |
 | Vision Pro spatial overview | — | [Image](visionpro-overview-dark.png) |
@@ -52,7 +53,6 @@ one app-owned dark appearance; duplicate light-labelled frames are excluded.
 | Surface | Next capture |
 | --- | --- |
 | Mac widgets | Actual fixture-only WidgetKit placement on the isolated hosted Mac |
-| iPad widgets | Actual WidgetKit placement in an owned fixture simulator |
 | Vision Pro widgets | Actual spatial WidgetKit placement in an owned fixture simulator |
 
 The app-window and shared-view images do not establish WidgetKit placement.
