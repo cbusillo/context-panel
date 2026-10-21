@@ -45,11 +45,6 @@ enum ScreenshotFixture {
         smallWidgetAccountLabels(in: widgetSnapshot)
     }
 
-    static var smallWidgetAccountNames: [String] {
-        widgetSnapshot.accountOverview(now: date, widgetsOnly: true, maximumAge: widgetMaximumAge)
-            .widgetPicks.compactMap { $0.account?.metadata.label }
-    }
-
     static func smallWidgetAccountLabels(in value: WidgetSnapshot) -> [String] {
         value.accountOverview(now: date, widgetsOnly: true, maximumAge: widgetMaximumAge)
             .widgetPicks.compactMap { pick in
