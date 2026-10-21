@@ -79,7 +79,8 @@ final class CompanionCaptureUITests: XCTestCase {
     private func placeFixtureWidget(reusing: Bool) throws {
         let home = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCUIDevice.shared.press(.home)
-        if !reusing { addFixtureWidget(home) }
+        if reusing { try showFirstHomePage(home) }
+        else { try addFixtureWidget(home) }
         XCTAssertFalse(home.searchFields["Search Widgets"].firstMatch.exists)
         XCTAssertFalse(addWidgetButton(home).exists)
         XCTAssertFalse(home.buttons["Done"].firstMatch.exists)
@@ -93,7 +94,7 @@ final class CompanionCaptureUITests: XCTestCase {
         }
     }
 
-    private func addFixtureWidget(_ home: XCUIApplication) {
+    private func addFixtureWidget(_ home: XCUIApplication) throws {
         let icon = home.icons["Context Panel"].firstMatch
         let foundIcon = icon.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "home")
@@ -104,7 +105,7 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(home, name: "home-menu")
         XCTAssertTrue(foundEdit)
         editHome.tap()
-        home.swipeRight() // Return from the fixture's page to the first Home Screen page.
+        try showFirstHomePage(home)
         let edit = home.buttons["Edit"].firstMatch
         let foundToolbar = edit.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "home-edit")
@@ -138,6 +139,17 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(foundDone)
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 10))
+    }
+
+    private func showFirstHomePage(_ home: XCUIApplication) throws {
+        let indicator = home.pageIndicators["Page control"].firstMatch
+        XCTAssertTrue(indicator.waitForExistence(timeout: 10))
+        let value = try XCTUnwrap(indicator.value as? String)
+        let words = value.split(separator: " ")
+        let page = try XCTUnwrap(words.count > 1 ? Int(words[1]) : nil)
+        XCTAssertGreaterThan(page, 0)
+        for _ in 1 ..< page { home.swipeRight() }
+        XCTAssertTrue((indicator.value as? String)?.hasPrefix("Page 1 of ") == true)
     }
 
     #endif
