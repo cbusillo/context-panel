@@ -53,7 +53,8 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 30))
         search.tap()
         search.typeText("Context Panel")
-        let result = gallery.buttons["Context Panel"].firstMatch
+        let result = gallery.collectionViews["LibraryAppsListView"].cells
+            .containing(.staticText, identifier: "Context Panel").firstMatch
         let found = result.waitForExistence(timeout: 30)
         recordHierarchy(gallery, name: "spatial-widget-search")
         XCTAssertTrue(found)
@@ -103,21 +104,16 @@ final class CompanionCaptureUITests: XCTestCase {
     }
 
     private func addFixtureWidget(_ home: XCUIApplication) throws {
-        let icon = home.otherElements["Home screen icons"].icons["Context Panel"].firstMatch
-        let foundIcon = icon.waitForExistence(timeout: 30)
+        let background = home.otherElements["Home screen icons"].firstMatch
+        let foundBackground = background.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "home")
-        XCTAssertTrue(foundIcon)
-        icon.press(forDuration: 2)
-        let editHome = home.buttons["Edit Home Screen"]
-        let foundEdit = editHome.waitForExistence(timeout: 10)
-        recordHierarchy(home, name: "home-menu")
-        XCTAssertTrue(foundEdit)
-        editHome.tap()
-        try showFirstHomePage(home)
+        XCTAssertTrue(foundBackground)
+        background.press(forDuration: 2)
         let edit = home.buttons["Edit"].firstMatch
         let foundToolbar = edit.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "home-edit")
         XCTAssertTrue(foundToolbar)
+        try showFirstHomePage(home)
         edit.tap()
         let addWidget = addWidgetButton(home)
         let foundAdd = addWidget.waitForExistence(timeout: 10)

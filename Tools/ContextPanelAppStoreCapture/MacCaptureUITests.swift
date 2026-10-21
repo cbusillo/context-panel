@@ -94,13 +94,6 @@ final class MacCaptureUITests: XCTestCase {
         let urls = Set(running.compactMap(\.bundleURL) + explicit.compactMap {
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
         }).filter { $0.pathExtension == "app" }
-        let skipped = running.filter { $0.bundleURL?.pathExtension != "app" }.map {
-            "\($0.bundleIdentifier ?? "no bundle identifier"): \($0.bundleURL?.path ?? "no app URL")"
-        }
-        let evidence = XCTAttachment(string: skipped.sorted().joined(separator: "\n"))
-        evidence.name = "non-application-processes"
-        evidence.lifetime = .keepAlways
-        add(evidence)
         return urls.sorted(by: { $0.path < $1.path }).map { ($0.path, XCUIApplication(url: $0)) }
     }
 
@@ -113,6 +106,7 @@ final class MacCaptureUITests: XCTestCase {
         repeat {
             hosts = systemHosts()
             for (identifier, app) in hosts where app.state != .notRunning {
+                if Date() >= deadline { break }
                 let element = query(app)
                 if element.exists && !element.frame.isEmpty && (!interactive || element.isHittable) {
                     found = (identifier, app, element)
@@ -122,6 +116,13 @@ final class MacCaptureUITests: XCTestCase {
             if found != nil { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline
+        let skipped = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.pathExtension != "app" }.map {
+            "\($0.bundleIdentifier ?? "no bundle identifier"): \($0.bundleURL?.path ?? "no app URL")"
+        }
+        let evidence = XCTAttachment(string: skipped.sorted().joined(separator: "\n"))
+        evidence.name = stage + "-non-application-processes"
+        evidence.lifetime = .keepAlways
+        add(evidence)
         let owner = XCTAttachment(string: "Matched owner: \(found?.identifier ?? "no AX owner")\n" + hosts.map(\.0).joined(separator: "\n"))
         owner.name = stage + "-system-applications"
         owner.lifetime = .keepAlways
