@@ -13,8 +13,9 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(app, name: "overview")
         XCTAssertTrue(overviewExists)
         XCTAssertTrue(app.frame.intersects(overview.frame))
-        if ProcessInfo.processInfo.environment["CP_CAPTURE_WIDGET"] == "true" {
-            try placeFixtureWidget()
+        let widgetMode = ProcessInfo.processInfo.environment["CP_CAPTURE_WIDGET"] ?? ""
+        if !widgetMode.isEmpty {
+            try placeFixtureWidget(reusing: widgetMode == "present")
         } else if ProcessInfo.processInfo.environment["CP_CAPTURE_DETAIL"] == "true" {
             let account = try XCTUnwrap(ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first)
             let prefix = "\(account.metadata.provider.accountDisplayName), \(account.metadata.label),"
@@ -35,9 +36,22 @@ final class CompanionCaptureUITests: XCTestCase {
         add(image)
     }
 
-    private func placeFixtureWidget() throws {
+    private func placeFixtureWidget(reusing: Bool) throws {
         let home = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCUIDevice.shared.press(.home)
+        if !reusing { addFixtureWidget(home) }
+        XCTAssertFalse(home.searchFields.firstMatch.exists)
+        XCTAssertFalse(home.buttons["Add Widget"].firstMatch.exists)
+        XCTAssertFalse(home.buttons["Done"].firstMatch.exists)
+        let account = try XCTUnwrap(ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first)
+        let content = home.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", account.metadata.label)).firstMatch
+        let foundContent = content.waitForExistence(timeout: 30)
+        recordHierarchy(home, name: "widget-placed")
+        XCTAssertTrue(foundContent)
+        XCTAssertTrue(home.frame.intersects(content.frame))
+    }
+
+    private func addFixtureWidget(_ home: XCUIApplication) {
         let icon = home.icons["Context Panel"].firstMatch
         let foundIcon = icon.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "home")
@@ -75,13 +89,11 @@ final class CompanionCaptureUITests: XCTestCase {
         XCTAssertTrue(foundPreview)
         add.tap()
         let done = home.buttons["Done"].firstMatch
-        if done.waitForExistence(timeout: 10) { done.tap() }
-        let account = try XCTUnwrap(ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first)
-        let content = home.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", account.metadata.label)).firstMatch
-        let foundContent = content.waitForExistence(timeout: 30)
-        recordHierarchy(home, name: "widget-placed")
-        XCTAssertTrue(foundContent)
-        XCTAssertTrue(home.frame.intersects(content.frame))
+        let foundDone = done.waitForExistence(timeout: 10)
+        recordHierarchy(home, name: "widget-added")
+        XCTAssertTrue(foundDone)
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 10))
     }
 
     private func recordHierarchy(_ app: XCUIApplication, name: String) {

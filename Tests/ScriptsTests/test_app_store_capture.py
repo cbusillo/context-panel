@@ -283,6 +283,13 @@ class AppStoreCaptureTests(unittest.TestCase):
                         self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "true")
                         capture.configure_ios_test_run(configuration, False)
                         self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_DETAIL"], "false")
+                        for mode in ("place", "present"):
+                            capture.configure_ios_test_run(configuration, False, mode)
+                            self.assertEqual(target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"], mode)
+                            with self.assertRaises(ValueError):
+                                capture.configure_ios_test_run(configuration, True, mode)
+                        with self.assertRaises(ValueError):
+                            capture.configure_ios_test_run(configuration, False, "unrelated")
 
     def test_native_ui_capture_removes_temporary_configuration_and_rejects_wrong_dimensions(self):
         for outcome in ("success", "test-failure", "wrong-size"):

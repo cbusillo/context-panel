@@ -373,7 +373,7 @@ def capture(profile: str, output: Path) -> None:
             path = output / f"{profile}-app-{appearance}.png"
             if platform == "ios":
                 native_ios_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size,
-                                   widget=profile.endswith("-widget"))
+                                   widget=("place" if not files else "present") if profile.endswith("-widget") else None)
                 staging = "native XCTest simulator screen attachment"
             else:
                 run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]), *launch_arguments)
@@ -437,7 +437,9 @@ def select_attachments(manifest: list, expected: set[str]) -> dict[str, str]:
     return found
 
 
-def configure_ios_test_run(configuration: dict, detail: bool, widget: bool = False) -> None:
+def configure_ios_test_run(configuration: dict, detail: bool, widget: str | None = None) -> None:
+    if widget not in {None, "place", "present"} or (detail and widget is not None):
+        raise ValueError("Select one fixture screen: overview, detail or widget placement")
     if "TestConfigurations" in configuration:
         targets = [target for entry in configuration["TestConfigurations"] for target in entry["TestTargets"]]
     else:
@@ -450,10 +452,10 @@ def configure_ios_test_run(configuration: dict, detail: bool, widget: bool = Fal
     if target.get("UITargetAppPath") != expected_app or target.get("IsUITestBundle") is not True:
         raise RuntimeError("UI test is not associated with the fixture app")
     target.setdefault("EnvironmentVariables", {})["CP_CAPTURE_DETAIL"] = "true" if detail else "false"
-    target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"] = "true" if widget else "false"
+    target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"] = widget or ""
 
 
-def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: bool = False) -> None:
+def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: str | None = None) -> None:
     products = BUILD / "ios/Build/Products"
     identity = ios_testing_identity()
     configuration = plistlib.loads((products / identity["xctestrunFile"]).read_bytes())
@@ -465,7 +467,8 @@ def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Pa
     try:
         configured.write_bytes(plistlib.dumps(configuration))
         run("xcodebuild", "-quiet", "-derivedDataPath", str(BUILD / "ios-test"), "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={udid}",
-            "-parallel-testing-enabled", "NO", "-resultBundlePath", str(result), "test-without-building", timeout=600)
+            "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
+            "-resultBundlePath", str(result), "test-without-building", timeout=600)
     finally:
         configured.unlink(missing_ok=True)
     exported = directory / "attachments"

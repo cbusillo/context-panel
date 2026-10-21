@@ -25,9 +25,18 @@ private struct CaptureWidgetContent: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
+        #if os(macOS)
+        let snapshot = ScreenshotFixture.snapshot
+        let maximumAge = SnapshotFreshness.widgetMaximumAge
+        #else
+        let maximumAge = SnapshotFreshness.companionProviderMaximumAge
+        let snapshot = WidgetSnapshot.fromCompanionSync(ScreenshotFixture.result,
+            now: ScreenshotFixture.date,
+            stalenessPolicy: .appDefault(maximumAge: maximumAge))
+        #endif
         ContextPanelWidgetContentView(
             family: family,
-            snapshot: ScreenshotFixture.snapshot,
+            snapshot: snapshot,
             displayPreferences: .defaultPreferences,
             links: ContextPanelWidgetLinks(
                 overview: URL(string: "contextpanel-fixture://overview")!,
@@ -35,6 +44,7 @@ private struct CaptureWidgetContent: View {
                 cacheStatsSettings: URL(string: "contextpanel-fixture://settings")!,
                 resetCreditInteraction: .none),
             showsResetCreditSurfaces: true,
+            resetCreditMaximumAge: maximumAge,
             presentationDate: ScreenshotFixture.date,
             allowsNavigation: false)
             .environment(\.locale, ScreenshotFixture.locale)
@@ -45,13 +55,18 @@ private struct CaptureWidgetContent: View {
 
 @main
 struct CaptureWidget: Widget {
+    init() { ScreenshotFixture.configureProcess() }
+
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "ContextPanelFixture", provider: CaptureProvider()) { _ in
             CaptureWidgetContent()
         }
         .configurationDisplayName("Context Panel")
-        .description("Track AI usage limits, reset windows, and fast-mode status at a glance.")
+        #if os(macOS)
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        #else
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
+        #endif
         .contentMarginsDisabled()
     }
 }
