@@ -153,6 +153,50 @@
       "surface": "ios.app.iphone"
     },
     {
+      "file": "iphone-widget-dark.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "6e44d92c0b2d6bf9782af8eb598b06a336ba14d4d8949fb2c4652238bd5099b3",
+      "appearance": "dark",
+      "staging": "native XCTest simulator screen attachment",
+      "rawSHA256": "e59d3c2547e6650dc983eca71485f19cd5327e6d18844ef5b017e3ea6d9b8b1f",
+      "sourceCommit": "c2e1dfb6366cbe0a75d9c8256eab57d426d2953b",
+      "bundleSHA256": "73225f23eae060cac2f1bac56384c3da34b2411a79f99dc92556ae3221f8223a",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_iphonesimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "c6e34d3f331adca5f8c4b6d7a7b372370e00364198a9c706ed83c924e47e1343",
+        "runnerSHA256": "c1cae8a301930e635dd43c6b64389bc30f09abf1fe9b7bd22bec532340dcfc8d"
+      },
+      "runtime": "iOS-27-0",
+      "mechanism": "native XCTest simulator framebuffer",
+      "profile": "iphone-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "surface": "widget",
+      "presentation": "native Home Screen, system small WidgetKit, fixture Use next accounts"
+    },
+    {
+      "file": "iphone-widget-light.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "55ae4ec4c9d5599dacc1cc356a507fb15d74a8cb404e1333b017090c4335d682",
+      "appearance": "light",
+      "staging": "native XCTest simulator screen attachment",
+      "rawSHA256": "450ef01c847d13be35d3dd97f0844f5ee4446c6c257ed70ccbe4422606d29540",
+      "sourceCommit": "c2e1dfb6366cbe0a75d9c8256eab57d426d2953b",
+      "bundleSHA256": "73225f23eae060cac2f1bac56384c3da34b2411a79f99dc92556ae3221f8223a",
+      "uiTesting": {
+        "xctestrunFile": "CompanionCapture_iphonesimulator27.0-arm64-x86_64.xctestrun",
+        "xctestrunSHA256": "c6e34d3f331adca5f8c4b6d7a7b372370e00364198a9c706ed83c924e47e1343",
+        "runnerSHA256": "c1cae8a301930e635dd43c6b64389bc30f09abf1fe9b7bd22bec532340dcfc8d"
+      },
+      "runtime": "iOS-27-0",
+      "mechanism": "native XCTest simulator framebuffer",
+      "profile": "iphone-widget",
+      "cleanup": "owned simulator deleted; absence verified",
+      "surface": "widget",
+      "presentation": "native Home Screen, system small WidgetKit, fixture Use next accounts"
+    },
+    {
       "file": "iphone65-overview-dark.png",
       "width": 1284,
       "height": 2778,

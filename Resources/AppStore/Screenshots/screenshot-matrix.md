@@ -23,6 +23,8 @@ are excluded.
 | [iphone-detail-light.png](horizon-capture/iphone-detail-light.png) | 1206 × 2622 | `97b248dd98859779e4286d20796cb440522a5792c8ef48b92da881cbde9a68be` |
 | [iphone-overview-dark.png](horizon-capture/iphone-overview-dark.png) | 1206 × 2622 | `f0b530f33dff837d1406244025fe5447f362819c7d0a9db6930469f5a013a987` |
 | [iphone-overview-light.png](horizon-capture/iphone-overview-light.png) | 1206 × 2622 | `45591127bcee6c6358875c310e6011ea3870f4bbd8bc42ba5936a45f933ce042` |
+| [iphone-widget-dark.png](horizon-capture/iphone-widget-dark.png) | 1206 × 2622 | `6e44d92c0b2d6bf9782af8eb598b06a336ba14d4d8949fb2c4652238bd5099b3` |
+| [iphone-widget-light.png](horizon-capture/iphone-widget-light.png) | 1206 × 2622 | `55ae4ec4c9d5599dacc1cc356a507fb15d74a8cb404e1333b017090c4335d682` |
 | [iphone65-overview-dark.png](horizon-capture/iphone65-overview-dark.png) | 1284 × 2778 | `ab48dcd8e74261a0a9b2b0067375320d6a6564736fd3f2a484d8306e5aa987a1` |
 | [iphone65-overview-light.png](horizon-capture/iphone65-overview-light.png) | 1284 × 2778 | `c1a033d338b41f5c6ab47c21e04de67972bb0dada814f7e1d90eb6972956b53f` |
 | [iphone65-widget-dark.png](horizon-capture/iphone65-widget-dark.png) | 1284 × 2778 | `62af05ca8fde9ad6e8a0cf6f20c9b65c1a80e1fddb2f65a98bd54107d4c35c75` |

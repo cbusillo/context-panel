@@ -16,6 +16,7 @@ spatial app window in the simulator's stock room environment.
 | Mac Studio account and sidebar | [Image](mac-detail-light.png) | [Image](mac-detail-dark.png) |
 | iPhone, existing 6.1-inch display group, overview | [Image](iphone-overview-light.png) | [Image](iphone-overview-dark.png) |
 | iPhone, existing 6.1-inch display group, Studio detail | [Image](iphone-detail-light.png) | [Image](iphone-detail-dark.png) |
+| iPhone, existing display group, actual Home Screen widget | [Image](iphone-widget-light.png) | [Image](iphone-widget-dark.png) |
 | iPhone, required 6.5-inch display group, overview | [Image](iphone65-overview-light.png) | [Image](iphone65-overview-dark.png) |
 | iPhone, required 6.5-inch display group, actual Home Screen widget | [Image](iphone65-widget-light.png) | [Image](iphone65-widget-dark.png) |
 | iPad overview | [Image](ipad-overview-light.png) | [Image](ipad-overview-dark.png) |
@@ -51,7 +52,7 @@ one app-owned dark appearance; duplicate light-labelled frames are excluded.
 | Surface | Next capture |
 | --- | --- |
 | Mac widgets | Actual fixture-only WidgetKit placement on the isolated hosted Mac |
-| Existing iPhone display group and iPad widgets | Actual WidgetKit placement in owned fixture simulators |
+| iPad widgets | Actual WidgetKit placement in an owned fixture simulator |
 | Vision Pro widgets | Actual spatial WidgetKit placement in an owned fixture simulator |
 
 The app-window and shared-view images do not establish WidgetKit placement.

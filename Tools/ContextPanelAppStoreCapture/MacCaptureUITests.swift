@@ -23,20 +23,11 @@ final class MacCaptureUITests: XCTestCase {
         record(finder, name: "desktop")
         let desktop = finder.scrollViews["desktop"].firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 15))
+        let baseline = Set(visibleWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
         desktop.rightClick()
-        let menu = findOwner(stage: "desktop-menu") { $0.menuItems["Edit Widgets…"].firstMatch }
-        let menuRoute: String
-        if let menu {
-            menuRoute = "native AX menu in " + menu.identifier
-            menu.element.click()
-        } else {
-            // The retained native screenshot proves this menu is open, but its
-            // owner may expose no AX menu. Use its ordinary keyboard selection.
-            menuRoute = "native menu keyboard selection after no AX owner"
-            finder.typeKey("e", modifierFlags: [])
-            finder.typeKey(.return, modifierFlags: [])
-        }
-        let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search") { $0.searchFields.firstMatch })
+        finder.typeKey("e", modifierFlags: [])
+        finder.typeKey(.return, modifierFlags: [])
+        let galleryMatch = try XCTUnwrap(findOwner(stage: "gallery-search", baseline: baseline) { $0.searchFields.firstMatch })
         let gallery = galleryMatch.app
         let search = galleryMatch.element
         search.click()
@@ -49,6 +40,7 @@ final class MacCaptureUITests: XCTestCase {
         let addWidget = gallery.buttons["Add Widget"].firstMatch
         XCTAssertTrue(addWidget.waitForExistence(timeout: 15))
         addWidget.click()
+        record(gallery, name: "widget-added")
         let done = gallery.buttons["Done"].firstMatch
         XCTAssertTrue(done.waitForExistence(timeout: 15))
         done.click()
@@ -56,7 +48,7 @@ final class MacCaptureUITests: XCTestCase {
         let labels = ScreenshotFixture.smallWidgetAccountLabels
         let label = try XCTUnwrap(labels.first)
         let predicate = NSPredicate(format: "label == %@", label)
-        let widgetHost = try XCTUnwrap(findOwner(stage: "placed-widget", interactive: false) {
+        let widgetHost = try XCTUnwrap(findOwner(stage: "placed-widget", baseline: baseline, interactive: false) {
             $0.descendants(matching: .any).matching(predicate).firstMatch
         }).app
         for label in labels {
@@ -73,7 +65,6 @@ final class MacCaptureUITests: XCTestCase {
             "screenPoints": [points.width, points.height],
             "screenPixels": [CGDisplayPixelsWide(display), CGDisplayPixelsHigh(display)],
             "backingScaleFactor": NSScreen.main?.backingScaleFactor ?? 0,
-            "menuRoute": menuRoute,
             "widgetPoints": [widget.frame.minX, widget.frame.minY, widget.frame.maxX, widget.frame.maxY]]
         let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
         let metadata = XCTAttachment(string: try XCTUnwrap(String(data: data, encoding: .utf8)))
@@ -87,24 +78,42 @@ final class MacCaptureUITests: XCTestCase {
         app.terminate()
     }
 
-    private func systemHosts() -> [(String, XCUIApplication)] {
-        let running = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }
-        let explicit = ["com.apple.finder", "com.apple.WindowManager", "com.apple.notificationcenterui",
-                        "com.apple.dock", "com.apple.controlcenter", "com.apple.systemuiserver"]
-        let urls = Set(running.compactMap(\.bundleURL) + explicit.compactMap {
-            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
-        }).filter { $0.pathExtension == "app" }
-        return urls.sorted(by: { $0.path < $1.path }).map { ($0.path, XCUIApplication(url: $0)) }
+    private func visibleWindows() -> [[String: Any]] {
+        CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
     }
 
-    private func findOwner(stage: String, interactive: Bool = true,
+    private func windowHosts(baseline: Set<Int>) -> [(String, XCUIApplication)] {
+        var seen = Set<pid_t>()
+        return visibleWindows().compactMap { window in
+            guard let number = window[kCGWindowNumber as String] as? Int, !baseline.contains(number),
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                  pid != ProcessInfo.processInfo.processIdentifier, seen.insert(pid).inserted,
+                  let process = NSRunningApplication(processIdentifier: pid),
+                  let url = process.bundleURL, url.pathExtension == "app", !process.isTerminated,
+                  process.bundleIdentifier != "com.shinycomputers.contextpanel.screenshots.maccaptureapp" else { return nil }
+            return (url.path, XCUIApplication(url: url))
+        }
+    }
+
+    private func findOwner(stage: String, baseline: Set<Int>, interactive: Bool = true,
                            query: (XCUIApplication) -> XCUIElement)
         -> (identifier: String, app: XCUIApplication, element: XCUIElement)? {
+        let processes = NSWorkspace.shared.runningApplications.map {
+            "pid=\($0.processIdentifier) policy=\($0.activationPolicy.rawValue) \($0.bundleIdentifier ?? "no identifier") \($0.bundleURL?.path ?? "no URL")"
+        }
+        let metadata = XCTAttachment(string: processes.joined(separator: "\n") + "\nWindows: \(visibleWindows())")
+        metadata.name = stage + "-window-owners-before-query"
+        metadata.lifetime = .keepAlways
+        add(metadata)
+        let initial = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        initial.name = stage + "-before-query"
+        initial.lifetime = .keepAlways
+        add(initial)
         let deadline = Date().addingTimeInterval(15)
         var hosts: [(String, XCUIApplication)] = []
         var found: (identifier: String, app: XCUIApplication, element: XCUIElement)?
         repeat {
-            hosts = systemHosts()
+            hosts = windowHosts(baseline: baseline)
             for (identifier, app) in hosts where app.state != .notRunning {
                 if Date() >= deadline { break }
                 let element = query(app)
@@ -116,27 +125,16 @@ final class MacCaptureUITests: XCTestCase {
             if found != nil { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline
-        let skipped = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.pathExtension != "app" }.map {
-            "\($0.bundleIdentifier ?? "no bundle identifier"): \($0.bundleURL?.path ?? "no app URL")"
-        }
-        let evidence = XCTAttachment(string: skipped.sorted().joined(separator: "\n"))
-        evidence.name = stage + "-non-application-processes"
-        evidence.lifetime = .keepAlways
-        add(evidence)
-        let owner = XCTAttachment(string: "Matched owner: \(found?.identifier ?? "no AX owner")\n" + hosts.map(\.0).joined(separator: "\n"))
-        owner.name = stage + "-system-applications"
+        let owner = XCTAttachment(string: "Matched owner: \(found?.identifier ?? "no AX owner")\n" + hosts.map(\.0).joined(separator: "\n") + "\nWindows: \(visibleWindows())")
+        owner.name = stage + "-window-owners-after-query"
         owner.lifetime = .keepAlways
         add(owner)
-        for (identifier, app) in hosts where app.state != .notRunning {
-            let hierarchy = XCTAttachment(string: app.debugDescription)
-            hierarchy.name = stage + "-" + identifier + "-hierarchy"
-            hierarchy.lifetime = .keepAlways
-            add(hierarchy)
+        if let found { record(found.app, name: stage) }
+        else {
+            for (identifier, app) in hosts where app.state != .notRunning {
+                record(app, name: stage + "-" + URL(fileURLWithPath: identifier).lastPathComponent)
+            }
         }
-        let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screen.name = stage + "-screen"
-        screen.lifetime = .keepAlways
-        add(screen)
         return found
     }
 
