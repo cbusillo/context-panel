@@ -115,6 +115,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let useLast: Bool
         public let remainingFraction: Double?
         public let limitingWindowID: String?
+        public var limitingWindowLabel: String? { display?.tightestWindow }
         public let observedAt: Date?
         public let windows: [Window]
         public let usageCredits: ProviderUsageCreditSummary?
@@ -126,7 +127,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public var resetAssessment: ResetAssessment? = nil
 
         enum CodingKeys: String, CodingKey {
-            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, primaryAccountID, accountIdentityStatus, resetAssessment
+            case id, configurationID, provider, label, state, showInWidgets, useLast, remainingFraction, limitingWindowID, limitingWindowLabel, observedAt, windows, usageCredits, bankedResets, display, sharedAccountIdentity, primaryAccountID, accountIdentityStatus, resetAssessment
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -140,6 +141,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(useLast, forKey: .useLast)
             try container.encode(remainingFraction, forKey: .remainingFraction)
             try container.encode(limitingWindowID, forKey: .limitingWindowID)
+            try container.encode(limitingWindowLabel, forKey: .limitingWindowLabel)
             try container.encode(observedAt, forKey: .observedAt)
             try container.encode(windows, forKey: .windows)
             try container.encode(usageCredits, forKey: .usageCredits)
@@ -213,6 +215,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public struct Window: Encodable, Sendable {
         public let id: String
         public let label: String
+        public let period: MainLimitWindow?
+        public let remainingFraction: Double?
         public let unit: UsageUnit
         public let used: Int?
         public let limit: Int?
@@ -223,13 +227,15 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let presentationAssumption: UsagePresentationAssumption?
 
         enum CodingKeys: String, CodingKey {
-            case id, label, unit, used, limit, naturalResetAt, observedAt, burn, confidence, presentationAssumption
+            case id, label, period, remainingFraction, unit, used, limit, naturalResetAt, observedAt, burn, confidence, presentationAssumption
         }
 
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(id, forKey: .id)
             try container.encode(label, forKey: .label)
+            try container.encode(period, forKey: .period)
+            try container.encode(remainingFraction, forKey: .remainingFraction)
             try container.encode(unit, forKey: .unit)
             try container.encode(used, forKey: .used)
             try container.encode(limit, forKey: .limit)
@@ -340,6 +346,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     observedAt: account.observedAt, windows: limits.map { limit in
                         let rate = canonical.accountBurnRates?[limit.accountID]?[limit.id]
                         return Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id), label: ConnectorRedactor.safeErrorDescription(limit.label),
+                            period: MainLimitWindow.infer(from: limit), remainingFraction: limit.remainingCapacityRatio,
                             unit: limit.unit, used: limit.used, limit: limit.limit, naturalResetAt: limit.resetsAt,
                             observedAt: limit.lastUpdatedAt,
                             burn: rate.flatMap { $0.sampleCount > 0 ? Burn(unitsPerHour: $0.unitsPerHour,
@@ -389,6 +396,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     return Window(
                         id: ConnectorRedactor.localAccountID(provider: row.provider, stableID: limit.id),
                         label: ConnectorRedactor.safeErrorDescription(limit.label),
+                        period: MainLimitWindow.infer(from: limit), remainingFraction: limit.remainingCapacityRatio,
                         unit: limit.unit, used: limit.used, limit: limit.limit,
                         naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
                         burn: burn.map { Burn(unitsPerHour: $0.unitsPerHour,

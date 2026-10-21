@@ -18,6 +18,38 @@ private func agentLimit(_ id: String, used: Int, at: Date, provider: Provider = 
         used: used, limit: 100, resetsAt: agentNow.addingTimeInterval(86_400), lastUpdatedAt: at)
 }
 
+@Test(arguments: [false, true], [11, 71])
+func agentSnapshotNamesHeadlineWindowAndExportsIndependentWindowCapacity(shared: Bool, weeklyUsed: Int) throws {
+    let account = agentConfiguration("d", provider: .anthropic)
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [account])
+    let limits = [
+        UsageLimit(provider: .anthropic, accountID: account.id, configuredAccountID: account.id,
+            accountName: "Ignored", label: "Usage", windowLabel: MainLimitWindow.fiveHour.displayName,
+            unit: .percent, used: 37, limit: 100, resetsAt: agentNow.addingTimeInterval(3_600), lastUpdatedAt: agentNow),
+        agentLimit(account.id, used: weeklyUsed, at: agentNow, provider: .anthropic)
+    ]
+    let report = StoredProviderReport(provider: .anthropic, accountID: account.id, configuredAccountID: account.id,
+        accountName: "Ignored", generatedAt: agentNow, status: .healthy, errorMessage: nil)
+    let stored = StoredUsageSnapshot(savedAt: agentNow, snapshot: UsageSnapshot(generatedAt: agentNow, limits: limits), reports: [report])
+    let document = shared ? CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: stored,
+        configuration: [account], publisherID: "fixture")) : nil
+    let snapshot = AgentAccountSnapshot(configuration: config, stored: stored, history: [], now: agentNow,
+        sharedDocument: document)
+    let row = try #require(snapshot.accounts.first)
+    let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any])
+    let limiting = try #require(limits.min { ($0.remainingCapacityRatio ?? 1) < ($1.remainingCapacityRatio ?? 1) })
+    #expect(object["limitingWindowLabel"] as? String == limiting.displayLabel)
+    #expect(row.remainingFraction == limiting.remainingCapacityRatio)
+    let windows = try #require(object["windows"] as? [[String: Any]])
+    for (index, limit) in limits.enumerated() {
+        #expect(windows[index]["period"] as? String == MainLimitWindow.infer(from: limit)?.rawValue)
+        #expect(windows[index]["remainingFraction"] as? Double == limit.remainingCapacityRatio)
+    }
+    let limitingWindow = try #require(windows.first { $0["id"] as? String == row.limitingWindowID })
+    #expect(limitingWindow["remainingFraction"] as? Double == row.remainingFraction)
+    #expect(windows[0]["remainingFraction"] as? Double != windows[1]["remainingFraction"] as? Double)
+}
+
 @Test func agentSnapshotAppCommandEmitsTheSharedProjectionWithoutWriting() throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -166,6 +198,7 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     let rows = try #require(object["accounts"] as? [[String: Any]])
     #expect(rows.first?["usageCredits"] is NSNull)
+    #expect(rows.first?["limitingWindowLabel"] is NSNull)
     let resets = try #require(rows.first?["bankedResets"] as? [String: Any])
     #expect(resets["summary"] is NSNull)
     #expect(resets["unknownExpiryCount"] is NSNull)
