@@ -28,12 +28,12 @@ PROJECT = BUILD / "project/ContextPanel.xcodeproj"
 TARGETS = {"ios": "ContextPanelCompanion", "visionos": "ContextPanelCompanion", "watchos": "ContextPanelWatch", "tvos": "ContextPanelTV"}
 SDKS = {"ios": "iphonesimulator", "visionos": "xrsimulator", "watchos": "watchsimulator", "tvos": "appletvsimulator"}
 PROFILES = {
-    "iphone": ("ios", "iPhone-17-Pro"),
-    "iphone65": ("ios", "iPhone-16-Plus"),
-    "ipad": ("ios", "iPad-Pro-13-inch-M4-8GB"),
-    "visionpro": ("visionos", "Apple-Vision-Pro-4K"),
-    "watch": ("watchos", "Apple-Watch-Ultra-2-49mm"),
-    "tvos": ("tvos", "Apple-TV-4K-3rd-generation-1080p"),
+    "iphone": ("ios", "iPhone-17-Pro", (1206, 2622)),
+    "iphone65": ("ios", "iPhone-14-Plus", (1284, 2778)),
+    "ipad": ("ios", "iPad-Pro-12-9-inch-6th-generation-8GB", (2048, 2732)),
+    "visionpro": ("visionos", "Apple-Vision-Pro-4K", (3840, 2160)),
+    "watch": ("watchos", "Apple-Watch-Ultra-2-49mm", (410, 502)),
+    "tvos": ("tvos", "Apple-TV-4K-3rd-generation-1080p", (1920, 1080)),
 }
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
 
@@ -86,7 +86,7 @@ def build(platform: str) -> None:
 
 
 def capture(profile: str, output: Path) -> None:
-    platform, device = PROFILES[profile]
+    platform, device, expected_size = PROFILES[profile]
     if output.exists():
         raise SystemExit(f"Refusing to overwrite {output}")
     app = BUILD / platform / "Build/Products" / f"Debug-{SDKS[platform]}" / "Context Panel.app"
@@ -110,7 +110,8 @@ def capture(profile: str, output: Path) -> None:
         run(*prefix, "install", udid, str(app))
         files = []
         for appearance in (["dark"] if platform in {"watchos", "tvos"} else ["light", "dark"]):
-            run(*prefix, "ui", udid, "appearance", appearance)
+            if platform not in {"watchos", "tvos"}:
+                run(*prefix, "ui", udid, "appearance", appearance)
             if platform == "ios":
                 run(*prefix, "status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi",
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
@@ -125,6 +126,8 @@ def capture(profile: str, output: Path) -> None:
             if data[:8] != b"\x89PNG\r\n\x1a\n":
                 raise SystemExit("simctl did not produce a PNG")
             width, height = struct.unpack(">II", data[16:24])
+            if (width, height) != expected_size:
+                raise SystemExit(f"Unexpected capture size {(width, height)}; expected {expected_size}")
             files.append({"file": path.name, "width": width, "height": height,
                           "sha256": hashlib.sha256(data).hexdigest(), "appearance": appearance})
         (output / "capture.json").write_text(json.dumps({
