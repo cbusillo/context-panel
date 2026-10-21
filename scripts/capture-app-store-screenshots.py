@@ -39,6 +39,7 @@ PROFILES = {
 }
 PROFILES.update({name + "-detail": PROFILES[name] for name in ("iphone", "iphone65", "ipad", "visionpro")})
 PROFILES["watch-accounts"] = PROFILES["watch"]
+PROFILES.update({name + "-widget": PROFILES[name] for name in ("iphone", "iphone65", "ipad")})
 RUNTIMES = {"ios": "iOS-27-0", "visionos": "xrOS-27-0", "watchos": "watchOS-27-0", "tvos": "tvOS-27-0"}
 
 
@@ -151,8 +152,37 @@ def capture_spec(original: dict, roots: set[str] | None = None) -> dict:
     return spec
 
 
-def validate_capture_spec(spec: dict, roots: set[str] | None = None) -> None:
+def fixture_widget_spec(host: str, mac: bool = False) -> dict:
+    return {
+        "type": "app-extension",
+        **({"platform": "macOS", "deploymentTarget": "14.0"} if mac else {
+            "platform": "auto", "supportedDestinations": ["iOS", "visionOS"],
+            "deploymentTarget": {"iOS": "17.0", "visionOS": "26.0"}}),
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/CaptureWidget.swift"},
+                    {"path": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift"}],
+        "dependencies": [{"target": "ContextPanelCore" if mac else "ContextPanelCoreCompanion"},
+                         {"target": "ContextPanelWidgetUI" if mac else "ContextPanelWidgetUICompanion"}],
+        "info": {"path": str(BUILD / (host + "-Widget-Info.plist")), "properties": {
+            "CFBundleDisplayName": "Context Panel", "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1", "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"}}},
+        "settings": {"base": {"CODE_SIGNING_ALLOWED": "NO", "PRODUCT_NAME": "CaptureWidget",
+            "PRODUCT_BUNDLE_IDENTIFIER": bundle_id(host) + ".widget", "SKIP_INSTALL": True,
+            "APPLICATION_EXTENSION_API_ONLY": True, **({} if mac else {"TARGETED_DEVICE_FAMILY": "1,2,7"})}}}
+
+
+def add_fixture_widget(spec: dict, host: str, mac: bool = False) -> None:
+    spec["targets"]["CaptureWidget"] = fixture_widget_spec(host, mac)
+    spec["targets"][host]["dependencies"].append({"target": "CaptureWidget", "embed": True})
+
+
+def validate_capture_spec(spec: dict, roots: set[str] | None = None, widget_host: str | None = None) -> None:
     roots = roots if roots is not None else set(TARGETS.values())
+    if widget_host is not None:
+        if widget_host not in roots or "CaptureWidget" not in spec["targets"]:
+            raise ValueError("Fixture widget requires its isolated capture host")
+        embeds = [d for d in spec["targets"][widget_host]["dependencies"] if d.get("embed")]
+        if embeds != [{"target": "CaptureWidget", "embed": True}]:
+            raise ValueError("Fixture host must embed exactly its fixture widget")
     for settings in [spec["settings"], *(target["settings"] for target in spec["targets"].values())]:
         if settings.get("configs"):
             raise ValueError("Capture projects cannot inherit shipping configuration overrides")
@@ -162,10 +192,15 @@ def validate_capture_spec(spec: dict, roots: set[str] | None = None) -> None:
             if key.startswith(("CODE_SIGN", "PROVISIONING_PROFILE")) or key == "DEVELOPMENT_TEAM":
                 raise ValueError("Capture projects cannot carry signing or provisioning settings")
     for name, target in spec["targets"].items():
+        if name == "CaptureWidget" and widget_host in roots:
+            if target != fixture_widget_spec(widget_host, spec["targets"][widget_host]["platform"] == "macOS"):
+                raise ValueError("Only the exact fixture-only widget extension is allowed")
+            continue
         settings = target["settings"]["base"]
         if target.get("postBuildScripts") or target.get("info"):
             raise ValueError("Capture targets cannot stamp builds or generate source-tree plists")
-        if any(dependency.get("embed") for dependency in target.get("dependencies", [])):
+        if any(dependency.get("embed") and (name != widget_host or dependency != {"target": "CaptureWidget", "embed": True})
+               for dependency in target.get("dependencies", [])):
             raise ValueError("Capture targets cannot embed extensions")
         if name in roots:
             if settings["PRODUCT_BUNDLE_IDENTIFIER"] != bundle_id(name):
@@ -195,7 +230,8 @@ def prepare() -> None:
     watch_plist = BUILD / "CaptureWatch-Info.plist"
     watch_plist.write_bytes(plistlib.dumps(info))
     watch["INFOPLIST_FILE"] = str(watch_plist)
-    validate_capture_spec(spec)
+    add_fixture_widget(spec, TARGETS["ios"])
+    validate_capture_spec(spec, widget_host=TARGETS["ios"])
     tests = "CompanionCaptureUITests"
     spec["targets"][tests] = {
         "type": "bundle.ui-testing", "platform": "iOS", "deploymentTarget": "17.0",
@@ -336,7 +372,8 @@ def capture(profile: str, output: Path) -> None:
                     "--wifiMode", "active", "--wifiBars", "3", "--batteryState", "charged", "--batteryLevel", "100")
             path = output / f"{profile}-app-{appearance}.png"
             if platform == "ios":
-                native_ios_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size)
+                native_ios_capture(udid, profile.endswith("-detail"), output / appearance, path, expected_size,
+                                   widget=profile.endswith("-widget"))
                 staging = "native XCTest simulator screen attachment"
             else:
                 run(*prefix, "launch", "--terminate-running-process", udid, bundle_id(TARGETS[platform]), *launch_arguments)
@@ -400,7 +437,7 @@ def select_attachments(manifest: list, expected: set[str]) -> dict[str, str]:
     return found
 
 
-def configure_ios_test_run(configuration: dict, detail: bool) -> None:
+def configure_ios_test_run(configuration: dict, detail: bool, widget: bool = False) -> None:
     if "TestConfigurations" in configuration:
         targets = [target for entry in configuration["TestConfigurations"] for target in entry["TestTargets"]]
     else:
@@ -413,13 +450,14 @@ def configure_ios_test_run(configuration: dict, detail: bool) -> None:
     if target.get("UITargetAppPath") != expected_app or target.get("IsUITestBundle") is not True:
         raise RuntimeError("UI test is not associated with the fixture app")
     target.setdefault("EnvironmentVariables", {})["CP_CAPTURE_DETAIL"] = "true" if detail else "false"
+    target["EnvironmentVariables"]["CP_CAPTURE_WIDGET"] = "true" if widget else "false"
 
 
-def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int]) -> None:
+def native_ios_capture(udid: str, detail: bool, directory: Path, destination: Path, size: tuple[int, int], widget: bool = False) -> None:
     products = BUILD / "ios/Build/Products"
     identity = ios_testing_identity()
     configuration = plistlib.loads((products / identity["xctestrunFile"]).read_bytes())
-    configure_ios_test_run(configuration, detail)
+    configure_ios_test_run(configuration, detail, widget)
     # Keep relative __TESTROOT__ product paths bound to the verified build tree.
     configured = products / ("capture-" + uuid.uuid4().hex + ".xctestrun")
     directory.mkdir()

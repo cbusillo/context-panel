@@ -235,7 +235,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                      patch.object(capture, "clean_commit", return_value=self.source), \
                      patch.object(capture, "run", side_effect=fake_run), \
                      patch.object(capture.time, "sleep"), \
-                     patch.object(capture, "native_ios_capture", side_effect=lambda udid, detail, directory, path, size: path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))):
+                     patch.object(capture, "native_ios_capture", side_effect=lambda udid, detail, directory, path, size, **kwargs: path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))):
                     self.make_bundle()
                     try:
                         raise ValueError("unrelated caller exception")
@@ -365,3 +365,26 @@ class AppStoreCaptureTests(unittest.TestCase):
                     target["info"] = {"path": "Config/source.plist"}
                 with self.assertRaises(ValueError):
                     capture.validate_capture_spec(model)
+
+    def test_only_fixture_widget_can_be_embedded_in_its_capture_host(self):
+        host = capture.TARGETS["ios"]
+        original = {"name": "Fixture", "options": {}, "targets": {
+            name: {"type": "application", "platform": "auto", "sources": [], "settings": {"base": {}}}
+            for name in set(capture.TARGETS.values())}}
+        for fault in (None, "shipping-source", "credential-entitlement", "other-embed", "missing-extension"):
+            with self.subTest(fault=fault):
+                model = capture.capture_spec(original)
+                capture.add_fixture_widget(model, host)
+                if fault == "shipping-source":
+                    model["targets"]["CaptureWidget"]["sources"].append({"path": "Sources/ContextPanelWidget"})
+                elif fault == "credential-entitlement":
+                    model["targets"]["CaptureWidget"]["settings"]["base"]["CODE_SIGN_ENTITLEMENTS"] = "production.entitlements"
+                elif fault == "other-embed":
+                    model["targets"][host]["dependencies"].append({"target": "production-widget", "embed": True})
+                elif fault == "missing-extension":
+                    del model["targets"]["CaptureWidget"]
+                if fault is None:
+                    capture.validate_capture_spec(model, widget_host=host)
+                else:
+                    with self.assertRaises(ValueError):
+                        capture.validate_capture_spec(model, widget_host=host)
