@@ -88,12 +88,20 @@ final class MacCaptureUITests: XCTestCase {
     }
 
     private func systemHosts() -> [(String, XCUIApplication)] {
-        let running = NSWorkspace.shared.runningApplications.filter {
-            $0.activationPolicy != .prohibited || ($0.bundleIdentifier?.localizedCaseInsensitiveContains("widget") == true)
-        }.compactMap(\.bundleIdentifier)
-        let identifiers = Set(running + ["com.apple.finder", "com.apple.WindowManager", "com.apple.notificationcenterui",
-                                       "com.apple.dock", "com.apple.controlcenter", "com.apple.systemuiserver"])
-        return identifiers.sorted().map { ($0, XCUIApplication(bundleIdentifier: $0)) }
+        let running = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }
+        let explicit = ["com.apple.finder", "com.apple.WindowManager", "com.apple.notificationcenterui",
+                        "com.apple.dock", "com.apple.controlcenter", "com.apple.systemuiserver"]
+        let urls = Set(running.compactMap(\.bundleURL) + explicit.compactMap {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+        }).filter { $0.pathExtension == "app" }
+        let skipped = running.filter { $0.bundleURL?.pathExtension != "app" }.map {
+            "\($0.bundleIdentifier ?? "no bundle identifier"): \($0.bundleURL?.path ?? "no app URL")"
+        }
+        let evidence = XCTAttachment(string: skipped.sorted().joined(separator: "\n"))
+        evidence.name = "non-application-processes"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        return urls.sorted(by: { $0.path < $1.path }).map { ($0.path, XCUIApplication(url: $0)) }
     }
 
     private func findOwner(stage: String, interactive: Bool = true,
