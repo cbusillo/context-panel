@@ -45,7 +45,6 @@ jobs:
           retention-days: 14
 
   scope:
-    if: ${{ !inputs.app_store_mac_capture }}
     # Which jobs this change needs, from the base it lands on (pull request base,
     # previous main tip, or main for a merge-train candidate).
     runs-on: ubuntu-latest
@@ -305,7 +304,7 @@ jobs:
 
   swift:
     needs: [scope, swift-tests, macos-release, shared-view-references]
-    if: ${{ always() && !inputs.app_store_mac_capture }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require product tests, release compilation and host reference images

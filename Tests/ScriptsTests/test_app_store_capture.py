@@ -416,3 +416,22 @@ class AppStoreCaptureTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         capture.validate_capture_spec(model, {host}, widget_host=host)
+
+    def test_native_desktop_crop_checks_real_pixels_and_complete_widget_in_points(self):
+        data = b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", 1600, 900)
+        for scale in (1, 2):
+            geometry = {"screenPixels": [1600, 900], "screenPoints": [1600 / scale, 900 / scale],
+                        "widgetPoints": [20, 20, 200, 200]}
+            crop = capture.native_mac_crop(geometry, data)
+            self.assertLessEqual(crop[2], 1600)
+            self.assertLessEqual(crop[3], 900)
+            for fault in ("pixels", "clipped", "nonuniform"):
+                changed = dict(geometry)
+                if fault == "pixels":
+                    changed["screenPixels"] = [3200, 1800]
+                elif fault == "clipped":
+                    changed["widgetPoints"] = [0, 0, 1600 / scale, 900 / scale]
+                else:
+                    changed["screenPoints"] = [1600, 450]
+                with self.assertRaises(ValueError):
+                    capture.native_mac_crop(changed, data)

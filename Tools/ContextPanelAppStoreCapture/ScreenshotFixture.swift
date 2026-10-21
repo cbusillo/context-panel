@@ -22,6 +22,30 @@ enum ScreenshotFixture {
             accountBurnRates: snapshot.accountBurnRates), status: .healthy)
     static let stored = StoredUsageSnapshot(savedAt: date, snapshot: snapshot.usageSnapshot, reports: snapshot.reports)
 
+    static var widgetMaximumAge: TimeInterval {
+        #if os(macOS)
+        SnapshotFreshness.widgetMaximumAge
+        #else
+        SnapshotFreshness.companionProviderMaximumAge
+        #endif
+    }
+
+    static var widgetSnapshot: WidgetSnapshot {
+        #if os(macOS)
+        snapshot
+        #else
+        .fromCompanionSync(result, now: date,
+            stalenessPolicy: .appDefault(maximumAge: widgetMaximumAge))
+        #endif
+    }
+
+    static var smallWidgetAccountLabels: [String] {
+        widgetSnapshot.accountOverview(now: date, widgetsOnly: true, maximumAge: widgetMaximumAge)
+            .widgetPicks.compactMap { pick in
+                pick.account?.glanceAccessibilityText(now: date, isNext: pick.isRecommendation)
+            }
+    }
+
     private static func makeSnapshot() -> WidgetSnapshot {
         typealias Row = (String, Provider, Int, Double, Int, Double, Double?, Double?, [Double])
         let rows: [Row] = [

@@ -16,6 +16,7 @@ import fcntl
 import os
 import hashlib
 import json
+import math
 import plistlib
 from pathlib import Path
 import struct
@@ -507,6 +508,26 @@ def rgb_image(source: Path, destination: Path, crop: tuple[int, int, int, int] |
         stream.write(output.getvalue())
 
 
+def native_mac_crop(geometry: dict, data: bytes) -> tuple[int, int, int, int]:
+    crop = (0, 0, 1440, 900)
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
+        raise ValueError("Native desktop screenshot is not a PNG")
+    pixels = struct.unpack(">II", data[16:24])
+    if tuple(geometry["screenPixels"]) != pixels or pixels[0] < crop[2] or pixels[1] < crop[3]:
+        raise ValueError("Native screenshot does not match the recorded display pixels")
+    width, height = geometry["screenPoints"]
+    box = geometry["widgetPoints"]
+    if not all(math.isfinite(value) for value in (width, height, *box)) or width <= 0 or height <= 0:
+        raise ValueError("Invalid native desktop geometry")
+    scale = pixels[0] / width
+    if not math.isclose(scale, pixels[1] / height, rel_tol=1e-6):
+        raise ValueError("Native display point-to-pixel scales disagree")
+    left, top, right, bottom = (value * scale for value in box)
+    if not (0 <= left < right <= crop[2] and 0 <= top < bottom <= crop[3]):
+        raise ValueError("The complete native widget is outside the screenshot crop")
+    return crop
+
+
 def hosted_macos_capture(output: Path) -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
         raise SystemExit("Native Mac UI capture requires an isolated GitHub-hosted runner")
@@ -526,9 +547,11 @@ def hosted_macos_capture(output: Path) -> None:
     tests = "MacCaptureUITests"
     original["targets"][app] = {
         "type": "application", "platform": "macOS", "deploymentTarget": "14.0",
-        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureMain.swift"}],
+        "sources": [{"path": "Tools/ContextPanelAppStoreCapture/MacCaptureMain.swift"},
+                    {"path": "Resources/Assets.xcassets"}],
         "dependencies": [{"target": "MacFixtureViews"}, *libraries],
-        "settings": {"base": {"PRODUCT_NAME": "Context Panel Fixture", "GENERATE_INFOPLIST_FILE": True}}}
+        "settings": {"base": {"PRODUCT_NAME": "Context Panel", "GENERATE_INFOPLIST_FILE": True,
+            "INFOPLIST_KEY_CFBundleDisplayName": "Context Panel"}}}
     spec = capture_spec(original, {app})
     spec["targets"][app]["settings"]["base"].update(fixture_signing(True))
     add_fixture_widget(spec, app, mac=True)
@@ -554,17 +577,18 @@ def hosted_macos_capture(output: Path) -> None:
     run("xcodebuild", "-quiet", "-project", str(directory / "ContextPanel.xcodeproj"),
         "-scheme", app, "-configuration", "Debug", "-destination", "platform=macOS",
         "-derivedDataPath", str(BUILD / "macos-ci"), "-resultBundlePath", str(result),
-        "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-", "-collect-test-diagnostics", "never", "test", timeout=1200)
+        "-collect-test-diagnostics", "never", "test", timeout=1200)
     exported = output / "attachments"
     run("xcrun", "xcresulttool", "export", "attachments", "--path", str(result), "--output-path", str(exported))
     expected = {f"mac-{mode}-{appearance}" for mode in ("overview", "detail") for appearance in ("light", "dark")}
     expected.add("mac-widget-desktop")
     images = []
-    found = select_attachments(json.loads((exported / "manifest.json").read_text()), expected)
+    found = select_attachments(json.loads((exported / "manifest.json").read_text()), expected | {"mac-widget-geometry"})
+    geometry = json.loads((exported / found.pop("mac-widget-geometry")).read_text())
     for name, filename in found.items():
         destination = output / (name + ".png")
         raw = exported / filename
-        crop = (0, 0, 1440, 900) if name == "mac-widget-desktop" else None
+        crop = native_mac_crop(geometry, raw.read_bytes()) if name == "mac-widget-desktop" else None
         rgb_image(raw, destination, crop=crop)
         data = destination.read_bytes()
         width, height = struct.unpack(">II", data[16:24])
@@ -572,7 +596,7 @@ def hosted_macos_capture(output: Path) -> None:
             raise SystemExit(f"Unexpected native Mac window size: {width}x{height}")
         images.append({"file": destination.name, "width": width, "height": height,
                        "sha256": hashlib.sha256(data).hexdigest(), "rawSHA256": hashlib.sha256(raw.read_bytes()).hexdigest(),
-                       "crop": list(crop) if crop else None})
+                       "crop": list(crop) if crop else None, "geometry": geometry if crop else None})
     expected -= set(found)
     if expected or clean_commit() != source:
         raise SystemExit(f"Missing native captures or changed source: {expected}")

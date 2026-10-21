@@ -30,15 +30,17 @@ final class CompanionCaptureUITests: XCTestCase {
         let home = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCUIDevice.shared.press(.home)
         if !reusing { addFixtureWidget(home) }
-        XCTAssertFalse(home.searchFields.firstMatch.exists)
-        XCTAssertFalse(home.buttons["Add Widget"].firstMatch.exists)
+        XCTAssertFalse(home.searchFields["Search Widgets"].firstMatch.exists)
+        XCTAssertFalse(addWidgetButton(home).exists)
         XCTAssertFalse(home.buttons["Done"].firstMatch.exists)
-        let account = try XCTUnwrap(ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first)
-        let content = home.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", account.metadata.label)).firstMatch
-        let foundContent = content.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "widget-placed")
-        XCTAssertTrue(foundContent)
-        XCTAssertTrue(home.frame.intersects(content.frame))
+        let labels = ScreenshotFixture.smallWidgetAccountLabels
+        XCTAssertFalse(labels.isEmpty)
+        for label in labels {
+            let content = home.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+            XCTAssertTrue(content.waitForExistence(timeout: 30))
+            XCTAssertTrue(home.frame.contains(content.frame))
+        }
     }
 
     private func addFixtureWidget(_ home: XCUIApplication) {
@@ -52,13 +54,13 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(home, name: "home-menu")
         XCTAssertTrue(foundEdit)
         editHome.tap()
-        home.swipeRight() // The newly installed fixture and test runner occupy page two.
+        home.swipeRight() // Return from the fixture's page to the first Home Screen page.
         let edit = home.buttons["Edit"].firstMatch
         let foundToolbar = edit.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "home-edit")
         XCTAssertTrue(foundToolbar)
         edit.tap()
-        let addWidget = home.buttons["Add Widget"].firstMatch
+        let addWidget = addWidgetButton(home)
         let foundAdd = addWidget.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "edit-menu")
         XCTAssertTrue(foundAdd)
@@ -74,17 +76,22 @@ final class CompanionCaptureUITests: XCTestCase {
         recordHierarchy(home, name: "widget-search")
         XCTAssertTrue(foundResult)
         result.tap()
-        let add = home.buttons["Add Widget"].firstMatch
+        let add = addWidgetButton(home)
         let foundPreview = add.waitForExistence(timeout: 30)
         recordHierarchy(home, name: "widget-preview")
         XCTAssertTrue(foundPreview)
         add.tap()
+        XCTAssertTrue(add.waitForNonExistence(timeout: 15))
         let done = home.buttons["Done"].firstMatch
         let foundDone = done.waitForExistence(timeout: 10)
         recordHierarchy(home, name: "widget-added")
         XCTAssertTrue(foundDone)
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 10))
+    }
+
+    private func addWidgetButton(_ home: XCUIApplication) -> XCUIElement {
+        home.buttons.matching(NSPredicate(format: "label MATCHES %@", #"^\s*Add Widget\s*$"#)).firstMatch
     }
 
     private func recordHierarchy(_ app: XCUIApplication, name: String) {

@@ -25,18 +25,9 @@ private struct CaptureWidgetContent: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        #if os(macOS)
-        let snapshot = ScreenshotFixture.snapshot
-        let maximumAge = SnapshotFreshness.widgetMaximumAge
-        #else
-        let maximumAge = SnapshotFreshness.companionProviderMaximumAge
-        let snapshot = WidgetSnapshot.fromCompanionSync(ScreenshotFixture.result,
-            now: ScreenshotFixture.date,
-            stalenessPolicy: .appDefault(maximumAge: maximumAge))
-        #endif
         ContextPanelWidgetContentView(
             family: family,
-            snapshot: snapshot,
+            snapshot: ScreenshotFixture.widgetSnapshot,
             displayPreferences: .defaultPreferences,
             links: ContextPanelWidgetLinks(
                 overview: URL(string: "contextpanel-fixture://overview")!,
@@ -44,7 +35,7 @@ private struct CaptureWidgetContent: View {
                 cacheStatsSettings: URL(string: "contextpanel-fixture://settings")!,
                 resetCreditInteraction: .none),
             showsResetCreditSurfaces: true,
-            resetCreditMaximumAge: maximumAge,
+            resetCreditMaximumAge: ScreenshotFixture.widgetMaximumAge,
             presentationDate: ScreenshotFixture.date,
             allowsNavigation: false)
             .environment(\.locale, ScreenshotFixture.locale)

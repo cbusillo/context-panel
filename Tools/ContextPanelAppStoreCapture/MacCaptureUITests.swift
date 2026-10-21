@@ -1,5 +1,6 @@
 import ContextPanelCore
 import AppKit
+import CoreGraphics
 import XCTest
 
 @MainActor
@@ -13,7 +14,7 @@ final class MacCaptureUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = ["GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"]
-        app.launchArguments = ["widgets", "dark"]
+        app.launchArguments = ["widgets"]
         app.launch()
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         finder.activate()
@@ -47,14 +48,32 @@ final class MacCaptureUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 15))
         done.click()
         XCTAssertTrue(search.waitForNonExistence(timeout: 15))
-        let account = try XCTUnwrap(ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first)
-        let predicate = NSPredicate(format: "label CONTAINS %@", account.metadata.label)
+        let labels = ScreenshotFixture.smallWidgetAccountLabels
+        let label = try XCTUnwrap(labels.first)
+        let predicate = NSPredicate(format: "label == %@", label)
         let widgetHost = try XCTUnwrap(hosts.map(\.1).first(where: {
             $0.descendants(matching: .any).matching(predicate).firstMatch.waitForExistence(timeout: 10)
         }))
-        let content = widgetHost.descendants(matching: .any).matching(predicate).firstMatch
-        XCTAssertTrue(CGRect(x: 0, y: 0, width: 1440, height: 900).contains(content.frame))
-        record(finder, name: "widget-placed")
+        for label in labels {
+            XCTAssertTrue(widgetHost.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch.waitForExistence(timeout: 15))
+        }
+        record(widgetHost, name: "widget-placed")
+        var containers = widgetHost.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Context Panel"))
+        for label in labels { containers = containers.containing(NSPredicate(format: "label == %@", label)) }
+        let widget = try XCTUnwrap(containers.allElementsBoundByIndex.filter { !$0.frame.isEmpty }
+            .min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }))
+        let display = CGMainDisplayID()
+        let points = CGDisplayBounds(display).size
+        let geometry: [String: Any] = [
+            "screenPoints": [points.width, points.height],
+            "screenPixels": [CGDisplayPixelsWide(display), CGDisplayPixelsHigh(display)],
+            "backingScaleFactor": NSScreen.main?.backingScaleFactor ?? 0,
+            "widgetPoints": [widget.frame.minX, widget.frame.minY, widget.frame.maxX, widget.frame.maxY]]
+        let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
+        let metadata = XCTAttachment(string: try XCTUnwrap(String(data: data, encoding: .utf8)))
+        metadata.name = "mac-widget-geometry"
+        metadata.lifetime = .keepAlways
+        add(metadata)
         let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         image.name = "mac-widget-desktop"
         image.lifetime = .keepAlways

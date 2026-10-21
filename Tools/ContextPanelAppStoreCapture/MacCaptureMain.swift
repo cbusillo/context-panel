@@ -26,6 +26,7 @@ enum MacCaptureApplication {
             print("Hosted display mode change failed: \(status.rawValue)")
             exit(65)
         }
+        print("Hosted capture display: \(mode.width)x\(mode.height) points, \(mode.pixelWidth)x\(mode.pixelHeight) mode pixels; backing scale \(NSScreen.main?.backingScaleFactor ?? 0)")
         let arguments = CommandLine.arguments
         let dark = arguments.contains("dark")
         ScreenshotFixture.configureProcess()
