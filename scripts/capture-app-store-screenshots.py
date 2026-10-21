@@ -230,6 +230,8 @@ def capture(profile: str, output: Path) -> None:
         udid = run(*prefix, "create", name, "com.apple.CoreSimulator.SimDeviceType." + device,
                    "com.apple.CoreSimulator.SimRuntime." + RUNTIMES[platform])
         uuid.UUID(udid)
+        if udid in before:
+            raise RuntimeError("Create returned a pre-existing simulator; preserving it")
         created_id = udid
         run(*prefix, "boot", udid)
         run(*prefix, "bootstatus", udid, "-b", timeout=240)
@@ -269,17 +271,16 @@ def capture(profile: str, output: Path) -> None:
         raise
     finally:
         try:
-            owned = new_owned_device(device_inventory(prefix), before, name, platform, device)
-            if created_id is not None and (owned is None or owned["udid"] != created_id):
-                raise RuntimeError("Created simulator identity is unavailable; cleanup not verified")
-            if owned:
-                owned_id = owned["udid"]
+            owned_id = created_id
+            if owned_id is None:
+                owned = new_owned_device(device_inventory(prefix), before, name, platform, device)
+                owned_id = owned["udid"] if owned else None
+            if owned_id:
                 uuid.UUID(owned_id)
-                if owned.get("state") == "Booted":
-                    try:
-                        run(*prefix, "shutdown", owned_id)
-                    except subprocess.CalledProcessError:
-                        pass  # Deletion can still finish cleanup of our exact owned device.
+                try:
+                    run(*prefix, "shutdown", owned_id)
+                except subprocess.CalledProcessError:
+                    pass  # Deletion can still finish cleanup of our exact owned device.
                 run(*prefix, "delete", owned_id)
                 if any(entry["udid"] == owned_id for entries in device_inventory(prefix).values() for entry in entries):
                     raise RuntimeError("Owned simulator still exists after delete")

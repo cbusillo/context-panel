@@ -68,7 +68,7 @@ class AppStoreCaptureTests(unittest.TestCase):
                     if "boot" in args:
                         devices[-1]["state"] = "Booted"
                     if "delete" in args:
-                        devices.pop()
+                        devices[:] = [entry for entry in devices if entry["udid"] != args[-1]]
                     return ""
 
                 with patch.object(capture, "BUILD", root / "build"), \
@@ -78,11 +78,33 @@ class AppStoreCaptureTests(unittest.TestCase):
                     with self.assertRaises(subprocess.CalledProcessError):
                         capture.capture("iphone", root / "output")
                 cleanup = [args[-2:] for args in calls if "delete" in args or "shutdown" in args]
-                expected = [("delete", owned)] if failure == "create" else [("shutdown", owned), ("delete", owned)]
+                expected = [("shutdown", owned), ("delete", owned)]
                 self.assertEqual(cleanup, expected)
                 self.assertEqual(len(devices), 1)
                 self.assertTrue(all(args[:2] == ("xcrun", "simctl") for args in calls))
                 self.assertTrue(all("--set" not in args for args in calls))
+
+    def test_create_cannot_adopt_or_delete_a_preexisting_device(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            foreign = "EBA287F0-39CB-4EE1-AD9B-5C987F5C3783"
+            calls = []
+
+            def fake_run(*args, **kwargs):
+                calls.append(args)
+                if "list" in args:
+                    return json.dumps({"devices": {"runtime": [{"udid": foreign, "name": "another session"}]}})
+                if "create" in args:
+                    return foreign
+                self.fail(f"Pre-existing device was acted on: {args}")
+
+            with patch.object(capture, "BUILD", root / "build"), \
+                 patch.object(capture, "clean_commit", return_value=self.source), \
+                 patch.object(capture, "run", side_effect=fake_run):
+                self.make_bundle()
+                with self.assertRaisesRegex(RuntimeError, "pre-existing simulator"):
+                    capture.capture("iphone", root / "output")
+            self.assertFalse((root / "output/capture.json").exists())
 
     def test_changed_source_or_bundle_cannot_be_captured_under_an_old_build_receipt(self):
         for change in ("source", "bundle"):
@@ -120,30 +142,34 @@ class AppStoreCaptureTests(unittest.TestCase):
                     capture.capture("iphone", root / "output")
                 self.assertTrue(failure.exception.__notes__)
 
-    def test_success_never_publishes_a_receipt_without_verified_cleanup(self):
-        for fault in ("missing-identity", "cleanup-error-in-outer-except"):
+    def test_success_receipts_require_verified_owned_cleanup(self):
+        for fault in ("clean", "missing-identity", "cleanup-error-in-outer-except"):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 owned = "EBA287F0-39CB-4EE1-AD9B-5C987F5C3783"
                 platform, device, size = capture.PROFILES["iphone"]
                 runtime = "com.apple.CoreSimulator.SimRuntime." + capture.RUNTIMES[platform]
-                devices = []
+                foreign = {"udid": "foreign-device", "name": "another session"}
+                devices = [foreign]
+                calls = []
                 reads = 0
 
                 def fake_run(*args, **kwargs):
                     nonlocal reads
+                    calls.append(args)
                     if "list" in args:
                         reads += 1
-                        if reads > 1:
-                            if fault == "cleanup-error-in-outer-except":
-                                raise RuntimeError("cleanup inventory unavailable")
-                            for entry in devices:
-                                entry.pop("deviceTypeIdentifier", None)
+                        if reads > 1 and fault == "cleanup-error-in-outer-except":
+                            raise RuntimeError("cleanup inventory unavailable")
                         return json.dumps({"devices": {runtime: devices}})
                     if "create" in args:
                         devices.append({"udid": owned, "name": args[args.index("create") + 1],
                             "state": "Booted", "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType." + device})
+                        if fault == "missing-identity":
+                            devices[-1].pop("deviceTypeIdentifier")
                         return owned
+                    if "delete" in args:
+                        devices[:] = [entry for entry in devices if entry["udid"] != args[-1]]
                     if "screenshot" in args:
                         Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + struct.pack(">II", *size))
                     return "fixture"
@@ -156,9 +182,19 @@ class AppStoreCaptureTests(unittest.TestCase):
                     try:
                         raise ValueError("unrelated caller exception")
                     except ValueError:
-                        with self.assertRaises(RuntimeError):
+                        if fault == "cleanup-error-in-outer-except":
+                            with self.assertRaises(RuntimeError):
+                                capture.capture("iphone", root / "output")
+                        else:
                             capture.capture("iphone", root / "output")
-                    self.assertFalse((root / "output/capture.json").exists())
+                    receipt = root / "output/capture.json"
+                    self.assertEqual(receipt.exists(), fault != "cleanup-error-in-outer-except")
+                    if receipt.exists():
+                        record = json.loads(receipt.read_text())
+                        self.assertEqual(record["simulatorUDID"], owned)
+                        self.assertTrue(record["cleanup"])
+                    self.assertEqual(devices, [foreign])
+                    self.assertEqual([args[-1] for args in calls if "delete" in args], [owned])
 
     def test_generated_capture_model_is_enforced_before_xcodegen(self):
         original = {"name": "Fixture", "options": {}, "targets": {

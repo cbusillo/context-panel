@@ -24,7 +24,7 @@ let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable
 let canvas = NSRect(x: 0, y: 0, width: 1440, height: 900)
 let size = NSWindow.contentRect(forFrameRect: canvas, styleMask: style).size
 let content = MacValidationGallery.appStorePresentation(snapshot: ScreenshotFixture.snapshot,
-    now: ScreenshotFixture.date, detail: arguments[0].hasPrefix("detail"))
+    now: ScreenshotFixture.date, detail: arguments[0] == "detail")
 let host = NSHostingView(rootView: content
     .frame(width: size.width, height: size.height)
     .background(Color(nsColor: .windowBackgroundColor))
@@ -44,7 +44,7 @@ host.layoutSubtreeIfNeeded()
 guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2880, pixelsHigh: 1800,
     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { exit(70) }
-guard let renderedView = host.superview else {
+guard let renderedView = host.superview, renderedView.bounds.size == canvas.size else {
     fputs("native window frame unavailable\n", stderr)
     exit(70)
 }

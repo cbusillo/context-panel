@@ -3,7 +3,7 @@
 ## Horizon App Capture Preparation
 
 The [CP744-C2 capture index](horizon-capture/README.md) links the new Mac
-app-content images and records the remaining platform and OS-placement gaps.
+window candidates and records the remaining platform and OS-placement gaps.
 [Its manifest](horizon-capture/manifest.json) is the single source for their
 dimensions, SHA-256 checksums and rendering provenance. The index owns current
 capture status and the recovery question; the approved uploader mapping below

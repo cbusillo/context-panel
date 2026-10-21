@@ -117,11 +117,10 @@ Other profiles are `iphone65`, `ipad`, `watch`, `visionpro` and `tvos`. Each run
 owns a newly named simulator and records the returned UDID, built source commit and bundle digest,
 runtime, device type, image dimensions and checksums. The built source owns the
 fixture date and timezone; the Python tool does not copy those values. Cleanup
-addresses only a newly observed exact name/type/runtime match by UDID, including
-when creation fails after allocating a device. The tool always uses normal
-private storage, without a second device-set option. Cleanup verifies
-the owned UDID is absent before writing a successful capture receipt. Cleanup
-failures retain the primary capture error with an added diagnostic;
+uses the UDID returned by successful creation. If creation fails without a
+returned UDID, it reconciles only a newly observed exact name/type/runtime match.
+A returned pre-existing UDID is refused before boot/install or cleanup. The tool
+verifies the owned UDID is absent before recording success. Cleanup failures retain the primary capture error with an added diagnostic;
 uncertain ownership preserves candidates and fails the command. A successful
 framebuffer PNG still needs visual
 review, particularly on visionOS. Captures are not formal release receipts.
