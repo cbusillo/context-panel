@@ -1,13 +1,38 @@
 # App Store Screenshot Matrix
 
-## Horizon App Capture Preparation
+## Horizon Native App Review Candidates
 
-The [CP744-C2 capture index](horizon-capture/README.md) links the new Mac
-window candidates and records the remaining platform and OS-placement gaps.
-[Its manifest](horizon-capture/manifest.json) is the single source for their
-dimensions, SHA-256 checksums and rendering provenance. The index owns current
-capture status and the recovery question; the approved uploader mapping below
-remains in place.
+The [native capture index](horizon-capture/README.md) contains fixture-only,
+OS-composited Horizon app images for all six platforms. These are unapproved.
+Actual WidgetKit placement remains work in progress. No uploader mapping,
+App Store upload or submission has changed.
+
+The table below is generated from [the capture manifest](horizon-capture/manifest.json),
+which records each image's captured source commit, mechanism and provenance.
+Every candidate was visually checked; failed Home-screen and cropped samples
+are excluded.
+
+| Image | Pixels | SHA-256 |
+| --- | --- | --- |
+| [ipad-detail-dark.png](horizon-capture/ipad-detail-dark.png) | 2048 × 2732 | `5713900196e2f91e4c5f0d971cd02380dfb3d6db73a5c204157c25bd65df5210` |
+| [ipad-detail-light.png](horizon-capture/ipad-detail-light.png) | 2048 × 2732 | `af09cf589db65a501f0e364cfc6997b1c253929bdb0c7fac98437515d5d4f334` |
+| [ipad-overview-dark.png](horizon-capture/ipad-overview-dark.png) | 2048 × 2732 | `b2a64aa47e1021cd27a87f704cb0ed0c0da788d170f3777634ad4651d15a9c15` |
+| [ipad-overview-light.png](horizon-capture/ipad-overview-light.png) | 2048 × 2732 | `acbca0b109ef0bac7e7478a3fea77d546504b3eddd091ada6a8594e688735235` |
+| [iphone-detail-dark.png](horizon-capture/iphone-detail-dark.png) | 1206 × 2622 | `2c080fd45e6266267d567c12094139dd3836677a2d079ae0fe9c1e136ee27cf0` |
+| [iphone-detail-light.png](horizon-capture/iphone-detail-light.png) | 1206 × 2622 | `97b248dd98859779e4286d20796cb440522a5792c8ef48b92da881cbde9a68be` |
+| [iphone-overview-dark.png](horizon-capture/iphone-overview-dark.png) | 1206 × 2622 | `f0b530f33dff837d1406244025fe5447f362819c7d0a9db6930469f5a013a987` |
+| [iphone-overview-light.png](horizon-capture/iphone-overview-light.png) | 1206 × 2622 | `45591127bcee6c6358875c310e6011ea3870f4bbd8bc42ba5936a45f933ce042` |
+| [iphone65-overview-dark.png](horizon-capture/iphone65-overview-dark.png) | 1284 × 2778 | `ab48dcd8e74261a0a9b2b0067375320d6a6564736fd3f2a484d8306e5aa987a1` |
+| [iphone65-overview-light.png](horizon-capture/iphone65-overview-light.png) | 1284 × 2778 | `c1a033d338b41f5c6ab47c21e04de67972bb0dada814f7e1d90eb6972956b53f` |
+| [mac-detail-dark.png](horizon-capture/mac-detail-dark.png) | 1280 × 800 | `5c0a252d9da652e2598cc066685aa7f56c7c7b939b70d01b4aa3f413752fa930` |
+| [mac-detail-light.png](horizon-capture/mac-detail-light.png) | 1280 × 800 | `0bc31997a2e27b3815b9f45aec8a0f8aab8c79569a16776b726066c59381cbaf` |
+| [mac-overview-dark.png](horizon-capture/mac-overview-dark.png) | 1280 × 800 | `777be94dd9ff20a58a09e549a8cdb09352c150e85b29e7edcc47b08cb839899b` |
+| [mac-overview-light.png](horizon-capture/mac-overview-light.png) | 1280 × 800 | `93c13afa29c92c268e86a090aeb894267f4164e00221c0a6e14c32b6c0976de1` |
+| [tvos-overview-dark.png](horizon-capture/tvos-overview-dark.png) | 1920 × 1080 | `510ef7a1ac0f864f7780a93b2f3c67d6b286e85fbed5f9254d15c467148cb3e8` |
+| [visionpro-detail-dark.png](horizon-capture/visionpro-detail-dark.png) | 3840 × 2160 | `28b11d8304794e971596be4b049f9a1fa24d3f1a7652a7ea471930e1a0c2e98e` |
+| [visionpro-overview-dark.png](horizon-capture/visionpro-overview-dark.png) | 3840 × 2160 | `688d383cb935b9d3b471615b2778ba1f2841af12d71f6e90c07195c6525be511` |
+| [watch-accounts-dark.png](horizon-capture/watch-accounts-dark.png) | 410 × 502 | `cf774e779c54d21fdc5fddcfee638cda2607a93a9f0d54eb04d202948099186a` |
+| [watch-overview-dark.png](horizon-capture/watch-overview-dark.png) | 410 × 502 | `2deec3480d14b57ed4829eebe2d6fcba2aa193eaa21d394b550caf3f5ca17955` |
 
 ## Horizon Draft Review Set
 

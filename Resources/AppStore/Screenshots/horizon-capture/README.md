@@ -1,154 +1,130 @@
-# Horizon app capture preparation
+# Horizon native app capture candidates
 
 Prepared for [#744](https://github.com/cbusillo/context-panel/issues/744),
-October 20, 2026, CP744-C2. **Incomplete, unapproved, repo only.**
+October 21, 2026, CP744-C2. **Unapproved. Actual WidgetKit placement is still
+in progress. No ready, App Store upload or submission.**
 
-The four Mac images include the production account sidebar, overview,
-account detail and native AppKit title bar/window controls. They use six synthetic accounts through the offscreen SwiftUI
-renderer. They capture a complete inactive window frame offscreen, without
-a desktop, actual WidgetKit placement or signed-runtime evidence. No normal Mac app is launched;
-the renderer creates an AppKit window hierarchy that is never ordered onto a
-display. The native frame is rendered as AppKit views, not through screen capture or
-the WindowServer compositor. The composition uses the production sidebar, overview and account-detail
-components, including the account diagnostics disclosure. It has no lifecycle
-tasks or account/provider refresh.
+These images show the native Horizon apps with synthetic account data. Mac
+images are XCTest screenshots of complete native windows on an isolated
+GitHub-hosted Mac. iPhone, iPad, Watch and TV images include native navigation
+and system chrome in owned simulators. Vision Pro images include the actual
+spatial app window in the simulator's stock room environment.
 
-| Mac window | Light | Dark |
+| Platform and scene | Light | Dark |
 | --- | --- | --- |
-| Overview and sidebar | [Image](mac-overview-light.png) | [Image](mac-overview-dark.png) |
-| Studio account and sidebar | [Image](mac-detail-light.png) | [Image](mac-detail-dark.png) |
+| Mac overview and sidebar | [Image](mac-overview-light.png) | [Image](mac-overview-dark.png) |
+| Mac Studio account and sidebar | [Image](mac-detail-light.png) | [Image](mac-detail-dark.png) |
+| iPhone, existing 6.1-inch display group, overview | [Image](iphone-overview-light.png) | [Image](iphone-overview-dark.png) |
+| iPhone, existing 6.1-inch display group, Studio detail | [Image](iphone-detail-light.png) | [Image](iphone-detail-dark.png) |
+| iPhone, required 6.5-inch display group, overview | [Image](iphone65-overview-light.png) | [Image](iphone65-overview-dark.png) |
+| iPad overview | [Image](ipad-overview-light.png) | [Image](ipad-overview-dark.png) |
+| iPad Studio detail | [Image](ipad-detail-light.png) | [Image](ipad-detail-dark.png) |
+| Watch overview and deadlines | — | [Image](watch-overview-dark.png) |
+| Watch Studio account card | — | [Image](watch-accounts-dark.png) |
+| Vision Pro spatial overview | — | [Image](visionpro-overview-dark.png) |
+| Vision Pro spatial Studio detail | — | [Image](visionpro-detail-dark.png) |
+| Apple TV native Accounts board | — | [Image](tvos-overview-dark.png) |
 
-Dimensions, checksums and rendering provenance are recorded once in
-[manifest.json](manifest.json). All four images are opaque 2880 × 1800 PNGs.
-They were visually checked for the sidebar, forecast, account identity,
-capacity numbers, clipping and contrast. App Store dimensions were checked
-against [Apple's specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/).
-Matching dimensions does not establish approval of rendered app compositions.
+[manifest.json](manifest.json) records every image's dimensions, SHA-256,
+source commit and capture mechanism. The [screenshot matrix](../screenshot-matrix.md)
+contains the image links and checksums together. All selected files are RGB
+PNGs without an alpha channel. Removing an opaque alpha channel preserves
+all RGB pixels and the source ICC profile; transparent inputs are refused.
+Dimensions were checked against [Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/).
 
-The [earlier 14-image draft](../horizon-draft/README.md) remains available for
-comparison. Neither set changes the approved uploader mapping.
+The fixture has six synthetic accounts across OpenAI, Anthropic and Google.
+Its presentation clock, locale and timezone come from
+[the fixture source](../../../../Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift).
+System status indicators belong to the isolated capture environment. No real
+account, credential, saved production snapshot, CloudKit subscription or
+provider refresh supplies these images. They are image review evidence, not
+signed-runtime or physical-device qualification.
 
-## Remaining captures
+Home-screen samples, cropped Mac frames and incomplete capture runs are
+excluded. Every selected image was checked for the intended native screen,
+forecast and account text, clipping, contrast and OS context. Vision Pro uses
+one app-owned dark appearance; duplicate light-labelled frames are excluded.
 
-| Platform/surface | Current evidence | Remaining work |
-| --- | --- | --- |
-| Mac app | Four offscreen native-frame images above | Chris reviews the concrete images; no desktop/WidgetKit placement proof |
-| Mac widgets | Earlier draft compositions only | Actual WidgetKit placement in an isolated fixture environment; never Chris's desktop |
-| iPhone and iPad app | Capture-only iOS simulator build passed | Private-storage fixture launch passed; Q605 temp staging is implemented. Capture native navigation at both iPhone sizes and iPad size |
-| iPhone/iPad widgets | Earlier draft covers no placed widgets | Capture actual widget placement in owned fixture simulators; the tool does not yet automate placement |
-| Watch app | Capture-only watchOS simulator build passed | Launch/capture native navigation, status, headline and account list |
-| Vision Pro app | Capture-only visionOS simulator build passed | Capture spatial app context; framebuffer capture may omit spatial windows and cannot be assumed sufficient |
-| Vision Pro widgets | Earlier flat compositions only | Actual spatial WidgetKit placement; no compositor or placement proof from a shared-view renderer |
-| Apple TV app | Capture-only tvOS simulator build passed | Launch/capture full native overview including controls, status and account groups |
+## Remaining OS placement
 
-[Q605's exact decision](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6307013529)
-authorizes a simpler capture path: `mktemp -d` in the system temp directory,
-normal PNG file output, validation/copy to Developer-Artifacts, then removal of
-the temp file and folder. Only a refused temp screenshot save permits the
-approved fallback to a fresh directory inside the owned fixture-app container.
-Any other refusal stops. There is no stdout transport or persistent internal
-image directory. Earlier failed attempts and decisions remain on #744.
-Both staging routes delete only their own PNG and newly created empty folder;
-owned-simulator cleanup still verifies absence before recording success.
+| Surface | Next capture |
+| --- | --- |
+| Mac widgets | Actual fixture-only WidgetKit placement on the isolated hosted Mac |
+| iPhone and iPad widgets | Actual WidgetKit placement in owned fixture simulators |
+| Vision Pro widgets | Actual spatial WidgetKit placement in an owned fixture simulator |
 
-Mac desktop WidgetKit placement cannot be supplied by this offscreen tool.
-Do not use Chris's live desktop to fill that gap. If no isolated repository
-capture route can supply it, post the exact needed fixture-only manual capture
-as an Owner question on #744 before proceeding. The same applies if visionOS
-spatial composition needs a live Simulator window on his desktop.
+The app-window and shared-view images do not establish WidgetKit placement.
+Never use Chris's running apps, desktop, browser or real account data to fill
+a gap. If a capture can only be made from his live desktop, stop that capture
+and post an Owner question on #744 describing exactly what is needed. Any new
+permission or authorization refusal stops and is reported on #744.
 
-## Reproduce
+## Capture tooling
 
-From a clean committed source tree on a host whose OS/fonts match the manifest:
+The repository tool generates a separate Xcode project under `.build`, with
+capture-only bundle identifiers and synthetic fixtures. Shipping entitlements,
+embedded shipping extensions, account stores and build stamping are excluded.
+iOS has an app-associated capture UI test. The shipping project does not set
+`CONTEXT_PANEL_SCREENSHOTS` or include the fixture sources.
 
-```sh
-swift build --product ContextPanelAppStoreCapture --scratch-path .build/app-store-capture
-.build/app-store-capture/debug/ContextPanelAppStoreCapture overview light /absolute/new/mac-overview-light.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture overview dark /absolute/new/mac-overview-dark.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture detail light /absolute/new/mac-detail-light.png
-.build/app-store-capture/debug/ContextPanelAppStoreCapture detail dark /absolute/new/mac-detail-dark.png
-```
-
-The renderer refuses existing output files. Its fixture uses no credentials,
-account homes, saved production snapshots or CloudKit. Dates are pinned to the
-manifest's fixture time in UTC and US English. Changes in macOS fonts or
-AppKit may change the PNG bytes; record the resulting bytes rather than
-claiming cross-host byte identity.
-
-The simulator tool prepares a separate generated project in `.build`, retaining
-only the three capture apps and their static-library dependencies. It discards
-shipping configuration/signing overrides, unused extension targets and their
-source-tree plist generation. The project has
-unique capture-only bundle identifiers, a watch-only capture plist, no
-entitlements, no embedded extensions, no build-manifest stamping and the `CONTEXT_PANEL_SCREENSHOTS`
-compilation condition. The shipping project never sets that condition or
-includes the capture fixture source. In capture mode the companion's normal
-root, navigation and layout receive an in-memory fixture; its app delegate,
-stores, runtime receipts, CloudKit subscription and reload are disabled. Watch
-and TV reuse the production content and navigation with inert actions.
-The fixture initializes UTC and US English in each capture process before views
-or models are constructed. Mac and simulator date formatting use the same clock
-and timezone. Normal shipping launch paths remain intact. Prepare and build require a clean
-committed source tree. Each build records its commit and complete bundle digest;
-capture refuses a different commit, dirty source or altered bundle. If source
-changes, run prepare and the relevant build again.
+Prepare, build and capture require a clean committed tree and share one lock.
+A build receipt binds the source and complete app bundle digest; iOS also binds
+the test runner and original test-run configuration. The tool checks those
+products before and after capture. It creates one uniquely named simulator,
+uses only its returned UUID and verifies deletion before writing a success
+receipt. Failed creation is reconciled only through an exact newly observed
+name/type/runtime match. Existing simulators are never adopted or deleted.
 
 ```sh
 uv run scripts/capture-app-store-screenshots.py prepare
 uv run scripts/capture-app-store-screenshots.py build ios
-uv run scripts/capture-app-store-screenshots.py build watchos
-uv run scripts/capture-app-store-screenshots.py build tvos
-uv run scripts/capture-app-store-screenshots.py build visionos
+uv run scripts/capture-app-store-screenshots.py capture iphone65 --output /absolute/new/iphone65
 ```
 
-Use only this fixture-only capture command and the Q605 staging order:
+Other base profiles are `iphone`, `ipad`, `watch`, `visionpro` and `tvos`;
+use the matching `watchos`, `visionos` or `tvos` build command first. Detail
+profiles append `-detail` to an iPhone, iPad or Vision Pro profile.
+`watch-accounts` captures the native account list after scrolling. Each output
+folder records its exact source, bundle, runtime, image hashes and verified
+owned-device cleanup in `capture.json`. Only complete receipts plus visual
+acceptance make candidates; command success alone does not prove the screen.
 
-```sh
-uv run scripts/capture-app-store-screenshots.py capture iphone --output /absolute/new/iphone
-```
+For iOS, XCTest launches the fixture, checks foreground state and expected
+native content, navigates through the real account button for detail, and
+takes `XCUIScreen.main.screenshot()`. Accessibility hierarchies and the test
+result bundle provide diagnostic evidence. Noninteractive container geometry
+is checked without requiring a tap target.
 
-Other profiles are `iphone65`, `ipad`, `watch`, `visionpro` and `tvos`. Each run
-owns a newly named simulator and records the returned UDID, built source commit and bundle digest,
-runtime, device type, image dimensions and checksums. The built source owns the
-fixture date and timezone; the Python tool does not copy those values. Cleanup
-uses the UDID returned by successful creation. If creation fails without a
-returned UDID, it reconciles only a newly observed exact name/type/runtime match.
-A returned pre-existing UDID is refused before boot/install or cleanup. The tool
-verifies the owned UDID is absent before recording success. Cleanup failures retain the primary capture error with an added diagnostic;
-uncertain ownership preserves candidates and fails the command. A successful
-framebuffer PNG still needs visual review, particularly after cold launch and on
-visionOS. Only images listed in a completed `capture.json` and visually accepted
-are candidates; a failed run is not a candidate set. Captures are not formal release receipts.
-No uploader or App Store submission is called by this tool.
+Other simulators use the [Q605 staging decision](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6307013529):
+`mktemp -d` in the system temporary directory, save a PNG, validate/copy to the
+external output, then delete that PNG and empty temporary directory. Only a
+system-temp screenshot save refused with Cocoa code 513 permits staging in a
+fresh folder inside the owned fixture-app container. Every other refusal
+stops; container fallback is never an automatic retry for unrelated errors.
+Cleanup preserves the original error if removing the temporary folder fails.
+No stdout workaround or persistent internal image folder is used.
 
+For Mac compositor evidence, dispatch CI on the PR branch with
+`app_store_mac_capture=true`. Its optional job runs `ci-macos` only on a
+GitHub-hosted macOS runner, collects four native XCTest window screenshots and
+exports their attachments. The tool checks the actual hosted environment
+before project generation; the fixture app also guards direct launch. The
+app temporarily chooses a supported display mode that fits its entire window
+and hides its own Dock/menu bar during capture. [Core Graphics restores the
+mode when the process exits](https://developer.apple.com/documentation/coregraphics/cgdisplaysetdisplaymode(_:_:_:)).
+No persistent desktop preference or permission setting is changed. The
+[successful native Mac capture run](https://github.com/cbusillo/context-panel/actions/runs/39545237236)
+is retained in each Mac image's provenance.
 
-## Native capture behavior
+`rgb SOURCE NEW.png` performs the lossless opaque-alpha removal used for the
+selected native images. It refuses existing output files and transparency.
 
-Device
-appearance and status are set before launch. iOS uses an app-associated native
-XCTest: activate the fixture, wait for visible overview content, tap the actual
-Studio account when requested, wait for visible detail, then capture the
-simulator screen. The accessibility hierarchy is retained for diagnosis.
-Other simulators use the Q605 temp-staged framebuffer route. Prepare, build and capture share one lock; app, test runner and test-run configuration digests are checked before and after capture.
-A receipt still requires human visual acceptance of the actual image.
+## Comparison evidence
 
-Available scenes: `iphone`, `iphone65`, `ipad`, `visionpro`, their `-detail`
-variants, `watch`, `watch-accounts`, and `tvos`. These are fixture-only apps.
-`rgb SOURCE NEW.png` removes a fully opaque alpha channel losslessly for App
-Store compatibility; transparent captures are refused.
-
-For actual Mac compositor evidence, manually dispatch CI on the PR branch with
-`app_store_mac_capture=true`. Its optional job runs `ci-macos` on an isolated
-GitHub-hosted macOS runner and attaches four native XCTest window screenshots.
-The tool refuses local execution; the fixture app also guards direct launches.
-The generated UI-test scheme passes the verified CI environment to its app. It cannot capture
-Chris's desktop or his running app. This is review artifact collection, with
-no App Store Connect operation. No `ready` or upload is authorized by #744.
-
-The Mac fixture app temporarily chooses a supported hosted-display mode large
-enough for its complete native window and hides its own Dock/menu bar during
-capture. It verifies the window fits before displaying it. The display change
-uses [Core Graphics](https://developer.apple.com/documentation/coregraphics/cgdisplaysetdisplaymode(_:_:_:)),
-which restores the mode when that fixture process exits. This code executes
-only after the isolated hosted-runner check. No persistent desktop preferences
-or permission settings are changed.
+The [earlier 14-image draft](../horizon-draft/README.md) remains available as
+host-rendered comparison evidence. The previous four offscreen Mac window
+candidates are retained in [their earlier committed capture index](https://github.com/cbusillo/context-panel/tree/4f058f47e09edd24e095695f4f6b1f61b9e82be9/Resources/AppStore/Screenshots/horizon-capture).
+They are superseded by the native Mac images above. Neither comparison set
+proves OS widget placement. Historical approved uploader mappings remain
+unchanged until Chris approves the complete set and the separate upload step
+uses `Upload App Store Screenshots`.
