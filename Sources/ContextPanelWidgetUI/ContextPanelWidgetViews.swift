@@ -2063,10 +2063,6 @@ extension WidgetSnapshot {
         ).bestForecast
     }
 
-    var fastModeStatus: FastModeRecommendation? {
-        fastModeForecast?.recommendation
-    }
-
     var fastModeVerdict: String {
         if needsProviderConnection { return "Connect accounts to track limits" }
         return fastModeForecast?.copy ?? message
