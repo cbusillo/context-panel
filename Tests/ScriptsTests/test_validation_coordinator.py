@@ -223,6 +223,32 @@ def proven_mac(state="current"):
     )
 
 
+def unavailable_asc():
+    return ASCEvidence(
+        "unavailable",
+        "none",
+        tuple(
+            ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
+            for platform in context_panel_validation.ASC_PLATFORMS
+        ),
+        "unavailable",
+    )
+
+
+def development_mac():
+    return MacEvidence(
+        "1.0.53",
+        "202607301200",
+        "current",
+        "failed",
+        "running",
+        "development",
+        "Development",
+        "Development",
+        "fixture",
+    )
+
+
 def device(label, platform, install_state="current", condition="reachable"):
     version = "1.0.53" if install_state in {"current", "superseded"} else "1.0.52"
     build = "202607301200" if install_state == "current" else "202607281100"
@@ -771,17 +797,7 @@ class ReportTests(unittest.TestCase):
                 self.assertFalse(report.actions)
 
     def test_mac_production_failure_blocks_downstream_review(self):
-        mac = MacEvidence(
-            "1.0.53",
-            "202607301200",
-            "current",
-            "failed",
-            "running",
-            "development",
-            "Development",
-            "Development",
-            "fixture",
-        )
+        mac = development_mac()
 
         report = self.report(valid_asc(), mac, [device("iPhone", "iOS")])
 
@@ -877,17 +893,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(mac_only.asc.platforms), len(context_panel_validation.ASC_PLATFORMS))
 
     def test_watch_scope_ignores_out_of_scope_mac_failure(self):
-        blocked_mac = MacEvidence(
-            "1.0.53",
-            "202607301200",
-            "current",
-            "failed",
-            "running",
-            "development",
-            "Development",
-            "Development",
-            "fixture",
-        )
+        blocked_mac = development_mac()
 
         report = context_panel_validation.build_report(
             self.target,
@@ -923,22 +929,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report.state, "blocked")
         self.assertIn("Mac moved to a newer build", report.headline)
 
-    def test_partial_asc_blindness_never_reports_complete(self):
-        asc = ASCEvidence(
-            "unavailable",
-            "none",
-            tuple(
-                ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
-                for platform in context_panel_validation.ASC_PLATFORMS
-            ),
-            "unavailable",
-        )
+    def test_partial_asc_blindness_outranks_complete_ready_and_waiting_devices(self):
+        waiting = DeviceEvidence("iPhone", "iOS", None, None, "unknown", "not_reachable", "fixture")
+        for devices in ([device("iPhone", "iOS")], [device("Apple Watch", "watchOS")], [waiting]):
+            with self.subTest(device=devices[0].label, condition=devices[0].condition):
+                report = self.report(unavailable_asc(), proven_mac(), devices)
 
-        report = self.report(asc, proven_mac(), [device("iPhone", "iOS")])
-
-        self.assertEqual(report.state, "unknown")
-        self.assertEqual(report.exit_code, 30)
-        self.assertIn("App Store Connect state is unknown", report.headline)
+                self.assertEqual(report.state, "unknown")
+                self.assertEqual(report.exit_code, 30)
+                self.assertFalse(report.actions)
+                self.assertIn("App Store Connect state is unknown", report.headline)
 
     def test_unknown_testflight_assignment_never_reports_complete(self):
         asc = ASCEvidence(
@@ -971,51 +971,6 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report.state, "unknown")
         self.assertEqual(report.exit_code, 30)
         self.assertIn("device install state is unknown", report.headline)
-
-    def test_partial_asc_blindness_suppresses_watch_action(self):
-        asc = ASCEvidence(
-            "unavailable",
-            "none",
-            tuple(
-                ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
-                for platform in context_panel_validation.ASC_PLATFORMS
-            ),
-            "unavailable",
-        )
-
-        report = self.report(
-            asc,
-            proven_mac(),
-            [device("Apple Watch", "watchOS")],
-        )
-
-        self.assertEqual(report.state, "unknown")
-        self.assertFalse(report.actions)
-
-    def test_partial_asc_blindness_outranks_device_waiting(self):
-        asc = ASCEvidence(
-            "unavailable",
-            "none",
-            tuple(
-                ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
-                for platform in context_panel_validation.ASC_PLATFORMS
-            ),
-            "unavailable",
-        )
-        waiting_device = DeviceEvidence(
-            "iPhone",
-            "iOS",
-            None,
-            None,
-            "unknown",
-            "not_reachable",
-            "fixture",
-        )
-
-        report = self.report(asc, proven_mac(), [waiting_device])
-
-        self.assertEqual(report.state, "unknown")
-        self.assertEqual(report.exit_code, 30)
 
     def test_unknown_mac_process_state_never_reports_complete(self):
         mac = MacEvidence(
@@ -1078,15 +1033,7 @@ class ReportTests(unittest.TestCase):
         )
 
     def test_total_tool_blindness_is_unknown_not_failed(self):
-        asc = ASCEvidence(
-            "unavailable",
-            "none",
-            tuple(
-                ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
-                for platform in context_panel_validation.ASC_PLATFORMS
-            ),
-            "unavailable",
-        )
+        asc = unavailable_asc()
         mac = MacEvidence(
             None,
             None,
@@ -1837,26 +1784,8 @@ class StateStoreTests(unittest.TestCase):
             now + timedelta(minutes=1),
             "operator-unavailable",
         )
-        blocked_mac = MacEvidence(
-            "1.0.53",
-            "202607301200",
-            "current",
-            "failed",
-            "running",
-            "development",
-            "Development",
-            "Development",
-            "fixture",
-        )
-        unknown_asc = ASCEvidence(
-            "unavailable",
-            "none",
-            tuple(
-                ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
-                for platform in context_panel_validation.ASC_PLATFORMS
-            ),
-            "unavailable",
-        )
+        blocked_mac = development_mac()
+        unknown_asc = unavailable_asc()
         reports = (
             context_panel_validation.build_report(
                 target,
