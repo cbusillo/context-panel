@@ -45,6 +45,19 @@ private struct QuotaFixture {
     #expect(report.status == .healthy)
 }
 
+@Test func sessionQuotaIgnoresNewerModelSpecificLimitEvents() async throws {
+    let fixture = try QuotaFixture()
+    defer { fixture.remove() }
+    let spark = fixture.event(used: 3).replacingOccurrences(of: "\"rate_limits\":{",
+        with: "\"rate_limits\":{\"limit_id\":\"codex_bengalfox\",\"limit_name\":\"GPT-5.3-Codex-Spark\",")
+    let main = fixture.event(used: 70, age: 60).replacingOccurrences(of: "\"rate_limits\":{",
+        with: "\"rate_limits\":{\"limit_id\":\"codex\",")
+    try fixture.write(main + "\n" + spark + "\n")
+    let report = try #require(await fixture.connector().refresh(now: fixture.now).reports.first)
+    #expect(report.limits.map(\.used) == [20, 70])
+    #expect(report.limits.allSatisfy { $0.lastUpdatedAt == fixture.now.addingTimeInterval(-60) })
+}
+
 @Test func sessionQuotaStaleAndExpiredObservationsNeverBecomeFreshByPolling() async throws {
     let fixture = try QuotaFixture()
     defer { fixture.remove() }
