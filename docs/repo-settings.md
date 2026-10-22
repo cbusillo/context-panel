@@ -11,7 +11,8 @@ Expected GitHub settings:
 - Delete branches on merge: enabled.
 - Merge commits: enabled.
 - Squash and rebase merges: disabled.
-- Dependabot: enabled for Swift Package Manager and GitHub Actions.
+- Renovate: enabled for Swift Package Manager and GitHub Actions; Dependabot
+  alerts stay on.
 - CodeQL: enabled for Swift on pull requests, pushes to `main`, weekly schedule,
   and manual dispatch.
   Superseded PR analyses cancel without waiting for trusted temp cleanup to
