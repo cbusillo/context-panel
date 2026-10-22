@@ -498,14 +498,25 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     }
 
     private func loadCredentials(accountID: String) throws -> ClaudeOAuthCredentials {
-        guard let data = try credentialStore.load(accountID: accountID) else {
+        let saved = try credentialStore.load(accountID: accountID)
+        let renewed = unsavedClaudeCredentials.renewed(accountID: accountID, over: saved)
+        if let renewed, (try? credentialStore.save(renewed, accountID: accountID)) != nil {
+            unsavedClaudeCredentials.clear(accountID: accountID)
+        }
+        guard let data = renewed ?? saved else {
             throw ConnectorError.missingAuth("Claude is not connected. Sign in to Claude from Settings.")
         }
         return try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: data)
     }
 
+    /// A failed save keeps the renewed credentials in memory, since the provider may have retired the old refresh token.
     private func saveCredentials(_ credentials: ClaudeOAuthCredentials, accountID: String) throws {
-        try credentialStore.save(try encodeClaudeOAuthCredentials(credentials), accountID: accountID)
+        let data = try encodeClaudeOAuthCredentials(credentials)
+        do {
+            try credentialStore.save(data, accountID: accountID)
+        } catch {
+            unsavedClaudeCredentials.hold(data, accountID: accountID, over: try? credentialStore.load(accountID: accountID))
+        }
     }
 
     private func accessToken(
@@ -590,6 +601,34 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             && (message.contains("invalid") || message.contains("expired") || message.contains("revoked"))
     }
 }
+
+/// Renewed Claude credentials the Keychain refused to save, held in this process's memory only.
+/// Refreshes read them ahead of the older Keychain copy and retry the save; a changed Keychain copy, such as a new sign-in, wins.
+private final class UnsavedClaudeCredentials: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: [String: (renewed: Data, replaced: Data?)] = [:]
+
+    func hold(_ renewed: Data, accountID: String, over replaced: Data?) {
+        lock.withLock { held[accountID] = (renewed, held[accountID]?.replaced ?? replaced) }
+    }
+
+    func renewed(accountID: String, over saved: Data?) -> Data? {
+        lock.withLock {
+            guard let entry = held[accountID] else { return nil }
+            guard entry.replaced == saved else {
+                held[accountID] = nil
+                return nil
+            }
+            return entry.renewed
+        }
+    }
+
+    func clear(accountID: String) {
+        lock.withLock { held[accountID] = nil }
+    }
+}
+
+private let unsavedClaudeCredentials = UnsavedClaudeCredentials()
 
 private func encodeClaudeOAuthCredentials(_ credentials: ClaudeOAuthCredentials) throws -> Data {
     let encoder = JSONEncoder()
