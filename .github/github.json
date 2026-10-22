@@ -46,6 +46,7 @@
     },
     "inspection": {
       "ide": "PyCharm",
+      "profile": ".idea/inspectionProfiles/Project_Default.xml",
       "scopePreference": "changed_files",
       "prepare": {
         "python": {
