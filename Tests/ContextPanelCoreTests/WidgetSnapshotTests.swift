@@ -1772,7 +1772,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     #expect(summary.widgetResetConfidenceText?.contains("estimated") == true)
 }
 
-@Test func resetCountdownRoundsFutureHoursUp() {
+@Test func resetCountdownKeepsMinutePrecisionBelowAnHourBoundary() {
     let now = Date(timeIntervalSince1970: 1_000)
     let summary = MainLimitSummary(
         provider: .openAI,
@@ -1795,7 +1795,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "5h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
+    #expect(summary.resetCountdownText(now: now) == "4h 59m · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func resetCountdownKeepsNearlyDayLongWindowsCompact() {
@@ -1821,7 +1821,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "24h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
+    #expect(summary.resetCountdownText(now: now) == "23h 1m · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func widgetResetTextRoundsFiveHourWindowUp() {
