@@ -100,10 +100,16 @@ import Testing
     #expect(http.requests.map(\.url.absoluteString) == ["https://chatgpt.com/backend-api/wham/usage"])
 }
 
-@Test func codexResetCreditDetailsFailureKeepsSuccessfulUsageCountOnly() async throws {
+@Test(arguments: [
+    (503, ""),
+    (401, ""),
+    (200, #"{"data":{"credits":[]}}"#),
+    (200, #"{"credits":[{"id":"discard-me","reset_type":"codex_rate_limits","status":"available","granted_at":"2027-01-01T00:00:00Z","expires_at":"2027-02-01T00:00:00Z"}]}"#),
+])
+func codexResetCreditDetailsFailureKeepsSuccessfulUsageCountOnly(detailsStatus: Int, detailsBody: String) async throws {
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 503, data: Data()),
+        ConnectorHTTPResponse(statusCode: detailsStatus, data: Data(detailsBody.utf8)),
     ])
 
     let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
@@ -112,46 +118,6 @@ import Testing
 
     #expect((report.status, report.limits.count, report.errorMessage) == (.healthy, 1, nil))
     #expect((summary.availableCount, summary.coverage, summary.earliestKnownExpiry) == (1, .countOnly, nil))
-}
-
-@Test func codexResetCreditDetailsAuthorizationFailureKeepsSuccessfulUsageCountOnly() async throws {
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 401, data: Data()),
-    ])
-
-    let report = try #require(await codexResetConnector(http: http)
-        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
-
-    #expect(report.status == .healthy)
-    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
-}
-
-@Test func codexMalformedResetCreditDetailsKeepSuccessfulUsageCountOnly() async throws {
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"data":{"credits":[]}}"#.utf8)),
-    ])
-
-    let report = try #require(await codexResetConnector(http: http)
-        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
-
-    #expect(report.status == .healthy)
-    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
-}
-
-@Test func codexResetCreditDetailsMissingRequiredCountKeepSuccessfulUsageCountOnly() async throws {
-    let details = Data(#"{"credits":[{"id":"discard-me","reset_type":"codex_rate_limits","status":"available","granted_at":"2027-01-01T00:00:00Z","expires_at":"2027-02-01T00:00:00Z"}]}"#.utf8)
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 200, data: details),
-    ])
-
-    let report = try #require(await codexResetConnector(http: http)
-        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
-
-    #expect(report.status == .healthy)
-    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
 }
 
 @Test func codexResetCreditsUseCodexAPISiblingGETDetailsEndpoint() async throws {
@@ -2065,7 +2031,6 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthConnectorReportsBlockedAccessFromStructuredUsage() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "limits": [
@@ -2076,18 +2041,10 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
       "extra_usage": { "is_enabled": true, "disabled_reason": "must-not-survive" }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
     let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
 
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.reports[0].status == .limited)
     #expect(result.reports[0].accessState == ProviderAccessState(
@@ -2099,7 +2056,6 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthConnectorKeepsLimitedQuotaWhilePaidFallbackIsActive() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "limits": [
@@ -2109,18 +2065,10 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
       "spend": { "enabled": true }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
     let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-27T12:00:00Z"))
 
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.reports[0].status == .limited)
     #expect(result.reports[0].accessState == ProviderAccessState(
@@ -2130,7 +2078,6 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthStructuredUsageWinsAndFallsBackPerWindow() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "limits": [
@@ -2145,17 +2092,9 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
       "extra_usage": { "is_enabled": false }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.snapshot.limits.map(\.used) == [35, 45, 55])
     #expect(result.snapshot.limits.map(\.modelLabel) == ["Claude", "Claude", "Sonnet"])
@@ -2164,24 +2103,15 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthSaturatedUsageWithoutFallbackSignalIsDegraded() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "five_hour": { "utilization": 100, "resets_at": "2026-07-23T19:30:00Z" },
       "seven_day": { "utilization": 29, "resets_at": "2026-07-27T12:00:00Z" }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.reports[0].status == .limited)
     #expect(result.reports[0].accessState == ProviderAccessState(kind: .degraded))
@@ -2320,23 +2250,14 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthConnectorAcceptsEpochResetTimes() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "five_hour": { "utilization": 9.0, "resets_at": 1780793400 },
       "seven_day": { "utilization": 12.0, "resets_at": "1780801200" }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+    let result = try await claudeUsageRefreshResult(usage: usage, now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
@@ -2347,7 +2268,6 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthConnectorDoesNotFillMissingResetTimesFromStatuslineHints() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "five_hour": { "utilization": 9.0 },
@@ -2355,16 +2275,8 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
       "seven_day_sonnet": { "utilization": 14.0 }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+    let result = try await claudeUsageRefreshResult(usage: usage, now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
@@ -2374,22 +2286,9 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 }
 
 @Test func claudeOAuthConnectorTreatsSuccessfulEmptyUsageAsAuthoritativeUnknown() async throws {
-    let credentials = try claudeCredentialsData(
-        accessToken: "access-secret",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
-    )
     let usage = Data(#"{"five_hour":null,"seven_day":{"utilization":null}}"#.utf8)
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let result = try await claudeUsageRefreshResult(usage: usage, now: Date(timeIntervalSince1970: 1_800_000_000))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .unknown)
@@ -2864,14 +2763,6 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
 
     #expect(store.saveCount == 0)
     #expect(try await lock.withLock { true } == true)
-}
-
-@Test func claudeOAuthTestGateTimesOutWhenTheExpectedSignalNeverArrives() async {
-    let gate = BoundedTestGate()
-
-    await #expect(throws: BoundedTestGateError.self) {
-        try await gate.waitUntilStarted(timeout: .milliseconds(10))
-    }
 }
 
 @Test func claudeOAuthCodeExchangeCommitCanRejectStaleFlow() async throws {
@@ -3429,14 +3320,6 @@ private struct StubConnector: ProviderConnector {
     func refresh(now: Date) async -> ConnectorRefreshResult {
         ConnectorRefreshResult(generatedAt: now, reports: [report])
     }
-}
-
-private func formValues(from body: String) -> [String: String] {
-    var components = URLComponents()
-    components.percentEncodedQuery = body
-    return Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
-        item.value.map { (item.name, $0) }
-    })
 }
 
 private func jwtPayload(email: String, name: String, accountID: String, planType: String) -> String {
