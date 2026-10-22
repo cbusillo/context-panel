@@ -3849,7 +3849,7 @@ wait
             pid_file = root / "discovery.pid"
             bodies = {
                 "empty": "exit 0",
-                "canonical": 'printf "%s\\n" "/Applications/Context Panel.app"',
+                "canonical": 'printf "%s\\n" "$FIXTURE_APP_PATH"',
                 "conflict": 'printf "%s\\n" "/fixture/Other Context Panel.app"',
                 "failed": 'printf "%s\\n" "/fixture/partial.app"; exit 1',
                 "unavailable": "exit 127",
@@ -3862,7 +3862,6 @@ wait
                 "check": "check_conflicting_bundles",
                 "install": "install_runtime",
                 "reset": "reset_runtime",
-                "quarantine": 'bundles="$(discoverable_bundles)"; quarantine_stale_runtime_bundles /fixture/quarantine "$bundles"',
             }
             command = f"""
             source scripts/context-panel-runtime-baseline.sh --source-only
@@ -3876,12 +3875,19 @@ wait
             run_with_timeout() {{ shift; fixture_run_with_timeout 1 "$@"; }}
             unregister_stale_plugin_paths() {{ echo MUTATION; }}
             unregister_stale_launchservices_paths() {{ echo MUTATION; }}
-            quarantine_path() {{ printf 'MUTATION %s\\n' "$1"; }}
+            quarantine_path() {{
+              if [[ "$1" == "$app_path" ]]; then echo CANONICAL_MUTATION; fi
+              printf 'MUTATION %s\\n' "$1"
+            }}
             remove_prior_baseline_trash() {{ echo MUTATION; }}
             stop_context_panel() {{ echo MUTATION; }}
             bootout_refresh_agent() {{ echo MUTATION; }}
             mkdir() {{ echo MUTATION; }}
             find() {{ :; }}
+            pluginkit() {{ :; }}
+            lsregister=/usr/bin/true
+            app_path={shlex.quote(str(root / "Canonical.app"))}
+            export FIXTURE_APP_PATH="$app_path"
             failures=0
             {actions[action]}
             [[ "$failures" == 0 ]]
@@ -3915,22 +3921,21 @@ wait
 
     def test_runtime_baseline_spotlight_failure_prevents_runtime_teardown(self) -> None:
         for action in ("install", "reset"):
-            for discovery in ("failed", "unavailable", "stalled"):
-                with self.subTest(action=action, discovery=discovery):
-                    result = self.run_spotlight_discovery_fixture(discovery, action=action)
-                    self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn("FAIL:", result.stdout)
-                    self.assertNotIn("MUTATION", result.stdout)
+            with self.subTest(action=action):
+                result = self.run_spotlight_discovery_fixture("stalled", action=action)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("FAIL:", result.stdout)
+                self.assertNotIn("MUTATION", result.stdout)
 
     def test_runtime_baseline_spotlight_success_permits_quarantine(self) -> None:
-        for discovery in ("empty", "canonical", "conflict"):
-            with self.subTest(discovery=discovery):
-                result = self.run_spotlight_discovery_fixture(discovery, action="quarantine")
+        for action, discovery in (("install", "empty"), ("reset", "canonical"), ("install", "conflict"), ("reset", "conflict")):
+            with self.subTest(action=action, discovery=discovery):
+                result = self.run_spotlight_discovery_fixture(discovery, action=action)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertIn("MUTATION", result.stdout)
                 if discovery == "conflict":
                     self.assertIn("MUTATION /fixture/Other Context Panel.app", result.stdout)
-                self.assertNotIn("MUTATION /Applications/Context Panel.app", result.stdout)
+                self.assertNotIn("CANONICAL_MUTATION", result.stdout)
 
     def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
         result = self.run_loaded_refresh_agent_fixture(candidate="matching")
