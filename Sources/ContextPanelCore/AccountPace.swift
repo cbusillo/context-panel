@@ -200,11 +200,16 @@ public enum AccountPaceText {
 
     /// "in 3h 12m", "in 2d 4h"; minute precision under a day.
     public static func countdown(to date: Date, now: Date) -> String {
+        "in " + countdownDistance(to: date, now: now)
+    }
+
+    /// Whole minutes below a day, whole hours after that; shared by all reset countdowns.
+    static func countdownDistance(to date: Date, now: Date) -> String {
         let minutes = max(0, Int(date.timeIntervalSince(now) / 60))
-        if minutes < 60 { return "in \(minutes)m" }
+        if minutes < 60 { return "\(minutes)m" }
         let hours = minutes / 60
-        if hours < 24 { return "in \(hours)h \(minutes % 60)m" }
-        return "in \(hours / 24)d \(hours % 24)h"
+        if hours < 24 { return "\(hours)h \(minutes % 60)m" }
+        return "\(hours / 24)d \(hours % 24)h"
     }
 
     /// A projection, to the hour: "Fri ~11 PM".
