@@ -9,7 +9,7 @@ Chris chose the **Horizon** design on
 and accepted its hand test on build 1.0.69. It reached `main` through #733,
 which carried the #737 refinement and the #741 Horizon build, and #742. The full
 record, including which earlier facts moved where, is
-[docs/evidence/722-horizon/README.md](evidence/722-horizon/README.md).
+[the Horizon record at 2a03444](https://github.com/cbusillo/context-panel/blob/2a034446470ab8e9d8200575f7e3a2793849f80f/docs/evidence/722-horizon/README.md).
 
 Horizon makes the account the unit on every surface. It is the default account
 layout on the Mac app, widgets, iPhone, iPad, Vision Pro, Watch, and Apple

@@ -170,11 +170,6 @@ without silently upgrading diagnostic or reference-only evidence.
 
 ## Validation
 
-Start with [Validation Authority and Operator Route](#sources-of-truth)
-to distinguish the agreed simulator-first contract, implemented capture support,
-and qualification evidence. Missing capture inputs do not by themselves justify
-asking Chris to navigate a signed gallery.
-
 Before changing or validating app/widget/provider behavior, identify the active
 runtime. Mixed runtimes caused repeated false positives during App Store release
 prep, so treat them as a blocker rather than background noise.
@@ -349,27 +344,13 @@ acceptable.
   `project.yml`; every new shippable train after an accepted or rejected App
   Store version needs a fresh marketing version/build input, and the uploaded
   build's pre-release marketing version must match the App Store Review version.
-- When Chris asks to check App Store Connect through the API, first use the
-  direct local ASC API route documented in `docs/release.md` under "Direct App
-  Store Connect API Checks." If that private operator config is unavailable,
-  say so explicitly before falling back to the GitHub workflow dry-run path.
-  On Chris's local operator machine, the generic discovery path starts with the
-  private shell env file `~/.appstoreconnect/asc.env` and private key directory
-  `~/.appstoreconnect/private_keys/`; source values only into the command
-  process and pass the key with `--api-key` when needed. Do not write
-  host-specific paths, key IDs, issuer IDs, private key names, JWTs, or live App
-  Store Connect object IDs into public repo docs, issues, PRs, or agent
-  summaries.
-- CloudKit live Production schema validation uses Apple's `cktool`, not the App
-  Store Connect API credentials. `scripts/cloudkit-schema-gate.py check` runs
-  it only when `CloudKit/` changed since the last release; see "CloudKit
-  Production Schema Gate" in `docs/release.md`. Publication workflow steps and
-  `context-panel-runtime-session.py sync` run the gate. It gates operations
-  that put a build in front of people; do not extend it to App Store Connect
-  writes that are independent of the build and schema, such as screenshot
-  upload. The operator machine keeps the management token saved by
-  `xcrun cktool save-token`; CI reads `CLOUDKIT_MANAGEMENT_TOKEN` from the
-  `release` environment. Never commit, print, or summarize the token.
+- When Chris asks to check App Store Connect through the API, follow
+  [Direct App Store Connect API Checks](release.md#direct-app-store-connect-api-checks).
+- CloudKit Production schema validation follows the
+  [CloudKit Production Schema Gate](release.md#cloudkit-production-schema-gate).
+  It gates operations that put a build in front of people; do not extend it to
+  App Store Connect writes that are independent of the build and schema, such
+  as screenshot upload.
 - Physical companion dogfood installs should clean stale Context Panel
   development provisioning profiles from the target device while preserving the
   profile embedded in the newly installed build and preserving App
@@ -406,16 +387,8 @@ acceptable.
   `feat/simulator-first-rc-validation` working tree is never qualification
   evidence.
 - After the coordinator final report is available, evaluate the full comparison
-  with `scripts/context-panel-release-gate.py enforce`. Do not filter or rewrite
-  `requiredSurfaces`. Carry-forward must bind to the previous approved ledger,
-  the complete expected-build manifest set for every shipping surface, bounded retention, current runtime
-  receipts, and compatible host OS evidence. Release evidence additionally
-  binds the full comparison, configured policy, expected-build identity set,
-  and exact coordinator report, and requires the exact selected approved RC.
-  Final validation must also receive the same previous ledger, selected RC,
-  and host-OS evidence used during generation so it can
-  reconstruct the ledger. Live submission requires those authoritative inputs
-  in either mode; see [evaluation and submission](#evaluation-and-submission).
+  with the [release evidence gate](release.md#release-evidence-carry-forward-gate).
+  Do not filter or rewrite `requiredSurfaces`.
 - Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
   and Apple TV product UI must not expose gallery buttons, toolbar actions, list
   rows, or runway items. Use the allowlisted signed routes and the bounded Watch
@@ -444,12 +417,8 @@ Run the commit gate before publishing changes:
 scripts/commit-gate.sh
 ```
 
-In CI, `scripts/ci-change-scope.py` skips the Swift and companion builds when
-no changed path can affect them, and the reference image jobs when no product
-or reference job input changed. It compares a pull request with its base, a
-push to `main` with the previous tip, and a merge-train candidate with `main`.
-A manual run, an unknown base or an unknown path runs everything. CodeQL always
-runs, because the `main` ruleset requires its results on every pull request.
+In CI, [`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py) decides
+which jobs a change needs; its docstring owns the rules.
 When adding a build input outside `Sources/`, `Tools/`, and `Config/` that
 lives under `docs/`, `Tests/ScriptsTests/`, or a Python script, list it in that
 script rather than widening the skip rules.
@@ -458,18 +427,10 @@ For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.
 
 For widget/app UI changes, the SwiftPM gate is not sufficient by itself. Use the
-Development install gate instead of manually opening or copying DerivedData
-builds; it regenerates the Xcode project, builds the real Xcode app target,
-installs the fresh app to `/Applications/Context Panel.app`, refreshes the
-app/widget runtime, and prints the runtime receipt:
-
-```sh
-scripts/context-panel-runtime-baseline.sh install --launch
-```
-
-If the canonical app is a signed Production/TestFlight runtime, preserve it and
-use `scripts/context-panel-runtime-baseline.sh check --require-production-runtime`
-instead of installing a Development build.
+Development install gate (`install --launch` above) instead of manually opening
+or copying DerivedData builds; it regenerates the Xcode project, builds the real
+Xcode app target, installs the fresh app to `/Applications/Context Panel.app`,
+refreshes the app/widget runtime, and prints the runtime receipt.
 
 Do not create backup copies of `/Applications/Context Panel.app` during normal
 development installs.
