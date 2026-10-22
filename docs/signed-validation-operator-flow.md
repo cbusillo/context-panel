@@ -215,60 +215,13 @@ outside this slice. Runtime surfaces are derived from
 `os-composited-placement` surface must have at least one explicit context in the
 requirements file, and no context may name a surface outside the comparison.
 
-For shared-view contexts, plan the requirements before starting a coordinator
-session. The planner accepts only a current schema-v5 comparison and binds the
-output's `currentManifestID` to that comparison:
-
-```sh
-scripts/context-panel-validation.py plan-shared-view-evidence \
-  --surface-comparison <comparison.json> \
-  [--base-requirements <placement-requirements.json>] \
-  --output <visual-review-requirements.json>
-```
-
-It reads the canonical schema-v1 matrix at
-`Config/ContextPanelSharedViewMatrix.json` unless `--matrix` or
-`--surface-policy` is supplied. The matrix covers every shared-view-capable
-surface with bounded, canonical cells and each host gallery's real selectors.
-An axis set to `not-applicable` is intentionally absent from that host gallery;
-the capture step must not try to drive it. Pixel policy is `advisory-only`. The
-command is read-only with respect to coordinator state: it does not start a
-session, inspect a runtime, launch a simulator, or capture private artifacts.
-Mixed shared-view and placement comparisons are accepted. Pass an explicit
-placement requirements file with `--base-requirements` to produce one combined
-plan: non-shared requirements are preserved verbatim, canonical matrix-derived
-shared-view requirements are added, and conflicting existing shared entries
-fail closed. The base file is never rewritten implicitly. Omitting the base on
-a mixed comparison emits a warning; the resulting shared-only file can drive
-capture, but `start-session` still rejects it for missing placement coverage.
-
-For supported simulator companion galleries, run the private executor after
-planning. It requires the same schema-v5 comparison, the canonical current
-source manifest, and the exact planned requirements:
-
-```sh
-scripts/context-panel-validation.py capture-shared-view-evidence \
-  --surface-comparison <comparison.json> \
-  --current-manifest <current-surface-manifest.json> \
-  --requirements <visual-review-requirements.json> \
-  --capture-config <private-capture-config.json> \
-  --artifact-root <absolute-private-artifact-root> \
-  --output <absolute-shared-view-capture-receipt.json>
-```
-
-The requirements input may be the combined coordinator plan. The executor
-projects only its canonical shared-view subset, preserves those exact
-requirement IDs, and binds the receipt digest to that projection. Placement
-entries remain in the authoritative file but are never captured or claimed as
-shared-view evidence.
-
-The executor uses only throwaway iOS, iPadOS, visionOS, watchOS, and tvOS
-simulators plus the host-side `macos.widget` renderer. Where it uses a
-simulator, it installs a private immutable app snapshot and verifies the
-installed container. It emits a
-sanitized build-bound receipt. It writes no coordinator, runtime, approval, or
-visual-review state. Unsupported hosts and missing profiles remain explicit;
-capture or cleanup uncertainty never becomes success.
+For shared-view contexts, plan the requirements with
+`plan-shared-view-evidence` and capture them with
+`capture-shared-view-evidence` before starting a coordinator session; both are
+described in [Signed Validation Galleries](signed-validation-galleries.md#shared-view-matrix-planning).
+The planner's output may be the combined coordinator plan: capture projects
+only its shared-view subset, and placement entries are never captured or
+claimed as shared-view evidence.
 
 The requirements file uses schema v1 and stores bounded public context:
 
