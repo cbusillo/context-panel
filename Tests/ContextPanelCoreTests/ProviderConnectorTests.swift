@@ -2424,11 +2424,14 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     let store = StubCredentialStore(storage: [accountID: try claudeCredentialsData(
         accessToken: "old-access", refreshToken: "refresh-secret", expiresAt: Date(timeIntervalSince1970: 0))])
     // Each refresh rotates the refresh token and returns an access token inside the expiry skew, so the next refresh rotates again.
-    func refresh(rotatingTo next: String) async throws -> (status: UsageStatus?, sentRefreshToken: String?) {
-        let http = StubHTTPClient(responses: [
-            ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"access_token":"access","refresh_token":"\#(next)","expires_in":60}"#.utf8)),
-            ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"five_hour":{"utilization":1}}"#.utf8)),
-        ])
+    // With a second token, usage first answers 401 and the forced refresh rotates to it.
+    func refresh(rotatingTo next: String, thenTo second: String? = nil) async throws -> (status: UsageStatus?, sentRefreshToken: String?) {
+        func token(_ refreshToken: String) -> ConnectorHTTPResponse {
+            ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"access_token":"access","refresh_token":"\#(refreshToken)","expires_in":60}"#.utf8))
+        }
+        let rejected = second.map { [ConnectorHTTPResponse(statusCode: 401, data: Data()), token($0)] } ?? []
+        let http = StubHTTPClient(responses: [token(next)] + rejected
+            + [ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"five_hour":{"utilization":1}}"#.utf8))])
         let connector = ClaudeOAuthUsageConnector(
             resetReadCooldown: ClaudeResetCreditReadCooldown(),
             accounts: [ClaudeOAuthAccountConfiguration(accountID: accountID, accountName: "Claude")],
@@ -2450,14 +2453,19 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
     store.allowedSaves = nil
     #expect(try await refresh(rotatingTo: "rotated-4") == (.healthy, "rotated-3"))
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "rotated-4")
+    // The first rotation saves and the forced rotation after a 401 fails to save.
+    store.allowedSaves = 1
+    #expect(try await refresh(rotatingTo: "rotated-5", thenTo: "rotated-6") == (.healthy, "rotated-4"))
+    store.allowedSaves = nil
+    #expect(try await refresh(rotatingTo: "rotated-7") == (.healthy, "rotated-6"))
 
     // A newer Keychain copy, such as a new sign-in, wins over a held one.
     store.allowedSaves = 0
-    _ = try await refresh(rotatingTo: "rotated-5")
+    _ = try await refresh(rotatingTo: "rotated-8")
     store.allowedSaves = nil
     try store.save(try claudeCredentialsData(accessToken: "signed-in", refreshToken: "signed-in-refresh",
         expiresAt: Date(timeIntervalSince1970: 0)), accountID: accountID)
-    #expect(try await refresh(rotatingTo: "rotated-6") == (.healthy, "signed-in-refresh"))
+    #expect(try await refresh(rotatingTo: "rotated-9") == (.healthy, "signed-in-refresh"))
 }
 
 @Test func claudeOAuthConnectorUsesExpirationSkewBoundary() async throws {

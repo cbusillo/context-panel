@@ -317,7 +317,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
 
         do {
             var (credentials, keychainCopy) = try loadCredentials(accountID: account.accountID)
-            return try await refresh(account: account, credentials: &credentials, keychainCopy: keychainCopy, now: now,
+            return try await refresh(account: account, credentials: &credentials, keychainCopy: &keychainCopy, now: now,
                 localAccountID: localAccountID)
         } catch {
             let savedAccessToken = (try? loadCredentials(accountID: account.accountID))?.credentials.accessToken
@@ -347,11 +347,11 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private func refresh(
         account: ClaudeOAuthAccountConfiguration,
         credentials: inout ClaudeOAuthCredentials,
-        keychainCopy: Data?,
+        keychainCopy: inout Data?,
         now: Date,
         localAccountID: String
     ) async throws -> ProviderConnectorReport {
-        let currentAccessToken = try await accessToken(credentials: &credentials, keychainCopy: keychainCopy, account: account,
+        let currentAccessToken = try await accessToken(credentials: &credentials, keychainCopy: &keychainCopy, account: account,
             now: now, forceRefresh: false)
         let response = try await httpClient.data(for: ConnectorHTTPRequest(
             url: account.usageEndpoint,
@@ -368,7 +368,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         ))
 
         if response.statusCode == 401 || response.statusCode == 403 {
-            let refreshedToken = try await accessToken(credentials: &credentials, keychainCopy: keychainCopy, account: account,
+            let refreshedToken = try await accessToken(credentials: &credentials, keychainCopy: &keychainCopy, account: account,
                 now: now, forceRefresh: true)
             let retryResponse = try await httpClient.data(for: ConnectorHTTPRequest(
                 url: account.usageEndpoint,
@@ -517,10 +517,11 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     }
 
     /// A failed save keeps the renewed credentials in memory, since the provider may have retired the old refresh token.
-    private func saveCredentials(_ credentials: ClaudeOAuthCredentials, accountID: String, over keychainCopy: Data?) throws {
+    private func saveCredentials(_ credentials: ClaudeOAuthCredentials, accountID: String, over keychainCopy: inout Data?) throws {
         let data = try encodeClaudeOAuthCredentials(credentials)
         do {
             try credentialStore.save(data, accountID: accountID)
+            keychainCopy = data
         } catch {
             unsavedClaudeCredentials.hold(data, accountID: accountID, over: keychainCopy)
         }
@@ -528,7 +529,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
 
     private func accessToken(
         credentials: inout ClaudeOAuthCredentials,
-        keychainCopy: Data?,
+        keychainCopy: inout Data?,
         account: ClaudeOAuthAccountConfiguration,
         now: Date,
         forceRefresh: Bool
@@ -576,7 +577,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             expiresAt: token.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) },
             scopes: token.scopes.isEmpty ? credentials.scopes : token.scopes
         )
-        try saveCredentials(credentials, accountID: account.accountID, over: keychainCopy)
+        try saveCredentials(credentials, accountID: account.accountID, over: &keychainCopy)
         // The provider accepted this exact refresh grant; carry only its existing binding.
         if let previousMaterial { identityMaterialStore?.save(previousMaterial, configurationID: account.accountID, credential: token.accessToken) }
         return token.accessToken
