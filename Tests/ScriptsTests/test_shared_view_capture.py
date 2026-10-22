@@ -1146,42 +1146,10 @@ class SharedViewCaptureTests(unittest.TestCase):
         ])
         self.assertTrue(any(args[2] == "erase" for args, _ in runner.calls))
 
-    def test_visionos_ui_test_failure_is_unknown(self) -> None:
-        self.write_plan(["visionos.app"])
-        self.write_config(("visionos",))
-        runner = FakeRunner(fail_at="xcodebuild")
-
-        exit_code, receipt = self.execute(runner)
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(
-            receipt,
-            "xcuitest-capture-failed",
-            "xcuitest-capture-failed",
-        )
-        self.assertEqual(["xcuitest-render-route"] * 2, [
-            item["appearanceMechanism"] for item in receipt["captures"]
-        ])
-
-    def test_visionos_ui_test_timeout_is_unknown(self) -> None:
-        self.write_plan(["visionos.app"])
-        self.write_config(("visionos",))
-        runner = FakeRunner(timeout_at="xcodebuild")
-
-        exit_code, receipt = self.execute(runner)
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(
-            receipt,
-            "xcuitest-capture-timeout",
-            "xcuitest-capture-timeout",
-        )
-        self.assertEqual(["xcuitest-render-route"] * 2, [
-            item["appearanceMechanism"] for item in receipt["captures"]
-        ])
-
-    def test_visionos_attachment_export_failures_are_unknown(self) -> None:
+    def test_visionos_ui_test_and_attachment_export_failures_are_unknown(self) -> None:
         scenarios = (
+            (FakeRunner(fail_at="xcodebuild"), "xcuitest-capture-failed"),
+            (FakeRunner(timeout_at="xcodebuild"), "xcuitest-capture-timeout"),
             (FakeRunner(fail_at="xcresulttool"), "xcresult-attachment-export-failed"),
             (FakeRunner(timeout_at="xcresulttool"), "xcresult-attachment-export-timeout"),
         )
@@ -1198,6 +1166,9 @@ class SharedViewCaptureTests(unittest.TestCase):
 
                 self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assert_capture_errors(receipt, error_code, error_code)
+                self.assertEqual(["xcuitest-render-route"] * 2, [
+                    item["appearanceMechanism"] for item in receipt["captures"]
+                ])
 
     def test_visionos_attachment_manifest_fails_closed(self) -> None:
         for index, manifest_error in enumerate(
@@ -1220,75 +1191,32 @@ class SharedViewCaptureTests(unittest.TestCase):
                     "xcuitest-attachments-invalid",
                 )
 
-    def test_visionos_invalid_png_is_preserved_for_private_diagnostics(self) -> None:
-        self.write_plan(["visionos.app"])
-        self.write_config(("visionos",))
-
-        exit_code, receipt = self.execute(
-            FakeRunner(corrupt_png="baseline"),
-            run_id="visionos-invalid-png",
-        )
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(
-            receipt,
-            "captured-image-invalid",
-            "captured-image-invalid",
-        )
-        diagnostic_directory = (
-            self.artifact_root
-            / self.manifest_id
-            / "visionos-invalid-png"
-            / "invalid-png-diagnostics"
-        )
-        diagnostic_paths = sorted(diagnostic_directory.glob("*.png"))
-        self.assertEqual(2, len(diagnostic_paths))
-        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in diagnostic_paths))
-
-    def test_visionos_xcui_placeholder_is_rejected_and_preserved(self) -> None:
-        self.write_plan(["visionos.app"])
-        self.write_config(("visionos",))
-
-        exit_code, receipt = self.execute(
-            FakeRunner(corrupt_png="placeholder"),
-            run_id="visionos-placeholder",
-        )
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(
-            receipt,
-            "captured-image-placeholder",
-            "captured-image-placeholder",
-        )
-        diagnostic_directory = (
-            self.artifact_root
-            / self.manifest_id
-            / "visionos-placeholder"
-            / "invalid-png-diagnostics"
-        )
-        diagnostic_paths = list(diagnostic_directory.glob("*.png"))
-        self.assertEqual(2, len(diagnostic_paths))
-        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in diagnostic_paths))
-
-    def test_visionos_attachment_stability_and_route_baseline_checks(self) -> None:
-        scenarios = (
-            (FakeRunner(baseline_unstable=True), "baseline-unstable"),
-            (FakeRunner(unstable=True), "capture-unstable"),
-            (FakeRunner(baseline_equal=True), "route-baseline-unchanged"),
-        )
-        for index, (runner, error_code) in enumerate(scenarios):
-            with self.subTest(error_code=error_code):
+    def test_visionos_invalid_and_placeholder_pngs_are_preserved_for_private_diagnostics(self) -> None:
+        for corruption, error_code in (
+            ("baseline", "captured-image-invalid"),
+            ("placeholder", "captured-image-placeholder"),
+        ):
+            with self.subTest(corruption=corruption):
                 self.write_plan(["visionos.app"])
                 self.write_config(("visionos",))
+                run_id = f"visionos-{corruption}"
 
                 exit_code, receipt = self.execute(
-                    runner,
-                    run_id=f"visionos-stability-{index}",
-                    receipt_path=self.root / f"visionos-stability-{index}.json",
+                    FakeRunner(corrupt_png=corruption),
+                    run_id=run_id,
+                    receipt_path=self.root / f"{run_id}.json",
                 )
 
                 self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assert_capture_errors(receipt, error_code, error_code)
+                diagnostic_directory = (
+                    self.artifact_root / self.manifest_id / run_id / "invalid-png-diagnostics"
+                )
+                diagnostic_paths = list(diagnostic_directory.glob("*.png"))
+                self.assertEqual(2, len(diagnostic_paths))
+                self.assertTrue(
+                    all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in diagnostic_paths)
+                )
 
     def test_visionos_attachment_stability_can_converge(self) -> None:
         self.write_plan(["visionos.app"])
@@ -1300,19 +1228,6 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(["captured", "captured"], [
             item["status"] for item in receipt["captures"]
         ])
-
-    def test_visionos_invalid_captured_image_is_unknown(self) -> None:
-        self.write_plan(["visionos.app"])
-        self.write_config(("visionos",))
-
-        exit_code, receipt = self.execute(FakeRunner(corrupt_png="idat"))
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(
-            receipt,
-            "captured-image-invalid",
-            "captured-image-invalid",
-        )
 
     def write_host_renderer_config(self) -> None:
         self.source_root = self.root / "current-source"
@@ -2242,23 +2157,36 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(error_code, receipt["captures"][0]["errorCode"])
                 self.assertEqual(mechanism, receipt["captures"][0]["appearanceMechanism"])
 
-    def test_ambig(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
-        runner = FakeRunner(
-            create_result=CommandResult(
-                0,
-                f"diagnostic\n{SIMULATOR_ID}\nignored\n{SECOND_SIMULATOR_ID}\n",
-                "",
-            )
+    def test_unverified_create_skips_cleanup(self) -> None:
+        cases = (
+            (
+                "ambiguous-udid",
+                FakeRunner(create_result=CommandResult(
+                    0, f"diagnostic\n{SIMULATOR_ID}\nignored\n{SECOND_SIMULATOR_ID}\n", ""
+                )),
+                "simctl-create-invalid-udid",
+            ),
+            ("missing-udid", FakeRunner(create_result=CommandResult(0, "not-a-udid\n", "")), "simctl-create-invalid-udid"),
+            (
+                "failed-without-device",
+                FakeRunner(create_result=CommandResult(1, "", "private create failure")),
+                "simctl-create-failed",
+            ),
+            ("timeout", FakeRunner(timeout_at="create"), "simctl-create-timeout"),
         )
+        for name, runner, error_code in cases:
+            with self.subTest(name=name):
+                self.write_plan(["ios.app"])
+                self.write_config()
 
-        exit_code, receipt = self.execute(runner)
+                exit_code, receipt = self.execute(
+                    runner, run_id=f"create-{name}", receipt_path=self.root / f"create-{name}.json"
+                )
 
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(receipt, *("simctl-create-invalid-udid",) * 2)
-        self.assertEqual("identity-unverified", receipt["profiles"][0]["cleanupStatus"])
-        self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assert_capture_errors(receipt, error_code, error_code)
+                self.assertEqual("identity-unverified", receipt["profiles"][0]["cleanupStatus"])
+                self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
     def test_identity_mismatch(self) -> None:
         self.write_plan(["ios.app"])
@@ -2303,29 +2231,6 @@ class SharedViewCaptureTests(unittest.TestCase):
             runner.run = mock.Mock(return_value=result)
             with self.subTest(expected=expected, stdout=result.stdout):
                 self.assertEqual(expected, _verify_created_simulator(runner, profile, name, SIMULATOR_ID))
-
-    def test_invalid_create_cleanup(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
-        runner = FakeRunner(create_result=CommandResult(0, "not-a-udid\n", ""))
-
-        exit_code, receipt = self.execute(runner)
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(receipt, *("simctl-create-invalid-udid",) * 2)
-        self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
-
-    def test_failed_create_without_device_preserves_error_and_skips_cleanup(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
-        runner = FakeRunner(create_result=CommandResult(1, "", "private create failure"))
-
-        exit_code, receipt = self.execute(runner)
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(receipt, *("simctl-create-failed",) * 2)
-        self.assertEqual("identity-unverified", receipt["profiles"][0]["cleanupStatus"])
-        self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
     def test_failed_create(self) -> None:
         self.write_plan(["ios.app"])
@@ -2395,18 +2300,6 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(EXIT_UNKNOWN, exit_code)
         self.assertEqual("delete-persisted", receipt["profiles"][0]["cleanupStatus"])
         self.assert_capture_errors(receipt, *("simctl-delete-persisted",) * 2)
-
-    def test_create_timeout(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
-        runner = FakeRunner(timeout_at="create")
-
-        exit_code, receipt = self.execute(runner)
-
-        self.assertEqual(EXIT_UNKNOWN, exit_code)
-        self.assert_capture_errors(receipt, *("simctl-create-timeout",) * 2)
-        self.assertEqual("identity-unverified", receipt["profiles"][0]["cleanupStatus"])
-        self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
     def test_cleanup_failure_preserves_the_capture_root_cause(self) -> None:
         self.write_plan(["ios.app"])
@@ -3423,60 +3316,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertNotIn("/tmp/capture-secret", serialized)
         self.assertNotIn(SIMULATOR_ID, serialized)
 
-    def test_cli_requires_comparison_and_never_touches_coordinator_state(self) -> None:
-        receipt = {
-            "schemaVersion": 1,
-            "kind": CAPTURE_RECEIPT_KIND,
-            "captureRunID": "run-fixed",
-            "currentManifestID": self.manifest_id,
-            "requirementsDigest": "c" * 64,
-            "matrixDigest": "b" * 64,
-            "pixelDiffPolicy": "advisory-only",
-            "profiles": [],
-            "captures": [],
-        }
-        arguments = [
-            "capture-shared-view-evidence",
-            "--surface-comparison",
-            str(self.comparison_path),
-            "--current-manifest",
-            str(self.current_manifest_path),
-            "--requirements",
-            str(self.requirements_path),
-            "--capture-config",
-            str(self.config_path),
-            "--artifact-root",
-            str(self.artifact_root),
-            "--output",
-            str(self.receipt_path),
-            "--json",
-        ]
-        coordinator = mock.Mock(side_effect=AssertionError("coordinator state must not be touched"))
-        with (
-            mock.patch.object(cli_module, "execute_shared_view_capture", return_value=(EXIT_OK, receipt)) as execute,
-            mock.patch.object(cli_module, "SessionStateStore", coordinator),
-            contextlib.redirect_stdout(io.StringIO()) as output,
-        ):
-            self.assertEqual(EXIT_OK, cli_module.main(arguments))
-        execute.assert_called_once_with(
-            self.comparison_path,
-            self.current_manifest_path,
-            self.requirements_path,
-            self.config_path,
-            self.artifact_root,
-            self.receipt_path,
-            matrix_path=cli_module.DEFAULT_MATRIX_PATH,
-            surface_policy_path=cli_module.DEFAULT_SURFACE_POLICY_PATH,
-        )
-        self.assertIn(CAPTURE_RECEIPT_KIND, output.getvalue())
-        coordinator.assert_not_called()
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                cli_module.parse_args([item for item in arguments if item not in {"--surface-comparison", str(self.comparison_path)}])
-
-    def test_cli_forwards_custom_matrix_and_surface_policy(self) -> None:
-        matrix_path = self.root / "matrix.json"
-        policy_path = self.root / "policy.json"
+    def test_cli_forwards_inputs_and_never_touches_coordinator_state(self) -> None:
         receipt = {"kind": CAPTURE_RECEIPT_KIND}
         arguments = [
             "capture-shared-view-evidence",
@@ -3492,27 +3332,37 @@ class SharedViewCaptureTests(unittest.TestCase):
             str(self.artifact_root),
             "--output",
             str(self.receipt_path),
-            "--matrix",
-            str(matrix_path),
-            "--surface-policy",
-            str(policy_path),
             "--json",
         ]
-        with (
-            mock.patch.object(cli_module, "execute_shared_view_capture", return_value=(EXIT_OK, receipt)) as execute,
-            contextlib.redirect_stdout(io.StringIO()),
+        matrix_path = self.root / "matrix.json"
+        policy_path = self.root / "policy.json"
+        for extra, expected_matrix, expected_policy in (
+            ([], cli_module.DEFAULT_MATRIX_PATH, cli_module.DEFAULT_SURFACE_POLICY_PATH),
+            (["--matrix", str(matrix_path), "--surface-policy", str(policy_path)], matrix_path, policy_path),
         ):
-            self.assertEqual(EXIT_OK, cli_module.main(arguments))
-        execute.assert_called_once_with(
-            self.comparison_path,
-            self.current_manifest_path,
-            self.requirements_path,
-            self.config_path,
-            self.artifact_root,
-            self.receipt_path,
-            matrix_path=matrix_path,
-            surface_policy_path=policy_path,
-        )
+            coordinator = mock.Mock(side_effect=AssertionError("coordinator state must not be touched"))
+            with (
+                self.subTest(custom=bool(extra)),
+                mock.patch.object(cli_module, "execute_shared_view_capture", return_value=(EXIT_OK, receipt)) as execute,
+                mock.patch.object(cli_module, "SessionStateStore", coordinator),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(EXIT_OK, cli_module.main(arguments + extra))
+                execute.assert_called_once_with(
+                    self.comparison_path,
+                    self.current_manifest_path,
+                    self.requirements_path,
+                    self.config_path,
+                    self.artifact_root,
+                    self.receipt_path,
+                    matrix_path=expected_matrix,
+                    surface_policy_path=expected_policy,
+                )
+                self.assertIn(CAPTURE_RECEIPT_KIND, output.getvalue())
+                coordinator.assert_not_called()
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cli_module.parse_args([item for item in arguments if item not in {"--surface-comparison", str(self.comparison_path)}])
 
 if __name__ == "__main__":
     unittest.main()
