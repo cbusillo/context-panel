@@ -163,6 +163,16 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(geometry.resetX == geometry.emptyRange?.upperBound)
 }
 
+@Test func horizonDayMarksStayAtLocalMidnightAcrossDaylightSavingEnd() throws {
+    // US daylight saving ends Sunday November 1, 2026: that day is 25 hours long.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+    let now = try #require(ContextPanelDateFormatting.date(from: "2026-10-29T16:00:00Z"))
+    let days = AccountHorizon.days(now: now, calendar: calendar)
+    #expect(days.allSatisfy { calendar.dateComponents([.hour, .minute], from: $0.date) == DateComponents(hour: 0, minute: 0) })
+    #expect(Set(days.map { calendar.component(.weekday, from: $0.date) }).count == days.count)
+}
+
 @Test func horizonNeverReassuresPastWhatIsMeasured() {
     // One account lasts, one is still measuring: the lead must not say nothing runs out.
     let overview = totalsOverview([("a", .openAI, 10, 50, 0.1, 0), ("b", .openAI, 10, 50, nil, 0)])
