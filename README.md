@@ -92,7 +92,7 @@ and use the read-only check instead:
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
-Follow [AGENTS.md's runtime requirements](AGENTS.md#validation) before judging
+Follow [the runtime requirements](docs/validation-authority.md#validation) before judging
 behavior or reporting readiness, including active process, widget registration,
 refresh-agent, URL-handler, fingerprint, and real WidgetKit cache evidence.
 Signed companion validation also requires the companion cache preflight.
@@ -154,5 +154,5 @@ The probes exercise shared `ContextPanelCore` connectors from the shell.
 They do not prove signed app or refresh-agent behavior: sandbox access, TCC,
 security-scoped bookmarks, app groups, and login-item environments differ.
 Validate those reads through the canonical installed runtime as
-[AGENTS.md](AGENTS.md#validation) requires. `SnapshotStoreProbe` additionally writes
+[the runtime requirements](docs/validation-authority.md#validation) require. `SnapshotStoreProbe` additionally writes
 and reloads the local JSON cache shape used by the app and widget.

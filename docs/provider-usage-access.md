@@ -1004,8 +1004,8 @@ a reset or changes utilization.
 
 ### Claude profile-field qualification
 
-Before implementing API-backed login/plan display, an operator can qualify the
-candidate fields from the signed installed app's own existing OAuth consent:
+An operator can qualify the candidate profile fields from the signed installed
+app's own existing OAuth consent:
 
 ```sh
 "/Applications/Context Panel.app/Contents/MacOS/Context Panel" --claude-profile-shape

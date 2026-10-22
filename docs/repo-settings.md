@@ -35,7 +35,7 @@ Expected GitHub settings:
 - Code quality gate on `main`: enabled for `errors`.
 - Force pushes and branch deletion: blocked for `main`.
 - Release environments, activation and owner setup: follow the single authority
-  in [the release guide](release.md#one-time-no-click-setup-owner-only).
+  in [the release guide](release.md#before-starting-a-release).
 - Release environment secret: `CLOUDKIT_MANAGEMENT_TOKEN`, the CloudKit
   management token the schema gate uses when `CloudKit/` changed since the last
   release. Its sole GitHub copy belongs in `release`; never store its value in

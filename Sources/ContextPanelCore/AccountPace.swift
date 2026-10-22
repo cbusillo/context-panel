@@ -403,7 +403,7 @@ public extension AccountHorizon {
     /// Each midnight inside the span, with its x: the axis every horizon shares.
     static func days(now: Date, span: TimeInterval = AccountHorizon.span, calendar: Calendar = .current) -> [(x: Double, date: Date)] {
         (1...8).compactMap { day in
-            let boundary = calendar.startOfDay(for: now).addingTimeInterval(Double(day) * 86_400)
+            guard let boundary = calendar.date(byAdding: .day, value: day, to: calendar.startOfDay(for: now)) else { return nil }
             let value = boundary.timeIntervalSince(now) / span
             return value > 0 && value < 1 ? (value, boundary) : nil
         }

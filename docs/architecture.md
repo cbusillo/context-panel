@@ -411,16 +411,8 @@ it only when it is missing. The `v2` and `v3` subscription IDs are deliberately
 left in place during the internal rolling-upgrade bridge so older builds do not
 lose their wake channel. App handlers accept only their own generation's wake
 notification, then reload and merge `current-v2` with legacy `current`.
-Roll out the bridge publisher first: the replacement Mac writes both records,
-so existing `v3` companions and replacement `current` companions continue to
-receive wakes while device updates propagate.
-
-CloudKit does not allow a new subscription definition to be introduced directly
-from a Production runtime. Any future subscription ID or predicate change must
-first be created in Development and included in the CloudKit schema deployment
-to Production before a TestFlight or App Store build starts using it.
-Do not deploy the abandoned `v3` definition while the legacy-wake bridge is the
-release contract.
+Rollout order and subscription changes follow the
+[CloudKit Production Schema Gate](release.md#cloudkit-production-schema-gate).
 
 Provider detail keeps the saved primary limit as the dominant answer while it
 has current capacity. If that lane is temporarily unavailable, detail promotes
