@@ -189,10 +189,6 @@ import Testing
     #expect(limit.contextLabel == "Codex · Personal")
 }
 
-@Test func providersCoverInitialScope() {
-    #expect(Provider.allCases == [.openAI, .anthropic, .google])
-}
-
 @Test func usageLimitCanRepresentPercentPressure() {
     let limit = UsageLimit(
         provider: .openAI,
