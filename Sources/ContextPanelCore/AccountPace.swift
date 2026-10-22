@@ -57,12 +57,16 @@ public extension AccountOverview.Account {
 
     /// The short column: a window under a day long.
     var shortWindow: AccountOverview.Window? {
-        windows.filter { ($0.duration ?? .infinity) < 86_400 }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+        capacityWindows.filter { ($0.duration ?? .infinity) < 86_400 }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
     }
 
-    /// The long column: the tightest of every other window, so the limiting one is never hidden.
+    private var longWindows: [AccountOverview.Window] {
+        windows.filter { ($0.duration ?? .infinity) >= 86_400 }
+    }
+
+    /// The long column: the tightest long window, including model-specific weekly limits.
     var longWindow: AccountOverview.Window? {
-        windows.filter { $0.id != shortWindow?.id }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+        longWindows.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
     }
 
     /// The earliest run-out across windows, with the window that causes it. Saved data gets none.
@@ -126,7 +130,7 @@ public extension AccountOverview.Account {
     /// The window an account adds to its provider's total: the tightest long window that applies to
     /// the whole account (no model name), so a model-only limit is never pooled with an overall one.
     var poolWindow: AccountOverview.Window? {
-        let long = windows.filter { $0.id != shortWindow?.id }
+        let long = longWindows
         return long.filter { $0.modelLabel == nil }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
             ?? longWindow
     }
@@ -298,7 +302,7 @@ public extension AccountOverview.Account {
     /// else the tightest long window, so neither a fast-burning model limit nor the limiting window is hidden.
     func horizonWindow(now: Date) -> AccountOverview.Window? {
         guard isReliable else { return longWindow }
-        let long = windows.filter { $0.id != shortWindow?.id }
+        let long = longWindows
         return long.compactMap { window in Self.runOut(window, now: now).map { (window, $0) } }.min { $0.1 < $1.1 }?.0 ?? longWindow
     }
 
