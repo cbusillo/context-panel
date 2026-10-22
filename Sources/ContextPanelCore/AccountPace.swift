@@ -275,7 +275,7 @@ public extension AccountOverview {
 /// its reset. If it reaches empty first, the gap until the reset is the only thing drawn in red.
 /// Only current readings are projected; saved, paused and unconnected accounts get no projection.
 public struct AccountHorizon: Equatable, Sendable {
-    /// The window the shape follows: the account's long column, so the limiting window is never hidden.
+    /// The window the shape follows: the first long-window run-out, else the least projected weekly spare.
     public let window: AccountOverview.Window?
     public let remaining: Double?
     public let resetAt: Date?
@@ -303,18 +303,29 @@ public struct AccountHorizon: Equatable, Sendable {
 }
 
 public extension AccountOverview.Account {
-    /// The long window the horizon follows: the one that runs out first before its reset at the observed burn,
-    /// else the tightest long window, so neither a fast-burning model limit nor the limiting window is hidden.
+    /// The first long window to run out before its reset, else the weekly window with least projected spare
+    /// at its own reset, including model-specific limits. Without a weekly projection, keep the tightest long window.
     func horizonWindow(now: Date) -> AccountOverview.Window? {
         guard isReliable else { return longWindow }
         let long = longWindows
-        return long.compactMap { window in Self.runOut(window, now: now).map { (window, $0) } }.min { $0.1 < $1.1 }?.0 ?? longWindow
+        if let first = long.compactMap({ window in Self.runOut(window, now: now).map { (window, $0) } }).min(by: { $0.1 < $1.1 }) {
+            return first.0
+        }
+        return long.filter { $0.duration == 7 * 86_400 }
+            .compactMap { window in Self.projectedSpare(window, now: now).map { (window, $0) } }
+            .min { $0.1 < $1.1 }?.0 ?? longWindow
     }
 
     /// Run-out before the reset: projected from the observed burn, or now when the window is already empty.
     private static func runOut(_ window: AccountOverview.Window, now: Date) -> Date? {
         if let remaining = window.remainingFraction, remaining <= 0, (window.naturalResetAt ?? .distantPast) > now { return now }
         return window.projectedRunOut(now: now)
+    }
+
+    private static func projectedSpare(_ window: AccountOverview.Window, now: Date) -> Double? {
+        guard let burn = window.burnFractionPerHour, let reset = window.naturalResetAt, reset > now,
+              let remaining = window.remainingFraction else { return nil }
+        return max(0, remaining - burn * reset.timeIntervalSince(now) / 3_600)
     }
 
     func horizon(now: Date) -> AccountHorizon {
@@ -325,8 +336,8 @@ public extension AccountOverview.Account {
         let reset = window?.naturalResetAt.flatMap { $0 > now ? $0 : nil }
         let burn = current ? window?.burnFractionPerHour : nil
         let runOut = current ? window.flatMap { Self.runOut($0, now: now) } : nil
-        let spare: Double? = if runOut != nil { 0 } else if let burn, let reset, let remaining = window?.remainingFraction {
-            max(0, remaining - burn * reset.timeIntervalSince(now) / 3_600)
+        let spare: Double? = if runOut != nil { 0 } else if current {
+            window.flatMap { Self.projectedSpare($0, now: now) }
         } else { nil }
         return AccountHorizon(window: window, remaining: window?.remainingFraction, resetAt: reset, burnPerHour: burn,
                               runOutAt: runOut, spare: spare, isCurrent: current)

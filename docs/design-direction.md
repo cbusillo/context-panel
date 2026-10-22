@@ -21,7 +21,10 @@ so every surface draws the same picture at a different size.
   "2 accounts run out before they reset. The other 4 are fine." Only current
   readings with observed burn count as fine.
 - **A horizon per account.** Each account follows the long window that runs out
-  first before its reset, otherwise its tightest long window. It shows the
+  first before its reset, otherwise the weekly window with the least projected
+  spare at its own reset. Model-specific weekly windows take part in that
+  forecast; account status and remaining capacity still use the main limits.
+  Without a weekly projection, keep the tightest long window. It shows the
   share left now, the observed burn, the run-out time when that comes before
   the reset, and the share to spare at the reset. If the provider reports only
   a short window, the horizon follows that window without inventing a weekly allowance.
