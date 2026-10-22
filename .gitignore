@@ -32,7 +32,7 @@ ContextPanel.xcodeproj/
 __pycache__/
 *.pyc
 .venv/
-.idea/*
+**/.idea/*
 !.idea/inspectionProfiles/
 .idea/inspectionProfiles/*
 !.idea/inspectionProfiles/Project_Default.xml
