@@ -494,13 +494,32 @@ class TestLaneTests(unittest.TestCase):
             # EOF proves the forked child has also released its inherited pipe.
             self.assertEqual(process.stdout.read(), b"")
         finally:
-            try:
-                real_killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
             process.wait = real_wait
+            module.kill_group_while_leader_unreaped(process)
             process.wait(timeout=5)
             process.stdout.close()
+
+    def test_a_deadline_after_the_command_exits_unreaped_still_reaps_and_reports(self):
+        process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        real_wait = process.wait
+        try:
+            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+            def wait(*, timeout):
+                if not timed_out:
+                    timed_out.append(timeout)
+                    raise subprocess.TimeoutExpired("fixture-swift", timeout)
+                return real_wait(timeout=timeout)
+            timed_out = []
+            process.wait = wait
+            with tempfile.TemporaryDirectory() as directory:
+                status, report, _ = self.timed_command(process, directory)
+            self.assertEqual(status, 124)
+            self.assertTrue(report["timedOut"])
+            self.assertFalse(report["cleanupTimedOut"])
+            self.assertIsNotNone(process.returncode)
+        finally:
+            process.wait = real_wait
+            process.wait(timeout=5)
 
     def test_invalid_deadline_cannot_disable_the_guard(self):
         for timeout in (0, -1, float("inf"), float("nan")):

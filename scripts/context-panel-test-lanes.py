@@ -441,6 +441,16 @@ def run_python_lane(
     return exit_code
 
 
+# https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c killpg1
+def kill_group_while_leader_unreaped(process: subprocess.Popen) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        return
+
+
 def time_command(
     payload: dict[str, Any], lane_name: str, report_path: Path, command: list[str],
     *, timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -497,13 +507,8 @@ def time_command(
             exit_code = 124 if timed_out else 128 + interrupted_signal
             reason = f"timed out after {timeout_seconds:g}s" if timed_out else "was interrupted"
             print(f"test lane {lane_name} {reason}; killing its process group", file=sys.stderr)
-            # Once reaped, a leader's PID can be reused by another group. Never
-            # issue a group kill from that state, even on an interrupt race.
             if process.returncode is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                kill_group_while_leader_unreaped(process)
                 try:
                     process.wait(timeout=COMMAND_CLEANUP_TIMEOUT_SECONDS)
                 except subprocess.TimeoutExpired:
