@@ -1,4 +1,5 @@
 import contextlib
+from dataclasses import replace
 from datetime import timedelta
 import hashlib
 import io
@@ -20,12 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from context_panel_surface_manifest.core import canonical_json, hash_parts  # noqa: E402
 from context_panel_validation import SessionStateStore, VisualApprovalStore, load_visual_review_plan  # noqa: E402
 from context_panel_validation import cli as cli_module  # noqa: E402
+from context_panel_validation.reference_approvals import reference_sources, review_against_references  # noqa: E402
 import test_shared_view_references as images  # noqa: E402
 import test_visual_approvals as plans  # noqa: E402
 
 APP = "shared-view.watchos-app.baseline"
 COMPLICATION = "shared-view.watchos-complication.baseline"
 PLACEMENT = "watch.complication.placement.corner"
+MAC_APP = "shared-view.macos-app.baseline"
 GIT_ENVIRONMENT = {
     "GIT_AUTHOR_NAME": "Test",
     "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -247,6 +250,54 @@ class ReferenceApprovalTests(unittest.TestCase):
                 ):
                     cli_module.run_record_reference_approvals(args)
                 self.assertEqual(self.decisions(), {})
+
+    def test_a_mac_cell_qualifies_only_with_the_session_manifest_renderer(self) -> None:
+        args = self.prepare({"macos.app/baseline.png": GRAY}, {"macos.app/baseline.png": GRAY}, {})
+        state = VisualApprovalStore(self.store).load(self.session)
+        requirement = replace(
+            next(item for item in state.requirements if item.id == APP), id=MAC_APP, surface="macos.app"
+        )
+        (self.captures / f"{MAC_APP}.png").write_bytes(GRAY)
+        manifest_id = state.current_manifest_id
+        sources = reference_sources(
+            json.loads(args.surface_comparison.read_text()),
+            json.loads(args.current_manifest.read_text()),
+            json.loads(args.previous_manifest.read_text()),
+            manifest_id,
+            self.repository,
+        )
+
+        def receipt(renderer_manifest_id: str) -> dict:
+            return {
+                "schemaVersion": 1,
+                "kind": "context-panel-shared-view-capture-receipt",
+                "pixelDiffPolicy": "advisory-only",
+                "currentManifestID": manifest_id,
+                "profiles": [{
+                    "profile": "macos",
+                    "hostMechanism": "swiftpm-shared-view-renderer",
+                    "rendererExecutableSHA256": "e" * 64,
+                    "rendererSourceSHA256": "f" * 64,
+                    "rendererSourceManifestID": renderer_manifest_id,
+                }],
+                "captures": [{
+                    "requirementID": MAC_APP,
+                    "surface": "macos.app",
+                    "cellID": "baseline",
+                    "fixtureContractID": requirement.fixture_contract_id,
+                    "status": "captured",
+                    "artifactDigest": hashlib.sha256(GRAY).hexdigest(),
+                    "hostMechanism": "swiftpm-shared-view-renderer",
+                    "appearanceMechanism": "renderer-argument",
+                    "errorCode": None,
+                }],
+            }
+
+        outcomes = review_against_references((requirement,), (), receipt(manifest_id), self.captures, sources, manifest_id)
+
+        self.assertEqual([(item.requirement_id, item.approved) for item in outcomes], [(MAC_APP, True)])
+        with self.assertRaises(cli_module.VisualApprovalError):
+            review_against_references((requirement,), (), receipt("d" * 64), self.captures, sources, manifest_id)
 
 if __name__ == "__main__":
     unittest.main()
