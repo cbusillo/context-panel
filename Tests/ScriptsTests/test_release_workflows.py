@@ -3840,6 +3840,76 @@ wait
                 check=False,
             )
 
+    def run_spotlight_discovery_fixture(
+        self, discovery: str, *, quarantine: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tool = root / "mdfind"
+            pid_file = root / "discovery.pid"
+            bodies = {
+                "empty": "exit 0",
+                "canonical": 'printf "%s\\n" "/Applications/Context Panel.app"',
+                "conflict": 'printf "%s\\n" "/fixture/Other Context Panel.app"',
+                "failed": 'printf "%s\\n" "/fixture/partial.app"; exit 1',
+                "unavailable": "exit 127",
+                "stalled": f'echo $$ > {shlex.quote(str(pid_file))}\nprintf "%s\\n" "/fixture/partial.app"\nexec /bin/sleep 60',
+            }
+            tool.write_text("#!/bin/bash\n" + bodies[discovery] + "\n")
+            tool.chmod(0o755)
+            action = 'quarantine_stale_runtime_bundles /fixture/quarantine' if quarantine else 'check_conflicting_bundles'
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            # Keep real discovery, deadline and receipt; all other host reads/writes are inert.
+            keep=" check_conflicting_bundles quarantine_stale_runtime_bundles discoverable_bundles run_with_timeout fail ok note section "
+            for name in $(declare -F | awk '{{print $3}}'); do
+              [[ "$keep" == *" $name "* ]] && continue
+              eval "$name() {{ :; }}"
+            done
+            eval "$(declare -f run_with_timeout | sed '1s/run_with_timeout/fixture_run_with_timeout/')"
+            run_with_timeout() {{ shift; fixture_run_with_timeout 1 "$@"; }}
+            unregister_stale_plugin_paths() {{ echo MUTATION; }}
+            unregister_stale_launchservices_paths() {{ echo MUTATION; }}
+            quarantine_path() {{ echo MUTATION; }}
+            failures=0
+            {action}
+            [[ "$failures" == 0 ]]
+            """
+            environment = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")
+            result = subprocess.run(
+                ["/bin/bash", "-c", command], cwd=REPO_ROOT, env=environment,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                timeout=10, check=False,
+            )
+            if pid_file.exists():
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(pid_file.read_text()), 0)
+            return result
+
+    def test_runtime_baseline_spotlight_requires_complete_discovery(self) -> None:
+        for discovery in ("empty", "canonical", "conflict", "failed", "unavailable", "stalled"):
+            with self.subTest(discovery=discovery):
+                result = self.run_spotlight_discovery_fixture(discovery)
+                complete_and_clear = discovery in ("empty", "canonical")
+                self.assertEqual(result.returncode == 0, complete_and_clear, result.stdout)
+                self.assertEqual(
+                    "OK: no discoverable conflicting Context Panel bundles" in result.stdout,
+                    complete_and_clear, result.stdout,
+                )
+                if discovery == "conflict":
+                    self.assertIn("/fixture/Other Context Panel.app", result.stdout)
+                elif discovery in ("failed", "unavailable", "stalled"):
+                    self.assertIn("discovery incomplete", result.stdout)
+                    self.assertNotIn("/fixture/partial.app", result.stdout)
+
+    def test_runtime_baseline_spotlight_failure_prevents_quarantine(self) -> None:
+        for discovery in ("failed", "unavailable", "stalled"):
+            with self.subTest(discovery=discovery):
+                result = self.run_spotlight_discovery_fixture(discovery, quarantine=True)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("discovery incomplete", result.stdout)
+                self.assertNotIn("MUTATION", result.stdout)
+
     def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
         result = self.run_loaded_refresh_agent_fixture(candidate="matching")
         self.assertEqual(result.returncode, 0, result.stdout)

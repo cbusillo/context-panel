@@ -576,7 +576,37 @@ current_snapshot_saved_at() {
 }
 
 discoverable_bundles() {
-	mdfind 'kMDItemCFBundleIdentifier == "com.shinycomputers.contextpanel" || kMDItemCFBundleIdentifier == "com.shinycomputers.contextpanel.widget" || kMDItemCFBundleIdentifier == "com.shinycomputers.contextpanel.refresh-agent"' 2>/dev/null || true
+	local bundles status
+	if bundles="$(run_with_timeout 10 mdfind 'kMDItemCFBundleIdentifier == "com.shinycomputers.contextpanel" || kMDItemCFBundleIdentifier == "com.shinycomputers.contextpanel.widget" || kMDItemCFBundleIdentifier == "com.shinycomputers.contextpanel.refresh-agent"')"; then
+		printf '%s\n' "$bundles"
+	else
+		status=$?
+		printf 'Spotlight bundle discovery incomplete (exit %s; timeout is 124)\n' "$status" >&2
+		return "$status"
+	fi
+}
+
+check_conflicting_bundles() {
+	section "Conflicting Bundles"
+	local bundles conflicts bundle
+	if ! bundles="$(discoverable_bundles)"; then
+		fail "Spotlight bundle discovery incomplete; conflicting bundle inventory unavailable"
+		return
+	fi
+	conflicts=""
+	while IFS= read -r bundle; do
+		[[ -n "$bundle" ]] || continue
+		case "$bundle" in
+		"$app_path" | "$widget_path" | "$refresh_agent_path") ;;
+		*) conflicts+="$bundle"$'\n' ;;
+		esac
+	done <<<"$bundles"
+	if [[ -z "$conflicts" ]]; then
+		ok "no discoverable conflicting Context Panel bundles"
+	else
+		printf '%s' "$conflicts"
+		fail "conflicting bundles are discoverable"
+	fi
 }
 
 local_build_bundles() {
@@ -1451,7 +1481,11 @@ btm_has_enabled_context_entries() {
 
 quarantine_stale_runtime_bundles() {
 	local quarantine="$1"
-	local bundle path
+	local bundle path bundles
+	if ! bundles="$(discoverable_bundles)"; then
+		fail "Spotlight bundle discovery incomplete; refusing bundle quarantine"
+		return 1
+	fi
 	unregister_stale_plugin_paths
 	unregister_stale_launchservices_paths
 	while IFS= read -r bundle; do
@@ -1466,7 +1500,7 @@ quarantine_stale_runtime_bundles() {
 			fi
 			;;
 		esac
-	done < <(discoverable_bundles)
+	done <<<"$bundles"
 
 	quarantine_path "$repo_root/dist/Context Panel.app" "$quarantine"
 	while IFS= read -r -d '' bundle; do
@@ -1795,23 +1829,7 @@ check_runtime() {
 		fail "contextpanel:// does not resolve to installed runtime app"
 	fi
 
-	section "Conflicting Bundles"
-	local bundles conflicts
-	bundles="$(discoverable_bundles)"
-	conflicts=""
-	while IFS= read -r bundle; do
-		[[ -n "$bundle" ]] || continue
-		case "$bundle" in
-		"$app_path" | "$widget_path" | "$refresh_agent_path") ;;
-		*) conflicts+="$bundle"$'\n' ;;
-		esac
-	done <<<"$bundles"
-	if [[ -z "$conflicts" ]]; then
-		ok "no discoverable conflicting Context Panel bundles"
-	else
-		printf '%s' "$conflicts"
-		fail "conflicting bundles are discoverable"
-	fi
+	check_conflicting_bundles
 
 	section "Local Build Bundles"
 	local local_bundles local_conflicts

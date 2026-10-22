@@ -232,6 +232,10 @@ These inputs select candidate identity; the release gate still owns approved
 RC lineage and human approval. Without a candidate manifest, the baseline
 continues to compare against its checkout. The candidate option is check-only.
 
+Spotlight bundle discovery has a bounded deadline. A timeout or unavailable
+discovery fails the receipt as an incomplete conflict inventory and stops
+bundle quarantine; partial results never establish a clean inventory.
+
 The baseline verifies each running refresh agent's loaded executable path and
 vnode (device/inode) against the canonical installed helper. It reads launchd's
 PID even when the process command is only the bundle identifier. A moved,
