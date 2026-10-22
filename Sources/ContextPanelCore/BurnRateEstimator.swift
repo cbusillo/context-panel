@@ -20,6 +20,7 @@ public struct ObservedBurnRate: Codable, Equatable, Sendable {
 
 public enum MainLimitBurnRateEstimator {
     public static let historyLookback: TimeInterval = 24 * 3_600
+    private static let resetJitterTolerance: TimeInterval = 5
 
     public static func observedBurnRates(
         current: UsageSnapshot,
@@ -156,11 +157,12 @@ public enum MainLimitBurnRateEstimator {
                 }
                 switch (previous.resetsAt, current.resetsAt) {
                 case let (previousReset?, currentReset?):
-                    guard previousReset == currentReset else {
+                    // Provider timestamps can drift slightly without starting a new allowance.
+                    guard abs(previousReset.timeIntervalSince(currentReset)) <= resetJitterTolerance else {
                         highWaterUsed = current.used
                         continue
                     }
-                    guard !(previousReset > previous.date && previousReset <= current.date) else {
+                    guard ![previousReset, currentReset].contains(where: { $0 > previous.date && $0 <= current.date }) else {
                         highWaterUsed = current.used
                         continue
                     }
