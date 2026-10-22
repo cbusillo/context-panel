@@ -42,7 +42,7 @@ public struct CodexCreditsSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable {
+public struct CodexRateLimitSnapshot: Equatable, Identifiable, Sendable {
     public let id: String
     public let limitName: String?
     public let planType: String
@@ -50,6 +50,8 @@ public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable
     public let secondary: CodexRateLimitWindow?
     public let credits: CodexCreditsSnapshot?
     public let rateLimitReachedType: CodexRateLimitReachedType?
+    /// Codex says usage is blocked now, whatever the window percentages show.
+    public let usageBlocked: Bool
 
     public init(
         id: String,
@@ -58,7 +60,8 @@ public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable
         primary: CodexRateLimitWindow?,
         secondary: CodexRateLimitWindow?,
         credits: CodexCreditsSnapshot?,
-        rateLimitReachedType: CodexRateLimitReachedType?
+        rateLimitReachedType: CodexRateLimitReachedType?,
+        usageBlocked: Bool = false
     ) {
         self.id = id
         self.limitName = limitName
@@ -67,6 +70,7 @@ public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable
         self.secondary = secondary
         self.credits = credits
         self.rateLimitReachedType = rateLimitReachedType
+        self.usageBlocked = usageBlocked
     }
 
     public var displayName: String {
@@ -661,6 +665,13 @@ public enum CodexUsagePayloadParser {
     }
 
     private static func snapshots(from payload: CodexUsagePayload, modelAvailability: CodexModelAvailability?) -> [CodexRateLimitSnapshot] {
+        let credits = payload.credits?.normalizedCredits
+        let reachedType = payload.rateLimitReachedType?.normalizedKind
+        // The Codex client's own rule: a recognized reached type or a reached spend control
+        // stops usage, and included usage that is not allowed stops it unless credits cover it.
+        let usageBlocked = (reachedType.map { $0 != .unknown } ?? false)
+            || payload.spendControl?.reached == true
+            || (payload.rateLimit?.allowed == false && !(credits.map { $0.hasCredits || $0.unlimited } ?? false))
         var snapshots = [
             CodexRateLimitSnapshot(
                 id: "codex",
@@ -668,8 +679,9 @@ public enum CodexUsagePayloadParser {
                 planType: payload.planType,
                 primary: payload.rateLimit?.primaryWindow?.normalizedWindow,
                 secondary: payload.rateLimit?.secondaryWindow?.normalizedWindow,
-                credits: payload.credits?.normalizedCredits,
-                rateLimitReachedType: payload.rateLimitReachedType?.normalizedKind
+                credits: credits,
+                rateLimitReachedType: reachedType,
+                usageBlocked: usageBlocked
             )
         ]
 
@@ -739,6 +751,7 @@ private struct CodexUsagePayload: Decodable {
     let credits: CodexCreditsDetails?
     let additionalRateLimits: [CodexAdditionalRateLimitDetails]
     let rateLimitReachedType: CodexReachedType?
+    let spendControl: CodexSpendControlDetails?
 
     enum CodingKeys: String, CodingKey {
         case planType = "plan_type"
@@ -746,6 +759,7 @@ private struct CodexUsagePayload: Decodable {
         case credits
         case additionalRateLimits = "additional_rate_limits"
         case rateLimitReachedType = "rate_limit_reached_type"
+        case spendControl = "spend_control"
     }
 
     init(from decoder: Decoder) throws {
@@ -755,7 +769,12 @@ private struct CodexUsagePayload: Decodable {
         credits = try container.decodeIfPresent(CodexCreditsDetails.self, forKey: .credits)
         additionalRateLimits = try container.decodeIfPresent([CodexAdditionalRateLimitDetails].self, forKey: .additionalRateLimits) ?? []
         rateLimitReachedType = try container.decodeIfPresent(CodexReachedType.self, forKey: .rateLimitReachedType)
+        spendControl = try? container.decodeIfPresent(CodexSpendControlDetails.self, forKey: .spendControl)
     }
+}
+
+private struct CodexSpendControlDetails: Decodable {
+    let reached: Bool
 }
 
 private struct CodexResetCreditCountEnvelope: Decodable {
@@ -877,10 +896,12 @@ private struct CodexAuthTokenPayload: Decodable {
 }
 
 private struct CodexRateLimitDetails: Decodable {
+    let allowed: Bool?
     let primaryWindow: CodexWindowSnapshot?
     let secondaryWindow: CodexWindowSnapshot?
 
     enum CodingKeys: String, CodingKey {
+        case allowed
         case primaryWindow = "primary_window"
         case secondaryWindow = "secondary_window"
     }
@@ -1014,7 +1035,7 @@ private func codexUsageLimit(
         resetsAt: window.resetsAt,
         lastUpdatedAt: observedAt,
         confidence: .observed,
-        statusOverride: statusOverride,
+        statusOverride: statusOverride ?? (snapshot.usageBlocked ? .limited : nil),
         note: "plan: \(snapshot.planType)"
     )
 }

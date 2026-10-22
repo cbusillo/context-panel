@@ -95,6 +95,13 @@ outer field is absent or null, it remains absent; any malformed present field,
 including an object with a missing, null, or malformed nested type, degrades to
 the explicit unknown state.
 
+When the usage read says Codex is blocked now, the account's Codex limits show
+Limited even if their window percentages are low. This follows the open-source
+Codex client: a recognized `rate_limit_reached_type` (for example
+`workspace_owner_credits_depleted`), `spend_control.reached`, or
+`rate_limit.allowed` false without usable credits blocks usage. An unknown
+reached type does not, and `limit_reached` is not used.
+
 ## OpenAI Reset Credits
 
 The verified OpenAI Codex read contract exposes an account-level summary under
