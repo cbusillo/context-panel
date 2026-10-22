@@ -3841,7 +3841,7 @@ wait
             )
 
     def run_spotlight_discovery_fixture(
-        self, discovery: str, *, quarantine: bool = False,
+        self, discovery: str, *, action: str = "check",
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -3853,15 +3853,21 @@ wait
                 "conflict": 'printf "%s\\n" "/fixture/Other Context Panel.app"',
                 "failed": 'printf "%s\\n" "/fixture/partial.app"; exit 1',
                 "unavailable": "exit 127",
+                "stderr": 'echo "Spotlight informational diagnostic" >&2; exit 0',
                 "stalled": f'echo $$ > {shlex.quote(str(pid_file))}\nprintf "%s\\n" "/fixture/partial.app"\nexec /bin/sleep 60',
             }
             tool.write_text("#!/bin/bash\n" + bodies[discovery] + "\n")
             tool.chmod(0o755)
-            action = 'quarantine_stale_runtime_bundles /fixture/quarantine' if quarantine else 'check_conflicting_bundles'
+            actions = {
+                "check": "check_conflicting_bundles",
+                "install": "install_runtime",
+                "reset": "reset_runtime",
+                "quarantine": 'bundles="$(discoverable_bundles)"; quarantine_stale_runtime_bundles /fixture/quarantine "$bundles"',
+            }
             command = f"""
             source scripts/context-panel-runtime-baseline.sh --source-only
             # Keep real discovery, deadline and receipt; all other host reads/writes are inert.
-            keep=" check_conflicting_bundles quarantine_stale_runtime_bundles discoverable_bundles run_with_timeout fail ok note section "
+            keep=" is_runtime_or_build_artifact check_conflicting_bundles install_runtime reset_runtime quarantine_stale_runtime_bundles discoverable_bundles run_with_timeout fail ok note section "
             for name in $(declare -F | awk '{{print $3}}'); do
               [[ "$keep" == *" $name "* ]] && continue
               eval "$name() {{ :; }}"
@@ -3870,9 +3876,14 @@ wait
             run_with_timeout() {{ shift; fixture_run_with_timeout 1 "$@"; }}
             unregister_stale_plugin_paths() {{ echo MUTATION; }}
             unregister_stale_launchservices_paths() {{ echo MUTATION; }}
-            quarantine_path() {{ echo MUTATION; }}
+            quarantine_path() {{ printf 'MUTATION %s\\n' "$1"; }}
+            remove_prior_baseline_trash() {{ echo MUTATION; }}
+            stop_context_panel() {{ echo MUTATION; }}
+            bootout_refresh_agent() {{ echo MUTATION; }}
+            mkdir() {{ echo MUTATION; }}
+            find() {{ :; }}
             failures=0
-            {action}
+            {actions[action]}
             [[ "$failures" == 0 ]]
             """
             environment = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")
@@ -3887,28 +3898,39 @@ wait
             return result
 
     def test_runtime_baseline_spotlight_requires_complete_discovery(self) -> None:
-        for discovery in ("empty", "canonical", "conflict", "failed", "unavailable", "stalled"):
+        for discovery in ("empty", "canonical", "stderr", "conflict", "failed", "unavailable", "stalled"):
             with self.subTest(discovery=discovery):
                 result = self.run_spotlight_discovery_fixture(discovery)
-                complete_and_clear = discovery in ("empty", "canonical")
+                complete_and_clear = discovery in ("empty", "canonical", "stderr")
                 self.assertEqual(result.returncode == 0, complete_and_clear, result.stdout)
                 self.assertEqual(
-                    "OK: no discoverable conflicting Context Panel bundles" in result.stdout,
+                    "OK:" in result.stdout,
                     complete_and_clear, result.stdout,
                 )
                 if discovery == "conflict":
                     self.assertIn("/fixture/Other Context Panel.app", result.stdout)
                 elif discovery in ("failed", "unavailable", "stalled"):
-                    self.assertIn("discovery incomplete", result.stdout)
+                    self.assertIn("FAIL:", result.stdout)
                     self.assertNotIn("/fixture/partial.app", result.stdout)
 
-    def test_runtime_baseline_spotlight_failure_prevents_quarantine(self) -> None:
-        for discovery in ("failed", "unavailable", "stalled"):
+    def test_runtime_baseline_spotlight_failure_prevents_runtime_teardown(self) -> None:
+        for action in ("install", "reset"):
+            for discovery in ("failed", "unavailable", "stalled"):
+                with self.subTest(action=action, discovery=discovery):
+                    result = self.run_spotlight_discovery_fixture(discovery, action=action)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("FAIL:", result.stdout)
+                    self.assertNotIn("MUTATION", result.stdout)
+
+    def test_runtime_baseline_spotlight_success_permits_quarantine(self) -> None:
+        for discovery in ("empty", "canonical", "conflict"):
             with self.subTest(discovery=discovery):
-                result = self.run_spotlight_discovery_fixture(discovery, quarantine=True)
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("discovery incomplete", result.stdout)
-                self.assertNotIn("MUTATION", result.stdout)
+                result = self.run_spotlight_discovery_fixture(discovery, action="quarantine")
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn("MUTATION", result.stdout)
+                if discovery == "conflict":
+                    self.assertIn("MUTATION /fixture/Other Context Panel.app", result.stdout)
+                self.assertNotIn("MUTATION /Applications/Context Panel.app", result.stdout)
 
     def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
         result = self.run_loaded_refresh_agent_fixture(candidate="matching")

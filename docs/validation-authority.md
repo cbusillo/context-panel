@@ -234,7 +234,7 @@ continues to compare against its checkout. The candidate option is check-only.
 
 Spotlight bundle discovery has a bounded deadline. A timeout or unavailable
 discovery fails the receipt as an incomplete conflict inventory and stops
-bundle quarantine; partial results never establish a clean inventory.
+install/reset before runtime teardown; partial results never establish a clean inventory.
 
 The baseline verifies each running refresh agent's loaded executable path and
 vnode (device/inode) against the canonical installed helper. It reads launchd's
