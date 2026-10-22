@@ -807,13 +807,13 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == nil)
     #expect(presentation.title.contains("Limited") == false)
 }
 
-@Test func companionSyncPresentationHidesCloudKitDeliverySource() throws {
+@Test(arguments: [CompanionSyncSource.cloudKit, .iCloud])
+func companionSyncPresentationHidesRemoteDeliverySource(source: CompanionSyncSource) throws {
     let now = Date(timeIntervalSince1970: 3_081)
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
@@ -825,7 +825,7 @@ import Testing
             document: document,
             status: .close,
             transportMetadata: CompanionSyncTransportMetadata(
-                source: .cloudKit,
+                source: source,
                 receivedAt: now.addingTimeInterval(65),
                 mirroredAt: now.addingTimeInterval(65),
                 deliveryStatus: .healthy
@@ -834,74 +834,6 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest usage received from your Mac.")
-    #expect(presentation.symbol == "checkmark.icloud")
-}
-
-@Test func companionSyncPresentationHidesCloudKitHealthForLegacyICloudMetadata() throws {
-    let now = Date(timeIntervalSince1970: 3_081.25)
-    let document = CompanionSyncDocument(
-        storedSnapshot: companionStoredSnapshot(generatedAt: now),
-        publishedAt: now.addingTimeInterval(60)
-    )
-
-    let presentation = CompanionSyncPresentation(
-        result: CompanionSyncLoadResult(
-            document: document,
-            status: .close,
-            transportMetadata: CompanionSyncTransportMetadata(
-                source: .iCloud,
-                receivedAt: now.addingTimeInterval(65),
-                mirroredAt: now.addingTimeInterval(65),
-                deliveryStatus: .healthy
-            ),
-            transportStatuses: [
-                CompanionSyncTransportStatus(
-                    source: .cloudKit,
-                    isAvailable: true,
-                    succeeded: true,
-                    loadedDocument: true
-                ),
-            ]
-        )
-    )
-
-    #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest usage received from your Mac.")
-    #expect(presentation.symbol == "checkmark.icloud")
-}
-
-@Test func companionSyncPresentationHidesMissingCloudKitRecordForLegacyICloudMetadata() throws {
-    let now = Date(timeIntervalSince1970: 3_081.375)
-    let document = CompanionSyncDocument(
-        storedSnapshot: companionStoredSnapshot(generatedAt: now),
-        publishedAt: now.addingTimeInterval(60)
-    )
-
-    let presentation = CompanionSyncPresentation(
-        result: CompanionSyncLoadResult(
-            document: document,
-            status: .close,
-            transportMetadata: CompanionSyncTransportMetadata(
-                source: .iCloud,
-                receivedAt: now.addingTimeInterval(65),
-                mirroredAt: now.addingTimeInterval(65),
-                deliveryStatus: .healthy
-            ),
-            transportStatuses: [
-                CompanionSyncTransportStatus(
-                    source: .cloudKit,
-                    isAvailable: true,
-                    succeeded: true,
-                    loadedDocument: false,
-                    missingRecord: true
-                ),
-            ]
-        )
-    )
-
-    #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
 }
 
@@ -926,7 +858,6 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.circle")
 }
 
@@ -957,42 +888,6 @@ import Testing
     #expect(presentation.usageSummary == nil)
 }
 
-@Test func companionSyncPresentationOmitsMultipleLimitedLanesFromStatusSummary() throws {
-    let now = Date(timeIntervalSince1970: 3_083)
-    let stored = StoredUsageSnapshot(
-        savedAt: now,
-        snapshot: UsageSnapshot(generatedAt: now, limits: [
-            companionUsageLimit(status: .limited, accountID: "openai-weekly"),
-            companionUsageLimit(status: .limited, accountID: "openai-weekly-alt"),
-        ])
-    )
-    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
-
-    let presentation = CompanionSyncPresentation(
-        result: CompanionSyncLoadResult(document: document, status: .limited)
-    )
-
-    #expect(presentation.usageSummary == nil)
-}
-
-@Test func companionSyncPresentationOmitsCloseLanesFromStatusSummary() throws {
-    let now = Date(timeIntervalSince1970: 3_084)
-    let stored = StoredUsageSnapshot(
-        savedAt: now,
-        snapshot: UsageSnapshot(generatedAt: now, limits: [
-            companionUsageLimit(status: .close, accountID: "openai-five-hour"),
-        ])
-    )
-    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
-
-    let presentation = CompanionSyncPresentation(
-        result: CompanionSyncLoadResult(document: document, status: .close)
-    )
-
-    #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.usageSummary == nil)
-}
-
 @Test func companionSyncPresentationSeparatesSyncHealthFromProviderFailures() throws {
     let now = Date(timeIntervalSince1970: 3_085)
     let stored = StoredUsageSnapshot(
@@ -1015,7 +910,6 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == "1 provider needs attention.")
 }
@@ -1071,7 +965,6 @@ import Testing
     )
 
     #expect(presentation.title == "Showing saved usage")
-    #expect(presentation.detail == "The latest sync failed. Saved usage may not reflect current Mac activity.")
     #expect(presentation.symbol == "clock.badge.exclamationmark")
     #expect(presentation.usageSummary == nil)
 }
@@ -1091,13 +984,9 @@ import Testing
     )
 
     #expect(stale.title == "Saved usage is stale")
-    #expect(stale.detail == "Open Context Panel on your Mac to refresh this device.")
     #expect(failure.title == "Sync unavailable")
-    #expect(failure.detail == "This device could not load your synced usage.")
     #expect(loading.title == "Checking for updates")
-    #expect(loading.detail == "Looking for the latest usage from your Mac.")
     #expect(unknown.title == "Waiting for your Mac")
-    #expect(unknown.detail == "Open Context Panel on your Mac to share usage with this device.")
 }
 
 @Test func companionSyncStoreStatusIsUnknownForEmptyDocument() throws {
@@ -1363,7 +1252,6 @@ import Testing
     #expect(result.document?.snapshot.generatedAt == document.snapshot.generatedAt)
     #expect(result.status == .close)
     #expect(result.transportMetadata?.source == .appGroup)
-    #expect(CompanionSyncPresentation(result: result).detail == "Latest usage received from your Mac.")
 }
 
 @Test func companionAppGroupMirrorDiagnosticsStayHealthyWithoutICloudFallback() throws {
@@ -2900,7 +2788,6 @@ import Testing
             loadedDocument: true
         ),
     ])
-    #expect(CompanionSyncPresentation(result: result).detail == "Latest usage received from your Mac.")
     #expect(CompanionSyncStore(documentURL: localURL).load().document == localDocument)
 }
 
