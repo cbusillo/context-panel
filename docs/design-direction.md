@@ -23,7 +23,8 @@ so every surface draws the same picture at a different size.
 - **A horizon per account.** Each account follows the long window that runs out
   first before its reset, otherwise its tightest long window. It shows the
   share left now, the observed burn, the run-out time when that comes before
-  the reset, and the share to spare at the reset.
+  the reset, and the share to spare at the reset. If the provider reports only
+  a short window, the horizon follows that window without inventing a weekly allowance.
 - **Red means one thing:** an account runs out before its reset. It is written
   in red in one place per surface; rows and cards say the same fact calmly.
 - **Provider identity** is the provider's name in its own hue (teal OpenAI,

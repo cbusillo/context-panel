@@ -309,7 +309,9 @@ public extension AccountOverview.Account {
     }
 
     func horizon(now: Date) -> AccountHorizon {
-        let window = horizonWindow(now: now)
+        // A provider may report only its short allowance. Forecast that real window,
+        // without inventing a weekly allowance or changing long-window selection.
+        let window = horizonWindow(now: now) ?? shortWindow
         let current = isReliable
         let reset = window?.naturalResetAt.flatMap { $0 > now ? $0 : nil }
         let burn = current ? window?.burnFractionPerHour : nil

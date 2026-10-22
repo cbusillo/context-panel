@@ -123,6 +123,42 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
 
 // MARK: Horizon
 
+@Test(arguments: [5.0, 30.0, nil])
+func horizonUsesTheReportedShortWindowWhenThereIsNoWeek(burn: Double?) throws {
+    let reset = totalsNow.addingTimeInterval(4 * 3_600)
+    let payload = """
+    {"rate_limit":{"primary_window":{"used_percent":50,"limit_window_seconds":18000,"reset_at":\(Int(reset.timeIntervalSince1970))}}}
+    """
+    let parsed = try #require(CodexUsagePayloadParser.snapshots(from: Data(payload.utf8)).first)
+    let limits = codexUsageLimits(from: parsed, accountID: "short-only", accountName: "Short only", observedAt: totalsNow)
+    let limit = try #require(limits.first)
+    let rates = burn.map { [limit.accountID: [limit.id: ObservedBurnRate(limitID: limit.id,
+        unitsPerHour: $0, observedDurationHours: 1, sampleCount: 2)]] } ?? [:]
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: totalsNow, limits: limits),
+        reports: [], now: totalsNow, accountBurnRates: rates)
+    let account = try #require(overview.accounts.first)
+    let horizon = account.horizon(now: totalsNow)
+    #expect(account.longWindow == nil)
+    #expect(horizon.window == account.shortWindow)
+    #expect(horizon.remaining == limit.remainingCapacityRatio)
+    #expect(horizon.resetAt == reset)
+    if let burn {
+        #expect(overview.headline(now: totalsNow).measuringCount == 0)
+        if burn == 5 {
+            #expect(abs((horizon.spare ?? -1) - 0.3) < 0.0001)
+            #expect(horizon.runOutAt == nil)
+            #expect(overview.headline(now: totalsNow).lastingCount == 1)
+        } else {
+            let runOut = try #require(horizon.runOutAt)
+            #expect(abs(runOut.timeIntervalSince(totalsNow) - 6_000) < 1)
+            #expect(overview.headline(now: totalsNow).shortCount == 1)
+        }
+    } else {
+        #expect(horizon.spare == nil)
+        #expect(overview.headline(now: totalsNow).measuringCount == 1)
+    }
+}
+
 @Test func horizonProjectsRunOutSpareAndTheEmptyGap() throws {
     // a: 20% left at 1%/h, reset in 100h: empty at 20h, empty 80h. b: 60% left at 0.5%/h, reset in 50h: 35% to spare.
     let overview = totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 40, 50, 0.5, 0), ("c", .anthropic, 10, 100, nil, 0)])
