@@ -183,14 +183,18 @@ import Testing
             "secondary_window": { "used_percent": 4, "limit_window_seconds": 604800, "reset_at": 1788998400 }
           },
           "credits": { "has_credits": \(testCase.hasCredits), "unlimited": false, "balance": "0" },
-          "additional_rate_limits": []\(testCase.extra)
+          "additional_rate_limits": [{
+            "limit_name": "GPT-5.3-Codex-Spark", "metered_feature": "codex_bengalfox",
+            "rate_limit": { "allowed": true, "limit_reached": false,
+              "primary_window": { "used_percent": 1, "limit_window_seconds": 18000, "reset_at": 1788400000 } }
+          }]\(testCase.extra)
         }
         """
         let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8))
-        let limits = codexUsageLimits(
-            from: snapshots[0], accountID: "acct", accountName: "Work", observedAt: Date(timeIntervalSince1970: 0)
-        )
-        #expect(limits.count == 2)
+        let limits = snapshots.flatMap {
+            codexUsageLimits(from: $0, accountID: "acct", accountName: "Work", observedAt: Date(timeIntervalSince1970: 0))
+        }
+        #expect(limits.count == 3)
         #expect(limits.allSatisfy { $0.status == testCase.expected }, "\(testCase.rateLimit)\(testCase.extra)")
     }
 }

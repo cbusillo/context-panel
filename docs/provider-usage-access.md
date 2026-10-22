@@ -100,7 +100,9 @@ Limited even if their window percentages are low. This follows the open-source
 Codex client: a recognized `rate_limit_reached_type` (for example
 `workspace_owner_credits_depleted`), `spend_control.reached`, or
 `rate_limit.allowed` false without usable credits blocks usage. An unknown
-reached type does not, and `limit_reached` is not used.
+reached type does not, and `limit_reached` is not used. The block is
+account-wide, so model-specific limits show Limited too. A blocked read with no
+windows at all has no limit to mark and stays Unknown.
 
 ## OpenAI Reset Credits
 

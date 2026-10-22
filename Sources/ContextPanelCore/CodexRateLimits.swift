@@ -669,6 +669,7 @@ public enum CodexUsagePayloadParser {
         let reachedType = payload.rateLimitReachedType?.normalizedKind
         // The Codex client's own rule: a recognized reached type or a reached spend control
         // stops usage, and included usage that is not allowed stops it unless credits cover it.
+        // The block is account-wide, so model-specific limits share it.
         let usageBlocked = (reachedType.map { $0 != .unknown } ?? false)
             || payload.spendControl?.reached == true
             || (payload.rateLimit?.allowed == false && !(credits.map { $0.hasCredits || $0.unlimited } ?? false))
@@ -704,7 +705,8 @@ public enum CodexUsagePayloadParser {
                 primary: additional.rateLimit?.primaryWindow?.normalizedWindow,
                 secondary: additional.rateLimit?.secondaryWindow?.normalizedWindow,
                 credits: nil,
-                rateLimitReachedType: nil
+                rateLimitReachedType: nil,
+                usageBlocked: usageBlocked
             )
         })
 
