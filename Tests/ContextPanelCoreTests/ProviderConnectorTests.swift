@@ -2441,20 +2441,23 @@ func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(s
         return (report.status, payload?["refresh_token"])
     }
 
-    store.failsSaves = true
+    store.allowedSaves = 0
     #expect(try await refresh(rotatingTo: "rotated-1") == (.healthy, "refresh-secret"))
     #expect(try await refresh(rotatingTo: "rotated-2") == (.healthy, "rotated-1"))
-    store.failsSaves = false
+    // The retried save succeeds and the new rotation's save fails.
+    store.allowedSaves = 1
     #expect(try await refresh(rotatingTo: "rotated-3") == (.healthy, "rotated-2"))
-    #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "rotated-3")
+    store.allowedSaves = nil
+    #expect(try await refresh(rotatingTo: "rotated-4") == (.healthy, "rotated-3"))
+    #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "rotated-4")
 
     // A newer Keychain copy, such as a new sign-in, wins over a held one.
-    store.failsSaves = true
-    _ = try await refresh(rotatingTo: "rotated-4")
-    store.failsSaves = false
+    store.allowedSaves = 0
+    _ = try await refresh(rotatingTo: "rotated-5")
+    store.allowedSaves = nil
     try store.save(try claudeCredentialsData(accessToken: "signed-in", refreshToken: "signed-in-refresh",
         expiresAt: Date(timeIntervalSince1970: 0)), accountID: accountID)
-    #expect(try await refresh(rotatingTo: "rotated-5") == (.healthy, "signed-in-refresh"))
+    #expect(try await refresh(rotatingTo: "rotated-6") == (.healthy, "signed-in-refresh"))
 }
 
 @Test func claudeOAuthConnectorUsesExpirationSkewBoundary() async throws {
@@ -3301,7 +3304,8 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
     private var storage: [String: Data]
     private(set) var savedAccountID: String?
     private(set) var savedData: Data?
-    var failsSaves = false
+    /// Saves left before each save throws; nil never throws.
+    var allowedSaves: Int?
 
     init(storage: [String: Data]) {
         self.storage = storage
@@ -3312,7 +3316,10 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
     }
 
     func save(_ data: Data, accountID: String) throws {
-        if failsSaves { throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed) }
+        if let allowedSaves {
+            guard allowedSaves > 0 else { throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed) }
+            self.allowedSaves = allowedSaves - 1
+        }
         storage[accountID] = data
         savedAccountID = accountID
         savedData = data
