@@ -47,9 +47,8 @@ swift build
 swift test --filter 'SelectedTestClass'
 ```
 
-Focused local tests and the complete CI sequence are declared in
-[`.github/github.json`](.github/github.json). [Test lanes](docs/test-lanes.md)
-explain Python selection and safety modules. Full suites run in CI before ready.
+[Test rules](AGENTS.md#test-rules) and [test lanes](docs/test-lanes.md) explain
+focused local selection and the complete CI sequence in `.github/github.json`.
 
 Useful entry points:
 

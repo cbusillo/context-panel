@@ -40,8 +40,6 @@
       "ci": "scripts/commit-gate.sh && python3 scripts/context-panel-test-lanes.py run --lane routine-ci-python",
       "lanesManifest": "Config/ContextPanelTestLanes.json",
       "lanesValidate": "uv run --no-project python scripts/context-panel-test-lanes.py validate",
-      "fastPython": "uv run --no-project python scripts/context-panel-test-lanes.py run --lane fast-local-python",
-      "routinePython": "uv run --no-project --with cryptography --with PyYAML python scripts/context-panel-test-lanes.py run --lane routine-ci-python",
       "pythonWorkers": "Config/ContextPanelTestLanes.json workersByFile (pytest-xdist via uv for independent unittest fixtures; --serial uses standard unittest; docs/test-lanes.md)",
       "changeDetectorWarnings": ".github/workflows/ci.yml swift-tests (warning-only shared scanner checked out from cbusillo/codex-skills; annotates all tracked tests on every run; https://github.com/cbusillo/codex-skills/blob/main/skills/references/test-quality.md)"
     },

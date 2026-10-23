@@ -415,12 +415,9 @@ shasum -a 256 \
 If any of those point to different build roots or unexpected entitlements, stop
 and report the mixed-runtime state before making more fixes.
 
-Before publishing source changes, run focused local tests plus required lint,
-type checks and inspection under the [test guidance](../AGENTS.md#test-rules).
-Safety changes also run complete affected modules locally. The complete test
-sequence declared in `.github/github.json` runs only in CI and must pass for the
-current head before `ready` or merge. This does not replace installed-runtime,
-release or visual evidence when that behavior changes.
+Source-only validation follows the [test rules](../AGENTS.md#test-rules).
+Installed-runtime, release and visual evidence above still applies when those
+behaviors change.
 
 In CI, [`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py) decides
 which jobs a change needs; its docstring owns the rules.
