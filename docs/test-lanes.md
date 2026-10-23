@@ -8,8 +8,8 @@ places it in a lane.
 
 ## Lane Boundaries
 
-- `fast-local-python`: the focused Python contract tests included in the local
-  commit gate.
+- `fast-local-python`: the historical lane name for baseline hermetic Python
+  contract tests, now run as part of the complete CI gate.
 - `routine-ci-python`: hermetic Python `unittest` files that use fixtures, fake
   clients, and temporary directories. They do not require credentials, signed
   artifacts, provider access, or devices.
@@ -51,14 +51,26 @@ Validate complete ownership:
 python3 scripts/context-panel-test-lanes.py validate
 ```
 
-Run the focused local Python lane with per-file timing (`uv` is required for
+Run focused local Python fixture modules directly, for example:
+
+```sh
+uv run --no-project --with cryptography --with PyYAML python -m unittest \
+  Tests.ScriptsTests.test_ci_change_scope
+```
+
+Use `qualityGate.test.local` for a selected Swift test class or method. For
+safety areas, run the complete covering modules described in `AGENTS.md`.
+Do not run the full commit gate locally. The complete CI sequence is declared
+in `.github/github.json`; the existing lane names and ownership remain intact.
+
+CI runs the baseline Python lane with per-file timing (`uv` is required for
 files configured with parallel workers):
 
 ```sh
 python3 scripts/context-panel-test-lanes.py run --lane fast-local-python
 ```
 
-Run the complementary routine CI Python lane with per-file timing:
+CI also runs the complementary routine Python lane with per-file timing:
 
 ```sh
 python3 scripts/context-panel-test-lanes.py run --lane routine-ci-python
@@ -73,11 +85,9 @@ Other files remain serial. A missing runner fails that file, preserves its
 report and continues later files.
 Only independent, hermetic fixture tests belong in this configuration. Reports
 record elapsed wall time and worker count for each file, including worker startup.
-For debugging or a machine without the parallel dependencies, add `--serial`
-to run every file with the standard unittest runner. The commit gate forwards
-that option with `scripts/commit-gate.sh --serial-python`; it still runs every
-focused Python file and the Swift build/tests. Combine with `--skip-swift` only
-when the changed paths cannot affect Swift.
+For CI lane diagnostics without parallel dependencies, add `--serial` to the
+lane command to use the standard unittest runner. The commit gate also retains
+its existing diagnostic flags; CI runs it without `--skip-swift` on every head.
 
 List the files in a safe lane:
 
@@ -86,7 +96,7 @@ python3 scripts/context-panel-test-lanes.py list \
   --lane routine-ci-python --safe
 ```
 
-The commit gate runs the focused Python lane and times the complete Swift lane.
+The CI commit gate runs the baseline Python lane and times the complete Swift lane.
 CI also runs the complementary routine Python lane. Reports are written under
 `.build/test-lane-timings/` and uploaded by CI. They
 contain repository-relative test paths, durations, exit status, source commit,
@@ -108,14 +118,6 @@ output pipe remains open in a leftover child after the gate has returned,
 including a child stuck in the kernel.
 A hang must fail the gate rather than occupy the runner until GitHub's default
 timeout.
-
-For a deliberately slower local diagnostic, choose a finite positive deadline:
-
-```sh
-swift build --build-tests
-python3 scripts/context-panel-test-lanes.py time-command \
-  --lane routine-ci-swift --timeout-seconds 600 -- swift test --skip-build
-```
 
 ## JetBrains Inspection Preparation
 

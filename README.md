@@ -44,9 +44,12 @@ time, and troubleshooting when a provider changes behavior.
 
 ```sh
 swift build
-swift test
-scripts/commit-gate.sh
+swift test --filter 'SelectedTestClass'
 ```
+
+Focused local tests and the complete CI sequence are declared in
+[`.github/github.json`](.github/github.json). [Test lanes](docs/test-lanes.md)
+explain Python selection and safety modules. Full suites run in CI before ready.
 
 Useful entry points:
 
