@@ -44,9 +44,11 @@ time, and troubleshooting when a provider changes behavior.
 
 ```sh
 swift build
-swift test
-scripts/commit-gate.sh
+swift test --filter '{test_filter}'
 ```
+
+[Test rules](AGENTS.md#test-rules) and [test lanes](docs/test-lanes.md) explain
+focused local selection and the complete CI sequence in `.github/github.json`.
 
 Useful entry points:
 

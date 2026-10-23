@@ -29,8 +29,6 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
-# Paths that cannot change the SwiftPM build, the Swift tests, or the companion
-# Xcode builds. Anything not listed here is treated as product-affecting.
 PRODUCT_IRRELEVANT_PREFIXES = (
     "docs/",
     "Tests/ScriptsTests/",
@@ -42,11 +40,6 @@ PRODUCT_IRRELEVANT_PATHS = ("Config/ContextPanelTestLanes.json",)
 # Markdown inside a build input directory could be a bundled resource.
 BUILD_INPUT_PREFIXES = ("Config/", "Sources/", "Tools/")
 
-# Python tooling is product-irrelevant except for the pieces the build or this
-# gate executes: the Xcode stamp phase runs the surface manifest and everything
-# it imports, the commit gate times `swift test` through the lane runner, and
-# this script decides what runs at all. A test checks this list against the
-# surface manifest's real import closure.
 PRODUCT_RELEVANT_PYTHON = (
     "scripts/ci-change-scope.py",
     "scripts/context-panel-surface-manifest.py",

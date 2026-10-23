@@ -21,9 +21,6 @@ DEFAULT_REPORT_DIRECTORY = REPO_ROOT / ".build" / "test-lane-timings"
 ALLOWED_RUNNERS = {"manual", "none", "python-unittest", "swiftpm"}
 ALLOWED_CI_POLICIES = {"safe", "local-only", "trusted-only", "device-only", "never"}
 ALLOWED_ROLES = {"test", "support"}
-# scripts/commit-gate.sh times `swift test` through this lane. Pull requests that
-# change only the lane manifest skip that step, so validation has to catch a
-# manifest the step would refuse.
 COMMIT_GATE_SWIFT_LANE = "routine-ci-swift"
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
 COMMAND_CLEANUP_TIMEOUT_SECONDS = 5

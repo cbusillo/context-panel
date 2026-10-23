@@ -319,7 +319,7 @@ acceptable.
   refresh agent all resolve under `/Applications/Context Panel.app`. A DerivedData
   app, widget, or login item is a mixed runtime and must not be called fixed.
 - Auto-review or agent worktrees must not leave globally registered WidgetKit or
-  LaunchServices bundles behind. Prefer `swift build`/`swift test` for review
+  LaunchServices bundles behind. Prefer `swift build` and focused `swift test --filter` for review
   work. If an agent must build the Xcode app target, check for stale
   DerivedData, `/tmp`, and repo `.build` app/widget registrations
   afterward. Apply the runtime-specific cleanup rules above; do not run
@@ -415,11 +415,9 @@ shasum -a 256 \
 If any of those point to different build roots or unexpected entitlements, stop
 and report the mixed-runtime state before making more fixes.
 
-Run the commit gate before publishing changes:
-
-```sh
-scripts/commit-gate.sh
-```
+Source-only validation follows the [test rules](../AGENTS.md#test-rules).
+Installed-runtime, release and visual evidence above still applies when those
+behaviors change.
 
 In CI, [`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py) decides
 which jobs a change needs; its docstring owns the rules.
