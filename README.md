@@ -44,7 +44,7 @@ time, and troubleshooting when a provider changes behavior.
 
 ```sh
 swift build
-swift test --filter 'SelectedTestClass'
+swift test --filter '{test_filter}'
 ```
 
 [Test rules](AGENTS.md#test-rules) and [test lanes](docs/test-lanes.md) explain

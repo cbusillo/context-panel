@@ -70,15 +70,16 @@ in [test lanes](docs/test-lanes.md#commands). Run required lint, type checks and
 IDE inspection alongside them. The complete `qualityGate.test.ci` sequence runs
 only in CI and must pass on the current head before `ready` or merge.
 
-Safety changes follow the shared rule's complete-local-module requirement.
-Select modules through the existing `qualityGate.validate` commands:
-`signedValidationCoordinatorTests` and `releaseEvidenceTests` for approval,
-signing and evidence; `codexClientCompatibility` for Codex account identity;
-`runtimeReceiptTests` for runtime identity; `companionCacheRetentionTests` for
-retention/cleanup. Trace other credential, sandbox and destructive paths through
-their callers to complete covering Swift classes and Python files. Protected
-release, visual and actual-runtime evidence remains under
-[validation authority](docs/validation-authority.md).
+For every safety, authorization, approval, destructive-helper or shared-CI
+change, trace the touched code and all callers to complete covering Swift
+classes and Python files, then run those modules under the shared rule.
+Approval checkers map to `Tests/ScriptsTests/test_release_approvals.py`; CI gates
+map to `test_ci_change_scope.py`, `test_test_lanes.py` and commit-gate fixtures
+in `test_release_workflows.py` in that directory. The existing
+`qualityGate.validate` commands locate additional account, runtime, signing,
+release-evidence and cleanup coverage; their filtered examples are starting
+points, not a replacement for the complete affected classes/files. Preserve
+protected evidence requirements under [validation authority](docs/validation-authority.md).
 
 Repository exception: the existing negative privacy and security text scans
 retained by #695 remain until a linter or executable replacement covers them.

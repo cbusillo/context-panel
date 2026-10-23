@@ -319,7 +319,7 @@ acceptable.
   refresh agent all resolve under `/Applications/Context Panel.app`. A DerivedData
   app, widget, or login item is a mixed runtime and must not be called fixed.
 - Auto-review or agent worktrees must not leave globally registered WidgetKit or
-  LaunchServices bundles behind. Prefer `swift build`/`swift test` for review
+  LaunchServices bundles behind. Prefer `swift build` and focused `swift test --filter` for review
   work. If an agent must build the Xcode app target, check for stale
   DerivedData, `/tmp`, and repo `.build` app/widget registrations
   afterward. Apply the runtime-specific cleanup rules above; do not run

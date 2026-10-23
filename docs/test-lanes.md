@@ -86,7 +86,8 @@ report and continues later files.
 Only independent, hermetic fixture tests belong in this configuration. Reports
 record elapsed wall time and worker count for each file, including worker startup.
 For CI lane diagnostics without parallel dependencies, add `--serial` to the
-lane command to use the standard unittest runner. The commit gate retains `--serial-python` and `--skip-swift` for diagnostics,
+lane command to use the standard unittest runner. The commit gate retains
+`--serial-python` and `--skip-swift` for diagnostics,
 and lane timing diagnostics accept `time-command --timeout-seconds <seconds>`.
 The required CI gate runs without `--skip-swift` on every head.
 
