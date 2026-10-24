@@ -245,7 +245,7 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     #expect(reverse.accountDisplayMetadata == merged.accountDisplayMetadata)
 }
 
-@Test func accountAnswersRespectEventDrivenIdleAgeButRejectFutureAndAssumedObservations() throws {
+@Test func accountAnswersRespectEventDrivenIdleAgeAndAssumedResetsButRejectFutureObservations() throws {
     let old = overviewNow.addingTimeInterval(-2 * 3_600)
     let setup = LocalProviderAccountConfiguration(id: "agy", provider: .google,
         connectorKind: .googleAntigravityQuota, displayName: "Antigravity")
@@ -266,7 +266,8 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
     #expect(projected(observedAt: old, reset: overviewNow.addingTimeInterval(86_400), mode: .polling).accounts.first?.state == .stale)
     #expect(projected(observedAt: overviewNow.addingTimeInterval(61), reset: overviewNow.addingTimeInterval(86_400), mode: .eventDriven).accounts.first?.state == .stale)
     let assumed = projected(observedAt: old, reset: overviewNow.addingTimeInterval(-1), mode: .eventDriven)
-    #expect(assumed.useNext(provider: .google) == nil)
+    // #848: a reset assumed full still ranks, so a quiet Google account stays launchable.
+    #expect(assumed.useNext(provider: .google) != nil)
     #expect(assumed.accounts.first?.windows.first?.assumption != nil)
 }
 
