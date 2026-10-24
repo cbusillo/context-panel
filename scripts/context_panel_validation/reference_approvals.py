@@ -54,7 +54,9 @@ def _manifest_is_genuine(manifest: dict[str, Any]) -> bool:
     )
 
 
-def _qualify_capture_receipt(receipt: dict[str, Any], requirements: tuple[VisualReviewRequirement, ...]) -> None:
+def _qualify_capture_receipt(
+    receipt: dict[str, Any], requirements: tuple[VisualReviewRequirement, ...], current_manifest_id: str
+) -> None:
     """Apply the hosted capture lane's own qualification to the receipt."""
     spec = importlib.util.spec_from_file_location("context_panel_capture_workflow", CAPTURE_WORKFLOW_PATH)
     if spec is None or spec.loader is None:
@@ -64,7 +66,7 @@ def _qualify_capture_receipt(receipt: dict[str, Any], requirements: tuple[Visual
     try:
         workflow.qualify_capture_receipt(
             receipt,
-            {"requirements": [requirement.to_dict() for requirement in requirements]},
+            {"currentManifestID": current_manifest_id, "requirements": [requirement.to_dict() for requirement in requirements]},
         )
     except workflow.WorkflowEvidenceError as error:
         raise VisualApprovalError(f"capture receipt is not qualified: {error}") from error
@@ -135,7 +137,7 @@ def review_against_references(
 ) -> list[ReferenceOutcome]:
     if receipt.get("currentManifestID") != current_manifest_id or not isinstance(receipt.get("captures"), list):
         raise VisualApprovalError("capture receipt does not match the session")
-    _qualify_capture_receipt(receipt, requirements)
+    _qualify_capture_receipt(receipt, requirements, current_manifest_id)
     captures = {
         item.get("requirementID"): item for item in receipt["captures"] if isinstance(item, dict)
     }

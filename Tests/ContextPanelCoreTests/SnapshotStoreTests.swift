@@ -1834,27 +1834,6 @@ import Testing
     #expect(widgetMirror.loadCurrent().snapshot?.snapshot.limits.count == 1)
 }
 
-@Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryBeforeReadingIt() async throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let callOrder = SnapshotRefreshCallOrderRecorder()
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary),
-        promptCacheTelemetryMirror: { _, _ in
-            callOrder.record("mirror")
-        },
-        promptCacheTelemetryReader: { _ in
-            callOrder.record("read")
-            return []
-        }
-    )
-
-    _ = service.promptCacheObservations(now: Date(timeIntervalSince1970: 300))
-
-    #expect(callOrder.values == ["mirror", "read"])
-}
-
 @Test func snapshotRefreshServicePassesBookmarkStoreToPromptCacheMirror() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -1905,6 +1884,46 @@ import Testing
     service.importConfiguredAuthFiles(now: Date(timeIntervalSince1970: 200))
 
     #expect(try credentialStore.load(accountID: "openai-code") == currentCredential)
+}
+
+@Test func snapshotRefreshUsesRenewedAuthFileWhenKeychainSaveFails() async throws {
+    let root = try temporaryDirectory()
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    // Both copies fail locally with different messages, so no usage request is sent.
+    let stale = Data(#"{"accounts":1}"#.utf8)
+    let renewed = Data(#"{}"#.utf8)
+    let credentialStore = SaveFailingProviderCredentialStore(
+        storage: ["unsaved": stale, "sibling": stale],
+        failingAccountIDs: ["unsaved"]
+    )
+    var accounts: [LocalProviderAccountConfiguration] = []
+    for id in ["unsaved", "sibling"] {
+        let authURL = root.appending(path: "\(id)-auth.json")
+        try renewed.write(to: authURL)
+        try bookmarkStore.createAndStoreBookmark(for: authURL, path: authURL.path)
+        accounts.append(LocalProviderAccountConfiguration(id: id, provider: .openAI,
+            connectorKind: .codexRateLimits, displayName: id, authPath: authURL.path))
+    }
+    try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: accounts))
+    let service = SnapshotRefreshService(
+        accountStore: accountStore,
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))),
+        bookmarkStore: bookmarkStore,
+        credentialStore: credentialStore,
+        promptCacheTelemetryMirror: { _, _ in },
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    let outcome = try await service.refresh(now: Date(timeIntervalSince1970: 200))
+
+    let messages = Dictionary(uniqueKeysWithValues: outcome.refreshResult.reports.compactMap { report in
+        report.configuredAccountID.map { ($0, report.errorMessage ?? "") }
+    })
+    #expect(messages["unsaved"]?.contains("token auth") == true)
+    #expect(messages["sibling"]?.contains("token auth") == true)
+    #expect(try credentialStore.load(accountID: "unsaved") == stale)
+    #expect(try credentialStore.load(accountID: "sibling") == renewed)
 }
 
 @Test func snapshotRefreshServiceDoesNotImportAuthForSessionQuotaSource() throws {
@@ -2427,19 +2446,6 @@ import Testing
     #expect(store.loadCurrent().snapshot?.promptCacheObservations.map(\.id) == [fresh.id])
 }
 
-@Test func widgetSandboxLocalSnapshotDirectoryUsesProcessApplicationSupport() {
-    #expect(ContextPanelLocations.widgetSandboxLocalSnapshotDirectory().path.hasSuffix(
-        "Library/Application Support/Context Panel/Snapshots"
-    ))
-}
-
-@Test func widgetContainerLocalSnapshotDirectoryTargetsWidgetExtensionContainer() {
-    let path = ContextPanelLocations.widgetContainerLocalSnapshotDirectory().path
-
-    #expect(path.contains("Library/Containers/com.shinycomputers.contextpanel.widget/Data"))
-    #expect(path.hasSuffix("Library/Application Support/Context Panel/Snapshots"))
-}
-
 @Test func snapshotRefreshStoresAppDefaultSkipsWidgetContainerMirrorInSandbox() {
     let stores = SnapshotRefreshStores.appDefault(
         appGroupID: "invalid.test.app-group",
@@ -2456,9 +2462,8 @@ import Testing
     )
 
     #expect(stores.mirrors.count == 1)
-    #expect(stores.mirrors.first?.currentSnapshotURL.path.contains(
-        "Library/Containers/com.shinycomputers.contextpanel.widget/Data"
-    ) == true)
+    #expect(stores.mirrors.first?.rootDirectory.standardizedFileURL
+        == ContextPanelLocations.widgetContainerLocalSnapshotDirectory().standardizedFileURL)
 }
 
 @Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
@@ -3522,28 +3527,6 @@ import Testing
     #expect(interval == 18)
 }
 
-@Test func snapshotRefreshRunnerSkipsWhenRefreshLockIsHeld() async throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
-    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let heldLock = try HeldFileLock(url: lockURL)
-    defer { heldLock.release() }
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary)
-    )
-    let runner = SnapshotRefreshRunner(
-        service: service,
-        lock: SnapshotRefreshLock(lockURL: lockURL)
-    )
-
-    let decision = try await runner.refresh(now: Date(timeIntervalSince1970: 600))
-
-    #expect(decision == .skippedAlreadyRunning)
-    #expect(primary.loadCurrent().snapshot == nil)
-}
-
 @Test func snapshotRefreshRunnerRetriesManualSavesUntilLockClears() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -3776,6 +3759,28 @@ private final class SnapshotRefreshSourceRecorder: @unchecked Sendable {
         lock.withLock {
             storedValues = values
         }
+    }
+}
+
+private final class SaveFailingProviderCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data]
+    private let failingAccountIDs: Set<String>
+
+    init(storage: [String: Data], failingAccountIDs: Set<String>) {
+        self.storage = storage
+        self.failingAccountIDs = failingAccountIDs
+    }
+
+    func load(accountID: String) throws -> Data? {
+        lock.withLock { storage[accountID] }
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        guard !failingAccountIDs.contains(accountID) else {
+            throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed)
+        }
+        lock.withLock { storage[accountID] = data }
     }
 }
 

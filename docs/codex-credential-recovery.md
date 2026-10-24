@@ -47,18 +47,16 @@ The source shows how a renewed credential reaches the connector:
   into Context Panel's Keychain (`importConfiguredAuthFiles` in
   [`SnapshotRefreshService.swift`](../Sources/ContextPanelCore/SnapshotRefreshService.swift)).
   The connector then reads that copy. A file that Codex has rewritten is
-  therefore used on the next refresh, provided the import succeeds. A stale
-  copy remains in use when the bookmarked file cannot be read (the user rebinds
-  the home) or when the Keychain save fails, which the import ignores silently
-  ([#934](https://github.com/cbusillo/context-panel/issues/934)).
+  therefore used on the next refresh. When the Keychain save fails, that
+  refresh reads the file it just imported, and the import retries the save on
+  the next refresh. A stale copy remains in use only when the bookmarked file
+  cannot be read (the user rebinds the home).
 - A usage-service 401/403 with a refresh token present is reported as
   `foregroundRefreshRequired`. Without one, it is `invalidAuth`
   ([`CodexRateLimits.swift`](../Sources/ContextPanelCore/CodexRateLimits.swift)).
-  Since [#864](https://github.com/cbusillo/context-panel/issues/864) both
-  messages name the entry's local nickname. With a refresh token, the message
-  says whether the access token's own expiry had passed, had not passed, or
-  could not be read; the connector still cannot tell a revoked refresh token
-  from an unrelated 403.
+  The connector cannot yet tell normal access-token expiry from a revoked
+  refresh token or an unrelated 403. Both messages still name the retired
+  Codex Lab client.
 - Context Panel never sends a refresh-token grant and never writes a
   client's files.
 
@@ -149,11 +147,10 @@ no new entitlement for local networking, but it does need a prototype.
 - Recovery is per home. Siblings keep their reports, and the stale account
   keeps its last limits marked stale until a genuine successful read
   ([Current Codex homes](provider-usage-access.md#current-codex-homes-and-openai-recovery)).
-- Delivered by [#864](https://github.com/cbusillo/context-panel/issues/864):
-  the messages drop the Codex Lab wording, name the affected home's local
-  nickname so the user knows which home to open, and read the access token's
-  own expiry locally, without logging it, so that "expired" is said separately
-  from "rejected". Recovery happens on the next scheduled refresh.
+- Follow-up scope ([#864](https://github.com/cbusillo/context-panel/issues/864)): drop the Codex Lab wording, and name the affected home's
+  local nickname so the user knows which home to open. Optionally, check the
+  access token's own expiry locally, without logging it, so that "expired"
+  can be said separately from "rejected". Retry on the next scheduled refresh.
 - This does not fix expiry that happens while the user never uses Codex with
   that home. Candidate C is the answer for that case.
 

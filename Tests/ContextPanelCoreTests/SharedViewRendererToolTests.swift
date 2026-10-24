@@ -12,6 +12,11 @@ private struct RendererRun {
 
 private final class TestBundleToken {}
 
+@Test func appStoreFixtureSurvivesCompanionTransport() throws {
+    let result = try runRenderer(["check-fixture"], executable: "ContextPanelAppStoreCapture")
+    #expect(result.status == 0, "\(result.output)")
+}
+
 private func builtProductsDirectory() throws -> URL {
     var url = Bundle(for: TestBundleToken.self).bundleURL
     while url.pathExtension != "xctest", url.path != "/" {
@@ -23,10 +28,11 @@ private func builtProductsDirectory() throws -> URL {
 
 private func runRenderer(
     _ arguments: [String],
-    environment: [String: String] = [:]
+    environment: [String: String] = [:],
+    executable: String = "ContextPanelSharedViewRenderer"
 ) throws -> RendererRun {
     let process = Process()
-    process.executableURL = try builtProductsDirectory().appending(path: "ContextPanelSharedViewRenderer")
+    process.executableURL = try builtProductsDirectory().appending(path: executable)
     process.arguments = arguments
     process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
     let pipe = Pipe()
@@ -62,19 +68,21 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
 }
 
 @Test func appStoreDraftImageBytesMatchTheirRecordedIdentity() throws {
-    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appending(path: "Resources/AppStore/Screenshots/horizon-draft")
-    let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appending(path: "manifest.json"))) as? [String: Any])
-    let assets = try #require(manifest["assets"] as? [[String: Any]])
-    #expect(!assets.isEmpty)
-    for asset in assets {
-        let file = try #require(asset["file"] as? String)
-        let data = try Data(contentsOf: root.appending(path: file))
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        #expect(digest == asset["sha256"] as? String, "\(file)")
-        let bitmap = try #require(NSBitmapImageRep(data: data))
-        #expect(bitmap.pixelsWide == asset["width"] as? Int, "\(file)")
-        #expect(bitmap.pixelsHigh == asset["height"] as? Int, "\(file)")
+    for folder in ["horizon-draft", "horizon-capture"] {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appending(path: "Resources/AppStore/Screenshots/\(folder)")
+        let manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appending(path: "manifest.json"))) as? [String: Any])
+        let assets = try #require(manifest["assets"] as? [[String: Any]])
+        #expect(!assets.isEmpty)
+        for asset in assets {
+            let file = try #require(asset["file"] as? String)
+            let data = try Data(contentsOf: root.appending(path: file))
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            #expect(digest == asset["sha256"] as? String, "\(file)")
+            let bitmap = try #require(NSBitmapImageRep(data: data))
+            #expect(bitmap.pixelsWide == asset["width"] as? Int, "\(file)")
+            #expect(bitmap.pixelsHigh == asset["height"] as? Int, "\(file)")
+        }
     }
 }
 
@@ -172,23 +180,36 @@ private func rendererArguments(cell: [String: String], output: URL) throws -> [S
     #expect(try Data(contentsOf: output) == first)
 }
 
-@Test func rendererOutputDoesNotDependOnTheHostTimeZoneOrLocale() throws {
+@Test func renderersPinTimeZoneAndAppStoreCapturePinsFoundationLocale() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cell = try #require(try macOSMatrixCells().first { $0.cell["presentation"] == "widget" }).cell
+    // The app overview prints dates and times; the framed widget cell may not.
+    let cell = try #require(try macOSMatrixCells().first { $0.surface == "macos.app" }).cell
     let hosts: [[String: String]] = [
         ["TZ": "UTC", "LANG": "en_US.UTF-8"],
         ["TZ": "Asia/Tokyo", "LANG": "ja_JP.UTF-8"],
         ["TZ": "America/Los_Angeles", "LANG": "de_DE.UTF-8"],
     ]
 
-    var images: Set<Data> = []
-    for (index, host) in hosts.enumerated() {
-        let output = directory.appending(path: "host-\(index).png")
-        let run = try runRenderer(try rendererArguments(cell: cell, output: output), environment: host)
-        #expect(run.status == 0, "\(host): \(run.output)")
-        images.insert(try Data(contentsOf: output))
+    for executable in ["ContextPanelSharedViewRenderer", "ContextPanelAppStoreCapture"] {
+        let presentations = executable == "ContextPanelAppStoreCapture" ? ["overview", "detail"] : ["overview"]
+        for presentation in presentations {
+            var images: Set<Data> = []
+            for (index, host) in hosts.enumerated() {
+                let output = directory.appending(path: "\(executable)-\(presentation)-host-\(index).png")
+                // The new capture CLI accepts Foundation launch defaults, so its
+                // locale is varied for real. The legacy CLI covers timezone only.
+                let locales = ["en_US", "ja_JP", "de_DE"]
+                let languages = ["(en)", "(ja)", "(de)"]
+                let arguments = executable == "ContextPanelAppStoreCapture"
+                    ? [presentation, "light", output.path, "-AppleLocale", locales[index], "-AppleLanguages", languages[index]]
+                    : try rendererArguments(cell: cell, output: output)
+                let run = try runRenderer(arguments, environment: host, executable: executable)
+                #expect(run.status == 0, "\(host): \(run.output)")
+                images.insert(try Data(contentsOf: output))
+            }
+            #expect(images.count == 1)
+        }
     }
-    #expect(images.count == 1)
 }

@@ -177,8 +177,6 @@ public enum AccountTerms {
     public static let thisWeekAtAGlance = "This week at a glance"
     public static let beforeItsReset = "Before its reset"
 
-    private static func accountsNoun(_ count: Int) -> String { "\(count) account" + (count == 1 ? "" : "s") }
-
     /// The sentence every surface leads with, as a bold lead and a quieter rest:
     /// "2 accounts run out before they reset." / "The other 4 are fine."
     public static func headline(_ headline: AccountHeadline) -> (lead: String, rest: String) {

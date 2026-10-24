@@ -95,6 +95,15 @@ outer field is absent or null, it remains absent; any malformed present field,
 including an object with a missing, null, or malformed nested type, degrades to
 the explicit unknown state.
 
+When the usage read says Codex is blocked now, the account's Codex limits show
+Limited even if their window percentages are low. This follows the open-source
+Codex client: a recognized `rate_limit_reached_type` (for example
+`workspace_owner_credits_depleted`), `spend_control.reached`, or
+`rate_limit.allowed` false without usable credits blocks usage. An unknown
+reached type does not, and `limit_reached` is not used. The block is
+account-wide, so model-specific limits show Limited too. A blocked read with no
+windows at all has no limit to mark and stays Unknown.
+
 ## OpenAI Reset Credits
 
 The verified OpenAI Codex read contract exposes an account-level summary under
@@ -212,9 +221,7 @@ not rotate client refresh tokens. A usage-service 401/403 means credentials were
 rejected, not proof that the subscription or account access was revoked. The
 account's message names its local nickname and asks the user to use Codex once
 with that home, or sign in again there; it says "expired" only when the access
-token's own expiry has passed. The next refresh picks up the renewed sign-in,
-unless saving it to Context Panel's Keychain fails; that failure is still silent
-([#934](https://github.com/cbusillo/context-panel/issues/934)).
+token's own expiry has passed. The next refresh picks up the renewed sign-in.
 [Codex credential recovery](codex-credential-recovery.md) records the
 recommended recovery route and the options that were set aside.
 
@@ -369,7 +376,9 @@ and presents the elapsed bucket as `≈100%` remaining and `≈0%` used. The
 approximation marker means the scheduled reset is assumed rather than observed;
 the next AGY run replaces it. This presentation inference must not be written
 into observed history or used as high-confidence forecast evidence, and it must
-not create stale or refresh-needed UI by itself.
+not create stale or refresh-needed UI by itself. Use next still ranks it as a
+fresh window (see [Use next ranking](#use-next-ranking-and-launch-receipts)), so
+a quiet account stays launchable and its next launch brings a real reading.
 Context Panel makes one immediate reset-expiry retry, then keeps unchanged AGY
 observations on the configured low-frequency background refresh cadence. Saves
 that only update prompt-cache telemetry, and refreshes that contact no provider
@@ -684,7 +693,8 @@ Schema 1 has `schemaVersion`, `readAt`, `savedAt`, `accounts`, `answers`,
 `deadlines`, `providers`, `headline`, `ranking`, `resetPrompts`,
 `configurationErrors` and `providerRefills`. `answers.tightestAccountID` repeats
 `closestAccountID` under the word the UI uses. Each row has an opaque local ID,
-provider, typed local label (including email-like names), shared panel `state`,
+provider, local label (typed, including email-like names, or an unnamed Claude
+account's profile login), shared panel `state`,
 observation time, windows, and a stable opaque `configurationID` for the
 configured source. The row `id` identifies its current logical lane and can
 change when a connection first establishes the account or a catalog source gains
@@ -698,6 +708,9 @@ invent unconfigured accounts. Membership and states use the shared
 `AccountBurnRateEstimator`, matching the account overview.
 
 Windows include their own observation time, unit, used/limit quantities,
+nullable `remainingFraction` and `period` (from
+[`MainLimitWindow`](../Sources/ContextPanelCore/MainLimitSummary.swift);
+null when the period is unknown),
 `naturalResetAt` and nullable `burn` (units per hour, observation duration,
 sample count). Burn is null when there is insufficient history or the account
 is not current. A burn `sampleCount` of zero means a whole-window average rather
@@ -718,7 +731,17 @@ Saved/failing reads keep unexpired offers explicitly marked last seen. A reporte
 zero remains distinguishable from no observation.
 
 Each account also exposes `showInWidgets`, `useLast`, its nullable tightest
-`remainingFraction`, and `limitingWindowID`. `answers.closestAccountID` is null
+`remainingFraction`, `limitingWindowID`, and `limitingWindowLabel`. The headline
+fraction measures that limiting window, which can change between readings; it
+is not a weekly allowance or a burn-rate sample. Read the `windows` entries
+with `period: fiveHour` and `period: weekly` for their separate remaining
+fractions and resets. Retain each matching entry when model-specific windows
+share a period. For weekly pacing and banked-reset burn summaries, read the
+weekly window's own `burn`, not changes in the headline. The headline label is null
+without a limiting window. These are additive schema 1 fields; older readers
+retain all existing fields, and consumers of older snapshots treat missing
+fields as unknown.
+`answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
 account ID per provider: the first entry of that provider's `ranking` (see
 [Use next ranking](#use-next-ranking-and-launch-receipts)). `deadlines` is a
@@ -735,7 +758,8 @@ No new CloudKit record type, server schema or entitlement is introduced.
 
 No credentials, source paths, raw provider responses, diagnostics, credential-derived
 account identity or transcript/cache payloads are exported. Explicitly typed local
-names and aliases retain email addresses under the Owner decision on #719;
+names and aliases retain email addresses under the Owner decision on #719, as does
+an unnamed Claude account's profile login under #760;
 secret/path patterns in those labels and provider-derived window labels remain redacted. IDs are local opaque projections,
 not provider identifiers. The command does not access Keychain, auth files,
 bookmarks, session files or provider endpoints; it performs no writes, migration
@@ -772,7 +796,11 @@ percent of an account's main window, which is the general weekly window
 
 - **Deadline:** Claude's next fixed weekly refill; the end of a running OpenAI
   clock; or now for an unstarted OpenAI clock (nothing used, and its reset reads
-  as a week after each reading).
+  as a week after each reading). An event-driven window assumed full after its
+  reset passed with no reading since has an unknown next reset: it ranks as a
+  full window ending one window length from now, with a note that the reset is
+  assumed, and no starter launch
+  ([#848](https://github.com/cbusillo/context-panel/issues/848)).
 - **Need** = (left − burn × hours to deadline) ÷ hours, in points per hour: how
   much faster the account must be used so nothing lapses.
 - **Exclusions,** each listed with its reason and, when known, `until`: not
@@ -994,8 +1022,8 @@ a reset or changes utilization.
 
 ### Claude profile-field qualification
 
-Before implementing API-backed login/plan display, an operator can qualify the
-candidate fields from the signed installed app's own existing OAuth consent:
+An operator can qualify the candidate profile fields from the signed installed
+app's own existing OAuth consent:
 
 ```sh
 "/Applications/Context Panel.app/Contents/MacOS/Context Panel" --claude-profile-shape
@@ -1016,5 +1044,27 @@ them or changing credential keys. Exit 0 means all selected profile checks passe
 
 Use the signed-runtime baseline and exact-build release gates before qualifying
 live fields. Development command tests with synthetic credentials prove routing
-and privacy only. Actual profile values remain unqualified until that step;
-typed account names remain the display fallback.
+and privacy only. Signed 1.0.75 qualified the shapes on October 20, 2026: all six
+fields are strings for both enabled entries (#760).
+
+### Claude account login and plan
+
+A typed Claude account name always wins. An empty name uses the login email from
+`/api/oauth/profile` everywhere the name appears, including the widget, companions
+and the agent account snapshot (Director decision on #760, October 20, 2026). Until
+the profile has been read, an unnamed account shows "Claude". New Claude accounts
+start unnamed.
+
+The plan label comes from a closed table of `organization_type` and
+`rate_limit_tier` values: Pro, Max, Max 5x, Max 20x, Team and Enterprise. Team and
+Enterprise labels add the organization name, which names the company there.
+Unrecognised values show no plan, never the raw string. The plan appears in the
+account detail's Plan row, through the same limit note OpenAI plans use.
+
+Only the email and plan label are kept. Account and organization UUIDs, full and
+display names, and personal organization names are dropped, and no profile value
+is logged. The values are cached in Context Panel's own Keychain identity-binding
+service, bound to the exact access token. Without companion identity resolution,
+the profile is read once per access token and only when the saved sign-in holds
+`user:profile`; with it, the existing per-refresh profile read is reused. No new
+consent or access is requested.

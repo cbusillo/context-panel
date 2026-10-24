@@ -100,10 +100,16 @@ import Testing
     #expect(http.requests.map(\.url.absoluteString) == ["https://chatgpt.com/backend-api/wham/usage"])
 }
 
-@Test func codexResetCreditDetailsFailureKeepsSuccessfulUsageCountOnly() async throws {
+@Test(arguments: [
+    (503, ""),
+    (401, ""),
+    (200, #"{"data":{"credits":[]}}"#),
+    (200, #"{"credits":[{"id":"discard-me","reset_type":"codex_rate_limits","status":"available","granted_at":"2027-01-01T00:00:00Z","expires_at":"2027-02-01T00:00:00Z"}]}"#),
+])
+func codexResetCreditDetailsFailureKeepsSuccessfulUsageCountOnly(detailsStatus: Int, detailsBody: String) async throws {
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 503, data: Data()),
+        ConnectorHTTPResponse(statusCode: detailsStatus, data: Data(detailsBody.utf8)),
     ])
 
     let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
@@ -112,46 +118,6 @@ import Testing
 
     #expect((report.status, report.limits.count, report.errorMessage) == (.healthy, 1, nil))
     #expect((summary.availableCount, summary.coverage, summary.earliestKnownExpiry) == (1, .countOnly, nil))
-}
-
-@Test func codexResetCreditDetailsAuthorizationFailureKeepsSuccessfulUsageCountOnly() async throws {
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 401, data: Data()),
-    ])
-
-    let report = try #require(await codexResetConnector(http: http)
-        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
-
-    #expect(report.status == .healthy)
-    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
-}
-
-@Test func codexMalformedResetCreditDetailsKeepSuccessfulUsageCountOnly() async throws {
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"data":{"credits":[]}}"#.utf8)),
-    ])
-
-    let report = try #require(await codexResetConnector(http: http)
-        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
-
-    #expect(report.status == .healthy)
-    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
-}
-
-@Test func codexResetCreditDetailsMissingRequiredCountKeepSuccessfulUsageCountOnly() async throws {
-    let details = Data(#"{"credits":[{"id":"discard-me","reset_type":"codex_rate_limits","status":"available","granted_at":"2027-01-01T00:00:00Z","expires_at":"2027-02-01T00:00:00Z"}]}"#.utf8)
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
-        ConnectorHTTPResponse(statusCode: 200, data: details),
-    ])
-
-    let report = try #require(await codexResetConnector(http: http)
-        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
-
-    #expect(report.status == .healthy)
-    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
 }
 
 @Test func codexResetCreditsUseCodexAPISiblingGETDetailsEndpoint() async throws {
@@ -2104,7 +2070,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthConnectorReportsBlockedAccessFromStructuredUsage() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "limits": [
@@ -2115,18 +2080,10 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
       "extra_usage": { "is_enabled": true, "disabled_reason": "must-not-survive" }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
     let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
 
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.reports[0].status == .limited)
     #expect(result.reports[0].accessState == ProviderAccessState(
@@ -2138,7 +2095,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthConnectorKeepsLimitedQuotaWhilePaidFallbackIsActive() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "limits": [
@@ -2148,18 +2104,10 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
       "spend": { "enabled": true }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
     let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-27T12:00:00Z"))
 
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.reports[0].status == .limited)
     #expect(result.reports[0].accessState == ProviderAccessState(
@@ -2169,7 +2117,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthStructuredUsageWinsAndFallsBackPerWindow() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "limits": [
@@ -2184,17 +2131,9 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
       "extra_usage": { "is_enabled": false }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.snapshot.limits.map(\.used) == [35, 45, 55])
     #expect(result.snapshot.limits.map(\.modelLabel) == ["Claude", "Claude", "Sonnet"])
@@ -2203,24 +2142,15 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthSaturatedUsageWithoutFallbackSignalIsDegraded() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "five_hour": { "utilization": 100, "resets_at": "2026-07-23T19:30:00Z" },
       "seven_day": { "utilization": 29, "resets_at": "2026-07-27T12:00:00Z" }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
     let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
-    let result = await connector.refresh(now: observedAt)
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
 
     #expect(result.reports[0].status == .limited)
     #expect(result.reports[0].accessState == ProviderAccessState(kind: .degraded))
@@ -2359,23 +2289,14 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthConnectorAcceptsEpochResetTimes() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "five_hour": { "utilization": 9.0, "resets_at": 1780793400 },
       "seven_day": { "utilization": 12.0, "resets_at": "1780801200" }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+    let result = try await claudeUsageRefreshResult(usage: usage, now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
@@ -2386,7 +2307,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthConnectorDoesNotFillMissingResetTimesFromStatuslineHints() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
       "five_hour": { "utilization": 9.0 },
@@ -2394,16 +2314,8 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
       "seven_day_sonnet": { "utilization": 14.0 }
     }
     """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+    let result = try await claudeUsageRefreshResult(usage: usage, now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
@@ -2413,22 +2325,9 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func claudeOAuthConnectorTreatsSuccessfulEmptyUsageAsAuthoritativeUnknown() async throws {
-    let credentials = try claudeCredentialsData(
-        accessToken: "access-secret",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
-    )
     let usage = Data(#"{"five_hour":null,"seven_day":{"utilization":null}}"#.utf8)
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        resetReadCooldown: ClaudeResetCreditReadCooldown(),
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let result = try await claudeUsageRefreshResult(usage: usage, now: Date(timeIntervalSince1970: 1_800_000_000))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .unknown)
@@ -2556,6 +2455,56 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     #expect(http.requests[1].headers["Authorization"] == "Bearer new-access")
     #expect(store.savedAccountID == "claude-oauth-default")
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
+}
+
+@Test func claudeOAuthConnectorKeepsRotatedRefreshTokenWhenKeychainSaveFails() async throws {
+    // A unique account, since the unsaved copy is held for the whole process.
+    let accountID = "claude-unsaved-\(UUID().uuidString)"
+    let store = StubCredentialStore(storage: [accountID: try claudeCredentialsData(
+        accessToken: "old-access", refreshToken: "refresh-secret", expiresAt: Date(timeIntervalSince1970: 0))])
+    // Each refresh rotates the refresh token and returns an access token inside the expiry skew, so the next refresh rotates again.
+    // With a second token, usage first answers 401 and the forced refresh rotates to it.
+    func refresh(rotatingTo next: String, thenTo second: String? = nil) async throws -> (status: UsageStatus?, sentRefreshToken: String?) {
+        func token(_ refreshToken: String) -> ConnectorHTTPResponse {
+            ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"access_token":"access","refresh_token":"\#(refreshToken)","expires_in":60}"#.utf8))
+        }
+        let rejected = second.map { [ConnectorHTTPResponse(statusCode: 401, data: Data()), token($0)] } ?? []
+        let http = StubHTTPClient(responses: [token(next)] + rejected
+            + [ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"five_hour":{"utilization":1}}"#.utf8))])
+        let connector = ClaudeOAuthUsageConnector(
+            resetReadCooldown: ClaudeResetCreditReadCooldown(),
+            accounts: [ClaudeOAuthAccountConfiguration(accountID: accountID, accountName: "Claude")],
+            httpClient: http,
+            credentialStore: store
+        )
+        let report = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports[0]
+        let body = try #require(http.requests.first?.body)
+        let payload = try JSONSerialization.jsonObject(with: body) as? [String: String]
+        return (report.status, payload?["refresh_token"])
+    }
+
+    store.allowedSaves = 0
+    #expect(try await refresh(rotatingTo: "rotated-1") == (.healthy, "refresh-secret"))
+    #expect(try await refresh(rotatingTo: "rotated-2") == (.healthy, "rotated-1"))
+    // The retried save succeeds and the new rotation's save fails.
+    store.allowedSaves = 1
+    #expect(try await refresh(rotatingTo: "rotated-3") == (.healthy, "rotated-2"))
+    store.allowedSaves = nil
+    #expect(try await refresh(rotatingTo: "rotated-4") == (.healthy, "rotated-3"))
+    #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "rotated-4")
+    // The first rotation saves and the forced rotation after a 401 fails to save.
+    store.allowedSaves = 1
+    #expect(try await refresh(rotatingTo: "rotated-5", thenTo: "rotated-6") == (.healthy, "rotated-4"))
+    store.allowedSaves = nil
+    #expect(try await refresh(rotatingTo: "rotated-7") == (.healthy, "rotated-6"))
+
+    // A newer Keychain copy, such as a new sign-in, wins over a held one.
+    store.allowedSaves = 0
+    _ = try await refresh(rotatingTo: "rotated-8")
+    store.allowedSaves = nil
+    try store.save(try claudeCredentialsData(accessToken: "signed-in", refreshToken: "signed-in-refresh",
+        expiresAt: Date(timeIntervalSince1970: 0)), accountID: accountID)
+    #expect(try await refresh(rotatingTo: "rotated-9") == (.healthy, "signed-in-refresh"))
 }
 
 @Test func claudeOAuthConnectorUsesExpirationSkewBoundary() async throws {
@@ -2903,14 +2852,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 
     #expect(store.saveCount == 0)
     #expect(try await lock.withLock { true } == true)
-}
-
-@Test func claudeOAuthTestGateTimesOutWhenTheExpectedSignalNeverArrives() async {
-    let gate = BoundedTestGate()
-
-    await #expect(throws: BoundedTestGateError.self) {
-        try await gate.waitUntilStarted(timeout: .milliseconds(10))
-    }
 }
 
 @Test func claudeOAuthCodeExchangeCommitCanRejectStaleFlow() async throws {
@@ -3410,6 +3351,8 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
     private var storage: [String: Data]
     private(set) var savedAccountID: String?
     private(set) var savedData: Data?
+    /// Saves left before each save throws; nil never throws.
+    var allowedSaves: Int?
 
     init(storage: [String: Data]) {
         self.storage = storage
@@ -3420,6 +3363,10 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
     }
 
     func save(_ data: Data, accountID: String) throws {
+        if let allowedSaves {
+            guard allowedSaves > 0 else { throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed) }
+            self.allowedSaves = allowedSaves - 1
+        }
         storage[accountID] = data
         savedAccountID = accountID
         savedData = data
@@ -3468,14 +3415,6 @@ private struct StubConnector: ProviderConnector {
     func refresh(now: Date) async -> ConnectorRefreshResult {
         ConnectorRefreshResult(generatedAt: now, reports: [report])
     }
-}
-
-private func formValues(from body: String) -> [String: String] {
-    var components = URLComponents()
-    components.percentEncodedQuery = body
-    return Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
-        item.value.map { (item.name, $0) }
-    })
 }
 
 private func jwtPayload(email: String, name: String, accountID: String, planType: String) -> String {
@@ -3678,4 +3617,65 @@ private func base64URLEncoded(_ data: Data) -> String {
     #expect(result.reports.allSatisfy { $0.sharedAccountIdentity == nil && $0.accountIdentityStatus == .providerIdentityUnavailable })
     let stored = StoredUsageSnapshot(savedAt: result.generatedAt, snapshot: result.snapshot, reports: result.reports.map { StoredProviderReport(report: $0) })
     #expect(CompanionSnapshot(storedSnapshot: stored).limits.count == 2)
+}
+
+private final class ClaudeProfileRoutingHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
+    private(set) var requests: [ConnectorHTTPRequest] = []
+    func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
+        requests.append(request)
+        if request.url.path == "/api/oauth/profile" {
+            return ConnectorHTTPResponse(statusCode: 200, data: Data(#"""
+            {"account":{"uuid":"6f1b2c3d-0000-4000-8000-000000000001","email":"pat@example.test","full_name":"Pat Q"},
+             "organization":{"uuid":"6f1b2c3d-0000-4000-8000-000000000002","name":"Pat's Organization",
+               "organization_type":"claude_max","rate_limit_tier":"default_claude_max_5x"}}
+            """#.utf8))
+        }
+        return ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"five_hour":{"utilization":20}}"#.utf8))
+    }
+    var profileRequestCount: Int { requests.filter { $0.url.path == "/api/oauth/profile" }.count }
+}
+
+@Test func claudeOAuthConnectorNamesAnUnnamedAccountFromItsLoginOncePerToken() async throws {
+    let credentials = { (token: String) in
+        try claudeCredentialsData(accessToken: token, refreshToken: "r", expiresAt: Date(timeIntervalSince1970: 4_000_000_000))
+    }
+    let store = StubCredentialStore(storage: ["unnamed": try credentials("first")])
+    let http = ClaudeProfileRoutingHTTPClient()
+    let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "unnamed", accountName: "")],
+        httpClient: http, credentialStore: store, profileDisplayStore: ClaudeOAuthProfileDisplayStore(store: store))
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    let first = await connector.refresh(now: now)
+    #expect(first.reports[0].accountName == "pat@example.test")
+    #expect(first.reports[0].limits.allSatisfy { $0.accountName == "pat@example.test" && $0.note == "plan: Max 5x" })
+    _ = await connector.refresh(now: now.addingTimeInterval(60))
+    #expect(http.profileRequestCount == 1)
+
+    try store.save(try credentials("second"), accountID: "unnamed")
+    let renewed = await connector.refresh(now: now.addingTimeInterval(120))
+    #expect(http.profileRequestCount == 2)
+    #expect(renewed.reports[0].accountName == "pat@example.test")
+
+    let snapshot = String(decoding: try JSONEncoder().encode(StoredUsageSnapshot(savedAt: now, refreshResult: renewed)), as: UTF8.self)
+    #expect(!snapshot.contains("Pat Q") && !snapshot.contains("6f1b2c3d"))
+}
+
+@Test func claudeOAuthConnectorKeepsTypedNamesAndSkipsProfileWithoutConsent() async throws {
+    let store = StubCredentialStore(storage: [
+        "typed": try claudeCredentialsData(accessToken: "a", refreshToken: "r", expiresAt: Date(timeIntervalSince1970: 4_000_000_000)),
+        "noConsent": try claudeCredentialsData(accessToken: "b", refreshToken: "r", expiresAt: Date(timeIntervalSince1970: 4_000_000_000),
+            scopes: ["user:inference"]),
+    ])
+    let http = ClaudeProfileRoutingHTTPClient()
+    let connector = ClaudeOAuthUsageConnector(resetReadCooldown: ClaudeResetCreditReadCooldown(),
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "typed", accountName: "Work"),
+                   ClaudeOAuthAccountConfiguration(accountID: "noConsent", accountName: "")],
+        httpClient: http, credentialStore: store, profileDisplayStore: ClaudeOAuthProfileDisplayStore(store: store))
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    #expect(result.reports.map(\.accountName) == ["Work", Provider.anthropic.accountDisplayName])
+    #expect(result.reports[0].limits.first?.note == "plan: Max 5x")
+    #expect(result.reports[1].limits.first?.note == nil)
+    #expect(http.profileRequestCount == 1)
 }

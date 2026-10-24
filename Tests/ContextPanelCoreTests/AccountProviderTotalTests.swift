@@ -123,6 +123,77 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
 
 // MARK: Horizon
 
+@Test(arguments: [(0.1, 1.0, nil), (0.1, 3.0, 30.0), (4.0, 3.0, 12.5)] as [(Double, Double, Double?)])
+func horizonChoosesLeastWeeklySpareUnlessAWindowRunsOutFirst(mainBurn: Double, modelBurn: Double,
+                                                           runOutHours: Double?) throws {
+    // The main week has 50% left and resets in 24h; the model week has 90% left and resets in 72h.
+    // At 0.1%/h and 1%/h they leave 47.6% and 18% respectively, so the less-used week constrains spare.
+    let overall = UsageLimit(provider: .openAI, accountID: "a", accountName: "a", label: "Weekly", windowLabel: "Weekly",
+        unit: .percent, used: 50, limit: 100, resetsAt: totalsNow.addingTimeInterval(24 * 3_600),
+        lastUpdatedAt: totalsNow, confidence: .observed)
+    let model = UsageLimit(provider: .openAI, accountID: "a", accountName: "a", label: "Synthetic model Weekly", windowLabel: "Weekly",
+        modelLabel: "Synthetic model", unit: .percent, used: 10, limit: 100,
+        resetsAt: totalsNow.addingTimeInterval(72 * 3_600), lastUpdatedAt: totalsNow, confidence: .observed)
+    let rates = Dictionary(uniqueKeysWithValues: [(overall, mainBurn), (model, modelBurn)].map { limit, burn in
+        (limit.id, ObservedBurnRate(limitID: limit.id, unitsPerHour: burn, observedDurationHours: 6, sampleCount: 24))
+    })
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: totalsNow, limits: [overall, model]),
+        reports: [], now: totalsNow, accountBurnRates: ["a": rates])
+    let account = try #require(overview.accounts.first)
+    let horizon = account.horizon(now: totalsNow)
+    let expected = mainBurn == 4 ? overall : model
+    #expect(horizon.window?.id == AccountDisplayMetadata.safeID(.openAI, expected.id))
+    #expect(horizon.resetAt == expected.resetsAt)
+    // Forecast selection must not replace the account's main capacity or status.
+    #expect(account.remainingFraction == overall.remainingCapacityRatio)
+    #expect(account.state == .available)
+    if let runOutHours {
+        #expect(horizon.runOutAt == totalsNow.addingTimeInterval(runOutHours * 3_600))
+        #expect(horizon.spare == 0)
+        #expect(overview.runningShort(now: totalsNow).first?.horizon == horizon)
+    } else {
+        #expect(horizon.runOutAt == nil)
+        #expect(abs((horizon.spare ?? -1) - 0.18) < 0.0001)
+        #expect(AccountTerms.outcome(account, horizon, now: totalsNow).title == AccountTerms.spare(0.18))
+    }
+}
+
+@Test(arguments: [5.0, 30.0, nil])
+func horizonUsesTheReportedShortWindowWhenThereIsNoWeek(burn: Double?) throws {
+    let reset = totalsNow.addingTimeInterval(4 * 3_600)
+    let payload = """
+    {"rate_limit":{"primary_window":{"used_percent":50,"limit_window_seconds":18000,"reset_at":\(Int(reset.timeIntervalSince1970))}}}
+    """
+    let parsed = try #require(CodexUsagePayloadParser.snapshots(from: Data(payload.utf8)).first)
+    let limits = codexUsageLimits(from: parsed, accountID: "short-only", accountName: "Short only", observedAt: totalsNow)
+    let limit = try #require(limits.first)
+    let rates = burn.map { [limit.accountID: [limit.id: ObservedBurnRate(limitID: limit.id,
+        unitsPerHour: $0, observedDurationHours: 1, sampleCount: 2)]] } ?? [:]
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: totalsNow, limits: limits),
+        reports: [], now: totalsNow, accountBurnRates: rates)
+    let account = try #require(overview.accounts.first)
+    let horizon = account.horizon(now: totalsNow)
+    #expect(account.longWindow == nil)
+    #expect(horizon.window == account.shortWindow)
+    #expect(horizon.remaining == limit.remainingCapacityRatio)
+    #expect(horizon.resetAt == reset)
+    if let burn {
+        #expect(overview.headline(now: totalsNow).measuringCount == 0)
+        if burn == 5 {
+            #expect(abs((horizon.spare ?? -1) - 0.3) < 0.0001)
+            #expect(horizon.runOutAt == nil)
+            #expect(overview.headline(now: totalsNow).lastingCount == 1)
+        } else {
+            let runOut = try #require(horizon.runOutAt)
+            #expect(abs(runOut.timeIntervalSince(totalsNow) - 6_000) < 1)
+            #expect(overview.headline(now: totalsNow).shortCount == 1)
+        }
+    } else {
+        #expect(horizon.spare == nil)
+        #expect(overview.headline(now: totalsNow).measuringCount == 1)
+    }
+}
+
 @Test func horizonProjectsRunOutSpareAndTheEmptyGap() throws {
     // a: 20% left at 1%/h, reset in 100h: empty at 20h, empty 80h. b: 60% left at 0.5%/h, reset in 50h: 35% to spare.
     let overview = totalsOverview([("a", .openAI, 80, 100, 1.0, 0), ("b", .openAI, 40, 50, 0.5, 0), ("c", .anthropic, 10, 100, nil, 0)])
@@ -161,6 +232,16 @@ private func totalsOverview(_ rows: [(String, Provider, Int, Double, Double?, Do
     #expect(abs(geometry.fillEndX - 20.0 / 168) < 0.0001)
     #expect(abs((geometry.emptyRange?.upperBound ?? 0) - 100.0 / 168) < 0.0001)
     #expect(geometry.resetX == geometry.emptyRange?.upperBound)
+}
+
+@Test func horizonDayMarksStayAtLocalMidnightAcrossDaylightSavingEnd() throws {
+    // US daylight saving ends Sunday November 1, 2026: that day is 25 hours long.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+    let now = try #require(ContextPanelDateFormatting.date(from: "2026-10-29T16:00:00Z"))
+    let days = AccountHorizon.days(now: now, calendar: calendar)
+    #expect(days.allSatisfy { calendar.dateComponents([.hour, .minute], from: $0.date) == DateComponents(hour: 0, minute: 0) })
+    #expect(Set(days.map { calendar.component(.weekday, from: $0.date) }).count == days.count)
 }
 
 @Test func horizonNeverReassuresPastWhatIsMeasured() {

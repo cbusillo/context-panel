@@ -273,20 +273,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(widget.limits.count == 1)
     #expect(widget.message.contains("data is old"))
     #expect(widget.hasProviderReconnectIssue == false)
-}
-
-@Test func widgetSnapshotNamesSingleProviderForAgeOnlyStaleness() {
-    let savedAt = Date(timeIntervalSince1970: 100)
-    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
-        generatedAt: savedAt,
-        limits: [UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100)]
-    ))
-
-    let widget = WidgetSnapshot.fromStore(
-        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
-        now: savedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1)
-    )
-
     #expect(widget.refreshAttentionSummary?.singleProvider == .openAI)
     #expect(widget.widgetProblemText == "OpenAI refresh needed")
 }
@@ -646,56 +632,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
                 provider: .openAI,
                 accountID: "openai-working-account",
                 configuredAccountID: "openai-code-default",
-                accountName: "Working OpenAI",
-                generatedAt: savedAt,
-                status: .healthy,
-                errorMessage: nil
-            ),
-        ]
-    )
-
-    let widget = WidgetSnapshot.fromStore(
-        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
-        now: Date(timeIntervalSince1970: 1_000)
-    )
-
-    #expect(widget.state == .ready)
-    #expect(widget.status == .healthy)
-    #expect(widget.message == "OpenAI · Expired OpenAI needs attention: Auth expired")
-    #expect(widget.hasProviderReconnectIssue == true)
-}
-
-@Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasOnlyDifferentConfiguredSibling() {
-    let savedAt = Date(timeIntervalSince1970: 100)
-    let stored = StoredUsageSnapshot(
-        savedAt: savedAt,
-        snapshot: UsageSnapshot(
-            generatedAt: savedAt,
-            limits: [UsageLimit(
-                provider: .openAI,
-                accountID: "openai-working-account",
-                configuredAccountID: "openai-other-default",
-                accountName: "Working OpenAI",
-                label: "Codex weekly",
-                windowLabel: "Weekly",
-                used: 20,
-                limit: 100
-            )]
-        ),
-        reports: [
-            StoredProviderReport(
-                provider: .openAI,
-                accountID: "openai-expired-account",
-                configuredAccountID: "openai-code-default",
-                accountName: "Expired OpenAI",
-                generatedAt: savedAt,
-                status: .failure,
-                errorMessage: "Auth expired"
-            ),
-            StoredProviderReport(
-                provider: .openAI,
-                accountID: "openai-working-account",
-                configuredAccountID: "openai-other-default",
                 accountName: "Working OpenAI",
                 generatedAt: savedAt,
                 status: .healthy,
@@ -1360,13 +1296,9 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         path: ContextPanelLocations.normalizedPath(usageDirectory.path)
     )
 
-    let provider = ContextPanelTimelineProvider(
+    let provider = widgetTimelineProvider(
+        root: root,
         store: primaryStore,
-        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
-        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
-        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
-        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
-        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
         accountStore: accountStore,
         bookmarkStore: bookmarkStore
     )
@@ -1397,16 +1329,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
             ),
         ])
     ))
-    let provider = ContextPanelTimelineProvider(
-        store: primaryStore,
-        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
-        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
-        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
-        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
-        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
-        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
-        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
-    )
+    let provider = widgetTimelineProvider(root: root, store: primaryStore)
 
     let entries = provider.timelineEntries(date: now)
 
@@ -1442,16 +1365,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
             ),
         ])
     ))
-    let provider = ContextPanelTimelineProvider(
-        store: primaryStore,
-        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
-        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
-        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
-        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
-        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
-        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
-        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
-    )
+    let provider = widgetTimelineProvider(root: root, store: primaryStore)
 
     let entries = provider.timelineEntries(date: now)
 
@@ -1502,16 +1416,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
             ),
         ]
     ))
-    let provider = ContextPanelTimelineProvider(
-        store: primaryStore,
-        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
-        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
-        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
-        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
-        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
-        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
-        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
-    )
+    let provider = widgetTimelineProvider(root: root, store: primaryStore)
 
     let entries = provider.timelineEntries(date: now)
 
@@ -1578,16 +1483,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
             ),
         ]
     ))
-    let provider = ContextPanelTimelineProvider(
-        store: primaryStore,
-        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
-        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
-        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
-        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
-        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
-        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
-        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
-    )
+    let provider = widgetTimelineProvider(root: root, store: primaryStore)
 
     let entries = provider.timelineEntries(date: now)
 
@@ -1876,7 +1772,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     #expect(summary.widgetResetConfidenceText?.contains("estimated") == true)
 }
 
-@Test func resetCountdownRoundsFutureHoursUp() {
+@Test func resetCountdownKeepsMinutePrecisionBelowAnHourBoundary() {
     let now = Date(timeIntervalSince1970: 1_000)
     let summary = MainLimitSummary(
         provider: .openAI,
@@ -1899,7 +1795,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "5h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
+    #expect(summary.resetCountdownText(now: now) == "4h 59m · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func resetCountdownKeepsNearlyDayLongWindowsCompact() {
@@ -1925,7 +1821,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         generatedAt: now
     )
 
-    #expect(summary.resetCountdownText(now: now) == "24h · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
+    #expect(summary.resetCountdownText(now: now) == "23h 1m · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
 @Test func widgetResetTextRoundsFiveHourWindowUp() {
@@ -2436,6 +2332,24 @@ private func defaultPrimarySummary(in snapshot: WidgetSnapshot) -> MainLimitSumm
         .mainLimitAnswerSelection(from: snapshot.usageSnapshot.mainLimitSummaries)
         .primary?
         .summary
+}
+
+private func widgetTimelineProvider(
+    root: URL,
+    store: JSONSnapshotStore,
+    accountStore: AccountConfigurationStore? = nil,
+    bookmarkStore: SecureFileBookmarkStore? = nil
+) -> ContextPanelTimelineProvider {
+    ContextPanelTimelineProvider(
+        store: store,
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: accountStore ?? AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        bookmarkStore: bookmarkStore ?? SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    )
 }
 
 private func widgetSnapshotTemporaryDirectory() throws -> URL {

@@ -16,6 +16,38 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
         used: used, limit: 100, resetsAt: reset ?? capacityNow.addingTimeInterval(86_400), lastUpdatedAt: at)
 }
 
+@Test(arguments: ["GPT-5.3-Codex-Spark", "Another model"])
+func accountCapacityUsesMainOpenAILimitsWhileKeepingModelRows(model: String) throws {
+    let weekly = capacityLimit("a", used: 20)
+    let short = UsageLimit(provider: .openAI, accountID: "a", configuredAccountID: "a", accountName: "Local a",
+        label: "Codex 5-hour", windowLabel: "5-hour", modelLabel: "Codex", unit: .percent,
+        used: 30, limit: 100, resetsAt: capacityNow.addingTimeInterval(3_600), lastUpdatedAt: capacityNow)
+    let modelLimit = UsageLimit(provider: .openAI, accountID: "a", configuredAccountID: "a", accountName: "Local a",
+        label: "\(model) 5-hour", windowLabel: "5-hour", modelLabel: model, unit: .percent,
+        used: 100, limit: 100, resetsAt: capacityNow.addingTimeInterval(3_600), lastUpdatedAt: capacityNow)
+    let limits = [weekly, short, modelLimit]
+    let snapshot = UsageSnapshot(generatedAt: capacityNow, limits: limits)
+    let report = StoredProviderReport(report: ProviderConnectorReport(provider: .openAI, accountID: "a",
+        configuredAccountID: "a", accountName: "Local a", generatedAt: capacityNow, limits: limits))
+    let configuration = [capacityConfiguration("a")]
+    let row = try #require(AccountCapacity.rows(configuration: configuration, snapshot: snapshot,
+        reports: [report], now: capacityNow).first)
+    #expect(row.status == .healthy)
+    #expect(row.limits == limits)
+    for metadata in [nil, AccountDisplayMetadata.local(configuration: configuration,
+        stored: StoredUsageSnapshot(savedAt: capacityNow, snapshot: snapshot, reports: [report]), now: capacityNow)] {
+        let overview = AccountOverview(snapshot: snapshot, reports: [report], metadata: metadata, now: capacityNow)
+        let account = try #require(overview.accounts.first)
+        #expect(account.state == .available)
+        #expect(account.remainingFraction == short.remainingCapacityRatio)
+        #expect(account.windows.count == limits.count)
+        #expect(account.windows.last?.status == .limited)
+        #expect(account.shortWindow?.id == AccountDisplayMetadata.safeID(.openAI, short.id))
+        #expect(account.longWindow?.id == AccountDisplayMetadata.safeID(.openAI, weekly.id))
+        #expect(overview.providerTotals(now: capacityNow).first?.shortRemaining == short.remainingCapacityRatio)
+    }
+}
+
 @Test func accountCapacityKeepsAllFiveAccountsWhenOnlyOneCanBeRead() {
     let configs = [capacityConfiguration("a"), capacityConfiguration("b"), capacityConfiguration("c"),
         capacityConfiguration("d", provider: .anthropic), capacityConfiguration("e", provider: .anthropic)]
@@ -186,4 +218,47 @@ func accountCapacityUsesAppFreshnessBoundary(ageFraction: Double) throws {
     let row = try #require(AccountCapacity.rows(configuration: [config],
         snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [limit]), reports: [report], now: capacityNow).first)
     #expect(row.state == .available)
+}
+
+@Test func accountCapacityUsesReportedLoginOnlyWhenTypedNameIsEmpty() {
+    var unnamed = capacityConfiguration("c", provider: .anthropic)
+    unnamed.displayName = ""
+    let report = StoredProviderReport(provider: .anthropic, accountID: "c", configuredAccountID: "c",
+        accountName: "pat@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil)
+    let rows = AccountCapacity.rows(configuration: [unnamed, capacityConfiguration("d", provider: .anthropic)],
+        snapshot: UsageSnapshot(generatedAt: capacityNow, limits: []),
+        reports: [report, StoredProviderReport(provider: .anthropic, accountID: "d", configuredAccountID: "d",
+            accountName: "other@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil)],
+        now: capacityNow)
+    #expect(rows.map(\.name) == ["pat@example.test", "Local d"])
+    unnamed.displayName = " "
+    let unread = AccountCapacity.rows(configuration: [unnamed], snapshot: UsageSnapshot(generatedAt: capacityNow, limits: []),
+        reports: [], now: capacityNow)
+    #expect(unread.map(\.name) == [Provider.anthropic.accountDisplayName])
+}
+
+@Test func clearedNameUsesTheNewestReportOverLimitsRetainedFromTheTypedName() {
+    var cleared = capacityConfiguration("c", provider: .anthropic)
+    cleared.displayName = ""
+    let retained = UsageLimit(provider: .anthropic, accountID: "c", configuredAccountID: "c", accountName: "Work",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 10, limit: 100,
+        resetsAt: capacityNow.addingTimeInterval(86_400), lastUpdatedAt: capacityNow.addingTimeInterval(-600))
+    let failedRead = StoredProviderReport(provider: .anthropic, accountID: "c", configuredAccountID: "c",
+        accountName: "pat@example.test", generatedAt: capacityNow, status: .failure, errorMessage: nil)
+    let rows = AccountCapacity.rows(configuration: [cleared], snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [retained]),
+        reports: [failedRead], now: capacityNow)
+    #expect(rows.map(\.name) == ["pat@example.test"])
+}
+
+@Test func useLastNoticeNamesUnnamedAccountsByTheirLogin() {
+    var first = capacityConfiguration("c", provider: .anthropic)
+    var second = capacityConfiguration("d", provider: .anthropic)
+    first.displayName = ""
+    second.displayName = ""
+    first.useLast = true
+    var accounts = [first, second]
+    let reports = ["c", "d"].map { StoredProviderReport(provider: .anthropic, accountID: $0, configuredAccountID: $0,
+        accountName: "\($0)@example.test", generatedAt: capacityNow, status: .healthy, errorMessage: nil) }
+    let notice = accounts.setUseLast("d", true, reports: reports) ?? ""
+    #expect(notice.contains("c@example.test") && notice.contains("d@example.test"))
 }

@@ -27,6 +27,8 @@ from context_panel_validation.shared_view_capture import (
     HOST_RENDERER_PROFILE,
     HOST_RENDERER_SURFACES,
     SIMULATOR_CAPTURE_PROFILES,
+    SimulatorPins,
+    load_simulator_pins,
 )
 from context_panel_validation.shared_view_evidence import (
     SharedViewEvidenceError,
@@ -302,7 +304,14 @@ def capture_config(
     visionos_ui_test_run: str,
     profiles: tuple[str, ...] = SUPPORTED_CAPTURE_SURFACES,
     macos_source_root: str | None = None,
+    pins: SimulatorPins | None = None,
 ) -> dict[str, Any]:
+    """Select each profile's pinned simulator, failing when the runner lacks it.
+
+    References are only valid for the pinned runtime and device, so a runner image
+    without them stops here instead of capturing on another simulator.
+    """
+    pins = pins or load_simulator_pins()
     runtimes = catalog.get("runtimes")
     device_types = catalog.get("devicetypes")
     if not isinstance(runtimes, list) or not isinstance(device_types, list):
@@ -313,53 +322,41 @@ def capture_config(
         bundle = bundles.get(name)
         if profile is None or not isinstance(bundle, str) or not Path(bundle).is_absolute():
             raise WorkflowEvidenceError("capture profile input is invalid")
-        matching_runtimes = sorted(
+        pin = pins.profiles[name]
+        runtime = next(
             (
                 item
                 for item in runtimes
                 if isinstance(item, dict)
+                and item.get("identifier") == pin.runtime_identifier
                 and item.get("isAvailable") is True
                 and item.get("platform") in profile.runtime_platforms
-                and isinstance(item.get("identifier"), str)
             ),
-            key=lambda item: tuple(
-                int(part)
-                for part in re.findall(
-                    r"\d+", str(item.get("version") or item.get("identifier"))
-                )
-            ),
-            reverse=True,
+            None,
         )
-        matching_devices = {
-            str(item["identifier"]): item
-            for item in device_types
-            if isinstance(item, dict)
+        device_known = any(
+            isinstance(item, dict)
+            and item.get("identifier") == pin.device_type_identifier
             and item.get("productFamily") == profile.product_family
-            and isinstance(item.get("identifier"), str)
-        }
-        selected_runtime: str | None = None
-        selected_device: str | None = None
-        for runtime in matching_runtimes:
-            supported_devices = runtime.get("supportedDeviceTypes")
-            if not isinstance(supported_devices, list):
-                continue
-            for supported_device in supported_devices:
-                identifier = (
-                    supported_device.get("identifier")
-                    if isinstance(supported_device, dict)
-                    else None
-                )
-                if isinstance(identifier, str) and identifier in matching_devices:
-                    selected_runtime = str(runtime["identifier"])
-                    selected_device = identifier
-                    break
-            if selected_device is not None:
-                break
-        if selected_runtime is None or selected_device is None:
-            raise WorkflowEvidenceError(f"no available simulator profile for {name}")
+            for item in device_types
+        )
+        supported = runtime.get("supportedDeviceTypes") if runtime is not None else None
+        if (
+            runtime is None
+            or not device_known
+            or not isinstance(supported, list)
+            or not any(
+                isinstance(item, dict) and item.get("identifier") == pin.device_type_identifier
+                for item in supported
+            )
+        ):
+            raise WorkflowEvidenceError(
+                f"pinned {name} simulator ({pin.runtime_identifier}, {pin.device_type_identifier}) "
+                "is not available; see docs/validation-authority.md#reference-images"
+            )
         output[name] = {
-            "runtimeIdentifier": selected_runtime,
-            "deviceTypeIdentifier": selected_device,
+            "runtimeIdentifier": pin.runtime_identifier,
+            "deviceTypeIdentifier": pin.device_type_identifier,
             "appBundle": bundle,
         }
         if name in {"ios", "ipados", "visionos"}:
@@ -510,6 +507,7 @@ def main(argv: list[str] | None = None) -> int:
     config.add_argument("--tvos-app", required=True)
     config.add_argument("--macos-source-root")
     config.add_argument("--output", type=Path, required=True)
+    commands.add_parser("pinned-xcode", help="print the Xcode every simulator capture uses")
     qualify = commands.add_parser("qualify-receipt")
     qualify.add_argument("--receipt", type=Path, required=True)
     qualify.add_argument("--requirements", type=Path, required=True)
@@ -568,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
                     macos_source_root=args.macos_source_root,
                 ),
             )
+        elif args.command == "pinned-xcode":
+            print(load_simulator_pins().xcode)
         elif args.command == "capture-and-qualify":
             command = args.capture_command
             if command[:1] == ["--"]:

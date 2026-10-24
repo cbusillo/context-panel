@@ -132,6 +132,15 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
     static let starterDelay: TimeInterval = 3_600
     static let receiptReflectedAfter: TimeInterval = 30 * 60
 
+    /// A window's full length in hours; a week when its period is unknown.
+    static func windowHours(_ period: MainLimitWindow?) -> Double {
+        switch period {
+        case .fiveHour: 5
+        case .daily: 24
+        case .weekly, .availability, nil: weekHours
+        }
+    }
+
     static func isUnstarted(used: Int?, resetsAt: Date?, observedAt: Date?) -> Bool {
         guard used == 0, let resetsAt, let observedAt else { return false }
         return abs(resetsAt.timeIntervalSince(observedAt) - weekHours * 3_600) <= unstartedTolerance
@@ -215,8 +224,11 @@ public extension AccountOverview {
             guard rankable.contains(where: { $0.id == row.id }) else {
                 exclude(row.state == .stale ? "Reading is not current" : "No current reading", nil); continue
             }
-            guard let main = row.mainWindow, let fraction = main.remainingFraction, main.assumption == nil,
+            guard let main = row.mainWindow, let fraction = main.remainingFraction,
                   main.confidence != .unknown else { exclude("No weekly reading", nil); continue }
+            // An event-driven window past its reset with no use since is assumed full and its next reset is unknown,
+            // so its allowance is spread over one whole window from now; the next launch brings a real reading.
+            let assumedFull = main.assumption != nil
             let remaining = fraction * 100
             guard remaining > 0 else { exclude("Out of quota until its reset", main.naturalResetAt); continue }
             if let gate = row.fiveHourGate, let gateFraction = gate.remainingFraction {
@@ -228,7 +240,8 @@ public extension AccountOverview {
                 }
             }
             let unstarted = provider == .openAI && row.isUnstarted(main)
-            guard let deadline = unstarted ? now : main.naturalResetAt else { exclude("Reset time unknown", nil); continue }
+            let fresh = assumedFull ? now.addingTimeInterval(UseNextRanking.windowHours(main.period) * 3_600) : nil
+            guard let deadline = unstarted ? now : fresh ?? main.naturalResetAt else { exclude("Reset time unknown", nil); continue }
             let burn = main.burnPoints ?? averageBurn
             let useLast = row.metadata.useLast && !multipleUseLast
             // An unstarted clock starts with the first launch, so its share is judged over a full week.
@@ -251,7 +264,7 @@ public extension AccountOverview {
                 window.id != main.id && window.id != row.fiveHourGate?.id && (window.remainingFraction ?? 1) <= 0
             }.map { window in
                 "\(window.modelLabel ?? window.label) is used up; only that model waits for its reset"
-            }
+            } + (assumedFull ? ["Assumed full after its reset; the next launch brings a real reading"] : [])
             candidates.append(Candidate(row: row, remaining: remaining, burn: burn, burnEstimated: main.burnPoints == nil,
                                         hours: hours, deadline: deadline, unstarted: unstarted, starter: starter,
                                         useLast: useLast, reserve: reserve, need: need, notes: notes))

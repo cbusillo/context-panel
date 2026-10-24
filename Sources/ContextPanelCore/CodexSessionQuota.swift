@@ -39,6 +39,8 @@ public enum CodexSessionQuotaReader {
                       event.type == "event_msg", event.payload.type == "token_count",
                       let date = ContextPanelDateFormatting.date(from: event.timestamp), date <= now,
                       let quota = event.payload.rateLimits,
+                      // Model-specific limits (for example Spark) share these events; only `codex` is the account limit.
+                      quota.limitID.map({ $0 == "codex" }) ?? true,
                       quota.primary != nil || quota.secondary != nil,
                       latest.map({ date > $0.observedAt }) ?? true
                 else { continue }
@@ -67,7 +69,8 @@ public enum CodexSessionQuotaReader {
         let secondary: Window?
         let planType: String?
         let credits: Credits?
-        enum CodingKeys: String, CodingKey { case primary, secondary, credits; case planType = "plan_type" }
+        let limitID: String?
+        enum CodingKeys: String, CodingKey { case primary, secondary, credits; case planType = "plan_type"; case limitID = "limit_id" }
     }
     private struct Credits: Decodable {
         let hasCredits: Bool

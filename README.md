@@ -11,18 +11,9 @@ which limits are close, and when each allowance resets.
 
 ## Direction and Contributions
 
-The Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
-governs priorities and stop boundaries. This repository has no DIRECTION.md of
-its own. [AGENTS.md](AGENTS.md) is the only agent-instruction file and owns the
-repository's execution and validation guidance. Durable work is tracked in
-GitHub issues.
-
-Contributions use focused branches and pull requests. Landing follows the
-overall direction and the [shared merge-train procedure](https://github.com/cbusillo/codex-skills/blob/main/skills/launchplane/references/merge-train.md).
-Reviews by another model follow the
-[shared review reference](https://github.com/cbusillo/codex-skills/blob/main/skills/references/model-review.md):
-findings are weighed against evidence, rather than reviewer approval being a
-gate. Releases are separate from merging and follow [the release procedure](docs/release.md).
+See the Director's [overall DIRECTION.md](https://github.com/cbusillo/direction/blob/HEAD/DIRECTION.md)
+and [AGENTS.md](AGENTS.md) for direction and repository guidance, and
+[the release procedure](docs/release.md) for release operations.
 
 ## Product Experience
 
@@ -53,9 +44,11 @@ time, and troubleshooting when a provider changes behavior.
 
 ```sh
 swift build
-swift test
-scripts/commit-gate.sh
+swift test --filter '{test_filter}'
 ```
+
+[Test rules](AGENTS.md#test-rules) and [test lanes](docs/test-lanes.md) explain
+focused local selection and the complete CI sequence in `.github/github.json`.
 
 Useful entry points:
 
@@ -101,7 +94,7 @@ and use the read-only check instead:
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
-Follow [AGENTS.md's runtime requirements](AGENTS.md#validation) before judging
+Follow [the runtime requirements](docs/validation-authority.md#validation) before judging
 behavior or reporting readiness, including active process, widget registration,
 refresh-agent, URL-handler, fingerprint, and real WidgetKit cache evidence.
 Signed companion validation also requires the companion cache preflight.
@@ -163,5 +156,5 @@ The probes exercise shared `ContextPanelCore` connectors from the shell.
 They do not prove signed app or refresh-agent behavior: sandbox access, TCC,
 security-scoped bookmarks, app groups, and login-item environments differ.
 Validate those reads through the canonical installed runtime as
-[AGENTS.md](AGENTS.md#validation) requires. `SnapshotStoreProbe` additionally writes
+[the runtime requirements](docs/validation-authority.md#validation) require. `SnapshotStoreProbe` additionally writes
 and reloads the local JSON cache shape used by the app and widget.

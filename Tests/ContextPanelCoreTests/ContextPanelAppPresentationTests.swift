@@ -166,6 +166,33 @@ import ContextPanelTVSupport
     #expect(model.lastRefreshText == "1m ago")
     #expect(model.providerAccessAlerts == snapshot.providerAccessAlerts)
     #expect(model.currentSnapshot == snapshot.usageSnapshot.presented(at: presentationDate))
+    let later = presentationDate.addingTimeInterval(30 * 86_400)
+    let limit = UsageLimit(provider: .openAI, accountID: "fixture", accountName: "Fixture",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 60, limit: 100,
+        resetsAt: later.addingTimeInterval(3600), lastUpdatedAt: later, confidence: .observed)
+    let rate = ObservedBurnRate(limitID: limit.id, unitsPerHour: 12, observedDurationHours: 2, sampleCount: 4)
+    let metadata = AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
+        configurationID: "fixture-config", provider: limit.provider, label: "Studio fixture", useLast: true)
+    let isolatedSnapshot = WidgetSnapshot(state: .ready, generatedAt: later, limits: [limit],
+        observedBurnRates: [limit.id: rate],
+        fastModeForecastSettings: FastModeForecastSettings(fastModeMultiplier: 3, reserveUnits: 9),
+        status: .healthy, message: "", accountDisplayMetadata: [metadata],
+        accountBurnRates: [limit.accountID: [limit.id: rate]])
+    let isolatedModel = ContextPanelAppModel.appStoreFixture(snapshot: isolatedSnapshot, now: later)
+    #expect(isolatedModel.observedBurnRates == isolatedSnapshot.observedBurnRates)
+    #expect(isolatedModel.fastModeForecastSettings == isolatedSnapshot.fastModeForecastSettings)
+    #expect(isolatedModel.accountBurnRates == isolatedSnapshot.accountBurnRates)
+    #expect(isolatedModel.lastRefreshAt == isolatedSnapshot.generatedAt)
+    for now in [later, later.addingTimeInterval(7200)] {
+        #expect(isolatedModel.accountOverview(at: now) == AccountOverview(
+            snapshot: isolatedSnapshot.usageSnapshot, reports: isolatedSnapshot.reports,
+            metadata: isolatedSnapshot.accountDisplayMetadata, now: now,
+            accountBurnRates: isolatedSnapshot.accountBurnRates ?? [:]))
+    }
+    #expect(isolatedModel.accountOverview(at: later).accounts !=
+        isolatedModel.accountOverview(at: later.addingTimeInterval(7200)).accounts)
+    #expect(isolatedModel.relativeTime(later) != isolatedModel.relativeTime(later.addingTimeInterval(-90)))
+
 }
 
 @MainActor

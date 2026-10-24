@@ -20,6 +20,12 @@ from urllib.parse import urlencode
 import uuid
 import zlib
 
+from context_panel_shared_view_references import (
+    ReferenceImageError,
+    decode_png,
+    encode_png,
+    fill_regions,
+)
 from context_panel_surface_manifest import SurfacePolicyError, embedded_manifest
 from context_panel_surface_manifest.core import canonical_json as manifest_canonical_json
 from context_panel_surface_manifest.core import hash_parts as manifest_hash_parts
@@ -34,6 +40,7 @@ from .shared_view_evidence import (
     SharedViewMatrix,
     SurfacePolicySurface,
     canonical_json_hash,
+    fixture_contract_id,
     load_shared_view_matrix,
     load_surface_policy,
     plan_shared_view_evidence,
@@ -54,14 +61,17 @@ REQUIREMENTS_DIGEST_DOMAIN = "context-panel-shared-view-capture-requirements/v1"
 EMBEDDED_MANIFEST_DIGEST_DOMAIN = "context-panel-shared-view-capture-embedded-manifest/v1"
 APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel"
 WATCH_APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.watch"
-SIMCTL_CATALOG_TIMEOUT = 30
+# On a loaded hosted runner CoreSimulator stalls queries after a visionOS reset:
+# a device listing passed 30 seconds (CI run 39180325140, normally under 6) and an
+# app-container query took 65 seconds (CI run 39191727857, normally about 2).
+SIMCTL_CATALOG_TIMEOUT = 120
 MAX_SIMULATOR_DEVICE_COUNT = 256
 SIMCTL_CREATE_TIMEOUT = 30
 SIMCTL_BOOT_TIMEOUT = 60
 SIMCTL_BOOTSTATUS_TIMEOUT = 300
 SIMCTL_INSTALL_TIMEOUT = 120
 SIMCTL_VISIONOS_INSTALL_TIMEOUT = 300
-SIMCTL_CONTAINER_TIMEOUT = 120
+SIMCTL_CONTAINER_TIMEOUT = 300
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
@@ -311,7 +321,87 @@ HOST_RENDERER_UNSUPPORTED_STATUS = 3
 HOST_RENDERER_BUILD_DIRECTORY = ".host-renderer-build"
 HOST_RENDERER_BUILD_TIMEOUT = 30 * 60
 HOST_RENDERER_RENDER_TIMEOUT = 120
+# Pixels per point, the same as the simulator cells' in-process renderer.
+HOST_RENDERER_SCALE = "2"
 COMPANION_UI_TEST_PROFILES = frozenset({"ios", "ipados", "visionos"})
+DEFAULT_SIMULATOR_PINS_PATH = REPO_ROOT / "Config" / "ContextPanelSharedViewSimulators.json"
+SIMULATOR_PINS_KIND = "context-panel-shared-view-simulators"
+# These apps draw the cell in its host frame and write the PNG to their temporary
+# directory (SharedViewFrame.renderedCellFileName); a screenshot would show the
+# gallery screen around it.
+APP_RENDERED_SURFACES = frozenset({"watchos.complication", "tvos.top-shelf"})
+RENDERED_CELL_FILE_NAME = "context-panel-shared-view-cell.png"
+# Apps format dates with their process's locale and time zone. Pin both, as the
+# in-process renderers do (Tools/ContextPanelSharedViewRenderer and the UI test).
+SIMULATOR_LAUNCH_LOCALE_ARGUMENTS = ("-AppleLocale", "en_US_POSIX", "-AppleLanguages", "(en-US)")
+SIMULATOR_LAUNCH_ENVIRONMENT = {"SIMCTL_CHILD_TZ": "UTC"}
+
+
+@dataclass(frozen=True)
+class SimulatorPin:
+    runtime_identifier: str
+    device_type_identifier: str
+    masked_regions: dict[str, tuple[tuple[int, int, int, int], ...]]
+
+
+@dataclass(frozen=True)
+class SimulatorPins:
+    xcode: str
+    profiles: dict[str, SimulatorPin]
+
+
+def load_simulator_pins(path: Path = DEFAULT_SIMULATOR_PINS_PATH) -> SimulatorPins:
+    """The Xcode, runtime and device every simulator capture and reference uses."""
+    payload = _load_json_object(path, "shared-view simulator pins")
+    if (
+        set(payload) != {"schemaVersion", "kind", "xcode", "profiles"}
+        or payload["schemaVersion"] != 1
+        or payload["kind"] != SIMULATOR_PINS_KIND
+        or not isinstance(payload["profiles"], dict)
+        or set(payload["profiles"]) != set(SUPPORTED_PROFILES)
+    ):
+        raise SharedViewCaptureError("shared-view simulator pins are invalid")
+    xcode = _require_string(payload["xcode"], "pinned Xcode")
+    if not xcode.startswith("/Applications/") or not xcode.endswith(".app"):
+        raise SharedViewCaptureError("pinned Xcode is invalid")
+    profiles: dict[str, SimulatorPin] = {}
+    for name, raw in payload["profiles"].items():
+        if not isinstance(raw, dict) or not {"runtimeIdentifier", "deviceTypeIdentifier"} <= set(raw) or not set(
+            raw
+        ) <= {"runtimeIdentifier", "deviceTypeIdentifier", "maskedRegions"}:
+            raise SharedViewCaptureError("shared-view simulator pin is invalid")
+        runtime = _require_string(raw["runtimeIdentifier"], "pinned runtime")
+        device_type = _require_string(raw["deviceTypeIdentifier"], "pinned device type")
+        if not RUNTIME_IDENTIFIER_PATTERN.fullmatch(runtime) or not DEVICE_TYPE_IDENTIFIER_PATTERN.fullmatch(
+            device_type
+        ):
+            raise SharedViewCaptureError("shared-view simulator pin is invalid")
+        regions: dict[str, list[tuple[int, int, int, int]]] = {}
+        raw_regions = raw.get("maskedRegions", [])
+        if not isinstance(raw_regions, list):
+            raise SharedViewCaptureError("shared-view masked regions are invalid")
+        for region in raw_regions:
+            keys = {"surface", "x", "y", "width", "height", "reason"}
+            if (
+                not isinstance(region, dict)
+                or set(region) != keys
+                or not str(region["surface"]).startswith(SIMULATOR_CAPTURE_PROFILES[name].surface_prefix)
+                or any(type(region[key]) is not int or region[key] < 0 for key in ("x", "y", "width", "height"))
+                or not region["width"]
+                or not region["height"]
+                or not isinstance(region["reason"], str)
+                or not region["reason"]
+            ):
+                raise SharedViewCaptureError("shared-view masked region is invalid")
+            regions.setdefault(region["surface"], []).append(
+                (region["x"], region["y"], region["width"], region["height"])
+            )
+        profiles[name] = SimulatorPin(
+            runtime,
+            device_type,
+            {surface: tuple(items) for surface, items in regions.items()},
+        )
+    return SimulatorPins(xcode, profiles)
 
 
 @dataclass(frozen=True)
@@ -1452,6 +1542,7 @@ def _capture_route(
                 profile.bundle_identifier,
                 "--context-panel-validation-gallery",
                 *selectors,
+                *SIMULATOR_LAUNCH_LOCALE_ARGUMENTS,
             ],
             "simctl-launch",
             None,
@@ -1459,8 +1550,17 @@ def _capture_route(
     raise SharedViewCaptureError("capture simulator profile route is invalid")
 
 
-def _run(runner: Runner, args: list[str], timeout: int) -> CommandResult:
-    return runner.run(args, timeout=timeout, environment=None)
+def _run(
+    runner: Runner,
+    args: list[str],
+    timeout: int,
+    environment: dict[str, str] | None = None,
+) -> CommandResult:
+    return runner.run(
+        args,
+        timeout=timeout,
+        environment=None if environment is None else {**os.environ, **environment},
+    )
 
 
 def _command_error_code(result: CommandResult, base: str) -> str:
@@ -2131,6 +2231,88 @@ def _take_stable_screenshot(
     return None, None, unstable_error_code
 
 
+def _rendered_cell_path(
+    runner: Runner,
+    simulator_id: str,
+    profile: CaptureProfile,
+) -> tuple[Path | None, str | None]:
+    """Where the app writes its framed cell, inside its simulator data container."""
+    result = _run(
+        runner,
+        ["xcrun", "simctl", "get_app_container", simulator_id, profile.bundle_identifier, "data"],
+        SIMCTL_CONTAINER_TIMEOUT,
+    )
+    if result.returncode != 0 or result.timed_out:
+        return None, _command_error_code(result, "simctl-data-container")
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) != 1 or not Path(lines[0]).is_absolute():
+        return None, "simctl-data-container-invalid"
+    try:
+        container = Path(lines[0]).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, "simctl-data-container-invalid"
+    temporary = container / "tmp"
+    # The app owns its container. Refuse a symlinked or missing tmp directory so
+    # neither the removal before launch nor the read after it can leave the container.
+    if (
+        not container.is_dir()
+        or not temporary.is_dir()
+        or temporary.is_symlink()
+        or temporary.resolve(strict=True).parent != container
+    ):
+        return None, "simctl-data-container-invalid"
+    return temporary / RENDERED_CELL_FILE_NAME, None
+
+
+def _take_stable_rendered_cell(
+    rendered_path: Path,
+    artifact_directory: Path,
+    prefix: str,
+    sleeper: Callable[[float], None],
+) -> tuple[PNGSnapshot | None, Path | None, str | None]:
+    """Wait for the app's framed cell and copy it once two reads agree."""
+    previous: PNGSnapshot | None = None
+    for _ in range(MAX_STABILITY_SAMPLE_COUNT):
+        sleeper(CAPTURE_SETTLE_SECONDS)
+        if not rendered_path.is_file() or rendered_path.is_symlink():
+            continue
+        try:
+            current, copied = _copy_private_png(rendered_path, artifact_directory, prefix)
+        except (OSError, SharedViewCaptureError):
+            return None, None, "rendered-cell-invalid"
+        if previous is not None and previous.pixel_digest == current.pixel_digest:
+            return current, copied, None
+        copied.unlink(missing_ok=True)
+        previous = current
+    return None, None, "rendered-cell-missing" if previous is None else "capture-unstable"
+
+
+def _mask_capture(
+    path: Path,
+    regions: tuple[tuple[int, int, int, int], ...],
+    artifact_directory: Path,
+    prefix: str,
+) -> tuple[PNGSnapshot, Path]:
+    """A copy of the capture with each pinned region painted out."""
+    try:
+        image = decode_png(_read_bounded_file(path, "captured image", MAX_PNG_FILE_BYTES))
+    except ReferenceImageError as error:
+        raise SharedViewCaptureError("captured image is invalid") from error
+    descriptor, name = tempfile.mkstemp(prefix=prefix, suffix=".png", dir=artifact_directory)
+    destination = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encode_png(fill_regions(image, regions)))
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o600)
+            os.fsync(stream.fileno())
+        snapshot = _png_snapshot(destination)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+    return snapshot, destination
+
+
 def _remove_profile_artifacts(
     artifact_paths: dict[str, Path],
 ) -> bool:
@@ -2386,7 +2568,10 @@ def _capture_profile(
     prior_results: dict[str, dict[str, object]],
     published_artifact_paths: dict[str, Path],
     cleanup_target_observer: Callable[[str], None] = lambda _: None,
+    masked_regions: dict[str, tuple[tuple[int, int, int, int], ...]] | None = None,
+    reset_visionos_cells: bool = True,
 ) -> ProfileCaptureOutcome:
+    masked_regions = masked_regions or {}
     results: dict[str, dict[str, object]] = {}
     artifact_paths: dict[str, Path] = {}
     simulator_name = _simulator_name(profile.name, capture_run_id)
@@ -2505,7 +2690,7 @@ def _capture_profile(
             stable_snapshot: PNGSnapshot | None = None
             stable_path: Path | None = None
             if index > 0:
-                if profile.name == "visionos":
+                if profile.name == "visionos" and reset_visionos_cells:
                     reset_error = _reset_visionos_cell(
                         runner,
                         simulator_id,
@@ -2615,13 +2800,58 @@ def _capture_profile(
                         error_code=baseline_error,
                     )
                     continue
+                baseline_regions = masked_regions.get(requirement.surface)
+                if baseline_regions:
+                    # Mask the baseline like the capture, so the painted-out region
+                    # alone can never make a capture differ from its baseline.
+                    try:
+                        route_baseline, masked_baseline_path = _mask_capture(
+                            route_baseline_path,
+                            baseline_regions,
+                            artifact_directory,
+                            f".{requirement.requirement_id}.baseline-masked.",
+                        )
+                        masked_baseline_path.unlink(missing_ok=True)
+                    except (OSError, SharedViewCaptureError):
+                        route_baseline_path.unlink(missing_ok=True)
+                        results[requirement.requirement_id] = _result(
+                            requirement,
+                            status="unknown",
+                            captured_at=now(),
+                            host_mechanism=host_mechanism,
+                            appearance_mechanism=appearance_mechanism,
+                            error_code="simulator-baseline-image-invalid",
+                        )
+                        continue
                 route_baseline_path.unlink(missing_ok=True)
+                rendered_path: Path | None = None
+                if requirement.surface in APP_RENDERED_SURFACES:
+                    rendered_path, container_error = _rendered_cell_path(
+                        runner, simulator_id, profile
+                    )
+                    if rendered_path is not None:
+                        try:
+                            rendered_path.unlink(missing_ok=True)
+                        except OSError:
+                            container_error = "rendered-cell-not-removable"
+                    if container_error is not None or rendered_path is None:
+                        results[requirement.requirement_id] = _result(
+                            requirement,
+                            status="unknown",
+                            captured_at=now(),
+                            host_mechanism=host_mechanism,
+                            appearance_mechanism=appearance_mechanism,
+                            error_code=container_error,
+                        )
+                        continue
                 route_command, route_error_base, route_appearance_mechanism = _capture_route(
                     profile,
                     simulator_id,
                     requirement,
                 )
-                routed = _run(runner, route_command, SIMCTL_LAUNCH_TIMEOUT)
+                routed = _run(
+                    runner, route_command, SIMCTL_LAUNCH_TIMEOUT, SIMULATOR_LAUNCH_ENVIRONMENT
+                )
                 if routed.returncode != 0 or routed.timed_out:
                     results[requirement.requirement_id] = _result(
                         requirement,
@@ -2634,16 +2864,38 @@ def _capture_profile(
                     continue
                 appearance_mechanism = route_appearance_mechanism
                 sleeper(CAPTURE_SETTLE_SECONDS)
-                stable_snapshot, stable_path, capture_error = _take_stable_screenshot(
-                    runner,
-                    simulator_id,
-                    artifact_directory,
-                    f".{requirement.requirement_id}.capture.",
-                    "simctl-screenshot",
-                    "captured-image-invalid",
-                    "capture-unstable",
-                    sleeper,
-                )
+                if rendered_path is not None:
+                    stable_snapshot, stable_path, capture_error = _take_stable_rendered_cell(
+                        rendered_path,
+                        artifact_directory,
+                        f".{requirement.requirement_id}.capture.",
+                        sleeper,
+                    )
+                else:
+                    stable_snapshot, stable_path, capture_error = _take_stable_screenshot(
+                        runner,
+                        simulator_id,
+                        artifact_directory,
+                        f".{requirement.requirement_id}.capture.",
+                        "simctl-screenshot",
+                        "captured-image-invalid",
+                        "capture-unstable",
+                        sleeper,
+                    )
+                regions = masked_regions.get(requirement.surface)
+                if capture_error is None and stable_path is not None and regions:
+                    try:
+                        stable_snapshot, masked_path = _mask_capture(
+                            stable_path,
+                            regions,
+                            artifact_directory,
+                            f".{requirement.requirement_id}.masked.",
+                        )
+                    except (OSError, SharedViewCaptureError):
+                        stable_snapshot, masked_path = None, None
+                        capture_error = "captured-image-invalid"
+                    stable_path.unlink(missing_ok=True)
+                    stable_path = masked_path
                 if capture_error is not None or stable_snapshot is None or stable_path is None:
                     results[requirement.requirement_id] = _result(
                         requirement,
@@ -2957,6 +3209,7 @@ def _capture_host_renderer(
                         "--family", requirement.family,
                         "--appearance", requirement.appearance,
                         "--presentation", requirement.presentation,
+                        "--scale", HOST_RENDERER_SCALE,
                         "--output", str(rendered_path),
                     ],
                     HOST_RENDERER_RENDER_TIMEOUT,
@@ -3027,6 +3280,7 @@ def execute_shared_view_capture(
     run_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
     matrix_path: Path = DEFAULT_MATRIX_PATH,
     surface_policy_path: Path = DEFAULT_SURFACE_POLICY_PATH,
+    simulator_pins_path: Path = DEFAULT_SIMULATOR_PINS_PATH,
 ) -> tuple[int, dict[str, object]]:
     resolved_policy_path = surface_policy_path.expanduser().resolve(strict=True)
     policy_bytes = _read_bounded_file(
@@ -3072,6 +3326,7 @@ def execute_shared_view_capture(
         raise SharedViewCaptureError("current surface manifest does not match comparison")
     profiles = load_capture_config(config_path)
     host_renderer_profile = load_host_renderer_profile(config_path)
+    simulator_pins = load_simulator_pins(simulator_pins_path)
     private_root = _validate_artifact_root(artifact_root)
     public_output = _validate_output_path(output_path)
     _reject_capture_path_overlap(
@@ -3244,6 +3499,7 @@ def execute_shared_view_capture(
                     capture_results,
                     published_artifact_paths,
                     emergency_cleanup_targets.append,
+                    simulator_pins.profiles[profile_name].masked_regions,
                 )
                 profile_capture_completed = True
             except BaseException as capture_error:
@@ -3343,3 +3599,160 @@ def execute_shared_view_capture(
     if "unknown" in statuses:
         return EXIT_UNKNOWN, receipt
     return EXIT_BLOCKED, receipt
+
+
+class _TimedRunner:
+    """Logs each command's verb, duration and outcome to stderr for CI diagnosis.
+
+    Only the command's first words are printed; paths, identifiers and output are not.
+    """
+
+    def __init__(self, runner: Runner) -> None:
+        self.runner = runner
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        timeout: int,
+        environment: dict[str, str] | None = None,
+    ) -> CommandResult:
+        started = time.monotonic()
+        result = self.runner.run(args, timeout=timeout, environment=environment)
+        words = 2 if Path(args[0]).name == "xcodebuild" else 3
+        verb = " ".join(Path(args[0]).name if index == 0 else part for index, part in enumerate(args[:words]))
+        outcome = "timed out" if result.timed_out else f"exit {result.returncode}"
+        print(
+            f"{verb}: {time.monotonic() - started:.1f}s of {timeout}s, {outcome}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return result
+
+
+def capture_reference_cells(
+    config_path: Path,
+    output_root: Path,
+    *,
+    runner: Runner | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    now: Callable[[], datetime] = utc_now,
+    matrix_path: Path = DEFAULT_MATRIX_PATH,
+    surface_policy_path: Path = DEFAULT_SURFACE_POLICY_PATH,
+    simulator_pins_path: Path = DEFAULT_SIMULATOR_PINS_PATH,
+) -> dict[str, dict[str, object]]:
+    """Capture every simulator cell of the matrix the way the release capture does.
+
+    Each captured cell is written to ``<output_root>/<surface>/<cell>.png`` for
+    comparison with its committed reference. A profile whose runtime or device is
+    not the pinned one is blocked rather than captured on another simulator.
+    Cells that fail in a profile that captured others get one retry in a fresh
+    simulator. visionOS cells share their simulator like the other XCUITest
+    cells; only the release capture erases it between cells.
+    """
+    surface_policy = load_surface_policy(surface_policy_path)
+    matrix = load_shared_view_matrix(matrix_path, surface_policy)
+    policy_by_id = {surface.id: surface for surface in surface_policy}
+    profiles = load_capture_config(config_path)
+    pins = load_simulator_pins(simulator_pins_path)
+    groups: dict[str, list[CaptureRequirement]] = {name: [] for name in SUPPORTED_PROFILES}
+    for surface in matrix.surfaces:
+        profile_name = _profile_for_surface(surface.id)
+        if profile_name is None:
+            continue  # macOS cells are drawn on the host.
+        for cell in surface.cells:
+            groups[profile_name].append(
+                CaptureRequirement(
+                    requirement_id=shared_view_requirement_id(surface.id, cell.id),
+                    surface=surface.id,
+                    cell_id=cell.id,
+                    fixture_contract_id=fixture_contract_id(matrix, policy_by_id[surface.id], cell),
+                    fixture_id=cell.fixture_id,
+                    family=cell.family,
+                    appearance=cell.appearance,
+                    presentation=cell.presentation,
+                    accessibility=cell.accessibility,
+                )
+            )
+    active_runner = runner or _TimedRunner(SubprocessRunner())
+    capture_run_id = uuid.uuid4().hex[:12]
+    results: dict[str, dict[str, object]] = {}
+    seen_digests: dict[str, str | None] = {}
+    published: dict[str, Path] = {}
+    output_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="shared-view-references-") as staging:
+        staging_directory = Path(staging)
+        for profile_name, requirements in groups.items():
+            if not requirements:
+                continue
+            profile = profiles.get(profile_name)
+            pin = pins.profiles[profile_name]
+            if profile is None:
+                results.update(_blocked_results(tuple(requirements), "profile-not-configured", now))
+                continue
+            if (profile.runtime_identifier, profile.device_type_identifier) != (
+                pin.runtime_identifier,
+                pin.device_type_identifier,
+            ):
+                results.update(
+                    _blocked_results(
+                        tuple(requirements),
+                        "simctl-profile-not-pinned",
+                        now,
+                        host_mechanism="simctl-profile-validation",
+                    )
+                )
+                continue
+            digests_before = set(seen_digests)
+            outcome = _capture_profile(
+                profile,
+                tuple(requirements),
+                staging_directory,
+                capture_run_id,
+                active_runner,
+                sleeper,
+                now,
+                seen_digests,
+                results,
+                published,
+                masked_regions=pin.masked_regions,
+                reset_visionos_cells=False,
+            )
+            results.update(outcome.results)
+            # A profile that captured some cells works, so a cell that failed is
+            # most likely a simulator flake: give it one more try in a fresh
+            # simulator instead of failing the whole job.
+            failed = tuple(
+                requirement
+                for requirement in requirements
+                if results[requirement.requirement_id]["status"] != "captured"
+            )
+            if failed and len(failed) < len(requirements):
+                # A digest this attempt left without an owner belongs to a failed
+                # cell; keeping it would mark that cell's retry a duplicate.
+                for digest in set(seen_digests) - digests_before:
+                    if seen_digests[digest] is None:
+                        del seen_digests[digest]
+                retried = _capture_profile(
+                    profile,
+                    failed,
+                    staging_directory,
+                    f"{capture_run_id}-retry",
+                    active_runner,
+                    sleeper,
+                    now,
+                    seen_digests,
+                    results,
+                    published,
+                    masked_regions=pin.masked_regions,
+                    reset_visionos_cells=False,
+                )
+                results.update(retried.results)
+        for requirement_id, artifact_path in published.items():
+            result = results[requirement_id]
+            if result["status"] != "captured":
+                continue
+            destination = output_root / str(result["surface"]) / f"{result['cellID']}.png"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(artifact_path, destination)
+    return results

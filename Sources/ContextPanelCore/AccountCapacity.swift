@@ -11,6 +11,16 @@ public struct AccountCapacity: Identifiable, Sendable {
     public let report: StoredProviderReport?
     public let status: UsageStatus
 
+    static func usageStatus(limits: [UsageLimit], reportStatus: UsageStatus) -> UsageStatus {
+        let main = limits.filter(\.isAccountCapacityLimit)
+        guard !main.isEmpty else { return .unknown }
+        // Saved reports aggregate every model. Recompute capacity words from the main limits,
+        // while retaining connector health and explicit blocks on those limits.
+        let reported = main.count != limits.count && [.healthy, .close, .limited].contains(reportStatus)
+            ? UsageStatus.healthy : reportStatus
+        return ([reported] + main.map(\.status)).contextPanelWorstStatus
+    }
+
     public var isNotConnected: Bool {
         provider == .anthropic && (report?.requiresCredentialReconnect == true
             || (report == nil && limits.isEmpty))
@@ -53,26 +63,34 @@ public struct AccountCapacity: Identifiable, Sendable {
             return (ids.isEmpty ? [account.id] : ids.sorted()).compactMap { id in
                 guard seen.insert("\(account.provider.rawValue):\(id)").inserted else { return nil }
                 let limits = matchingLimits.filter { $0.accountID == id }
+                let main = limits.filter(\.isAccountCapacityLimit)
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
-                let expired = limits.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
-                let ageSensitive = limits.isEmpty || limits.contains { !$0.usesEventDrivenFreshness }
+                let expired = main.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
+                let ageSensitive = main.isEmpty || main.contains { !$0.usesEventDrivenFreshness }
                 let stale = (report.map { $0.generatedAt > now.addingTimeInterval(60)
                     || ageSensitive && now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false)
-                    || limits.contains { limit in limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
+                    || main.contains { limit in limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
                         || !limit.usesEventDrivenFreshness && now.timeIntervalSince($0) > SnapshotFreshness.appMaximumAge } ?? false }
                 let status: UsageStatus = !account.isEnabled ? .unknown
                     : report?.status == .failure ? .failure
                     : stale || expired ? .stale
-                    : limits.isEmpty ? .unknown
-                    : ([report?.status ?? .unknown] + limits.map(\.status)).contextPanelWorstStatus
+                    : usageStatus(limits: limits, reportStatus: report?.status ?? .unknown)
+                // An empty typed name uses the login the newest report carried; older retained
+                // limits may still hold a name typed before it was cleared (#760).
+                let defaultName = account.typedName.map { ids.count > 1 ? "\($0) \(id.suffix(6))" : $0 }
+                    ?? report?.accountName ?? limits.first?.accountName ?? account.provider.accountDisplayName
                 return Self(
                     id: id, configuredAccountID: account.id, provider: account.provider,
-                    name: account.accountAliases?[id] ?? report?.legacyAccountID.flatMap { account.accountAliases?[$0] } ?? (ids.count > 1 ? "\(account.displayName) \(id.suffix(6))" : account.displayName),
+                    name: account.accountAliases?[id] ?? report?.legacyAccountID.flatMap { account.accountAliases?[$0] } ?? defaultName,
                     isEnabled: account.isEnabled, limits: limits, report: report, status: status
                 )
             }
         }
     }
+}
+
+extension UsageLimit {
+    var isAccountCapacityLimit: Bool { provider != .openAI || isMainLimit }
 }
 
 public enum AccountCapacityState: String, Codable, Sendable {

@@ -157,6 +157,48 @@ import Testing
     #expect(explicitNull[0].rateLimitReachedType == nil)
 }
 
+@Test func codexUsageReportsLimitedWhenCodexSaysTheAccountIsBlocked() throws {
+    // Shaped like a /wham/usage read for a workspace blocked with low window usage.
+    let cases: [(rateLimit: String, extra: String, hasCredits: Bool, expected: UsageStatus)] = [
+        (#""allowed": true, "limit_reached": false"#,
+         #", "rate_limit_reached_type": {"type": "workspace_owner_credits_depleted"}"#, false, .limited),
+        (#""allowed": true, "limit_reached": false"#,
+         #", "rate_limit_reached_type": {"type": "rate_limit_reached"}"#, false, .limited),
+        (#""allowed": true, "limit_reached": false"#, #", "spend_control": {"reached": true}"#, true, .limited),
+        (#""allowed": false, "limit_reached": true"#, "", false, .limited),
+        // Codex keeps working on credits when included usage is not allowed.
+        (#""allowed": false, "limit_reached": true"#, "", true, .healthy),
+        // Codex ignores reached types it does not recognize.
+        (#""allowed": true, "limit_reached": false"#,
+         #", "rate_limit_reached_type": {"type": "future_provider_value"}"#, false, .healthy),
+        (#""allowed": true, "limit_reached": false"#, #", "spend_control": {"reached": false}"#, false, .healthy),
+    ]
+    for testCase in cases {
+        let json = """
+        {
+          "plan_type": "team",
+          "rate_limit": {
+            \(testCase.rateLimit),
+            "primary_window": { "used_percent": 12, "limit_window_seconds": 18000, "reset_at": 1788393600 },
+            "secondary_window": { "used_percent": 4, "limit_window_seconds": 604800, "reset_at": 1788998400 }
+          },
+          "credits": { "has_credits": \(testCase.hasCredits), "unlimited": false, "balance": "0" },
+          "additional_rate_limits": [{
+            "limit_name": "GPT-5.3-Codex-Spark", "metered_feature": "codex_bengalfox",
+            "rate_limit": { "allowed": true, "limit_reached": false,
+              "primary_window": { "used_percent": 1, "limit_window_seconds": 18000, "reset_at": 1788400000 } }
+          }]\(testCase.extra)
+        }
+        """
+        let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8))
+        let limits = snapshots.flatMap {
+            codexUsageLimits(from: $0, accountID: "acct", accountName: "Work", observedAt: Date(timeIntervalSince1970: 0))
+        }
+        #expect(limits.count == 3)
+        #expect(limits.allSatisfy { $0.status == testCase.expected }, "\(testCase.rateLimit)\(testCase.extra)")
+    }
+}
+
 @Test func codexResetCreditCountUsesAuthoritativeAvailableCountAndClampsAtZero() {
     let applicable = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":2}}"#.utf8)
     let zeroApplicable = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":0}}"#.utf8)

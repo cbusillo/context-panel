@@ -222,6 +222,33 @@ class ReleaseApprovalTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     policy.check(documents)
 
+    def test_submission_recorder_is_secretless_and_follows_the_submission(self) -> None:
+        recorder = {"needs": "submit", "permissions": {"contents": "read", "issues": "write"},
+                    "steps": [{"run": "python3 scripts/app-store-release-status.py record-submission",
+                               "env": {"GH_TOKEN": "${{ github.token }}"}}]}
+        filename, job_id = policy.SUBMISSION_RECORDER
+        documents = fixture()
+        documents[filename]["jobs"][job_id] = copy.deepcopy(recorder)
+        policy.check(documents)
+        mutations = [
+            lambda job: job.update(environment="release"),
+            lambda job: job.update(env={"KEY": "${{ secrets.KEY }}"}),
+            lambda job: job["permissions"].update(contents="write"),
+            lambda job: job.update(needs=["guard", "intent"]),
+            lambda job: job.update(uses="./.github/workflows/release.yml"),
+        ]
+        for index, mutate in enumerate(mutations):
+            with self.subTest(mutation=index):
+                documents = fixture()
+                documents[filename]["jobs"][job_id] = copy.deepcopy(recorder)
+                mutate(documents[filename]["jobs"][job_id])
+                with self.assertRaises(ValueError):
+                    policy.check(documents)
+        other = fixture()
+        other[next(name for name in policy.STANDALONE_ONLY if name != filename)]["jobs"][job_id] = copy.deepcopy(recorder)
+        with self.assertRaises(ValueError):
+            policy.check(other)
+
     def test_testflight_join_requires_success_even_when_upload_is_skipped(self) -> None:
         documents = fixture()
         call = documents["ship.yml"]["jobs"]["testflight-beta"]

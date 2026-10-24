@@ -77,7 +77,9 @@
       "Tests/ScriptsTests/test_cloudkit_schema_gate.py",
       "Tests/ScriptsTests/test_shared_view_references.py",
       "Tests/ScriptsTests/test_reference_approvals.py",
-      "Tests/ScriptsTests/test_submission_evidence_bundle.py"
+      "Tests/ScriptsTests/test_submission_evidence_bundle.py",
+      "Tests/ScriptsTests/test_shared_view_reference_gate.py",
+      "Tests/ScriptsTests/test_app_store_capture.py"
     ],
     "routine-ci-python": [
       "Tests/ScriptsTests/test_companion_quarantine_retention.py",

@@ -73,32 +73,68 @@ see [the capture contract](signed-validation-galleries.md#private-simulator-capt
 
 ## Reference images
 
-Each host-rendered shared-view cell (`macos.app` and `macos.widget`) has a
-committed reference PNG at `Tests/SharedViewReferences/<surface>/<cell>.png`.
-The CI job `shared-view-references` renders those cells and compares them with
-[`scripts/context-panel-shared-view-references.py`](../scripts/context-panel-shared-view-references.py);
-a cell matches when its size is the same and only a few pixels differ beyond a
-small per-channel tolerance (the constants live in
+Every shared-view cell has a committed reference PNG at
+`Tests/SharedViewReferences/<surface>/<cell>.png`. Two CI jobs draw the cells
+the way Shared-View Capture Evidence does and compare them with
+[`scripts/context-panel-shared-view-references.py`](../scripts/context-panel-shared-view-references.py):
+`shared-view-references` renders the macOS cells on the host, and
+`shared-view-simulator-references` builds the Release simulator products and
+captures the iOS, iPadOS, visionOS, watchOS and tvOS cells. A cell matches when
+its size is the same and only a few pixels differ beyond a small per-channel
+tolerance (the constants live in
 [`scripts/context_panel_shared_view_references.py`](../scripts/context_panel_shared_view_references.py)).
 A changed or missing reference fails the job.
 
-References are valid only for the runner image and Xcode that job selects,
-which are the ones the Shared-View Capture Evidence workflow uses. When a PR
-changes how a cell looks on purpose, or that image or Xcode changes, re-record:
+The jobs run only when a change can affect them (see
+[`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py)).
+`shared-view-references` runs on pull requests and merge-train candidates.
+`shared-view-simulator-references` takes about an hour, so it does not: it runs
+after a change lands on `main`, one run at a time with a newer merge replacing a
+running one, and on a manual CI run. Nothing waits for it. A failure on `main`
+opens a plan issue titled "Simulator reference images fail on main", or comments
+on the open one, naming the changed cells; the next passing run on `main` closes
+it. Runner image drift shows up in the next of these runs, and at release the
+capture compares every cell with its reference on the current runner. The capture
+retries a failed cell once in a fresh simulator when the rest of its platform
+captured, so one flaky cell does not fail the job. App Store submission refuses
+a build whose source commit has no passing `shared-view-simulator-references`
+job; see [the release procedure](release.md#app-store-review-submission).
 
-1. Download the `shared-view-rendered-*` artifact from the PR's CI run. Its
-   `report.json` lists each cell as matched, changed or missing-reference.
-2. Look at every changed cell.
-3. Copy them over the references and commit:
+Each image shows the surface in the frame its host gives it, not the gallery
+screen: a widget in its family size with the widget corner mask, a Watch
+complication in its face frame and mask, the Top Shelf banner with its corner
+mask, and an app presentation filling its content area. The frames live in
+[`SharedViewFrame`](../Sources/ContextPanelValidationGalleryUI/SharedViewFrame.swift)
+and `ValidationGalleryFamily.frame(on:)`. Dates come from fixed fixture times in
+the `en_US_POSIX` locale and UTC. The Watch status-bar clock, which nothing can
+pin, is painted out by a masked region.
+
+[`Config/ContextPanelSharedViewSimulators.json`](../Config/ContextPanelSharedViewSimulators.json)
+pins the Xcode, simulator runtimes, devices and masked regions both jobs and the
+release capture use; a runner without them fails instead of capturing on another
+simulator. References are valid only for those pins and the `macos-26` runner
+image. When a PR changes how a cell looks on purpose, or the toolchain changes,
+re-record:
+
+1. For a toolchain change, update the pins file first: the Xcode, each runtime
+   and device the runner offers, and each masked region if the device changed.
+2. Download the `shared-view-rendered-*` artifact from the PR's CI run. For
+   the simulator cells, run CI on the PR branch by hand
+   (`gh workflow run ci.yml --ref <branch>`) and download its
+   `shared-view-simulator-rendered-*` artifact. Each `report.json` lists every
+   cell as matched, changed or missing-reference.
+3. Look at every changed cell.
+4. Copy them over the references and commit:
 
    ```sh
    scripts/context-panel-shared-view-references.py compare \
-     --rendered <downloaded-artifact> \
-     --surface macos.app --surface macos.widget --update
+     --rendered <host-artifact> --surface macos.app --surface macos.widget --update
+   scripts/context-panel-shared-view-references.py compare \
+     --rendered <simulator-artifact> --simulator --update
    ```
 
-Do not record references on a local Mac; its OS and fonts differ from the
-pinned runner.
+Do not record references on a local Mac; its OS, fonts and simulators differ
+from the pinned runner.
 
 At release, after a qualified capture, approve the unchanged cells:
 
@@ -133,11 +169,6 @@ contracts. Use [replay qualification](signed-validation-replay-inventory.md)
 without silently upgrading diagnostic or reference-only evidence.
 
 ## Validation
-
-Start with [Validation Authority and Operator Route](#sources-of-truth)
-to distinguish the agreed simulator-first contract, implemented capture support,
-and qualification evidence. Missing capture inputs do not by themselves justify
-asking Chris to navigate a signed gallery.
 
 Before changing or validating app/widget/provider behavior, identify the active
 runtime. Mixed runtimes caused repeated false positives during App Store release
@@ -195,6 +226,10 @@ inputs to this path for status, final reports and Mac launch verification.
 These inputs select candidate identity; the release gate still owns approved
 RC lineage and human approval. Without a candidate manifest, the baseline
 continues to compare against its checkout. The candidate option is check-only.
+
+Spotlight bundle discovery has a bounded deadline. A timeout or unavailable
+discovery fails the receipt as an incomplete conflict inventory and stops
+install/reset before runtime teardown; partial results never establish a clean inventory.
 
 The baseline verifies each running refresh agent's loaded executable path and
 vnode (device/inode) against the canonical installed helper. It reads launchd's
@@ -284,7 +319,7 @@ acceptable.
   refresh agent all resolve under `/Applications/Context Panel.app`. A DerivedData
   app, widget, or login item is a mixed runtime and must not be called fixed.
 - Auto-review or agent worktrees must not leave globally registered WidgetKit or
-  LaunchServices bundles behind. Prefer `swift build`/`swift test` for review
+  LaunchServices bundles behind. Prefer `swift build` and focused `swift test --filter` for review
   work. If an agent must build the Xcode app target, check for stale
   DerivedData, `/tmp`, and repo `.build` app/widget registrations
   afterward. Apply the runtime-specific cleanup rules above; do not run
@@ -313,27 +348,13 @@ acceptable.
   `project.yml`; every new shippable train after an accepted or rejected App
   Store version needs a fresh marketing version/build input, and the uploaded
   build's pre-release marketing version must match the App Store Review version.
-- When Chris asks to check App Store Connect through the API, first use the
-  direct local ASC API route documented in `docs/release.md` under "Direct App
-  Store Connect API Checks." If that private operator config is unavailable,
-  say so explicitly before falling back to the GitHub workflow dry-run path.
-  On Chris's local operator machine, the generic discovery path starts with the
-  private shell env file `~/.appstoreconnect/asc.env` and private key directory
-  `~/.appstoreconnect/private_keys/`; source values only into the command
-  process and pass the key with `--api-key` when needed. Do not write
-  host-specific paths, key IDs, issuer IDs, private key names, JWTs, or live App
-  Store Connect object IDs into public repo docs, issues, PRs, or agent
-  summaries.
-- CloudKit live Production schema validation uses Apple's `cktool`, not the App
-  Store Connect API credentials. `scripts/cloudkit-schema-gate.py check` runs
-  it only when `CloudKit/` changed since the last release; see "CloudKit
-  Production Schema Gate" in `docs/release.md`. Publication workflow steps and
-  `context-panel-runtime-session.py sync` run the gate. It gates operations
-  that put a build in front of people; do not extend it to App Store Connect
-  writes that are independent of the build and schema, such as screenshot
-  upload. The operator machine keeps the management token saved by
-  `xcrun cktool save-token`; CI reads `CLOUDKIT_MANAGEMENT_TOKEN` from the
-  `release` environment. Never commit, print, or summarize the token.
+- When Chris asks to check App Store Connect through the API, follow
+  [Direct App Store Connect API Checks](release.md#direct-app-store-connect-api-checks).
+- CloudKit Production schema validation follows the
+  [CloudKit Production Schema Gate](release.md#cloudkit-production-schema-gate).
+  It gates operations that put a build in front of people; do not extend it to
+  App Store Connect writes that are independent of the build and schema, such
+  as screenshot upload.
 - Physical companion dogfood installs should clean stale Context Panel
   development provisioning profiles from the target device while preserving the
   profile embedded in the newly installed build and preserving App
@@ -370,16 +391,8 @@ acceptable.
   `feat/simulator-first-rc-validation` working tree is never qualification
   evidence.
 - After the coordinator final report is available, evaluate the full comparison
-  with `scripts/context-panel-release-gate.py enforce`. Do not filter or rewrite
-  `requiredSurfaces`. Carry-forward must bind to the previous approved ledger,
-  the complete expected-build manifest set for every shipping surface, bounded retention, current runtime
-  receipts, and compatible host OS evidence. Release evidence additionally
-  binds the full comparison, configured policy, expected-build identity set,
-  and exact coordinator report, and requires the exact selected approved RC.
-  Final validation must also receive the same previous ledger, selected RC,
-  and host-OS evidence used during generation so it can
-  reconstruct the ledger. Live submission requires those authoritative inputs
-  in either mode; see [evaluation and submission](#evaluation-and-submission).
+  with the [release evidence gate](release.md#release-evidence-carry-forward-gate).
+  Do not filter or rewrite `requiredSurfaces`.
 - Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
   and Apple TV product UI must not expose gallery buttons, toolbar actions, list
   rows, or runway items. Use the allowlisted signed routes and the bounded Watch
@@ -402,35 +415,24 @@ shasum -a 256 \
 If any of those point to different build roots or unexpected entitlements, stop
 and report the mixed-runtime state before making more fixes.
 
-Run the commit gate before publishing changes:
+Source-only validation follows the [test rules](../AGENTS.md#test-rules).
+Installed-runtime, release and visual evidence above still applies when those
+behaviors change.
 
-```sh
-scripts/commit-gate.sh
-```
-
-In CI, `scripts/ci-change-scope.py` lets a pull request skip the Swift and
-companion builds when none of its changed paths can affect them. Unknown paths
-run everything, and every push to `main` runs the full set. CodeQL always runs,
-because the `main` ruleset requires its results on every pull request. When adding a build input outside `Sources/`, `Tools/`, and `Config/`
-that lives under `docs/`, `Tests/ScriptsTests/`, or a Python script, list it in
-that script rather than widening the skip rules.
+In CI, [`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py) decides
+which jobs a change needs; its docstring owns the rules.
+When adding a build input outside `Sources/`, `Tools/`, and `Config/` that
+lives under `docs/`, `Tests/ScriptsTests/`, or a Python script, list it in that
+script rather than widening the skip rules.
 
 For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.
 
 For widget/app UI changes, the SwiftPM gate is not sufficient by itself. Use the
-Development install gate instead of manually opening or copying DerivedData
-builds; it regenerates the Xcode project, builds the real Xcode app target,
-installs the fresh app to `/Applications/Context Panel.app`, refreshes the
-app/widget runtime, and prints the runtime receipt:
-
-```sh
-scripts/context-panel-runtime-baseline.sh install --launch
-```
-
-If the canonical app is a signed Production/TestFlight runtime, preserve it and
-use `scripts/context-panel-runtime-baseline.sh check --require-production-runtime`
-instead of installing a Development build.
+Development install gate (`install --launch` above) instead of manually opening
+or copying DerivedData builds; it regenerates the Xcode project, builds the real
+Xcode app target, installs the fresh app to `/Applications/Context Panel.app`,
+refreshes the app/widget runtime, and prints the runtime receipt.
 
 Do not create backup copies of `/Applications/Context Panel.app` during normal
 development installs.

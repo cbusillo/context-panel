@@ -56,24 +56,33 @@ summary job. Retries reuse the same platform/version/build/source record.
 The release agent owns TestFlight validation and the existing submission gates;
 recording a pending issue grants no submission authority. Keep it open until
 the exact build is verified live, then close it with that proof. Submission,
-rejection, and approval updates belong on the same issue.
+rejection, and approval updates belong on the same issue. A real `Submit App
+Store Review` run (not a dry run, cancel or prepare-only run) marks the
+matching record as submitted. A build uploaded outside Ship has no record, so
+the monitor cannot watch it: the run warns, and the monitor keeps its previous
+target for that platform. A record whose build is replaced as the candidate
+never goes live: close it as not planned, with a link to the replacing record.
 
 `App Store Release Drift` runs every six hours and can also be dispatched
 manually. `scripts/app-store-release-status.py check --lag-hours 48` reads the
 public US storefront separately for each platform and compares its numeric
-marketing version with that platform's latest tracked uploaded build. It also
+marketing version with that platform's newest build submitted for review.
+Before any build on a platform is submitted, it uses the newest upload, so a
+release that stalls before submission still alerts; a TestFlight-only build
+uploaded after a submission raises no alert. It also
 uses the latest sealed GitHub Mac publication as a baseline, including releases
 predating these records; that baseline explicitly leaves upload and TestFlight
 state unknown. Other platforms are tracked when selected for a successful Ship
 upload, never inferred from a Mac release.
 
-After 48 hours from the upload record (or GitHub publication for the legacy Mac
-baseline), lag produces an alert comment on that durable issue and a failing
+After 48 hours from the submission (from the upload for a build not yet
+submitted, or GitHub publication for the legacy Mac baseline), lag produces an alert comment on that durable issue and a failing
 workflow signal for Supervisor watchers. This also catches a release stalled
 in review or rejected without querying or changing App Store Connect. An
 unreadable or changed public page alerts as **unknown**, immediately. Identical
 observations produce no duplicate comments; a later recovery is recorded.
-Closed records still participate, so premature closeout cannot hide drift.
+Records closed as completed still participate, so premature closeout cannot
+hide drift; records closed as not planned were superseded and are ignored.
 No store credentials or store writes are used. The public page parser verifies
 the requested app/platform; it never substitutes another platform's version.
 Public version equality reports only “public version current”; public listings
@@ -93,8 +102,7 @@ TestFlight and App Store releases run on different clocks.
   release pays for one proof round covering whatever changed since the last
   App Store release. Any `ContextPanelCore` change means every device. Agents
   suggest an App Store release when user-facing changes have built up, or when
-  a fix matters to users. Chris decides. Time alone is no reason, per the
-  overall DIRECTION.
+  a fix matters to users. Chris decides.
 - **Fixes users are waiting for** go to the App Store promptly, even alone.
 - **One release at a time per platform:** don't start the next App Store round
   while one is in review, unless it replaces a rejected build.
@@ -106,10 +114,8 @@ For Context Panel, the [recorded Q94 decision](https://github.com/cbusillo/conte
 sets the operator preflight: name Chris's release request or the approved issue
 whose finish line requires the change installed. Post the list of changes since
 the last release on the release's owning issue **before dispatching Ship**.
-Check that every listed change is finished; stop if any is unfinished. An agent
-may suggest a release with that list, but a suggestion alone is not a release
-request. Do not dispatch on a schedule or because time has passed. Apply this
-preflight to standalone workflows too when they publish, upload, distribute or
+Check that every listed change is finished; stop if any is unfinished. Apply
+this preflight to standalone workflows too when they publish, upload, distribute or
 submit a build, including recovery. Artifact-only and dry-run validation remain
 ordinary engineering on their existing guarded paths.
 
@@ -172,7 +178,10 @@ approval changes. `scripts/check-release-approvals.py` lints the parsed workflow
 graph in CI and prints an all-channel structural dry-run plus secret names,
 never values. It checks one secretless Ship intent job, standalone intent paths,
 success dependencies, repository-secret inheritance on all four local channel
-calls, and a single secret environment. It cannot verify live
+calls, and a single secret environment. The one classified non-channel job is
+`Submit App Store Review`'s `record-submission`: it needs only the submit job,
+holds no secrets or environment, and may only read contents and write issues.
+It cannot verify live
 reviewer settings or actual secret placement. In unclassified workflows, it
 rejects names that could select `release`, `release-approval`, or the retired
 `release-channels`, including opaque expressions such as
@@ -231,27 +240,7 @@ release behavior must join the classified graph and its model-review route.
 A blanket ban, exception allowlist or new blocking approval policy needs a
 separate Director decision. The no-click graph remains unchanged.
 
-## One-time no-click setup (owner only)
-
-The source change does not change environment access. After it lands, Chris
-performs the already-decided hand step on [#781](https://github.com/cbusillo/context-panel/issues/781).
-Finish or cancel pending release jobs first; historical runs keep their original
-workflow and are not migrated by this setup. No release dispatch is needed.
-
-1. Open **Settings → Environments → release-approval**. Under protection rules,
-   uncheck **Required reviewers**, leave **Wait timer** off, and click **Save
-   protection rules**. Keep the existing branch policy and add no secrets.
-2. Leave **release** and every secret entry untouched. It remains the single
-   environment secret store, restricted to protected `main`, with no reviewer
-   or wait timer. No credential is read, copied, rotated or re-entered.
-3. Keep the existing repository variable `RELEASE_APPROVALS_CONFIGURED=true`.
-   If it was unset to pause runs, restore `true` only after step 1. Confirm the
-   settings on #781, without values. An agent then runs the GET-only environment
-   checker; no publication is needed for setup verification.
-
-Until that hand step is complete, the new full metadata check fails before an
-intent or secret job; follow the setup above. The structural checker proves
-the source graph; it does not prove the live hand step or observe release UI.
+## Release environment check
 
 Local agents run the metadata checker through the configured automation helper
 from the [GitHub skill](https://github.com/cbusillo/codex-skills/blob/main/skills/github/SKILL.md):
@@ -263,9 +252,8 @@ CONTEXT_PANEL_ENVIRONMENT_GH="<github-skill>/scripts/gh-with-env-token" \
 ```
 
 Replace `<github-skill>` with the installed skill directory. This performs GETs
-only and fails on the old reviewer rule until the hand step is complete. CI
-uses `--probe` to check only the secret store; workflow guards use the built-in
-token and full mode to check both environments.
+only. CI uses `--probe` to check only the secret store; workflow guards use the
+built-in token and full mode to check both environments.
 
 The lower-level workflows remain callable for recovery and validation:
 
@@ -290,10 +278,7 @@ The lower-level workflows remain callable for recovery and validation:
 - an interim SwiftPM wrapper script for quickly sharing the preview app without
   the widget extension
 
-The native Xcode path is the one to use for widget installability. Workflows
-that build or upload the app no longer require Google OAuth build settings;
-Google Antigravity quota arrives through AGY's documented custom status-line
-command and the signed refresh agent's privacy-filtered utility mode.
+The native Xcode path is the one to use for widget installability.
 
 ## Runner And Xcode Policy
 
@@ -333,22 +318,8 @@ official App Store or TestFlight upload jobs.
 
 ## Normal Ship Workflow
 
-Use `Ship` for normal releases. It accepts:
-
-- `version`: marketing/release version, for example `1.0.18`.
-- `build_number`: optional App Store build number; blank uses a UTC timestamp.
-- `github_release`: publish the GitHub release channel.
-- `notarize_github_release`: notarize the GitHub zip; defaults to true. With
-  `github_release=true`, selecting false is refused before channel builds.
-- `app_store_channel`: Mac `upload` (default), `export-only`, or `skip`.
-- `companion_app_store_channel`: `upload` (default), `export-only`, or `skip`
-  for the iPhone/iPad/Watch, Vision Pro, and Apple TV builds together.
-- `testflight_beta`: distribute every uploaded build through TestFlight. It
-  runs only after every selected upload succeeded, so the platforms reach
-  testers together.
-- `testflight_beta_groups`: optional comma-separated TestFlight beta group
-  names; internal groups are included by default.
-- `include_internal_testflight_groups`: include internal TestFlight beta groups.
+Use `Ship` for normal releases. Its inputs, descriptions and defaults are
+declared in [`ship.yml`](../.github/workflows/ship.yml).
 
 For a normal release, run `Ship` from `main` with the defaults. That creates the
 friend-installable GitHub artifact and makes every platform's App Store build
@@ -371,14 +342,8 @@ scheme, not the SwiftPM wrapper, so the artifact includes
 `ContextPanelWidgetExtension.appex`. Creating a tag does not trigger the
 workflow; this keeps secret-bearing execution bound to the protected branch.
 
-Manual dispatch accepts:
-
-- `version`: release version without a leading `v`; blank creates a dated build
-  version.
-- `build_number`: optional CFBundleVersion; blank derives one.
-- `create_github_release`: whether to create or update a GitHub Release.
-- `notarize`: whether to run Apple notarization; defaults to true and must
-  complete before a GitHub Release can be published.
+Its dispatch inputs are declared in
+[`release.yml`](../.github/workflows/release.yml).
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
 workflow artifact. Before upload, it seals the metadata with the tag, exact
@@ -423,15 +388,8 @@ any publisher defect. Preserve the exact zip and sealed metadata when diagnosing
 a stranded draft. After source repair lands, a separately authorized release
 session chooses recovery using the retained bytes or an intentional replacement.
 
-Required local command parity:
-
-```sh
-scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity -
-```
-
-That command builds a Release Xcode app, signs the app and widget ad-hoc with
-their entitlements, verifies the signature, and writes
-`dist/ContextPanel-1.0.0-macOS.zip`.
+For local command parity, see
+[Build A Native App Artifact Locally](#build-a-native-app-artifact-locally).
 
 ### CI Signing And Notarization Secrets
 
@@ -651,7 +609,8 @@ Chris's device steps, only when needed:
 3. Let the paired iPhone deliver the embedded Watch app (use the Watch app's
    install control if automatic installation is off). Confirm the new build on
    Watch, then restart Watch before routine complication review, following
-   [AGENTS.md](../AGENTS.md#validation). Preserve existing complication placement.
+   [the Watch restart rule](validation-authority.md#validation). Preserve
+   existing complication placement.
 4. If an explicitly selected local dogfood route requests device unlock, trust,
    Developer Mode or install approval, complete those prompts himself. They are
    not routine TestFlight prerequisites. The existing Vision Pro dogfood helper
@@ -680,10 +639,7 @@ runs both targets as the current Apple TV user. App Store Connect requires
 `aps-environment` when the tvOS binary declares CloudKit, so Release uses the
 production APNs environment for best-effort background sync. Debug signs the
 tvOS app for Development CloudKit and Release signs it for Production; the
-archive gate verifies the signed environment before export. The tvOS app does
-not request badge permission: physical validation showed that badge-only local
-expiry is not reliable while the app is suspended, so the live/stale truth
-remains in the app and dynamic Top Shelf surface.
+archive gate verifies the signed environment before export.
 
 The tvOS target compiles layered small/App Store icons plus required standard and
 wide Top Shelf artwork from
@@ -697,7 +653,7 @@ artwork remains the fallback, while the embedded
 `ContextPanelTVTopShelfExtension` provides privacy-filtered dynamic provider
 runway from the shared App Group without network access.
 
-The first signed tvOS canary is:
+The signed tvOS export-only canary is:
 
 ```sh
 scripts/upload-app-store-connect-companion-app.sh \
@@ -707,19 +663,6 @@ scripts/upload-app-store-connect-companion-app.sh \
   --export-only
 ```
 
-Before treating the first tvOS TestFlight build as release evidence:
-
-- archive and upload from `main` with dedicated tvOS app and Top Shelf extension
-  profile secrets;
-- verify the Production CloudKit schema and the canonical Mac Production
-  publisher before loading data on Apple TV;
-- install from TestFlight on physical Apple TV hardware and cover fresh, stale,
-  offline, missing-record, and restrictive-presentation states;
-- prepare tvOS screenshots, privacy disclosures, age rating, App Review notes,
-  and a physical-hardware demo path before App Store review;
-- validate dynamic Top Shelf, retired-badge cleanup, and all presentation modes
-  on the same signed candidate used for release evidence.
-
 The approved tvOS screenshot set lives under
 `Resources/AppStore/Screenshots/tvos/`. Upload it with the `tvos` screenshot set;
 the uploader maps those approved 1920-by-1080 frames to App Store Connect display
@@ -727,14 +670,7 @@ type `APP_APPLE_TV`. The first tvOS App Store version already has its approved
 description and screenshots; verify the live App Store Connect record before
 editing or submitting a later train.
 
-### visionOS Release State
-
-The native visionOS companion is published: App Store version `1.0.42` is
-`READY_FOR_SALE`, and signed TestFlight `1.0.43 (202607091626)` passed physical
-Apple Vision Pro launch and synced-state validation on July 9, 2026. The product
-page has approved visionOS screenshots, privacy metadata, age rating, review
-details that explain the Mac-to-companion CloudKit dependency, and App Motion
-Information.
+### visionOS Release Lane
 
 For a fresh visionOS update, `scripts/validate-companion-builds.sh visionos`
 remains only the unsigned compiler gate. Release evidence also requires a signed
@@ -864,32 +800,8 @@ records still depend on the container's Production schema, so a production-
 entitled Mac build cannot rely on runtime schema creation.
 
 Before companion TestFlight distribution, App Store Review, or signed runtime
-receipt relay, validate that Production contains the
-CloudKit-backed companion snapshot and runtime-evidence contracts:
-
-- private database record type `CompanionSyncDocument`
-- fixed versioned record name `current-v2`; current clients also read the
-  legacy `current` record during rolling upgrades, and current publishers mirror
-  the merged document there as a compatibility wake record
-- `payload` as CloudKit bytes/data
-- `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
-  `payloadByteCount` as integer/number fields
-- `snapshotSchemaVersion` marked queryable for transport diagnostics and schema
-  compatibility
-- `generatedAt` and `publishedAt` as date/time fields
-- private database record type `RuntimeValidationSession` with fixed record name
-  `runtime-validation-session-current-v1`, a bytes `payload`, session/schema
-  identity, bounded session and retention dates, expected manifest ID, publish
-  date, `active`/`cleared` state, state-update date, and payload byte count
-- private database record type `RuntimeReceipt` with deterministic
-  `runtime-receipt-<sha256>` record names, the existing redacted receipt payload,
-  session/receipt/surface/process metadata, observed and retention dates, and
-  payload byte count
-- `RuntimeReceipt.sessionID` marked queryable for current-session extraction
-- `RuntimeReceipt.retentionExpiresAt` marked queryable and sortable because
-  bounded remote cleanup uses a range predicate
-- no public-database grants on either runtime record type; the relay uses only
-  each signed-in user's private CloudKit database
+receipt relay, validate that Production contains the companion snapshot and
+runtime-evidence contracts in `CloudKit/companion-sync.schema.ckdb`.
 
 Run the offline repo contract check before packaging:
 
@@ -1340,13 +1252,6 @@ out of the archive. The `--historical-policy-archive` option is optional because
 many trains only reference current policies, but any supplied unused entry is a
 validation failure.
 
-Transitive reconstruction accepts an omitted operator-flow
-`totalDurationMinutes` only in historical lineage reports generated before the
-scoped action contract added that derived aggregate. Group and action durations
-remain fully validated, a present but incorrect total still fails, and current
-reports must always include the field. The replay path validates the untouched
-historical payload; never hand-edit or backfill a retained lineage bundle.
-
 The App Store submission workflow accepts the ledger separately from the
 coordinator report. Every live build attachment or submission requires the
 `release` evidence tier and release-evidence report in both `shadow` and
@@ -1451,17 +1356,9 @@ with the parent session. The lifecycle document remains schema v1 and is never
 silently rewritten to add receipt fields. The sidecar contains expected public
 build identity, receipt IDs, ordering metadata, closed outcomes, and diagnostic
 codes only; it does not persist raw exports or receipt documents.
-Operator queue state uses a second additive schema-v1 sidecar under
-`Coordinator/Operator Flow`, also keyed by the coordinator session ID and
-pruned with the parent. It stores only public action IDs/device classes, bounded
-wait timestamps, allowlisted notification decisions, and expiring deferral
-codes. See [Signed Validation Operator Flow](signed-validation-operator-flow.md)
-for the queue, privacy, and recovery contract.
-Visual review state uses a third additive schema-v1 sidecar under
-`Coordinator/Visual Approvals`. It binds explicit shared-view and placement
-contexts to the sealed exact-build identity, records append-only approve/reject
-decisions and supersession order, stores only optional private artifact digests,
-and is pruned with the parent session.
+Operator queue and visual review state use further schema-v1 sidecars, pruned
+with the parent session; see
+[Signed Validation Operator Flow](signed-validation-operator-flow.md#persistence).
 
 Signed host apps also contain the fixture-isolated shared widget gallery
 documented in [Signed Validation Galleries](signed-validation-galleries.md).
@@ -1545,62 +1442,16 @@ extensions, malformed exports, and relay problems become unknown or diagnostic,
 not product failures. Companion CloudKit content and visual approval remain
 separate evidence classes for later slices.
 
-Coordinator status exits with `0` while waiting or after all evidence available
-to this slice is collected, `10` when a human action is ready, `20` for a real
-blocker, `30` when local or remote evidence cannot establish a state, and `1`
-for an internal coordinator error. Exit `30` is soft unknown evidence, not a
-failed build.
+Status exit codes, queue timing, notification decisions and deferrals are
+defined in [Signed Validation Operator Flow](signed-validation-operator-flow.md).
 `sync-runtime-evidence` follows the same non-failure waiting rule: it exits `0`
 for an active bounded receipt wait or proven runtime slice, `20` when newer
 evidence supersedes the target, and `30` for an unknown/diagnostic result.
 
-Status groups operator actions by device after evidence and lifecycle
-reconciliation. Apple/TestFlight/install/receipt propagation remains quiet.
-Locked or sleeping devices remain quiet for 15 minutes before one unlock/wake
-request; reachability loss remains quiet for 30 minutes before a bounded
-decision request. The queue never requests an extended awake period.
-Notification decisions are persisted and limited to `readyForHumanReview`,
-`restartRequired`, `manualUnlockRequired`, and `blockedDecisionRequired`; the
-coordinator contains no notification delivery integration.
-
-Defer an action shown by `status --json` without satisfying its evidence:
-
-```sh
-scripts/context-panel-validation.py defer-action \
-  --version <marketing-version> \
-  --build-number <coordinated-build-number> \
-  --action-id <action-id> \
-  --owner release-operator \
-  --reason operator-unavailable \
-  --residual-risk review-pending \
-  --duration-hours 4
-```
-
-The owner is a public-safe label, and reason/residual-risk values are
-allowlisted. Active deferrals suppress the current notification decision but
-remain visible in the queue, expire automatically, retain residual-risk history,
-and never change proof or completion. A fully deferred queue remains exit `10`
-so shell callers cannot treat unresolved evidence as green. Use
-`clear-deferral` with the same target and action ID to end one early.
-
-Render the current privacy-safe GitHub report without posting it:
-
-```sh
-scripts/context-panel-validation.py final-report \
-  --version <marketing-version> \
-  --build-number <coordinated-build-number>
-```
-
-Pass `--json` for the stable machine contract. The report includes the exact
-target, required and obtained evidence classes, runtime surface state, grouped
-queue, visual requirements and decisions, deferrals, blockers, residual risks, and the explicit
-carry-forward boundary. It excludes the coordinator session ID and all device,
-account, credential, path, raw receipt, private artifact content, raw provider,
-and App Store Connect identifiers.
-
-Live App Store build attachment and review submission require this exact-build
-report. Generate it only after the coordinator reaches `complete_for_slice` with
-every required runtime surface proven, no active deferrals, no pending operator
+Live App Store build attachment and review submission require the exact-build
+[final report](signed-validation-operator-flow.md#final-report). Generate it
+only after the coordinator reaches `complete_for_slice` with every required
+runtime surface proven, no active deferrals, no pending operator
 actions, and no runtime diagnostics:
 
 ```sh
@@ -1820,12 +1671,8 @@ Before treating a fresh macOS train as release-ready:
 2. Restart the Watch after the installation completes.
 3. After the restart, test the real production complication, Watch app reload,
    shared-cache agreement, and degraded-state behavior.
-4. Do not treat stale or blank pre-restart output as an application-code
-   regression. Skip the restart only for an explicitly requested in-place
-   upgrade investigation; capture the installed build, face, app diagnostics,
-   and extension-process evidence before recovery.
-5. Do not use uninstall/reinstall or complication reselection as the routine
-   recovery path.
+4. Follow the [Watch restart rule](validation-authority.md#validation) for
+   pre-restart output, in-place upgrade investigations and recovery.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, follow the companion receive/mirror/reload
@@ -1845,6 +1692,14 @@ metadata from an existing version, updates `What's New`, and submits the review
 submission. Use `dry_run: true` to validate the metadata source, uploaded build,
 blocked-version recovery path, and target version path without creating,
 updating, or submitting App Store review objects.
+
+A live submission and the `--validate-report-only` preflight also need a
+passing `shared-view-simulator-references` CI job on each source commit the
+expected-build manifests name, from a push or manual run of CI. CI
+skips that job when a change cannot affect it, so the release commit may not
+have one. The helper then refuses and prints how to get one: push a branch at
+that commit and dispatch CI on it. It reads the runs from the GitHub API, with
+`GH_TOKEN` when set.
 
 ### Submission evidence bundle
 
@@ -1965,11 +1820,6 @@ runs so an exact-build recording from an older version cannot silently carry
 forward.
 Dry runs report that pending clear without changing App Store Connect.
 
-After a companion platform is rejected, do not resubmit that rejected marketing
-version as the recovery candidate. Prepare the next marketing version, copy the
-approved metadata and screenshot matrix there, attach a newly validated build,
-and submit that fresh version after device validation.
-
 Use `platform: MAC_OS` for the native macOS app. For companion review, first run
 the companion App Store Connect upload for `platform=ios`, `platform=visionos`,
 or `platform=tvos`, then run `Submit App Store Review` separately with
@@ -2054,22 +1904,11 @@ GitHub `Submit App Store Review` workflow with `dry_run: true` as a fallback.
 When reporting results, distinguish direct local ASC API evidence from
 workflow-mediated ASC API evidence.
 
-The app and refresh-agent App Store entitlements must keep the sandbox enabled
-with App Group, outbound network, read-only user-selected file access, and
-app-scope bookmark permissions. The macOS widget should keep only the sandbox
-and App Group entitlements. The App Store Connect upload script fails early when
-any supplied provisioning profile does not authorize the Context Panel App
-Group; App Store profiles may express that authorization as either the exact app
-group or a same-team wildcard. Companion iOS and visionOS uploads require the
-companion app profile to authorize the Context Panel iCloud container,
-iCloud Documents, CloudKit, ubiquity container access, and production APNs. The
-companion widget profile must authorize the App Group, selected platform,
-Context Panel CloudKit container, and Production CloudKit environment because
-the widget reads CloudKit directly and keeps the app-group mirror as fallback.
-It should not carry iCloud Documents, ubiquity, or APNs entitlements. The
-embedded watch app and watch complication profiles must both authorize the
-Context Panel CloudKit container and the shared
-`group.com.shinycomputers.contextpanel` App Group used for the Watch-local cache.
+The App Store Connect upload scripts fail early when any supplied provisioning
+profile does not authorize the Context Panel App Group; App Store profiles may
+express that authorization as either the exact app group or a same-team
+wildcard. Per-bundle profile requirements are in
+[Required Signing Material](#required-signing-material).
 
 ## Build The Native App And Widget
 
@@ -2096,10 +1935,6 @@ three bundle identifiers:
 
 The Xcode project is generated from `project.yml`; update the spec and
 regenerate rather than editing the project by hand.
-
-On 2026-05-06, the Debug Xcode build succeeded locally with automatic signing,
-embedded the WidgetKit extension, included the WidgetKit extension point in the
-extension Info.plist, and passed `codesign --verify --deep --strict`.
 
 ## Build A Native App Artifact Locally
 
@@ -2182,34 +2017,3 @@ scripts/package-macos-app.sh --identity -
   whose modification time is at least as new as the installed build fingerprint.
   Older render caches are diagnostic evidence only and cannot prove that the
   newly installed widget extension launched successfully.
-
-## Validation
-
-On 2026-05-06, `scripts/package-macos-app.sh --output dist --identity auto`
-produced `dist/Context Panel.app`, signed with Developer ID Application:
-Shiny Computers Leasing LLC, and `spctl --assess --type execute` accepted the
-bundle as Developer ID signed.
-
-On 2026-05-07, `scripts/package-native-macos-app.sh --version 1.0.0 --output
-dist --identity -` produced `dist/ContextPanel-1.0.0-macOS.zip`, embedded the
-WidgetKit extension, ad-hoc signed the app and widget with their entitlements,
-and passed `codesign --verify --deep --strict`.
-
-On 2026-05-08, `scripts/package-native-macos-app.sh --version
-1.0.1-signed-test --output dist --identity auto` produced a Developer ID signed
-app and widget with hardened runtime and trusted timestamp, passed
-`codesign --verify --deep --strict`, and passed local Gatekeeper assessment as
-`source=Developer ID`.
-
-On 2026-05-08, `scripts/package-native-macos-app.sh --version
-1.0.2-notary-test --output dist --identity auto --notarize` with App Store
-Connect API key options was accepted by Apple notarization, stapled the ticket,
-passed `xcrun stapler validate`, and passed local Gatekeeper assessment as
-`source=Notarized Developer ID`.
-
-On 2026-05-12, the App Store Connect export path was verified for current
-signing configuration in code review: Release archive signing is manual per
-target, uses Apple Distribution profile build settings, the export plist uses
-the current App Store Connect method plus the 3rd Party Mac Developer Installer
-certificate label, and the upload script checks that all three provisioning
-profiles authorize the Context Panel App Group before archiving.

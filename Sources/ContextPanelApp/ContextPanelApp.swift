@@ -467,14 +467,10 @@ struct AppRoot: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            AccountsSidebar(model: model, snapshot: snapshot, selection: $selection)
-                .frame(width: 240)
-            Divider()
+        AppLayout(model: model, snapshot: snapshot, selection: $selection) {
             MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview, openLimit: { selection = .mainLimit($0) })
                 .frame(minWidth: 760)
         }
-        .tint(CPTheme.accent)
         .onReceive(model.$navigationRequest.compactMap { $0 }) { request in
             selection = request
             model.clearNavigationRequest()
@@ -488,6 +484,25 @@ struct AppRoot: View {
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             model.loadSnapshot(reloadWidgetTimelines: false)
         }
+    }
+}
+
+private struct AppLayout<Detail: View>: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    @Binding var selection: AppNavigationSelection?
+    var fixedPresentationDate: Date? = nil
+    @ViewBuilder let detail: () -> Detail
+
+    var body: some View {
+        HStack(spacing: 0) {
+            AccountsSidebar(model: model, snapshot: snapshot, selection: $selection,
+                fixedPresentationDate: fixedPresentationDate)
+                .frame(width: 240)
+            Divider()
+            detail()
+        }
+        .tint(CPTheme.accent)
     }
 }
 
@@ -541,7 +556,7 @@ struct SettingsPane: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProviderBadge(provider: account.provider)
-                            TextField("Local account name", text: nameBinding(.account(account.id)))
+                            TextField(account.provider == .anthropic ? "Uses your Claude login" : "Local account name", text: nameBinding(.account(account.id)))
                                 .labelsHidden().accessibilityLabel("Local account name")
                                 .focused($focusedName, equals: .account(account.id))
                                 .onSubmit { commitName(.account(account.id)) }
@@ -576,7 +591,7 @@ struct SettingsPane: View {
                             .fixedSize()
                             Toggle(AccountTerms.useLast, isOn: Binding(
                                 get: { account.useLast ?? false },
-                                set: { model.setUseLast(account.id, useLast: $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                                set: { model.setUseLast(account.id, useLast: $0, reports: appModel.storedSnapshot?.reports ?? []); appModel.loadSnapshot(reloadWidgetTimelines: false) }
                             ))
                             .toggleStyle(.checkbox)
                             .fixedSize()
@@ -765,7 +780,7 @@ struct SettingsPane: View {
                 }
                 ForEach(model.retiredSettingsAccounts) { account in
                     HStack {
-                        Text("\(account.displayName) · retired source, off")
+                        Text("\(account.presentedName(reports: appModel.storedSnapshot?.reports ?? [])) · retired source, off")
                             .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         Spacer()
                         Button(AccountTerms.removeAccount, role: .destructive) {
@@ -1044,7 +1059,7 @@ struct SettingsPane: View {
         guard nameDrafts[field] != nil else { return }
         let allowsEmpty: Bool
         switch field {
-        case .account: allowsEmpty = false
+        case let .account(id): allowsEmpty = model.accounts.first { $0.id == id }?.provider == .anthropic
         case .alias: allowsEmpty = true
         }
         nameInputError = AccountNameEditing.commit(for: field, drafts: $nameDrafts, allowsEmpty: allowsEmpty) { value in
@@ -1056,7 +1071,12 @@ struct SettingsPane: View {
             case let .alias(id, logical): return model.renameAccount(id, name: value, logicalID: logical)
             }
         }
-        if nameInputError == nil { appModel.loadSnapshot(reloadWidgetTimelines: false) }
+        guard nameInputError == nil else { return }
+        appModel.loadSnapshot(reloadWidgetTimelines: false)
+        // A cleared Claude name takes the cached login on the next read, so read now (#760).
+        if case let .account(id) = field, model.accounts.first(where: { $0.id == id })?.displayName.isEmpty == true {
+            refreshAfterAuthorization()
+        }
     }
 
     private func reloadWidgetPreview() {
@@ -1175,6 +1195,51 @@ public enum MacValidationGallery {
                 AnyView(MacValidationGalleryPreview(context: context))
             }
         )
+    }
+
+    /// Offscreen App Store composition. No app lifecycle or installed runtime is opened.
+    @MainActor
+    public static func appStorePresentation(snapshot: WidgetSnapshot, now: Date, detail: Bool) -> some View {
+        MacAppStorePresentation(snapshot: snapshot, now: now, detail: detail)
+    }
+
+    /// One app presentation of the gallery without the gallery around it, for the
+    /// framed shared-view cell the renderer draws.
+    @MainActor
+    public static func presentation(route: ValidationGalleryRoute) -> some View {
+        MacValidationGalleryPreview(context: ValidationGalleryContext(route: route))
+    }
+}
+
+@MainActor
+private struct MacAppStorePresentation: View {
+    @StateObject private var model: ContextPanelAppModel
+    let snapshot: WidgetSnapshot
+    let now: Date
+    let detail: Bool
+
+    init(snapshot: WidgetSnapshot, now: Date, detail: Bool) {
+        self.snapshot = snapshot; self.now = now; self.detail = detail
+        _model = StateObject(wrappedValue: ContextPanelAppModel.appStoreFixture(snapshot: snapshot, now: now))
+    }
+
+    private var selection: AppNavigationSelection {
+        if detail, let account = snapshot.accountOverview(now: now).accounts.first {
+            return .providerAccount(account.metadata.provider, account.id)
+        }
+        return .overview
+    }
+
+    var body: some View {
+        AppLayout(model: model, snapshot: snapshot.usageSnapshot,
+            selection: .constant(selection), fixedPresentationDate: now) {
+            if detail, let account = snapshot.accountOverview(now: now).accounts.first {
+                AccountDashboard(model: model, provider: account.metadata.provider, accountID: account.id,
+                    fixedPresentationDate: now)
+            } else {
+                OverviewDashboard(model: model, snapshot: snapshot.usageSnapshot, presentationDate: now)
+            }
+        }
     }
 }
 
@@ -1301,7 +1366,7 @@ struct AddAccountSheet: View {
             Picker("Provider", selection: $provider) {
                 ForEach(Provider.allCases) { Text($0.accountDisplayName).tag($0) }
             }.pickerStyle(.segmented)
-            TextField("Local account name", text: $name).textFieldStyle(.roundedBorder)
+            TextField(provider == .anthropic ? "Name (optional, uses your Claude login)" : "Local account name", text: $name).textFieldStyle(.roundedBorder)
             if provider == .openAI {
                 Button("Find Codex sign-ins…") {
                     model.findCodexHomes { root, results in
@@ -1339,7 +1404,7 @@ struct AddAccountSheet: View {
                 Spacer()
                 Button(provider == .anthropic ? "Sign in" : "Add account") { add() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isAdding || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
+                    .disabled(isAdding || provider != .anthropic && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80
                         || (provider == .openAI && selectedHome == nil)
                         || (provider == .google && model.settingsAccounts.contains { $0.provider == .google }))
             }
@@ -2196,7 +2261,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         accounts.append(LocalProviderAccountConfiguration(
             id: "local-" + UUID().uuidString.lowercased(), provider: provider,
             connectorKind: provider == .openAI ? .codexRateLimits : .claudeOAuthUsage,
-            displayName: "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
+            // An empty Claude name uses the account's login (#760).
+            displayName: provider == .anthropic ? "" : "\(provider.displayName) \(accounts.filter { $0.provider == provider }.count + 1)",
             authPath: nil,
             codexClient: provider == .openAI ? .codex : nil,
             restorationRequestedAt: Date()
@@ -2290,9 +2356,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         // Preserve legacy paused accounts; active accounts keep collecting when hidden.
         saveAccounts()
     }
-    func setUseLast(_ accountID: String, useLast: Bool) {
+    func setUseLast(_ accountID: String, useLast: Bool, reports: [StoredProviderReport]) {
         guard !isRemovingAccount, accounts.contains(where: { $0.id == accountID }) else { return }
-        let notice = accounts.setUseLast(accountID, useLast)
+        let notice = accounts.setUseLast(accountID, useLast, reports: reports)
         useLastNotice = notice.map { (accountID, $0) }
         saveAccounts()
     }
@@ -3054,6 +3120,8 @@ struct AccountsSidebar: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     @Binding var selection: AppNavigationSelection?
+    var fixedPresentationDate: Date? = nil
+    private var presentationDate: Date { fixedPresentationDate ?? Date() }
 
     var body: some View {
         List(selection: Binding(
@@ -3072,14 +3140,14 @@ struct AccountsSidebar: View {
                 }
             }
             Section(AccountTerms.accounts) {
-                let overview = model.accountOverview(at: Date())
-                let totals = overview.providerTotals(now: Date())
+                let overview = model.accountOverview(at: presentationDate)
+                let totals = overview.providerTotals(now: presentationDate)
                 let reports = model.storedSnapshot?.reports ?? []
                 ForEach(Provider.allCases) { provider in
                     let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                     let providerTotal = totals.first(where: { $0.provider == provider })
-                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: Date())
+                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: presentationDate)
                     let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
                     if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
                         Button { selection = .provider(provider) } label: {
@@ -3143,7 +3211,7 @@ struct AccountsSidebar: View {
     }
 
     private func providerAccessibilityLabel(provider: Provider, total: AccountProviderTotal?, resetCredits: ProviderResetCreditSurfaceSummary?) -> String {
-        var parts = [total?.accessibilityText(now: Date()) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
+        var parts = [total?.accessibilityText(now: presentationDate) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
         if let resetCredits { parts.append(resetCreditAccessibilityText(resetCredits)) }
         return parts.joined(separator: ", ")
     }
@@ -3249,13 +3317,15 @@ struct AccountDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let provider: Provider
     let accountID: String
+    var fixedPresentationDate: Date? = nil
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let overview = model.accountOverview(at: context.date)
+            let now = fixedPresentationDate ?? context.date
+            let overview = model.accountOverview(at: now)
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
-                        AccountDashboardDetail(account: account, overview: overview, now: context.date)
+                        AccountDashboardDetail(account: account, overview: overview, now: now)
                     } else {
                         Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
                     }
@@ -3996,7 +4066,7 @@ private struct ReconnectAccountRow: View {
         HStack(alignment: .center, spacing: 12) {
             ProviderBadge(provider: account.provider)
             VStack(alignment: .leading, spacing: 4) {
-                Text(account.displayName)
+                Text(account.presentedName(reports: attentionReport.map { [$0] } ?? []))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                 Text(statusText)
@@ -5553,6 +5623,7 @@ final class ContextPanelAppModel: ObservableObject {
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let fixedPresentationDate: Date?
+    private var fixtureDisplayMetadata: [AccountDisplayMetadata]?
 
     private var presentationDate: Date {
         fixedPresentationDate ?? Date()
@@ -5790,34 +5861,36 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     static func validationFixture(context: ValidationGalleryContext) -> ContextPanelAppModel {
+        fixture(snapshot: context.snapshot, stored: context.storedSnapshot,
+            now: context.presentationDate, preferences: context.displayPreferences, historyCount: 3)
+    }
+
+    static func appStoreFixture(snapshot: WidgetSnapshot, now: Date) -> ContextPanelAppModel {
+        fixture(snapshot: snapshot,
+            stored: StoredUsageSnapshot(savedAt: now, snapshot: snapshot.usageSnapshot, reports: snapshot.reports),
+            now: now, preferences: .defaultPreferences, historyCount: 0)
+    }
+
+    private static func fixture(snapshot: WidgetSnapshot, stored: StoredUsageSnapshot, now: Date,
+                                preferences: WidgetDisplayPreferences, historyCount: Int) -> ContextPanelAppModel {
         let validationDirectory = FileManager.default.temporaryDirectory.appending(
-            path: "ContextPanelValidationGallery",
-            directoryHint: .isDirectory
-        )
+            path: "ContextPanelValidationGallery", directoryHint: .isDirectory)
         let refreshService = SnapshotRefreshService(
-            accountStore: AccountConfigurationStore(
-                configurationURL: validationDirectory.appending(path: "accounts.json")
-            ),
-            stores: SnapshotRefreshStores(
-                primary: JSONSnapshotStore(rootDirectory: validationDirectory)
-            ),
-            promptCacheTelemetryMirror: { _, _ in },
-            promptCacheTelemetryReader: { _ in [] }
-        )
-        let model = ContextPanelAppModel(
-            refreshService: refreshService,
-            runtimeReceiptRecorder: .disabled(),
-            enablesRuntimeReceiptRelay: false,
-            fixedPresentationDate: context.presentationDate
-        )
-        model.storedSnapshot = context.storedSnapshot
-        model.storeStatus = context.snapshot.status
-        model.historyCount = 3
-        model.widgetPreferences = context.displayPreferences
-        model.fastModeForecastSettings = context.snapshot.fastModeForecastSettings
-        model.observedBurnRates = context.snapshot.observedBurnRates
-        model.errorMessage = context.snapshot.syncErrorMessage
-        model.lastRefreshAt = context.snapshot.generatedAt
+            accountStore: AccountConfigurationStore(configurationURL: validationDirectory.appending(path: "accounts.json")),
+            stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: validationDirectory)),
+            promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+        let model = ContextPanelAppModel(refreshService: refreshService, runtimeReceiptRecorder: .disabled(),
+            enablesRuntimeReceiptRelay: false, fixedPresentationDate: now)
+        model.storedSnapshot = stored
+        model.storeStatus = snapshot.status
+        model.historyCount = historyCount
+        model.widgetPreferences = preferences
+        model.fastModeForecastSettings = snapshot.fastModeForecastSettings
+        model.observedBurnRates = snapshot.observedBurnRates
+        model.accountBurnRates = snapshot.accountBurnRates ?? [:]
+        model.fixtureDisplayMetadata = snapshot.accountDisplayMetadata
+        model.errorMessage = snapshot.syncErrorMessage
+        model.lastRefreshAt = snapshot.generatedAt
         return model
     }
 
@@ -5933,7 +6006,7 @@ final class ContextPanelAppModel: ObservableObject {
             return shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
         }
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
-            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : nil, now: now,
+            metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : fixtureDisplayMetadata, now: now,
             accountBurnRates: accountBurnRates)
     }
 

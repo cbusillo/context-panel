@@ -8,6 +8,11 @@ name: CI
       - main
       - "launchplane/train/**"
   workflow_dispatch:
+    inputs:
+      app_store_mac_capture:
+        description: Capture fixture-only native Mac windows for review
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,10 +26,33 @@ env:
   CI_TIME_BUDGET_MINUTES: "15"
 
 jobs:
-  macos-release:
-    # Use Ship's hosted runner/toolchain and universal optimized configuration.
+  app-store-mac-capture:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_store_mac_capture }}
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Capture isolated fixture windows
+        run: uv run scripts/capture-app-store-screenshots.py ci-macos --output .build/native-mac-capture
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: app-store-native-mac-${{ github.run_id }}
+          path: .build/native-mac-capture
+          retention-days: 14
+
+  scope:
+    # Which jobs this change needs, from the base it lands on (pull request base,
+    # previous main tip, or main for a merge-train candidate).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      product: ${{ steps.scope.outputs.product }}
+      references: ${{ steps.scope.outputs.references }}
+      simulator_references: ${{ steps.scope.outputs.simulator_references }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -33,28 +61,41 @@ jobs:
 
       - name: Classify change scope
         id: scope
-        if: ${{ github.event_name == 'pull_request' }}
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          python3 scripts/ci-change-scope.py --event "$EVENT_NAME" --ref "$REF"
+          --pr-base "$PR_BASE_SHA" --before "$BEFORE_SHA" --default-branch "${DEFAULT_BRANCH:-main}"
+
+  macos-release:
+    # Use Ship's hosted runner/toolchain and universal optimized configuration.
+    needs: scope
+    if: ${{ needs.scope.outputs.product != 'false' }}
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode
-        if: ${{ steps.scope.outputs.product != 'false' }}
         run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Validate Release Xcode
-        if: ${{ steps.scope.outputs.product != 'false' }}
         run: scripts/validate-release-xcode.sh --required-major 26
 
       - name: Install XcodeGen
-        if: ${{ steps.scope.outputs.product != 'false' }}
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then
             brew install xcodegen
           fi
 
       - name: Build universal macOS Release
-        if: ${{ steps.scope.outputs.product != 'false' }}
         run: |
           xcodegen generate --spec project.yml
           xcodebuild \
@@ -76,8 +117,10 @@ jobs:
   shared-view-references:
     # Renders the host shared-view cells and compares them with their committed
     # reference images. References are only valid for this runner image and the
-    # Xcode the Shared-View Capture Evidence workflow selects; re-record them when
-    # either changes (docs/validation-authority.md#reference-images).
+    # pinned Xcode; re-record them when either changes
+    # (docs/validation-authority.md#reference-images).
+    needs: scope
+    if: ${{ needs.scope.outputs.references != 'false' }}
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -86,19 +129,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Classify change scope
-        id: scope
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
-
       - name: Select Xcode
-        if: ${{ steps.scope.outputs.product != 'false' }}
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-capture-workflow.py pinned-xcode)"
 
       - name: Render host cells
-        if: ${{ steps.scope.outputs.product != 'false' }}
         run: |
           set -euo pipefail
           sw_vers
@@ -109,7 +143,6 @@ jobs:
             --output .build/shared-view-rendered
 
       - name: Compare with reference images
-        if: ${{ steps.scope.outputs.product != 'false' }}
         run: |
           python3 scripts/context-panel-shared-view-references.py compare \
             --rendered .build/shared-view-rendered \
@@ -117,7 +150,7 @@ jobs:
             --report .build/shared-view-rendered/report.json
 
       - name: Upload rendered cells
-        if: ${{ always() && steps.scope.outputs.product != 'false' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: shared-view-rendered-${{ github.run_id }}-${{ github.run_attempt }}
@@ -125,20 +158,172 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  shared-view-simulator-references:
+    # Captures the simulator shared-view cells exactly as Shared-View Capture
+    # Evidence does, from fresh Release builds of this commit, and compares them
+    # with their committed reference images. Xcode, runtimes and devices come from
+    # Config/ContextPanelSharedViewSimulators.json
+    # (docs/validation-authority.md#reference-images). It takes about an hour, so
+    # pull requests and merge-train candidates skip it (scripts/ci-change-scope.py)
+    # and nothing waits for it. On a branch, a newer push replaces a running one.
+    needs: scope
+    if: ${{ needs.scope.outputs.simulator_references != 'false' }}
+    concurrency:
+      group: shared-view-simulator-references-${{ github.event_name == 'push' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      issues: write
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-capture-workflow.py pinned-xcode)"
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Build Release simulator products
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          export CONTEXT_PANEL_SHARED_VIEW_SOURCE_ROOT="${GITHUB_WORKSPACE}"
+          export CONTEXT_PANEL_SHARED_VIEW_UI_TEST_SOURCE="${GITHUB_WORKSPACE}/Tests/ContextPanelCompanionSharedViewCaptureUITests"
+          xcodegen generate \
+            --spec Config/ContextPanelSharedViewCaptureUITests.yml \
+            --project-root "${GITHUB_WORKSPACE}" \
+            --project "${GITHUB_WORKSPACE}"
+          build_simulator() {
+            xcodebuild -project ContextPanel.xcodeproj -scheme "$1" -configuration Release \
+              -destination "$2" -derivedDataPath "$3" CODE_SIGNING_ALLOWED=NO build
+          }
+          build_ui_tests() {
+            xcodebuild -project ContextPanel.xcodeproj \
+              -scheme ContextPanelCompanionSharedViewCaptureUITests -configuration Release \
+              -destination "$1" -derivedDataPath "$2" build-for-testing
+          }
+          build_ui_tests 'generic/platform=iOS Simulator' .build/ios-derived-data
+          build_ui_tests 'generic/platform=visionOS Simulator' .build/visionos-derived-data
+          build_simulator ContextPanelWatch 'generic/platform=watchOS Simulator' .build/watchos-derived-data
+          build_simulator ContextPanelTV 'generic/platform=tvOS Simulator' .build/tvos-derived-data
+
+      - name: Capture simulator cells
+        run: |
+          set -euo pipefail
+          xcrun simctl list --json >"${RUNNER_TEMP}/simctl-catalog.json"
+          products() { echo "${GITHUB_WORKSPACE}/.build/$1-derived-data/Build/Products"; }
+          test_run() {
+            find "$(products "$1")" -maxdepth 1 -type f -name 'ContextPanelCompanionSharedViewCaptureUITests_*.xctestrun' -print -quit
+          }
+          python3 scripts/context-panel-shared-view-capture-workflow.py capture-config \
+            --catalog "${RUNNER_TEMP}/simctl-catalog.json" \
+            --ios-app "$(products ios)/Release-iphonesimulator/Context Panel.app" \
+            --ios-ui-test-run "$(test_run ios)" \
+            --visionos-app "$(products visionos)/Release-xrsimulator/Context Panel.app" \
+            --visionos-ui-test-run "$(test_run visionos)" \
+            --watchos-app "$(products watchos)/Release-watchsimulator/Context Panel.app" \
+            --tvos-app "$(products tvos)/Release-appletvsimulator/Context Panel.app" \
+            --output "${RUNNER_TEMP}/capture-config.json"
+          python3 scripts/context-panel-shared-view-references.py render-simulator \
+            --config "${RUNNER_TEMP}/capture-config.json" \
+            --output .build/shared-view-rendered
+
+      - name: Compare with reference images
+        run: |
+          python3 scripts/context-panel-shared-view-references.py compare \
+            --rendered .build/shared-view-rendered --simulator \
+            --report .build/shared-view-rendered/report.json
+
+      - name: Upload rendered cells
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-view-simulator-rendered-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/shared-view-rendered
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Nothing waits for this job, so a failure on main opens a plan issue for
+      # an agent to pick up, and the next passing run on main closes it.
+      - name: Open or close the reference failure issue
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Simulator reference images fail on main
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            | jq -r --arg title "$TITLE" 'map(select(.title == $title)) | .[0].number // empty')
+          if [[ "$JOB_STATUS" == 'success' ]]; then
+            if [[ -n "$open" ]]; then
+              gh issue close "$open" --comment "Passing again on ${GITHUB_SHA}: ${RUN_URL}"
+            fi
+            exit 0
+          fi
+          report=.build/shared-view-rendered/report.json
+          if [[ -f "$report" ]]; then
+            cells=$(jq -r '.cells[] | select(.state != "matched")
+              | "- `\(.surface)/\(.cell).png`: \(.state)\(if .changedPixels then " (\(.changedPixels) pixels differ)" else "" end)"' "$report")
+          else
+            cells='- No comparison ran: the build or capture failed. The run log names the failed step and cells.'
+          fi
+          failure="The simulator reference job failed on ${GITHUB_SHA}: ${RUN_URL}"$'\n\n'"${cells}"
+          if [[ -n "$open" ]]; then
+            gh issue comment "$open" --body "$failure"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --label plan --label plan:active --body "$(cat <<EOF
+          ## Why
+
+          ${failure}
+
+          Nothing waits for this job, so this issue is the only signal. App Store submission refuses a commit without a passing run.
+
+          ## Finish line
+
+          - The simulator reference job passes on main; that run closes this issue.
+
+          ## Current Status
+
+          Next action: Next agent: download the run's \`shared-view-simulator-rendered-*\` artifact, then fix the cause or re-record the changed cells (docs/validation-authority.md#reference-images).
+
+          <!-- github-plan:wait {"evidence": "Opened by CI for a failed reference run; no person or event hold.", "state": "clear", "version": 1, "waits": []} -->
+          EOF
+          )"
+
   swift:
-    needs: [swift-tests, macos-release, shared-view-references]
-    if: always()
+    needs: [scope, swift-tests, macos-release, shared-view-references]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Require product tests, release compilation and reference images
+      - name: Require product tests, release compilation and host reference images
+        # A job the change scope skipped passes; any other skip or failure does not.
         env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          PRODUCT: ${{ needs.scope.outputs.product }}
+          REFERENCES: ${{ needs.scope.outputs.references }}
           TEST_RESULT: ${{ needs.swift-tests.result }}
           RELEASE_RESULT: ${{ needs.macos-release.result }}
           REFERENCES_RESULT: ${{ needs.shared-view-references.result }}
         run: |
-          [[ "$TEST_RESULT" == 'success' && "$RELEASE_RESULT" == 'success' && "$REFERENCES_RESULT" == 'success' ]]
+          passed() { [[ "$1" == 'success' || ( "$1" == 'skipped' && "$2" == 'false' ) ]]; }
+          [[ "$SCOPE_RESULT" == 'success' && "$TEST_RESULT" == 'success' ]]
+          passed "$RELEASE_RESULT" "$PRODUCT"
+          passed "$REFERENCES_RESULT" "$REFERENCES"
 
   swift-tests:
+    needs: scope
     timeout-minutes: 30
     runs-on: >-
       ${{ fromJSON(github.event_name == 'pull_request' &&
@@ -160,15 +345,6 @@ jobs:
       - name: Show Xcode
         run: xcodebuild -version
 
-      # Pull requests that touch only documentation or validation tooling skip
-      # the Swift and companion builds. Every push to main runs them all.
-      - name: Classify change scope
-        id: scope
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/ci-change-scope.py --base "$BASE_SHA"
-
       - name: Set up uv for release approval policy lint
         uses: astral-sh/setup-uv@v7
 
@@ -182,14 +358,7 @@ jobs:
         run: uv run scripts/check-release-approvals.py
 
       - name: Run commit gate
-        env:
-          RUN_PRODUCT: ${{ steps.scope.outputs.product != 'false' }}
-        run: |
-          if [[ "$RUN_PRODUCT" == "true" ]]; then
-            scripts/commit-gate.sh
-          else
-            scripts/commit-gate.sh --skip-swift
-          fi
+        run: scripts/commit-gate.sh
 
       - name: Run routine Python test lane
         timeout-minutes: 5
@@ -213,25 +382,25 @@ jobs:
           .test-quality-catalog/scripts/check_test_quality.py --repo . --format github
 
       - name: Install XcodeGen
-        if: ${{ steps.scope.outputs.product != 'false' }}
+        if: ${{ needs.scope.outputs.product != 'false' }}
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then
             brew install xcodegen
           fi
 
       - name: Validate companion iOS build
-        if: ${{ steps.scope.outputs.product != 'false' }}
+        if: ${{ needs.scope.outputs.product != 'false' }}
         run: >-
           scripts/validate-companion-builds.sh
           --configuration Release --archive ios
 
       - name: Validate companion watchOS build
-        if: ${{ steps.scope.outputs.product != 'false' }}
+        if: ${{ needs.scope.outputs.product != 'false' }}
         run: >-
           scripts/validate-companion-builds.sh --configuration Release watchos
 
       - name: Validate companion tvOS archive
-        if: ${{ steps.scope.outputs.product != 'false' }}
+        if: ${{ needs.scope.outputs.product != 'false' }}
         run: >-
           scripts/validate-companion-builds.sh --configuration Release --archive tvos
 

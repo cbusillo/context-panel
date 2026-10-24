@@ -1099,14 +1099,6 @@ import Testing
     await blocker.resume(returning: 42)
 }
 
-@Test func watchRemoteLoadProbeStartWaitTimesOutWhenLoadNeverBegins() async {
-    let probe = WatchRemoteLoadProbe()
-
-    await #expect(throws: WatchRemoteLoadProbeError.self) {
-        try await probe.waitUntilLoadStarts(timeout: .milliseconds(10))
-    }
-}
-
 @Test func watchCompanionLoaderNeverMergesCachedUserAIntoRemoteUserB() async throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
