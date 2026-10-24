@@ -28,6 +28,8 @@ private struct Fixture {
     var bankedCountOnly = false
     var unrecognizedResets = 0
     var observedAgo: TimeInterval = 0
+    /// Readings arrive only when the provider is used, as with AGY's callback.
+    var eventDriven = false
 
     var family: String { provider == .openAI ? "Codex" : provider == .anthropic ? "Claude" : "Gemini" }
     var id: String { AccountDisplayMetadata.safeID(provider, name) }
@@ -37,7 +39,7 @@ private struct Fixture {
         var limits = [UsageLimit(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
             label: "\(family) Weekly", windowLabel: "Weekly", modelLabel: family, unit: .percent, used: weeklyUsed, limit: 100,
             resetsAt: resetHours.map { now.addingTimeInterval($0 * hour) } ?? observed.addingTimeInterval(168 * hour),
-            lastUpdatedAt: observed, confidence: .observed)]
+            lastUpdatedAt: observed, confidence: .observed, freshnessMode: eventDriven ? .eventDriven : nil)]
         if let fiveHourUsed {
             limits.append(UsageLimit(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
                 label: "\(family) 5-hour", windowLabel: "5-hour", modelLabel: family, unit: .percent, used: fiveHourUsed,
@@ -148,6 +150,26 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(result.useNextAccountID == idle.id)
     // The starter is one launch; after it the account shares by its need over a full week.
     #expect(Array(result.launchOrder.prefix(2)) == [idle.id, started.id])
+}
+
+// #848: an event-driven reading whose reset passed with no use since is assumed full and still ranks,
+// over a whole window from now, behind an account that would lose measured capacity sooner.
+@Test func assumedResetRanksAsAFreshWindowBehindMeasuredNeed() throws {
+    let quiet = Fixture(name: "gemini-quiet", provider: .google, weeklyUsed: 40, resetHours: -2, burn: 0.1,
+                        observedAgo: 22 * hour, eventDriven: true)
+    let alone = ranking([quiet], provider: .google)
+    let entry = try #require(alone.entry(quiet))
+    #expect(alone.exclusion(quiet) == nil)
+    #expect(alone.useNextAccountID == quiet.id)
+    #expect(alone.launchOrder.first == quiet.id)
+    #expect(entry.remaining == 100)
+    #expect(entry.deadline == rankNow.addingTimeInterval(168 * hour))
+    #expect(!entry.unstarted && !entry.starter)
+    #expect(entry.notes.contains { $0.contains("Assumed full") })
+
+    let measured = Fixture(name: "gemini-measured", provider: .google, weeklyUsed: 50, resetHours: 20, burn: 0.5)
+    let both = ranking([quiet, measured], provider: .google)
+    #expect(both.entries.map(\.accountID) == [measured.id, quiet.id])
 }
 
 // 5. An unstarted use-last account 1 hour after a refill gets one starter launch.

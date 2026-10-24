@@ -373,7 +373,9 @@ and presents the elapsed bucket as `≈100%` remaining and `≈0%` used. The
 approximation marker means the scheduled reset is assumed rather than observed;
 the next AGY run replaces it. This presentation inference must not be written
 into observed history or used as high-confidence forecast evidence, and it must
-not create stale or refresh-needed UI by itself.
+not create stale or refresh-needed UI by itself. Use next still ranks it as a
+fresh window (see [Use next ranking](#use-next-ranking-and-launch-receipts)), so
+a quiet account stays launchable and its next launch brings a real reading.
 Context Panel makes one immediate reset-expiry retry, then keeps unchanged AGY
 observations on the configured low-frequency background refresh cadence. Saves
 that only update prompt-cache telemetry, and refreshes that contact no provider
@@ -791,7 +793,11 @@ percent of an account's main window, which is the general weekly window
 
 - **Deadline:** Claude's next fixed weekly refill; the end of a running OpenAI
   clock; or now for an unstarted OpenAI clock (nothing used, and its reset reads
-  as a week after each reading).
+  as a week after each reading). An event-driven window assumed full after its
+  reset passed with no reading since has an unknown next reset: it ranks as a
+  full window ending one window length from now, with a note that the reset is
+  assumed, and no starter launch
+  ([#848](https://github.com/cbusillo/context-panel/issues/848)).
 - **Need** = (left − burn × hours to deadline) ÷ hours, in points per hour: how
   much faster the account must be used so nothing lapses.
 - **Exclusions,** each listed with its reason and, when known, `until`: not
