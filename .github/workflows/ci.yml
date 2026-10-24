@@ -8,6 +8,11 @@ name: CI
       - main
       - "launchplane/train/**"
   workflow_dispatch:
+    inputs:
+      app_store_mac_capture:
+        description: Capture fixture-only native Mac windows for review
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,6 +26,24 @@ env:
   CI_TIME_BUDGET_MINUTES: "15"
 
 jobs:
+  app-store-mac-capture:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_store_mac_capture }}
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Capture isolated fixture windows
+        run: uv run scripts/capture-app-store-screenshots.py ci-macos --output .build/native-mac-capture
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: app-store-native-mac-${{ github.run_id }}
+          path: .build/native-mac-capture
+          retention-days: 14
+
   scope:
     # Which jobs this change needs, from the base it lands on (pull request base,
     # previous main tip, or main for a merge-train candidate).
@@ -281,7 +304,7 @@ jobs:
 
   swift:
     needs: [scope, swift-tests, macos-release, shared-view-references]
-    if: always()
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require product tests, release compilation and host reference images

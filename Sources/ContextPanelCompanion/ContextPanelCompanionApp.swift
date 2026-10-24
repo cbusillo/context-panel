@@ -28,13 +28,33 @@ private extension Notification.Name {
     )
 }
 
+
+private var companionFixedPresentationDate: Date? {
+    #if CONTEXT_PANEL_SCREENSHOTS
+    ScreenshotFixture.date
+    #else
+    nil
+    #endif
+}
+
 @main
 struct ContextPanelCompanionApp: App {
+    #if CONTEXT_PANEL_SCREENSHOTS
+    init() { ScreenshotFixture.configureProcess() }
+    #endif
+
+    #if !CONTEXT_PANEL_SCREENSHOTS
     @UIApplicationDelegateAdaptor(CompanionAppDelegate.self) private var appDelegate
+    #endif
 
     var body: some Scene {
         WindowGroup {
+            #if CONTEXT_PANEL_SCREENSHOTS
             CompanionRootView()
+                .appStoreScreenshotEnvironment()
+            #else
+            CompanionRootView()
+            #endif
         }
     }
 }
@@ -126,6 +146,15 @@ private struct CompanionRootView: View {
     @State private var accountPath: [CompanionAccountRoute] = []
     @State private var showsAbout = false
 
+    #if CONTEXT_PANEL_SCREENSHOTS
+    init() {
+        if CommandLine.arguments.contains("--screenshot-detail"),
+           let account = ScreenshotFixture.snapshot.accountOverview(now: ScreenshotFixture.date).accounts.first {
+            _accountPath = State(initialValue: [.account(account.id)])
+        }
+    }
+    #endif
+
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
         model.appearanceSettings.visionOSAppAppearance.cpwThemeVariant
@@ -194,19 +223,25 @@ private struct CompanionRootView: View {
                         }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
-                                CompanionSyncStatusView(result: model.result, now: context.date)
+                                CompanionSyncStatusView(result: model.result, now: companionFixedPresentationDate ?? context.date)
                                 #if os(visionOS)
-                                SpatialAccountOverviewPanel(overview: accountOverview(at: context.date), now: context.date,
+                                SpatialAccountOverviewPanel(overview: accountOverview(at: companionFixedPresentationDate ?? context.date), now: companionFixedPresentationDate ?? context.date,
                                     contentWidth: min(geometry.size.width - 2 * pagePadding,
                                         CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, platform: .visionOS)
                                             ?? geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
+                                    #if CONTEXT_PANEL_SCREENSHOTS
+                                    .accessibilityIdentifier("screenshot-overview")
+                                    #endif
                                 #else
-                                AccountDashboardPanel(overview: accountOverview(at: context.date), now: context.date,
+                                AccountDashboardPanel(overview: accountOverview(at: companionFixedPresentationDate ?? context.date), now: companionFixedPresentationDate ?? context.date,
                                     compact: !CompanionLayoutPolicy.usesAccountTable(width: geometry.size.width),
                                     openAccount: { accountPath.append(.account($0.id)) },
                                     openDeadlines: { accountPath.append(.deadlines) })
+                                    #if CONTEXT_PANEL_SCREENSHOTS
+                                    .accessibilityIdentifier("screenshot-overview")
+                                    #endif
                                 #endif
                             }
                         }
@@ -268,15 +303,18 @@ private struct CompanionRootView: View {
                 } else {
                     ScrollView {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let overview = accountOverview(at: context.date)
+                            let overview = accountOverview(at: companionFixedPresentationDate ?? context.date)
                             switch route {
                             case .deadlines:
-                                AccountDeadlinesPanel(overview: overview, now: context.date,
+                                AccountDeadlinesPanel(overview: overview, now: companionFixedPresentationDate ?? context.date,
                                     openAccount: { accountPath.append(.account($0)) })
                             case let .account(id):
                                 if let account = overview.accounts.first(where: { $0.id == id }) {
-                                    AccountDashboardDetail(account: account, overview: overview, now: context.date,
+                                    AccountDashboardDetail(account: account, overview: overview, now: companionFixedPresentationDate ?? context.date,
                                         compact: horizontalSizeClass != .regular)
+                                        #if CONTEXT_PANEL_SCREENSHOTS
+                                        .accessibilityIdentifier("screenshot-detail")
+                                        #endif
                                 } else { Text("Account is no longer in this snapshot.") }
                             case .syncAndSettings:
                                 EmptyView()
@@ -319,7 +357,7 @@ private struct CompanionRootView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        CompanionSyncStatusView(result: model.result, now: context.date)
+                        CompanionSyncStatusView(result: model.result, now: companionFixedPresentationDate ?? context.date)
                     }
                     companionContent(layoutMode: layoutMode)
                 }
@@ -371,7 +409,7 @@ private struct CompanionRootView: View {
 
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
             if !model.snapshot.reports.isEmpty {
-                BankedResetDeadlinesView(reports: model.snapshot.reports, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+                BankedResetDeadlinesView(reports: model.snapshot.reports, presentationDate: companionFixedPresentationDate, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
             }
         }
         .frame(
@@ -395,7 +433,7 @@ private struct CompanionRootView: View {
                 links: CompanionDeepLinks.previewLinks,
                 showsResetCreditSurfaces: true,
                 resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
-                presentationDate: context.date
+                presentationDate: companionFixedPresentationDate ?? context.date
             )
             .cpwThemeVariant(previewThemeVariant)
             .background(
@@ -407,7 +445,7 @@ private struct CompanionRootView: View {
 
     private var companionForecast: KeepWorkingForecast? {
         guard model.snapshot.state == .ready else { return nil }
-        let forecast = model.snapshot.keepWorkingForecast(presentationDate: Date())
+        let forecast = model.snapshot.keepWorkingForecast(presentationDate: companionFixedPresentationDate ?? Date())
         return forecast.remainingPercent == nil ? nil : forecast
     }
 
@@ -753,7 +791,9 @@ private final class CompanionSyncModel {
     private let refreshSettingsStore: CompanionRefreshSettingsStore?
     private let appearanceSettingsStore: CompanionAppearanceSettingsStore?
     private let displayPreferencesStore: WidgetDisplayPreferencesStore?
+    #if !CONTEXT_PANEL_SCREENSHOTS
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    #endif
     private let presentationPreferencesRemoteStore: CompanionPresentationRemoteStore?
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
@@ -781,6 +821,19 @@ private final class CompanionSyncModel {
         runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
         runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
     ) {
+        #if CONTEXT_PANEL_SCREENSHOTS
+        refreshSettingsStore = nil
+        appearanceSettingsStore = nil
+        displayPreferencesStore = nil
+        presentationPreferencesRemoteStore = nil
+        self.runtimeReceiptRecorder = .disabled()
+        self.runtimeReceiptRelay = nil
+        refreshSettings = .defaultSettings
+        appearanceSettings = .defaultSettings
+        snapshot = ScreenshotFixture.snapshot
+        result = ScreenshotFixture.result
+        hasLoadedDisplayPreferences = true
+        #else
         let deviceClass = companionRuntimeDeviceClass()
         let appSurface = RuntimeSurface.companionApp(for: deviceClass)
         self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
@@ -837,9 +890,11 @@ private final class CompanionSyncModel {
             displayPreferencesStore = nil
             displayPreferencesErrorMessage = "Widget display settings could not be saved because shared app storage is unavailable."
         }
+        #endif
     }
 
     func reload(now: Date = Date()) {
+        #if !CONTEXT_PANEL_SCREENSHOTS
         guard reloadTask == nil else {
             needsReloadAfterCurrentTask = true
             return
@@ -918,6 +973,7 @@ private final class CompanionSyncModel {
             )
             lastWidgetRenderSignature = loadedSignature
         }
+        #endif
     }
 
     func handleCloudKitAccountChange() {
@@ -973,9 +1029,11 @@ private final class CompanionSyncModel {
     }
 
     func registerCloudKitSubscription() {
+        #if !CONTEXT_PANEL_SCREENSHOTS
         Task { [remoteStore] in
             _ = await remoteStore.registerSubscription()
         }
+        #endif
     }
 
     func runPeriodicRefreshLoop() async {

@@ -106,6 +106,12 @@ let package = Package(
             exclude: ["Main"]
         ),
         .executableTarget(
+            name: "ContextPanelAppStoreCapture",
+            dependencies: ["ContextPanelApp", "ContextPanelCore"],
+            path: "Tools/ContextPanelAppStoreCapture",
+            exclude: ["MacCaptureMain.swift", "MacCaptureUITests.swift", "CompanionCaptureUITests.swift", "CaptureWidget.swift"]
+        ),
+        .executableTarget(
             name: "ContextPanelAppMain",
             dependencies: ["ContextPanelApp"],
             path: "Sources/ContextPanelApp/Main"
@@ -163,6 +169,7 @@ let package = Package(
                 "ContextPanelApp",
                 "ContextPanelCore",
                 "ContextPanelSharedViewRenderer",
+                "ContextPanelAppStoreCapture",
                 "ContextPanelCloudKitSync",
                 "ContextPanelCompanionSupport",
                 "ContextPanelSettingsUI",

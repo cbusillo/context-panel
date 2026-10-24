@@ -1,5 +1,48 @@
 # App Store Screenshot Matrix
 
+## Horizon Native App and Widget Review Set
+
+The [native capture index](horizon-capture/README.md) contains 27 fixture-only,
+OS-composited Horizon images: native apps on all six platforms, actual Mac
+desktop widgets, Home Screen widgets for both iPhone display groups and iPad,
+and a spatial Vision Pro widget. These are unapproved. No uploader mapping,
+App Store upload or submission has changed.
+
+The table below is generated from [the capture manifest](horizon-capture/manifest.json),
+which records each image's captured source commit, mechanism and provenance.
+Every candidate was visually checked; failed Home-screen and cropped samples
+are excluded.
+
+| Image | Pixels | SHA-256 |
+| --- | --- | --- |
+| [ipad-detail-dark.png](horizon-capture/ipad-detail-dark.png) | 2048 × 2732 | `5713900196e2f91e4c5f0d971cd02380dfb3d6db73a5c204157c25bd65df5210` |
+| [ipad-detail-light.png](horizon-capture/ipad-detail-light.png) | 2048 × 2732 | `af09cf589db65a501f0e364cfc6997b1c253929bdb0c7fac98437515d5d4f334` |
+| [ipad-overview-dark.png](horizon-capture/ipad-overview-dark.png) | 2048 × 2732 | `b2a64aa47e1021cd27a87f704cb0ed0c0da788d170f3777634ad4651d15a9c15` |
+| [ipad-overview-light.png](horizon-capture/ipad-overview-light.png) | 2048 × 2732 | `acbca0b109ef0bac7e7478a3fea77d546504b3eddd091ada6a8594e688735235` |
+| [ipad-widget-dark.png](horizon-capture/ipad-widget-dark.png) | 2048 × 2732 | `09a732c7895e278c1f9c09acef84a9cc3e34667f7c1a652d7208ae85488dea87` |
+| [ipad-widget-light.png](horizon-capture/ipad-widget-light.png) | 2048 × 2732 | `621ebc119abbc74cca67a81493eeee435421d14ce23e19e7f5ea140918db48c7` |
+| [iphone-detail-dark.png](horizon-capture/iphone-detail-dark.png) | 1206 × 2622 | `2c080fd45e6266267d567c12094139dd3836677a2d079ae0fe9c1e136ee27cf0` |
+| [iphone-detail-light.png](horizon-capture/iphone-detail-light.png) | 1206 × 2622 | `97b248dd98859779e4286d20796cb440522a5792c8ef48b92da881cbde9a68be` |
+| [iphone-overview-dark.png](horizon-capture/iphone-overview-dark.png) | 1206 × 2622 | `f0b530f33dff837d1406244025fe5447f362819c7d0a9db6930469f5a013a987` |
+| [iphone-overview-light.png](horizon-capture/iphone-overview-light.png) | 1206 × 2622 | `45591127bcee6c6358875c310e6011ea3870f4bbd8bc42ba5936a45f933ce042` |
+| [iphone-widget-dark.png](horizon-capture/iphone-widget-dark.png) | 1206 × 2622 | `6e44d92c0b2d6bf9782af8eb598b06a336ba14d4d8949fb2c4652238bd5099b3` |
+| [iphone-widget-light.png](horizon-capture/iphone-widget-light.png) | 1206 × 2622 | `55ae4ec4c9d5599dacc1cc356a507fb15d74a8cb404e1333b017090c4335d682` |
+| [iphone65-overview-dark.png](horizon-capture/iphone65-overview-dark.png) | 1284 × 2778 | `ab48dcd8e74261a0a9b2b0067375320d6a6564736fd3f2a484d8306e5aa987a1` |
+| [iphone65-overview-light.png](horizon-capture/iphone65-overview-light.png) | 1284 × 2778 | `c1a033d338b41f5c6ab47c21e04de67972bb0dada814f7e1d90eb6972956b53f` |
+| [iphone65-widget-dark.png](horizon-capture/iphone65-widget-dark.png) | 1284 × 2778 | `62af05ca8fde9ad6e8a0cf6f20c9b65c1a80e1fddb2f65a98bd54107d4c35c75` |
+| [iphone65-widget-light.png](horizon-capture/iphone65-widget-light.png) | 1284 × 2778 | `f14a3f6337e41fb217a3a3ff59bee5136c86a150e3be8f07a5a6baaf46c67432` |
+| [mac-detail-dark.png](horizon-capture/mac-detail-dark.png) | 1280 × 800 | `5c0a252d9da652e2598cc066685aa7f56c7c7b939b70d01b4aa3f413752fa930` |
+| [mac-detail-light.png](horizon-capture/mac-detail-light.png) | 1280 × 800 | `0bc31997a2e27b3815b9f45aec8a0f8aab8c79569a16776b726066c59381cbaf` |
+| [mac-overview-dark.png](horizon-capture/mac-overview-dark.png) | 1280 × 800 | `777be94dd9ff20a58a09e549a8cdb09352c150e85b29e7edcc47b08cb839899b` |
+| [mac-overview-light.png](horizon-capture/mac-overview-light.png) | 1280 × 800 | `93c13afa29c92c268e86a090aeb894267f4164e00221c0a6e14c32b6c0976de1` |
+| [mac-widget-desktop.png](horizon-capture/mac-widget-desktop.png) | 1280 × 800 | `39f7962761fd1185e2fbb8d399c40dccfc147e8abe999077c1b345eb85c7812e` |
+| [tvos-overview-dark.png](horizon-capture/tvos-overview-dark.png) | 1920 × 1080 | `510ef7a1ac0f864f7780a93b2f3c67d6b286e85fbed5f9254d15c467148cb3e8` |
+| [visionpro-detail-dark.png](horizon-capture/visionpro-detail-dark.png) | 3840 × 2160 | `28b11d8304794e971596be4b049f9a1fa24d3f1a7652a7ea471930e1a0c2e98e` |
+| [visionpro-overview-dark.png](horizon-capture/visionpro-overview-dark.png) | 3840 × 2160 | `688d383cb935b9d3b471615b2778ba1f2841af12d71f6e90c07195c6525be511` |
+| [visionpro-widget-dark.png](horizon-capture/visionpro-widget-dark.png) | 3840 × 2160 | `73ed6ae01f052483390d5df791ee0377a16d89fd5b49861c49852df25efe4747` |
+| [watch-accounts-dark.png](horizon-capture/watch-accounts-dark.png) | 410 × 502 | `cf774e779c54d21fdc5fddcfee638cda2607a93a9f0d54eb04d202948099186a` |
+| [watch-overview-dark.png](horizon-capture/watch-overview-dark.png) | 410 × 502 | `2deec3480d14b57ed4829eebe2d6fcba2aa193eaa21d394b550caf3f5ca17955` |
+
 ## Horizon Draft Review Set
 
 Repo-only Horizon candidates for [#744](https://github.com/cbusillo/context-panel/issues/744)
