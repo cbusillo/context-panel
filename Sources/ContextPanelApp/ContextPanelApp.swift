@@ -4131,7 +4131,8 @@ private struct ReconnectAccountRow: View {
         }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .codexRateLimits, refreshSummary?.status == .failure {
-            return "Sign in again with the configured Codex client, then reselect its auth file."
+            return attentionReport?.userFacingErrorMessage
+                ?? "Use Codex once with this home, or sign in again there, then refresh Context Panel."
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .googleAntigravityQuota {

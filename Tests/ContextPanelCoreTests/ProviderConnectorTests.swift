@@ -1282,43 +1282,82 @@ func codexConnectorRejectsAuthWithoutReadableChatGPTTokens(authJSON: String) asy
     }
 }
 
-@Test func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithoutRefreshToken() async {
-    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 401, data: Data("secret body".utf8))])
-    let connector = CodexRateLimitConnector(
-        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
-        httpClient: http,
-        fileLoader: { _ in auth }
+private let codexRecoveryNow = Date(timeIntervalSince1970: 1_800_000_000)
+
+private func codexRecoveryResult(
+    rejectedAuth: String,
+    rejection: ConnectorHTTPResponse? = nil,
+    networkFailure: Bool = false
+) async -> (rejected: ProviderConnectorReport, sibling: ProviderConnectorReport) {
+    let siblingAuth = #"{"tokens":{"access_token":"sibling-secret","account_id":"account-b"}}"#
+    let usage = Data(#"{"rate_limit":{"primary_window":{"used_percent":20,"limit_window_seconds":18000,"reset_at":1800003600}}}"#.utf8)
+    let http = StubHTTPClient(
+        responses: [rejection ?? ConnectorHTTPResponse(statusCode: 200, data: usage), ConnectorHTTPResponse(statusCode: 200, data: usage)],
+        failureAtRequest: networkFailure ? 1 : nil
     )
+    let connector = CodexRateLimitConnector(
+        accounts: [
+            CodexAccountConfiguration(authPath: "/tmp/codex-work/auth.json", accountName: "Work"),
+            CodexAccountConfiguration(authPath: "/tmp/codex-home/auth.json", accountName: "Home"),
+        ],
+        httpClient: http,
+        fileLoader: { path in Data((path.contains("codex-work") ? rejectedAuth : siblingAuth).utf8) }
+    )
+    let reports = await connector.refresh(now: codexRecoveryNow).reports
+    return (reports[0], reports[1])
+}
 
-    let result = await connector.refresh(now: Date())
+private func codexRecoveryAuth(accessTokenExpiry: Date?, refreshToken: String?) -> String {
+    let payload: [String: Any] = accessTokenExpiry.map { ["exp": Int($0.timeIntervalSince1970)] } ?? [:]
+    let accessToken = "header.\(base64URLEncoded(try! JSONSerialization.data(withJSONObject: payload))).signature"
+    let refresh = refreshToken.map { #","refresh_token":"\#($0)""# } ?? ""
+    return #"{"tokens":{"access_token":"\#(accessToken)"\#(refresh),"account_id":"account-a"}}"#
+}
 
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("cannot be refreshed") == true)
-    #expect(result.reports[0].errorMessage?.contains("Sign in again") == true)
-    #expect(result.reports[0].errorMessage?.contains("secret body") == false)
-    #expect(http.requests.count == 1)
+private func expectCodexRecoveryMessage(_ report: ProviderConnectorReport, sibling: ProviderConnectorReport) {
+    #expect(report.status == .failure)
+    #expect(report.errorMessage?.contains("\u{201C}Work\u{201D}") == true)
+    #expect(report.errorMessage?.contains("Codex Lab") == false)
+    #expect(report.errorMessage?.contains("secret") == false)
+    #expect(sibling.status != .failure)
+    #expect(sibling.errorMessage == nil)
 }
 
 @Test(arguments: [401, 403])
-func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken(statusCode: Int) async {
-    let auth = #"{"tokens":{"access_token":"token-secret","refresh_token":"refresh-secret","account_id":"account-a"}}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: statusCode, data: Data("secret body".utf8))])
-    let connector = CodexRateLimitConnector(
-        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
-        httpClient: http,
-        fileLoader: { _ in auth }
-    )
+func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) async {
+    let auth = codexRecoveryAuth(accessTokenExpiry: codexRecoveryNow.addingTimeInterval(-60), refreshToken: "refresh-secret")
+    let result = await codexRecoveryResult(rejectedAuth: auth, rejection: ConnectorHTTPResponse(statusCode: statusCode, data: Data("secret body".utf8)))
 
-    let result = await connector.refresh(now: Date())
+    expectCodexRecoveryMessage(result.rejected, sibling: result.sibling)
+    #expect(result.rejected.errorMessage?.contains("expired sign-in") == true)
+    #expect(result.rejected.errorMessage?.contains("next refresh") == true)
+}
 
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("credentials were rejected") == true)
-    #expect(result.reports[0].errorMessage?.contains("no longer authorized") == false)
-    #expect(result.reports[0].errorMessage?.contains("secret body") == false)
-    #expect(http.requests.count == 1)
+@Test func codexConnectorAsksForNewSignInWhenHomeHasNoRefreshToken() async {
+    let auth = codexRecoveryAuth(accessTokenExpiry: codexRecoveryNow.addingTimeInterval(-60), refreshToken: nil)
+    let result = await codexRecoveryResult(rejectedAuth: auth, rejection: ConnectorHTTPResponse(statusCode: 401, data: Data("secret body".utf8)))
+
+    expectCodexRecoveryMessage(result.rejected, sibling: result.sibling)
+    #expect(result.rejected.errorMessage?.contains("cannot be renewed") == true)
+    #expect(result.rejected.errorMessage?.contains("Sign in again") == true)
+}
+
+@Test func codexConnectorDoesNotCallAnUnexpiredRejectionExpiry() async {
+    let auth = codexRecoveryAuth(accessTokenExpiry: codexRecoveryNow.addingTimeInterval(3600), refreshToken: "refresh-secret")
+    let result = await codexRecoveryResult(rejectedAuth: auth, rejection: ConnectorHTTPResponse(statusCode: 403, data: Data("secret body".utf8)))
+
+    expectCodexRecoveryMessage(result.rejected, sibling: result.sibling)
+    #expect(result.rejected.errorMessage?.contains("before it expired") == true)
+    #expect(result.rejected.errorMessage?.contains("expired sign-in") == false)
+}
+
+@Test func codexConnectorKeepsNetworkFailuresOutOfSignInRecovery() async {
+    let auth = codexRecoveryAuth(accessTokenExpiry: codexRecoveryNow.addingTimeInterval(-60), refreshToken: "refresh-secret")
+    let result = await codexRecoveryResult(rejectedAuth: auth, networkFailure: true)
+
+    #expect(result.rejected.status == .failure)
+    #expect(result.rejected.errorMessage?.contains("sign-in") == false)
+    #expect(result.sibling.status != .failure)
 }
 
 @Test func googleAntigravityBridgePersistsOnlySanitizedQuotaFields() throws {
