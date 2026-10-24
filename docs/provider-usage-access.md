@@ -95,6 +95,15 @@ outer field is absent or null, it remains absent; any malformed present field,
 including an object with a missing, null, or malformed nested type, degrades to
 the explicit unknown state.
 
+When the usage read says Codex is blocked now, the account's Codex limits show
+Limited even if their window percentages are low. This follows the open-source
+Codex client: a recognized `rate_limit_reached_type` (for example
+`workspace_owner_credits_depleted`), `spend_control.reached`, or
+`rate_limit.allowed` false without usable credits blocks usage. An unknown
+reached type does not, and `limit_reached` is not used. The block is
+account-wide, so model-specific limits show Limited too. A blocked read with no
+windows at all has no limit to mark and stays Unknown.
+
 ## OpenAI Reset Credits
 
 The verified OpenAI Codex read contract exposes an account-level summary under
@@ -694,6 +703,9 @@ invent unconfigured accounts. Membership and states use the shared
 `AccountBurnRateEstimator`, matching the account overview.
 
 Windows include their own observation time, unit, used/limit quantities,
+nullable `remainingFraction` and `period` (from
+[`MainLimitWindow`](../Sources/ContextPanelCore/MainLimitSummary.swift);
+null when the period is unknown),
 `naturalResetAt` and nullable `burn` (units per hour, observation duration,
 sample count). Burn is null when there is insufficient history or the account
 is not current. A burn `sampleCount` of zero means a whole-window average rather
@@ -714,7 +726,17 @@ Saved/failing reads keep unexpired offers explicitly marked last seen. A reporte
 zero remains distinguishable from no observation.
 
 Each account also exposes `showInWidgets`, `useLast`, its nullable tightest
-`remainingFraction`, and `limitingWindowID`. `answers.closestAccountID` is null
+`remainingFraction`, `limitingWindowID`, and `limitingWindowLabel`. The headline
+fraction measures that limiting window, which can change between readings; it
+is not a weekly allowance or a burn-rate sample. Read the `windows` entries
+with `period: fiveHour` and `period: weekly` for their separate remaining
+fractions and resets. Retain each matching entry when model-specific windows
+share a period. For weekly pacing and banked-reset burn summaries, read the
+weekly window's own `burn`, not changes in the headline. The headline label is null
+without a limiting window. These are additive schema 1 fields; older readers
+retain all existing fields, and consumers of older snapshots treat missing
+fields as unknown.
+`answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
 account ID per provider: the first entry of that provider's `ranking` (see
 [Use next ranking](#use-next-ranking-and-launch-receipts)). `deadlines` is a
@@ -991,8 +1013,8 @@ a reset or changes utilization.
 
 ### Claude profile-field qualification
 
-Before implementing API-backed login/plan display, an operator can qualify the
-candidate fields from the signed installed app's own existing OAuth consent:
+An operator can qualify the candidate profile fields from the signed installed
+app's own existing OAuth consent:
 
 ```sh
 "/Applications/Context Panel.app/Contents/MacOS/Context Panel" --claude-profile-shape

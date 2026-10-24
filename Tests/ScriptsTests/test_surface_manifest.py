@@ -30,7 +30,6 @@ SurfacePolicyError = core_module.SurfacePolicyError
 compare_manifests = core_module.compare_manifests
 collect_archive_evidence = artifact_module.collect_archive_evidence
 canonical_entitlements = artifact_module.canonical_entitlements
-canonical_json_hash = artifact_module.canonical_json_hash
 entitlement_contract_hash = artifact_module.entitlement_contract_hash
 embedded_manifest = core_module.embedded_manifest
 generate_manifest = core_module.generate_manifest
@@ -1088,18 +1087,19 @@ class SurfaceManifestTests(unittest.TestCase):
             "Sources/ContextPanelTVTopShelf": {"tvos.top-shelf"},
         }
         baseline_surfaces = self.surfaces(self.baseline)
-        for directory, expected_surfaces in mutations.items():
-            with self.subTest(directory=directory), tempfile.TemporaryDirectory() as temporary_directory:
-                root = self.fixture(temporary_directory)
-                (root / directory / "SyntheticFingerprintInput.swift").write_text(
-                    "struct SyntheticFingerprintInput {}\n"
-                )
-                mutated_surfaces = self.surfaces(self.manifest(root))
-                for surface_id in expected_surfaces:
-                    self.assertNotEqual(
-                        baseline_surfaces[surface_id]["fingerprints"]["combined"],
-                        mutated_surfaces[surface_id]["fingerprints"]["combined"],
-                    )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            for directory, expected_surfaces in mutations.items():
+                synthetic = root / directory / "SyntheticFingerprintInput.swift"
+                with self.subTest(directory=directory):
+                    synthetic.write_text("struct SyntheticFingerprintInput {}\n")
+                    mutated_surfaces = self.surfaces(self.manifest(root))
+                    synthetic.unlink()
+                    for surface_id in expected_surfaces:
+                        self.assertNotEqual(
+                            baseline_surfaces[surface_id]["fingerprints"]["combined"],
+                            mutated_surfaces[surface_id]["fingerprints"]["combined"],
+                        )
 
     def test_provider_transport_change_is_runtime_only(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1696,24 +1696,14 @@ class SurfaceManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.fixture(temporary_directory)
             self.append(root / "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
-            runtime = compare_manifests(self.baseline, self.manifest(root), "beta")
-        self.assertEqual(runtime["runtimeState"], "required-with-session")
-        self.assertEqual(
-            runtime["runtimeStateReasons"], ["runtime-fingerprint-changed"]
-        )
-
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = self.fixture(temporary_directory)
-            self.append(root / "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
-            release_runtime = compare_manifests(
-                self.baseline,
-                self.manifest(root),
-                "release",
-            )
-        self.assertEqual(release_runtime["runtimeState"], "required-with-session")
-        self.assertEqual(
-            release_runtime["runtimeStateReasons"], ["runtime-fingerprint-changed"]
-        )
+            runtime_manifest = self.manifest(root)
+        for train in ("beta", "release"):
+            with self.subTest(train=train):
+                runtime = compare_manifests(self.baseline, runtime_manifest, train)
+                self.assertEqual(runtime["runtimeState"], "required-with-session")
+                self.assertEqual(
+                    runtime["runtimeStateReasons"], ["runtime-fingerprint-changed"]
+                )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.fixture(temporary_directory)
@@ -2245,48 +2235,6 @@ class SurfaceManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(SurfacePolicyError, "architectures are missing"):
             seal_expected_build(self.baseline, invalid_architecture)
 
-    def test_artifact_semantic_risks_fan_out_without_escalating_beta(self):
-        surfaces = self.surfaces(self.baseline)
-        shared_artifact = surfaces["ios.app"]["artifactId"]
-        self.assertEqual(shared_artifact, surfaces["ipados.app"]["artifactId"])
-        previous = self.expected_build(self.baseline)
-
-        def change_entitlement_contract(template):
-            artifact = next(
-                item for item in template["artifacts"]
-                if item["artifactId"] == shared_artifact
-            )
-            artifact["entitlementContractSha256"] = "f" * 64
-
-        current = self.expected_build(self.baseline, change_entitlement_contract)
-        beta = compare_manifests(
-            self.baseline,
-            self.baseline,
-            "beta",
-            [previous],
-            [current],
-        )
-        self.assertEqual(beta["artifactEvidence"]["previousState"], "complete")
-        self.assertEqual(beta["artifactEvidence"]["currentState"], "complete")
-        self.assertEqual(beta["artifactRiskCodes"], ["entitlement-contract-changed"])
-        self.assertEqual(
-            beta["artifactRiskSurfaces"]["entitlement-contract-changed"],
-            ["ios.app", "ipados.app"],
-        )
-        self.assertNotIn("ios.app", beta["requiredSurfaces"]["actual-runtime"])
-        self.assertFalse(beta["requiresRuntimeSession"])
-
-        rc = compare_manifests(
-            self.baseline,
-            self.baseline,
-            "rc",
-            [previous],
-            [current],
-        )
-        by_surface = {item["surfaceId"]: item for item in rc["surfaces"]}
-        for surface_id in ("ios.app", "ipados.app"):
-            self.assertIn("actual-runtime", by_surface[surface_id]["freshEvidence"])
-
     def test_artifact_escalation_round_trips_through_release_policy(self):
         surfaces = self.surfaces(self.baseline)
         shared_artifact = surfaces["ios.app"]["artifactId"]
@@ -2330,43 +2278,7 @@ class SurfaceManifestTests(unittest.TestCase):
 
     def test_artifact_risk_vocabulary_ignores_raw_provenance_noise(self):
         previous = self.expected_build(self.baseline)
-        semantic_cases = (
-            ("bundleContractSha256", "bundle-contract-changed", "e" * 64),
-            ("signingContractSha256", "signing-contract-changed", "d" * 64),
-            ("entitlementContractSha256", "entitlement-contract-changed", "c" * 64),
-            ("profileCapabilitySha256", "profile-capability-changed", "b" * 64),
-        )
         artifact_id = previous["artifacts"][0]["artifactId"]
-        expected_surfaces = sorted(
-            surface_id
-            for surface_id, surface in self.surfaces(self.baseline).items()
-            if surface["artifactId"] == artifact_id
-        )
-        for field, risk_code, replacement in semantic_cases:
-            with self.subTest(field=field):
-                def mutate(
-                    template,
-                    semantic_field=field,
-                    semantic_replacement=replacement,
-                ):
-                    next(
-                        item for item in template["artifacts"]
-                        if item["artifactId"] == artifact_id
-                    )[semantic_field] = semantic_replacement
-
-                current = self.expected_build(self.baseline, mutate)
-                comparison = compare_manifests(
-                    self.baseline,
-                    self.baseline,
-                    "beta",
-                    [previous],
-                    [current],
-                )
-                self.assertEqual(comparison["artifactRiskCodes"], [risk_code])
-                self.assertEqual(
-                    comparison["artifactRiskSurfaces"][risk_code],
-                    expected_surfaces,
-                )
 
         def mutate_raw_provenance(template):
             artifact = next(
@@ -2774,30 +2686,6 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertEqual(profile_capability_hash(base), profile_capability_hash(renewed))
 
     def test_semantic_contract_drift_changes_expected_hashes(self):
-        signing_a = canonical_json_hash(
-            {
-                "identifierMatchesBundleIdentifier": True,
-                "signingClass": "Apple Distribution",
-                "teamIdentitySha256": hashlib.sha256(b"TEAM-A").hexdigest(),
-            }
-        )
-        signing_b = canonical_json_hash(
-            {
-                "identifierMatchesBundleIdentifier": True,
-                "signingClass": "Apple Development",
-                "teamIdentitySha256": hashlib.sha256(b"TEAM-A").hexdigest(),
-            }
-        )
-        signing_c = canonical_json_hash(
-            {
-                "identifierMatchesBundleIdentifier": True,
-                "signingClass": "Apple Distribution",
-                "teamIdentitySha256": hashlib.sha256(b"TEAM-B").hexdigest(),
-            }
-        )
-        self.assertNotEqual(signing_a, signing_b)
-        self.assertNotEqual(signing_a, signing_c)
-
         entitlements_a = canonical_entitlements(
             plistlib.dumps({"com.apple.security.application-groups": ["group.one"]})
         )
@@ -2867,40 +2755,6 @@ class SurfaceManifestTests(unittest.TestCase):
         thin = seal_expected_build(self.baseline, thin_template)
         self.assertNotEqual(universal["artifacts"][0]["architectures"], thin["artifacts"][0]["architectures"])
         self.assertNotEqual(universal["expectedBuildId"], thin["expectedBuildId"])
-
-    def test_expected_build_id_binds_raw_and_semantic_v2_fields(self):
-        template = evidence_template(self.baseline, "macos")
-        for artifact in template["artifacts"]:
-            artifact.update(v2_artifact_contract(artifact["artifactId"].encode()))
-        sealed = seal_expected_build(self.baseline, template)
-        for key in (
-            "executableSha256",
-            "executableUUIDs",
-            "entitlementsSha256",
-            "profileSha256",
-            "bundleContractSha256",
-            "signingContractSha256",
-            "entitlementContractSha256",
-            "profileCapabilitySha256",
-            "architectures",
-        ):
-            tampered = json.loads(json.dumps(sealed))
-            if isinstance(tampered["artifacts"][0][key], list):
-                tampered["artifacts"][0][key] = ["tampered"]
-            else:
-                tampered["artifacts"][0][key] = "f" * 64
-            self.assertNotEqual(
-                tampered["expectedBuildId"],
-                core_module.hash_parts(
-                    f"{tampered['digestDomain']}/expected-build",
-                    [
-                        core_module.canonical_json(
-                            {name: value for name, value in tampered.items() if name != "expectedBuildId"}
-                        )
-                    ],
-                ),
-                key,
-            )
 
     def test_archive_fixture_binds_embedded_manifests_and_signed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

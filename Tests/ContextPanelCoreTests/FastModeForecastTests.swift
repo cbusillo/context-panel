@@ -454,6 +454,30 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(estimate.sampleCount == 3)
 }
 
+@Test(arguments: [(-1.0, false), (1.0, false), (3.0, false), (-1.0, true), (1.0, true)])
+func observedBurnRateKeepsIntervalsWithSmallResetJitter(jitter: Double, crossesReset: Bool) throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = (0...2).map { index in
+        let sampleReset = crossesReset ? now.addingTimeInterval(index == 2 ? jitter : -jitter)
+            : reset.addingTimeInterval(Double(index) * jitter)
+        return storedOpenAIWeekly(savedAt: now.addingTimeInterval(Double(index - 2) * 1_800), used: 10 + index * 2,
+            reset: sampleReset)
+    }
+    let current = try #require(history.last?.snapshot)
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    if crossesReset {
+        #expect(estimates.isEmpty)
+        return
+    }
+    let estimate = try #require(estimates.values.first)
+    #expect(estimate.unitsPerHour == 4)
+    #expect(estimate.observedDurationHours == 1)
+    #expect(estimate.sampleCount == history.count)
+    let limit = try #require(current.limits.first)
+    let accountRate = AccountBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)[limit.accountID]?[limit.id]
+    #expect(accountRate == estimate)
+}
+
 @Test func observedBurnRateUsesCurrentWindowPaceWithoutHistory() throws {
     let reset = now.addingTimeInterval((7 * 24 - 2) * 3_600)
     let history = [

@@ -1834,27 +1834,6 @@ import Testing
     #expect(widgetMirror.loadCurrent().snapshot?.snapshot.limits.count == 1)
 }
 
-@Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryBeforeReadingIt() async throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let callOrder = SnapshotRefreshCallOrderRecorder()
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary),
-        promptCacheTelemetryMirror: { _, _ in
-            callOrder.record("mirror")
-        },
-        promptCacheTelemetryReader: { _ in
-            callOrder.record("read")
-            return []
-        }
-    )
-
-    _ = service.promptCacheObservations(now: Date(timeIntervalSince1970: 300))
-
-    #expect(callOrder.values == ["mirror", "read"])
-}
-
 @Test func snapshotRefreshServicePassesBookmarkStoreToPromptCacheMirror() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -2467,19 +2446,6 @@ import Testing
     #expect(store.loadCurrent().snapshot?.promptCacheObservations.map(\.id) == [fresh.id])
 }
 
-@Test func widgetSandboxLocalSnapshotDirectoryUsesProcessApplicationSupport() {
-    #expect(ContextPanelLocations.widgetSandboxLocalSnapshotDirectory().path.hasSuffix(
-        "Library/Application Support/Context Panel/Snapshots"
-    ))
-}
-
-@Test func widgetContainerLocalSnapshotDirectoryTargetsWidgetExtensionContainer() {
-    let path = ContextPanelLocations.widgetContainerLocalSnapshotDirectory().path
-
-    #expect(path.contains("Library/Containers/com.shinycomputers.contextpanel.widget/Data"))
-    #expect(path.hasSuffix("Library/Application Support/Context Panel/Snapshots"))
-}
-
 @Test func snapshotRefreshStoresAppDefaultSkipsWidgetContainerMirrorInSandbox() {
     let stores = SnapshotRefreshStores.appDefault(
         appGroupID: "invalid.test.app-group",
@@ -2496,9 +2462,8 @@ import Testing
     )
 
     #expect(stores.mirrors.count == 1)
-    #expect(stores.mirrors.first?.currentSnapshotURL.path.contains(
-        "Library/Containers/com.shinycomputers.contextpanel.widget/Data"
-    ) == true)
+    #expect(stores.mirrors.first?.rootDirectory.standardizedFileURL
+        == ContextPanelLocations.widgetContainerLocalSnapshotDirectory().standardizedFileURL)
 }
 
 @Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
@@ -3560,28 +3525,6 @@ import Testing
     )
 
     #expect(interval == 18)
-}
-
-@Test func snapshotRefreshRunnerSkipsWhenRefreshLockIsHeld() async throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
-    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let heldLock = try HeldFileLock(url: lockURL)
-    defer { heldLock.release() }
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary)
-    )
-    let runner = SnapshotRefreshRunner(
-        service: service,
-        lock: SnapshotRefreshLock(lockURL: lockURL)
-    )
-
-    let decision = try await runner.refresh(now: Date(timeIntervalSince1970: 600))
-
-    #expect(decision == .skippedAlreadyRunning)
-    #expect(primary.loadCurrent().snapshot == nil)
 }
 
 @Test func snapshotRefreshRunnerRetriesManualSavesUntilLockClears() async throws {

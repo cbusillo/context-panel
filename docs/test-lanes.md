@@ -8,8 +8,8 @@ places it in a lane.
 
 ## Lane Boundaries
 
-- `fast-local-python`: the focused Python contract tests included in the local
-  commit gate.
+- `fast-local-python`: the historical lane name for baseline hermetic Python
+  contract tests, now run as part of the complete CI gate.
 - `routine-ci-python`: hermetic Python `unittest` files that use fixtures, fake
   clients, and temporary directories. They do not require credentials, signed
   artifacts, provider access, or devices.
@@ -19,7 +19,7 @@ places it in a lane.
 - `visual-evidence`: exact-build gallery or visual-review evidence. Simulator
   renders may satisfy shared-view evidence, but not actual-runtime requirements.
 - `actual-runtime`: evidence from `/Applications/Context Panel.app` or physical
-  devices under the runtime rules in `AGENTS.md`.
+  devices under the [runtime rules](validation-authority.md#validation).
 - `support-only`: fixtures and helpers that are consumed by tests but are never
   executed independently.
 
@@ -51,17 +51,29 @@ Validate complete ownership:
 python3 scripts/context-panel-test-lanes.py validate
 ```
 
-Run the focused local Python lane with per-file timing (`uv` is required for
+Run focused local Python fixture modules directly, for example:
+
+```sh
+uv run --no-project --with cryptography --with PyYAML python -m unittest \
+  Tests.ScriptsTests.test_ci_change_scope
+```
+
+Use `qualityGate.test.local` for a selected Swift test class or method. For
+safety areas, run the complete covering modules described in `AGENTS.md`.
+Do not run the full commit gate locally. The complete CI sequence is declared
+in `.github/github.json`; the existing lane names and ownership remain intact.
+
+CI runs the baseline Python lane with per-file timing (`uv` is required for
 files configured with parallel workers):
 
 ```sh
 python3 scripts/context-panel-test-lanes.py run --lane fast-local-python
 ```
 
-Run the complementary routine CI Python lane with per-file timing:
+CI also runs the complementary routine Python lane with per-file timing:
 
 ```sh
-uv run --no-project --with cryptography --with PyYAML python scripts/context-panel-test-lanes.py run --lane routine-ci-python
+python3 scripts/context-panel-test-lanes.py run --lane routine-ci-python
 ```
 
 Files configured in the manifest's `workersByFile` run their existing unittest
@@ -73,11 +85,11 @@ Other files remain serial. A missing runner fails that file, preserves its
 report and continues later files.
 Only independent, hermetic fixture tests belong in this configuration. Reports
 record elapsed wall time and worker count for each file, including worker startup.
-For debugging or a machine without the parallel dependencies, add `--serial`
-to run every file with the standard unittest runner. The commit gate forwards
-that option with `scripts/commit-gate.sh --serial-python`; it still runs every
-focused Python file and the Swift build/tests. Combine with `--skip-swift` only
-when the changed paths cannot affect Swift.
+For CI lane diagnostics without parallel dependencies, add `--serial` to the
+lane command to use the standard unittest runner. The commit gate retains
+`--serial-python` and `--skip-swift` for diagnostics,
+and lane timing diagnostics accept `time-command --timeout-seconds <seconds>`.
+The required CI gate runs without `--skip-swift` on every head.
 
 List the files in a safe lane:
 
@@ -86,7 +98,7 @@ python3 scripts/context-panel-test-lanes.py list \
   --lane routine-ci-python --safe
 ```
 
-The commit gate runs the focused Python lane and times the complete Swift lane.
+The CI commit gate runs the baseline Python lane and times the complete Swift lane.
 CI also runs the complementary routine Python lane. Reports are written under
 `.build/test-lane-timings/` and uploaded by CI. They
 contain repository-relative test paths, durations, exit status, source commit,
@@ -109,46 +121,30 @@ including a child stuck in the kernel.
 A hang must fail the gate rather than occupy the runner until GitHub's default
 timeout.
 
-For a deliberately slower local diagnostic, choose a finite positive deadline:
-
-```sh
-swift build --build-tests
-python3 scripts/context-panel-test-lanes.py time-command \
-  --lane routine-ci-swift --timeout-seconds 600 -- swift test --skip-build
-```
-
 ## JetBrains Inspection Preparation
 
 The repository declares PyCharm as its preferred inspection IDE and defines its
 worktree-local Python SDK preparation in `.github/github.json`. Before an
 inspection, the helper uses `uv` to create a Python 3.13 environment at `.venv`
 and generates the local `.idea` project model with `Tests` marked as a test root.
-Both directories are ignored and must be generated independently in each linked
-worktree. PyCharm is preferred because it reliably registers each worktree's
-path-specific virtual environment without manual SDK configuration.
+The shared default inspection profile in `.idea/inspectionProfiles/Project_Default.xml`
+is tracked; the generated SDK and other `.idea` state stay ignored and must be
+prepared independently in each linked worktree. PyCharm is preferred because it
+reliably registers each worktree's path-specific virtual environment without
+manual SDK configuration.
 
 This preparation exists only to provide semantic Python inspection for the
 repository's validation scripts and tests. Context Panel is not a Python
 package, so the preparation does not run dependency synchronization and does
 not require a `pyproject.toml` or `uv.lock`.
 
-## Audit Baseline
-
-The initial lane manifest is anchored to source commit
-`172cae46e192bf3c203d5a8ce62e7def99eb49e3` on August 12, 2026. At that commit,
-all 14 existing Python test files passed in local execution; this change adds a
-fifteenth test file for the lane tooling itself. The lane report generated by CI
-is the durable runner-specific baseline; local and GitHub-hosted timings must not
-be compared as if they came from the same environment.
-
 ## macOS release compilation
 
 The CI workflow also builds the native macOS app in Release for both Apple
 Silicon and Intel, using the same hosted runner and Xcode selection/guard as
 Ship. This covers optimized whole-module compilation that the native SwiftPM
-test lane does not exercise. The required `swift` check joins the product test
-and macOS release jobs; either failure blocks that check. Documentation-only
-changes use the existing change-scope classifier to skip product compilation.
+test lane does not exercise. Documentation-only changes use the existing
+change-scope classifier to skip product compilation.
 
 This build checks compilation and both executable slices. It does not sign,
 notarize, publish, install, or replace the canonical runtime. Those steps remain

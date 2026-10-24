@@ -813,7 +813,10 @@ read -r fixture_input <"$FAKE_XCODEBUILD_BLOCKED"
         )
 
     @staticmethod
-    def run_widget_timeline_freshness_fixture(timeline_mtime: int, reference_mtime: int) -> subprocess.CompletedProcess[str]:
+    def run_widget_timeline_freshness_fixture(
+        timeline_mtime: int, reference_mtime: int | None
+    ) -> subprocess.CompletedProcess[str]:
+        """A None reference_mtime leaves the installed build's fingerprint missing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             timeline_dir = root / "timelines/ContextPanelWidget"
@@ -821,9 +824,10 @@ read -r fixture_input <"$FAKE_XCODEBUILD_BLOCKED"
             timeline = timeline_dir / "systemMedium344.00w-164.00h.timeline.chrono-timeline"
             reference = root / "ContextPanelBuildFingerprint.txt"
             timeline.write_text("timeline")
-            reference.write_text("fingerprint")
             os.utime(timeline, (timeline_mtime, timeline_mtime))
-            os.utime(reference, (reference_mtime, reference_mtime))
+            if reference_mtime is not None:
+                reference.write_text("fingerprint")
+                os.utime(reference, (reference_mtime, reference_mtime))
             command = f"""
             source scripts/context-panel-runtime-baseline.sh --source-only
             widget_timeline_cache_is_current_for_build "{root}" "{reference}"
@@ -2164,93 +2168,84 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("usage:", result.stdout)
 
-    def test_runtime_gate_accepts_widget_timeline_from_installed_build(self) -> None:
-        result = self.run_widget_timeline_freshness_fixture(timeline_mtime=200, reference_mtime=100)
+    def test_runtime_gate_accepts_only_widget_timeline_newer_than_installed_build(self) -> None:
+        for timeline_mtime, reference_mtime, accepted in ((200, 100, True), (100, 200, False), (200, None, False)):
+            with self.subTest(timeline_mtime=timeline_mtime, reference_mtime=reference_mtime):
+                result = self.run_widget_timeline_freshness_fixture(timeline_mtime, reference_mtime)
 
-        self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(result.returncode == 0, accepted, result.stdout)
 
-    def test_runtime_gate_rejects_widget_timeline_from_previous_build(self) -> None:
-        result = self.run_widget_timeline_freshness_fixture(timeline_mtime=100, reference_mtime=200)
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_runtime_gate_rejects_widget_timeline_without_build_reference(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            timeline_dir = root / "timelines/ContextPanelWidget"
-            timeline_dir.mkdir(parents=True)
-            (timeline_dir / "systemMedium344.00w-164.00h.timeline.chrono-timeline").write_text("timeline")
-            command = f"""
-            source scripts/context-panel-runtime-baseline.sh --source-only
-            widget_timeline_cache_is_current_for_build "{root}" "{root / 'missing-fingerprint.txt'}"
-            """
-            result = subprocess.run(
-                ["/bin/bash", "-c", command],
-                cwd=REPO_ROOT,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_release_package_rejects_cloudkit_without_profiles_before_building(self) -> None:
-        result = self.run_package_script_preflight([
-            "--identity",
-            "Apple Development: Test",
-        ])
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Context Panel app uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_rejects_ambiguous_auto_identity_before_building(self) -> None:
+    def test_release_package_refuses_unsafe_signing_inputs_before_building(self) -> None:
+        app = self.cloudkit_profile_plist("com.shinycomputers.contextpanel")
+        refresh = self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent")
+        cloudkit_args = [
+            "--app-provisioning-profile", "app.plist", "--refresh-agent-provisioning-profile", "refresh.plist",
+        ]
+        developer_id = '"Developer ID Application: Test (MM5YXC7T6E)"'
         second_fingerprint = hashlib.sha1(b"second-signing-certificate").hexdigest().upper()
-        identities = (
-            f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Developer ID Application: Test (MM5YXC7T6E)"\n'
-            f'  2) {second_fingerprint} "Developer ID Application: Test (MM5YXC7T6E)"\n'
-            "     2 valid identities found"
-        )
+        # name: (arguments, profiles, preflight options, refusal)
+        cases: dict[str, tuple[list[str], dict[str, str], dict[str, Any], str]] = {
+            "CloudKit without profiles": (
+                ["--identity", "Apple Development: Test"], {}, {},
+                "Context Panel app uses CloudKit entitlements and requires an embedded provisioning profile",
+            ),
+            "ambiguous auto identity": (
+                ["--identity", "auto"], {},
+                {"identity_output": f"  1) {FIXTURE_SIGNING_FINGERPRINT} {developer_id}\n"
+                                    f"  2) {second_fingerprint} {developer_id}\n"
+                                    "     2 valid identities found"},
+                "multiple valid Developer ID Application signing certificates are available",
+            ),
+            "identity lookup failure": (
+                ["--identity", "auto"], {},
+                {"identity_output": f"  1) {FIXTURE_SIGNING_FINGERPRINT} {developer_id}", "identity_status": 77},
+                "could not list valid codesigning identities",
+            ),
+            "signed build without widget profile": (
+                ["--identity", FIXTURE_SIGNING_FINGERPRINT, *cloudkit_args],
+                {"app.plist": app, "refresh.plist": refresh}, {},
+                "Context Panel widget requires an embedded provisioning profile",
+            ),
+            "ad hoc widget profile": (
+                ["--identity", "-", "--widget-provisioning-profile", "widget.plist"],
+                {"widget.plist": self.widget_profile_plist()}, {"identity_status": 77},
+                "provisioning profiles requires a non-ad-hoc signing identity",
+            ),
+            "ad hoc CloudKit profiles": (
+                ["--identity", "-", *cloudkit_args], {"app.plist": app, "refresh.plist": refresh}, {},
+                "requires a non-ad-hoc signing identity",
+            ),
+            "swapped profile": (
+                ["--identity", "Apple Development: Test", "--app-provisioning-profile", "app.plist",
+                 "--refresh-agent-provisioning-profile", "app.plist"],
+                {"app.plist": app}, {},
+                "Context Panel refresh agent provisioning profile does not authorize application identifier: "
+                "MM5YXC7T6E.com.shinycomputers.contextpanel.refresh-agent",
+            ),
+            "profile without CloudKit service": (
+                ["--identity", "Apple Development: Test", *cloudkit_args],
+                {"app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel", services=["CloudDocuments"]),
+                 "refresh.plist": refresh},
+                {},
+                "Context Panel app provisioning profile does not authorize com.apple.developer.icloud-services: CloudKit",
+            ),
+            "wrong CloudKit environment": (
+                ["--identity", "Apple Development: Test", *cloudkit_args],
+                {"app.plist": self.cloudkit_profile_plist(
+                    "com.shinycomputers.contextpanel", cloudkit_environment="Development",
+                ), "refresh.plist": refresh},
+                {},
+                "Context Panel app provisioning profile does not authorize "
+                "com.apple.developer.icloud-container-environment: Production",
+            ),
+        }
+        for name, (args, profiles, options, refusal) in cases.items():
+            with self.subTest(name):
+                result = self.run_package_script_preflight(args, profiles=profiles, **options)
 
-        result = self.run_package_script_preflight(["--identity", "auto"], identity_output=identities)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("multiple valid Developer ID Application signing certificates are available", result.stdout)
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_rejects_identity_lookup_failure_before_building(self) -> None:
-        identities = f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Developer ID Application: Test (MM5YXC7T6E)"'
-
-        result = self.run_package_script_preflight(
-            ["--identity", "auto"],
-            identity_output=identities,
-            identity_status=77,
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("could not list valid codesigning identities", result.stdout)
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_requires_widget_profile_for_signed_builds(self) -> None:
-        result = self.run_package_script_preflight(
-            [
-                "--identity",
-                FIXTURE_SIGNING_FINGERPRINT,
-                "--app-provisioning-profile",
-                "app.plist",
-                "--refresh-agent-provisioning-profile",
-                "refresh.plist",
-            ],
-            profiles={
-                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
-                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
-            },
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Context Panel widget requires an embedded provisioning profile", result.stdout)
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(refusal, result.stdout)
+                self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
     def test_release_package_rejects_each_profile_for_a_different_signing_certificate(self) -> None:
         mismatch_cases = (
@@ -2329,118 +2324,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("unexpected fake xcodegen invocation", result.stdout)
         self.assertNotIn("uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
 
-    def test_release_package_rejects_ad_hoc_widget_profile_before_building(self) -> None:
-        result = self.run_package_script_preflight(
-            [
-                "--identity",
-                "-",
-                "--widget-provisioning-profile",
-                "widget.plist",
-            ],
-            profiles={"widget.plist": self.widget_profile_plist()},
-            identity_status=77,
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("provisioning profiles requires a non-ad-hoc signing identity", result.stdout)
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_rejects_ad_hoc_cloudkit_profiles_before_building(self) -> None:
-        result = self.run_package_script_preflight(
-            [
-                "--identity",
-                "-",
-                "--app-provisioning-profile",
-                "app.plist",
-                "--refresh-agent-provisioning-profile",
-                "refresh.plist",
-            ],
-            profiles={
-                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
-                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
-            },
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires a non-ad-hoc signing identity", result.stdout)
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_rejects_swapped_cloudkit_profile_before_building(self) -> None:
-        result = self.run_package_script_preflight(
-            [
-                "--identity",
-                "Apple Development: Test",
-                "--app-provisioning-profile",
-                "app.plist",
-                "--refresh-agent-provisioning-profile",
-                "app.plist",
-            ],
-            profiles={
-                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
-            },
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "Context Panel refresh agent provisioning profile does not authorize application identifier: "
-            "MM5YXC7T6E.com.shinycomputers.contextpanel.refresh-agent",
-            result.stdout,
-        )
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_rejects_profile_without_cloudkit_service_before_building(self) -> None:
-        result = self.run_package_script_preflight(
-            [
-                "--identity",
-                "Apple Development: Test",
-                "--app-provisioning-profile",
-                "app.plist",
-                "--refresh-agent-provisioning-profile",
-                "refresh.plist",
-            ],
-            profiles={
-                "app.plist": self.cloudkit_profile_plist(
-                    "com.shinycomputers.contextpanel",
-                    services=["CloudDocuments"],
-                ),
-                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
-            },
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "Context Panel app provisioning profile does not authorize com.apple.developer.icloud-services: CloudKit",
-            result.stdout,
-        )
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
-    def test_release_package_rejects_wrong_cloudkit_environment_before_building(self) -> None:
-        result = self.run_package_script_preflight(
-            [
-                "--identity",
-                "Apple Development: Test",
-                "--app-provisioning-profile",
-                "app.plist",
-                "--refresh-agent-provisioning-profile",
-                "refresh.plist",
-            ],
-            profiles={
-                "app.plist": self.cloudkit_profile_plist(
-                    "com.shinycomputers.contextpanel",
-                    cloudkit_environment="Development",
-                ),
-                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
-            },
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "Context Panel app provisioning profile does not authorize "
-            "com.apple.developer.icloud-container-environment: Production",
-            result.stdout,
-        )
-        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
-
     def test_cloudkit_companion_schema_validator_accepts_ckdb_export(self) -> None:
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
             self.read("CloudKit/companion-sync.schema.ckdb")
@@ -2470,93 +2353,60 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn("test-management-token", result.stdout)
 
-    def test_cloudkit_schema_validator_rejects_non_sortable_retention_field(self) -> None:
-        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
-            "retentionExpiresAt   TIMESTAMP QUERYABLE SORTABLE",
-            "retentionExpiresAt   TIMESTAMP QUERYABLE",
-        )
+    def test_cloudkit_schema_validator_rejects_unsafe_or_drifted_schema(self) -> None:
+        schema = self.read("CloudKit/companion-sync.schema.ckdb")
+        # name: (live schema, checked-in schema or None for the repository copy, expected messages)
+        cases: dict[str, tuple[str, str | None, tuple[str, ...]]] = {
+            "non-sortable retention field": (
+                schema.replace("retentionExpiresAt   TIMESTAMP QUERYABLE SORTABLE", "retentionExpiresAt   TIMESTAMP QUERYABLE"),
+                None, ("RuntimeReceipt.retentionExpiresAt", "not sortable"),
+            ),
+            "runtime public grant": (
+                schema.replace(
+                    "        surface              STRING\n    );",
+                    '        surface              STRING,\n        GRANT READ TO "_world"\n    );',
+                ),
+                None, ("must not grant public database access", "RuntimeReceipt"),
+            ),
+            "changed Users grants": (
+                schema,
+                schema.replace(
+                    '        GRANT WRITE TO "_creator",\n        GRANT READ TO "_world"\n    );',
+                    '        GRANT WRITE TO "_creator"\n    );',
+                ),
+                ("grants changed for record type: Users",),
+            ),
+            "unexpected checked-in record type": (
+                schema,
+                schema.replace(
+                    "\n    RECORD TYPE Users (",
+                    "\n    RECORD TYPE UnexpectedType (\n        value STRING\n    );\n\n    RECORD TYPE Users (",
+                ),
+                ("record types differ from the additive companion/runtime baseline",),
+            ),
+            "wrong field type": (
+                schema.replace("payload               BYTES QUERYABLE SORTABLE", "payload               STRING QUERYABLE SORTABLE"),
+                None, ("CompanionSyncDocument.payload BYTES",),
+            ),
+            "non-queryable subscription field": (
+                schema.replace("snapshotSchemaVersion INT64 QUERYABLE SORTABLE", "snapshotSchemaVersion INT64 SORTABLE"),
+                None, ("snapshotSchemaVersion", "not queryable"),
+            ),
+            "missing runtime receipt record type": (
+                re.sub(r"\n    RECORD TYPE RuntimeReceipt \(.*?\n    \);\n", "\n", schema, flags=re.DOTALL),
+                None, ("missing record type: RuntimeReceipt",),
+            ),
+        }
+        for name, (live_schema, checked_in_schema, messages) in cases.items():
+            with self.subTest(name):
+                self.assertNotEqual(checked_in_schema or live_schema, schema, "fixture edit did not apply")
+                result = self.run_cloudkit_schema_validator_with_fake_cktool(
+                    live_schema, checked_in_schema=checked_in_schema,
+                )
 
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("RuntimeReceipt.retentionExpiresAt", result.stdout)
-        self.assertIn("not sortable", result.stdout)
-
-    def test_cloudkit_schema_validator_rejects_runtime_public_grant(self) -> None:
-        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
-            "        surface              STRING\n    );",
-            '        surface              STRING,\n        GRANT READ TO "_world"\n    );',
-        )
-
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("must not grant public database access", result.stdout)
-        self.assertIn("RuntimeReceipt", result.stdout)
-
-    def test_cloudkit_schema_validator_rejects_changed_users_grants(self) -> None:
-        checked_in_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
-            '        GRANT WRITE TO "_creator",\n        GRANT READ TO "_world"\n    );',
-            '        GRANT WRITE TO "_creator"\n    );',
-        )
-
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            self.read("CloudKit/companion-sync.schema.ckdb"),
-            checked_in_schema=checked_in_schema,
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("grants changed for record type: Users", result.stdout)
-
-    def test_cloudkit_schema_validator_rejects_unexpected_checked_in_record_type(self) -> None:
-        checked_in_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
-            "\n    RECORD TYPE Users (",
-            "\n    RECORD TYPE UnexpectedType (\n        value STRING\n    );\n\n    RECORD TYPE Users (",
-        )
-
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            self.read("CloudKit/companion-sync.schema.ckdb"),
-            checked_in_schema=checked_in_schema,
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("record types differ from the additive companion/runtime baseline", result.stdout)
-
-    def test_cloudkit_companion_schema_validator_rejects_wrong_ckdb_field_type(self) -> None:
-        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
-            "payload               BYTES QUERYABLE SORTABLE",
-            "payload               STRING QUERYABLE SORTABLE",
-        )
-
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("CompanionSyncDocument.payload BYTES", result.stdout)
-
-    def test_cloudkit_companion_schema_validator_rejects_nonqueryable_subscription_field(self) -> None:
-        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
-            "snapshotSchemaVersion INT64 QUERYABLE SORTABLE",
-            "snapshotSchemaVersion INT64 SORTABLE",
-        )
-
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("snapshotSchemaVersion", result.stdout)
-        self.assertIn("not queryable", result.stdout)
-
-    def test_cloudkit_schema_validator_rejects_missing_runtime_receipt_boundary(self) -> None:
-        live_schema = re.sub(
-            r"\n    RECORD TYPE RuntimeReceipt \(.*?\n    \);\n",
-            "\n",
-            self.read("CloudKit/companion-sync.schema.ckdb"),
-            flags=re.DOTALL,
-        )
-
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("missing record type: RuntimeReceipt", result.stdout)
+                self.assertNotEqual(result.returncode, 0)
+                for message in messages:
+                    self.assertIn(message, result.stdout)
 
     def test_cloudkit_schema_validator_checks_every_contract_field_live(self) -> None:
         contract = json.loads(self.read("CloudKit/companion-sync.schema.json"))
@@ -3616,220 +3466,65 @@ wait
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_rejects_placeholder_visionos_icon_stack(self) -> None:
-        with tempfile.TemporaryDirectory() as working_dir:
-            working_root = Path(working_dir)
-            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
-            icon_stack.mkdir(parents=True)
-            (icon_stack / "Contents.json").write_text("{}\n")
+    def test_companion_upload_rejects_malformed_visionos_icon_stack_before_profiles(self) -> None:
+        stack = "Resources/Assets.xcassets/AppIcon.solidimagestack"
+        front_images = f"{stack}/Front.solidimagestacklayer/Content.imageset/Contents.json"
 
-            result = self.run_companion_upload_script(
-                [
-                    "--platform",
-                    "visionos",
-                    "--version",
-                    "1.0.99",
-                    "--build-number",
-                    "168004",
-                    "--export-only",
-                ],
-                cwd=working_root,
-            )
+        def layers(*names: str) -> str:
+            return json.dumps({"layers": [{"filename": f"{name}.solidimagestacklayer"} for name in names]})
 
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("must contain two or three solid image stack layers", result.stdout)
-        self.assertNotIn("provisioning profile not found", result.stdout)
-        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+        def images(*names: str) -> str:
+            return json.dumps({"images": [{"filename": name, "idiom": "vision", "scale": "2x"} for name in names]})
 
-    def test_companion_upload_rejects_visionos_icon_stack_without_image_files(self) -> None:
-        with tempfile.TemporaryDirectory() as working_dir:
-            working_root = Path(working_dir)
-            self.write_minimal_visionos_icon_stack(working_root)
-            for image_file in working_root.glob(
-                "Resources/Assets.xcassets/AppIcon.solidimagestack/*.solidimagestacklayer/Content.imageset/*.png"
-            ):
-                image_file.unlink()
+        # Each case starts from a valid three-layer stack (or none), then rewrites
+        # (text) or deletes (None) the named files.
+        cases: dict[str, tuple[bool, dict[str, str | None], str]] = {
+            "placeholder stack": (
+                False, {f"{stack}/Contents.json": "{}\n"},
+                "must contain two or three solid image stack layers",
+            ),
+            "missing image files": (
+                True,
+                {f"{stack}/{name}.solidimagestacklayer/Content.imageset/{name}.png": None
+                 for name in ("Front", "Middle", "Back")},
+                "has a missing image file",
+            ),
+            "duplicate layers": (
+                True, {f"{stack}/Contents.json": layers("Front", "Front", "Back")}, "declares a duplicate layer",
+            ),
+            "path-warped layer filename": (
+                True, {f"{stack}/Contents.json": layers("Front", "../Back", "Middle")},
+                "declares an invalid layer filename",
+            ),
+            "path-warped image filename": (
+                True, {front_images: images("../Front.png")}, "has an invalid image filename",
+            ),
+            "duplicate image filenames": (
+                True, {front_images: images("Front.png", "Front.png")}, "declares a duplicate image filename",
+            ),
+        }
+        for name, (valid_stack, changes, refusal) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as working_dir:
+                working_root = Path(working_dir)
+                if valid_stack:
+                    self.write_minimal_visionos_icon_stack(working_root)
+                for relative_path, text in changes.items():
+                    target = working_root / relative_path
+                    if text is None:
+                        target.unlink()
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_text(text)
 
-            result = self.run_companion_upload_script(
-                [
-                    "--platform",
-                    "visionos",
-                    "--version",
-                    "1.0.99",
-                    "--build-number",
-                    "168005",
-                    "--export-only",
-                ],
-                cwd=working_root,
-            )
+                result = self.run_companion_upload_script(
+                    ["--platform", "visionos", "--version", "1.0.99", "--build-number", "168004", "--export-only"],
+                    cwd=working_root,
+                )
 
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("has a missing image file", result.stdout)
-        self.assertNotIn("provisioning profile not found", result.stdout)
-        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
-
-    def test_companion_upload_rejects_duplicate_visionos_layers(self) -> None:
-        with tempfile.TemporaryDirectory() as working_dir:
-            working_root = Path(working_dir)
-            self.write_minimal_visionos_icon_stack(working_root)
-            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
-            (icon_stack / "Contents.json").write_text(
-                """{
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  },
-  "layers" : [
-    { "filename" : "Front.solidimagestacklayer" },
-    { "filename" : "Front.solidimagestacklayer" },
-    { "filename" : "Back.solidimagestacklayer" }
-  ]
-}
-"""
-            )
-            result = self.run_companion_upload_script(
-                [
-                    "--platform",
-                    "visionos",
-                    "--version",
-                    "1.0.99",
-                    "--build-number",
-                    "168006",
-                    "--export-only",
-                ],
-                cwd=working_root,
-            )
-
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("declares a duplicate layer", result.stdout)
-        self.assertNotIn("provisioning profile not found", result.stdout)
-        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
-
-    def test_companion_upload_rejects_path_warped_visionos_layer_filename(self) -> None:
-        with tempfile.TemporaryDirectory() as working_dir:
-            working_root = Path(working_dir)
-            self.write_minimal_visionos_icon_stack(working_root)
-            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
-            (icon_stack / "Contents.json").write_text(
-                """{
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  },
-  "layers" : [
-    { "filename" : "Front.solidimagestacklayer" },
-    { "filename" : "../Back.solidimagestacklayer" },
-    { "filename" : "Middle.solidimagestacklayer" }
-  ]
-}
-"""
-            )
-            result = self.run_companion_upload_script(
-                [
-                    "--platform",
-                    "visionos",
-                    "--version",
-                    "1.0.99",
-                    "--build-number",
-                    "168007",
-                    "--export-only",
-                ],
-                cwd=working_root,
-            )
-
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("declares an invalid layer filename", result.stdout)
-        self.assertNotIn("provisioning profile not found", result.stdout)
-        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
-
-    def test_companion_upload_rejects_path_warped_visionos_image_filename(self) -> None:
-        with tempfile.TemporaryDirectory() as working_dir:
-            working_root = Path(working_dir)
-            self.write_minimal_visionos_icon_stack(working_root)
-            front_images = (
-                working_root
-                / "Resources/Assets.xcassets/AppIcon.solidimagestack/Front.solidimagestacklayer/Content.imageset"
-            )
-            (front_images / "Contents.json").write_text(
-                """{
-  "images" : [
-    {
-      "filename" : "../Front.png",
-      "idiom" : "vision",
-      "scale" : "2x"
-    }
-  ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  }
-}
-"""
-            )
-            result = self.run_companion_upload_script(
-                [
-                    "--platform",
-                    "visionos",
-                    "--version",
-                    "1.0.99",
-                    "--build-number",
-                    "168008",
-                    "--export-only",
-                ],
-                cwd=working_root,
-            )
-
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("has an invalid image filename", result.stdout)
-        self.assertNotIn("provisioning profile not found", result.stdout)
-        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
-
-    def test_companion_upload_rejects_duplicate_visionos_image_filenames(self) -> None:
-        with tempfile.TemporaryDirectory() as working_dir:
-            working_root = Path(working_dir)
-            self.write_minimal_visionos_icon_stack(working_root)
-            front_images = (
-                working_root
-                / "Resources/Assets.xcassets/AppIcon.solidimagestack/Front.solidimagestacklayer/Content.imageset"
-            )
-            (front_images / "Contents.json").write_text(
-                """{
-  "images" : [
-    {
-      "filename" : "Front.png",
-      "idiom" : "vision",
-      "scale" : "2x"
-    },
-    {
-      "filename" : "Front.png",
-      "idiom" : "vision",
-      "scale" : "2x"
-    }
-  ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  }
-}
-"""
-            )
-            result = self.run_companion_upload_script(
-                [
-                    "--platform",
-                    "visionos",
-                    "--version",
-                    "1.0.99",
-                    "--build-number",
-                    "168009",
-                    "--export-only",
-                ],
-                cwd=working_root,
-            )
-
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("declares a duplicate image filename", result.stdout)
-        self.assertNotIn("provisioning profile not found", result.stdout)
-        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(refusal, result.stdout)
+                self.assertNotIn("provisioning profile not found", result.stdout)
+                self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
     def test_companion_upload_allows_leading_dash_visionos_icon_filenames(self) -> None:
         with tempfile.TemporaryDirectory() as working_dir:
@@ -4145,6 +3840,103 @@ wait
                 check=False,
             )
 
+    def run_spotlight_discovery_fixture(
+        self, discovery: str, *, action: str = "check",
+    ) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tool = root / "mdfind"
+            pid_file = root / "discovery.pid"
+            bodies = {
+                "empty": "exit 0",
+                "canonical": 'printf "%s\\n" "$FIXTURE_APP_PATH"',
+                "conflict": 'printf "%s\\n" "/fixture/Other Context Panel.app"',
+                "failed": 'printf "%s\\n" "/fixture/partial.app"; exit 1',
+                "unavailable": "exit 127",
+                "stderr": 'echo "Spotlight informational diagnostic" >&2; exit 0',
+                "stalled": f'echo $$ > {shlex.quote(str(pid_file))}\nprintf "%s\\n" "/fixture/partial.app"\nexec /bin/sleep 60',
+            }
+            tool.write_text("#!/bin/bash\n" + bodies[discovery] + "\n")
+            tool.chmod(0o755)
+            actions = {
+                "check": "check_conflicting_bundles",
+                "install": "install_runtime",
+                "reset": "reset_runtime",
+            }
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            # Keep real discovery, deadline and receipt; all other host reads/writes are inert.
+            keep=" is_runtime_or_build_artifact check_conflicting_bundles install_runtime reset_runtime quarantine_stale_runtime_bundles discoverable_bundles run_with_timeout fail ok note section "
+            for name in $(declare -F | awk '{{print $3}}'); do
+              [[ "$keep" == *" $name "* ]] && continue
+              eval "$name() {{ :; }}"
+            done
+            eval "$(declare -f run_with_timeout | sed '1s/run_with_timeout/fixture_run_with_timeout/')"
+            run_with_timeout() {{ shift; fixture_run_with_timeout 1 "$@"; }}
+            unregister_stale_plugin_paths() {{ echo MUTATION; }}
+            unregister_stale_launchservices_paths() {{ echo MUTATION; }}
+            quarantine_path() {{
+              if [[ "$1" == "$app_path" ]]; then echo CANONICAL_MUTATION; fi
+              printf 'MUTATION %s\\n' "$1"
+            }}
+            remove_prior_baseline_trash() {{ echo MUTATION; }}
+            stop_context_panel() {{ echo MUTATION; }}
+            bootout_refresh_agent() {{ echo MUTATION; }}
+            mkdir() {{ echo MUTATION; }}
+            find() {{ :; }}
+            pluginkit() {{ :; }}
+            lsregister=/usr/bin/true
+            app_path={shlex.quote(str(root / "Canonical.app"))}
+            export FIXTURE_APP_PATH="$app_path"
+            failures=0
+            {actions[action]}
+            [[ "$failures" == 0 ]]
+            """
+            environment = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")
+            result = subprocess.run(
+                ["/bin/bash", "-c", command], cwd=REPO_ROOT, env=environment,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                timeout=10, check=False,
+            )
+            if pid_file.exists():
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(pid_file.read_text()), 0)
+            return result
+
+    def test_runtime_baseline_spotlight_requires_complete_discovery(self) -> None:
+        for discovery in ("empty", "canonical", "stderr", "conflict", "failed", "unavailable", "stalled"):
+            with self.subTest(discovery=discovery):
+                result = self.run_spotlight_discovery_fixture(discovery)
+                complete_and_clear = discovery in ("empty", "canonical", "stderr")
+                self.assertEqual(result.returncode == 0, complete_and_clear, result.stdout)
+                self.assertEqual(
+                    "OK:" in result.stdout,
+                    complete_and_clear, result.stdout,
+                )
+                if discovery == "conflict":
+                    self.assertIn("/fixture/Other Context Panel.app", result.stdout)
+                elif discovery in ("failed", "unavailable", "stalled"):
+                    self.assertIn("FAIL:", result.stdout)
+                    self.assertNotIn("/fixture/partial.app", result.stdout)
+
+    def test_runtime_baseline_spotlight_failure_prevents_runtime_teardown(self) -> None:
+        for action in ("install", "reset"):
+            with self.subTest(action=action):
+                result = self.run_spotlight_discovery_fixture("stalled", action=action)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("FAIL:", result.stdout)
+                self.assertNotIn("MUTATION", result.stdout)
+
+    def test_runtime_baseline_spotlight_success_permits_quarantine(self) -> None:
+        for action, discovery in (("install", "empty"), ("reset", "canonical"), ("install", "conflict"), ("reset", "conflict")):
+            with self.subTest(action=action, discovery=discovery):
+                result = self.run_spotlight_discovery_fixture(discovery, action=action)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn("MUTATION", result.stdout)
+                if discovery == "conflict":
+                    self.assertIn("MUTATION /fixture/Other Context Panel.app", result.stdout)
+                self.assertNotIn("CANONICAL_MUTATION", result.stdout)
+
     def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
         result = self.run_loaded_refresh_agent_fixture(candidate="matching")
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -4339,55 +4131,34 @@ wait
         self.assertIn("app-cloudkit=Development", development.stdout)
         self.assertIn("existing canonical runtime is verified as Development", development.stdout)
 
-    def test_runtime_baseline_guard_blocks_production_runtime(self) -> None:
-        result = self.run_runtime_identity_fixture(
-            "app-entitlements-production.plist",
-            "app-entitlements-production.plist",
-        )
+    def test_runtime_baseline_guard_refuses_to_replace_a_non_development_runtime(self) -> None:
+        production = "app-entitlements-production.plist"
+        development = "app-entitlements.plist"
+        cases: dict[str, tuple[str, str | None, bool, tuple[str, ...]]] = {
+            "Production app": (production, production, False, (
+                "app-cloudkit=Production", "refusing to replace", "check --require-production-runtime",
+            )),
+            "Production refresh agent": (development, production, False, (
+                "app-cloudkit=Development", "refresh-agent-cloudkit=Production",
+                "installed refresh agent uses Production CloudKit",
+            )),
+            "TestFlight without embedded profile": ("runtime-testflight-entitlements.plist", production, False, (
+                "distribution=testflight", "installed app is a TestFlight runtime",
+            )),
+            "App Store receipt with Development entitlements": (development, development, True, (
+                "distribution=app-store", "installed app has an App Store receipt",
+            )),
+            "unverified runtime": ("runtime-unknown-entitlements.plist", None, False, (
+                "app-cloudkit=unknown", "not verified as Development",
+            )),
+        }
+        for name, (app, refresh_agent, receipt, messages) in cases.items():
+            with self.subTest(name):
+                result = self.run_runtime_identity_fixture(app, refresh_agent, receipt=receipt)
 
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("app-cloudkit=Production", result.stdout)
-        self.assertIn("refusing to replace", result.stdout)
-        self.assertIn("check --require-production-runtime", result.stdout)
-
-    def test_runtime_baseline_guard_blocks_production_refresh_agent(self) -> None:
-        result = self.run_runtime_identity_fixture(
-            "app-entitlements.plist",
-            "app-entitlements-production.plist",
-        )
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("app-cloudkit=Development", result.stdout)
-        self.assertIn("refresh-agent-cloudkit=Production", result.stdout)
-        self.assertIn("installed refresh agent uses Production CloudKit", result.stdout)
-
-    def test_runtime_baseline_guard_blocks_testflight_without_embedded_profile(self) -> None:
-        result = self.run_runtime_identity_fixture(
-            "runtime-testflight-entitlements.plist",
-            "app-entitlements-production.plist",
-        )
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("distribution=testflight", result.stdout)
-        self.assertIn("installed app is a TestFlight runtime", result.stdout)
-
-    def test_runtime_baseline_guard_blocks_store_receipt_even_with_development_entitlements(self) -> None:
-        result = self.run_runtime_identity_fixture(
-            "app-entitlements.plist",
-            "app-entitlements.plist",
-            receipt=True,
-        )
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("distribution=app-store", result.stdout)
-        self.assertIn("installed app has an App Store receipt", result.stdout)
-
-    def test_runtime_baseline_guard_fails_closed_for_unverified_runtime(self) -> None:
-        result = self.run_runtime_identity_fixture("runtime-unknown-entitlements.plist")
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("app-cloudkit=unknown", result.stdout)
-        self.assertIn("not verified as Development", result.stdout)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                for message in messages:
+                    self.assertIn(message, result.stdout)
 
     def test_runtime_baseline_production_check_requires_matching_cloudkit_environments(self) -> None:
         production = self.run_runtime_identity_fixture(
@@ -4497,44 +4268,27 @@ wait
                 completed.stdout,
             )
 
-    def test_runtime_baseline_profile_fixture_accepts_matching_explicit_profile(self) -> None:
-        result = self.run_runtime_preflight_fixture("profile-good.plist")
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
-
-    def test_runtime_baseline_profile_fixture_accepts_development_wildcard_grants(self) -> None:
-        result = self.run_runtime_preflight_fixture("profile-development-wildcard-grants.plist")
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
-
-    def test_runtime_baseline_profile_fixture_accepts_environment_array_grant(self) -> None:
-        result = self.run_runtime_preflight_fixture("profile-environment-array.plist")
-
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
-
-    def test_runtime_baseline_profile_fixture_rejects_environment_array_without_expected_value(self) -> None:
-        result = self.run_runtime_preflight_fixture("profile-environment-array-production-only.plist")
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("does not authorize com.apple.developer.icloud-container-environment", result.stdout)
-
-    def test_runtime_baseline_profile_fixture_rejects_cloudkit_environment_mismatch(self) -> None:
-        result = self.run_runtime_preflight_fixture(
-            "profile-good.plist",
-            "app-entitlements-production.plist",
+    def test_runtime_baseline_profile_fixture_checks_profile_covers_entitlements(self) -> None:
+        cases = (
+            ("profile-good.plist", "app-entitlements.plist", None),
+            ("profile-development-wildcard-grants.plist", "app-entitlements.plist", None),
+            ("profile-environment-array.plist", "app-entitlements.plist", None),
+            ("profile-environment-array-production-only.plist", "app-entitlements.plist",
+             "does not authorize com.apple.developer.icloud-container-environment"),
+            ("profile-good.plist", "app-entitlements-production.plist",
+             "does not authorize com.apple.developer.icloud-container-environment"),
+            ("profile-wildcard.plist", "app-entitlements.plist", "does not authorize application identifier"),
         )
+        for profile, entitlements, refusal in cases:
+            with self.subTest(profile=profile, entitlements=entitlements):
+                result = self.run_runtime_preflight_fixture(profile, entitlements)
 
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("does not authorize com.apple.developer.icloud-container-environment", result.stdout)
-
-    def test_runtime_baseline_profile_fixture_rejects_wildcard_profile(self) -> None:
-        result = self.run_runtime_preflight_fixture("profile-wildcard.plist")
-
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("does not authorize application identifier", result.stdout)
+                if refusal is None:
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(refusal, result.stdout)
 
 
 if __name__ == "__main__":

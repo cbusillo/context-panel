@@ -46,7 +46,7 @@ public struct AccountDisplayMetadata: Codable, Equatable, Sendable {
 }
 
 /// The same account answers for the app, widgets, companions and local agent reader.
-/// Percentages describe the tightest known window; eligibility requires every window.
+/// Percentages and status describe the account's main capacity; model rows remain available.
 public struct AccountOverview: Equatable, Sendable {
     public struct Window: Equatable, Sendable, Identifiable {
         public let id: String
@@ -66,6 +66,7 @@ public struct AccountOverview: Equatable, Sendable {
         public var status: UsageStatus = .unknown
         /// 5-hour, weekly or daily, inferred from the provider's labels; nil when unknown.
         public var period: MainLimitWindow? = nil
+        public var isAccountCapacityLimit: Bool = true
     }
 
     public struct Account: Equatable, Sendable, Identifiable {
@@ -80,15 +81,16 @@ public struct AccountOverview: Equatable, Sendable {
         /// When applying a banked reset is worth it (#791); the value and reasoning for the detail view.
         public var resetAssessment: ResetAssessment? = nil
         public var id: String { metadata.id }
+        var capacityWindows: [Window] { windows.filter(\.isAccountCapacityLimit) }
         public var limitingWindow: Window? {
-            guard !windows.isEmpty, windows.allSatisfy({ $0.remainingFraction != nil }) else { return nil }
-            return windows.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+            guard !capacityWindows.isEmpty, capacityWindows.allSatisfy({ $0.remainingFraction != nil }) else { return nil }
+            return capacityWindows.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
         }
         public var remainingFraction: Double? { state == .unknown || state == .notConnected || state == .off
             ? nil : limitingWindow?.remainingFraction }
         public var isReliable: Bool {
             [.available, .closeToLimit, .limited].contains(state)
-                && limitingWindow != nil && windows.allSatisfy { $0.assumption == nil && $0.confidence != .unknown }
+                && limitingWindow != nil && capacityWindows.allSatisfy { $0.assumption == nil && $0.confidence != .unknown }
         }
         public var unknownExpiryCount: Int? {
             bankedResets.map { max(0, $0.availableCount - ($0.knownExpiries.isEmpty
@@ -160,7 +162,7 @@ public struct AccountOverview: Equatable, Sendable {
         let observed = accounts.compactMap(\.observedAt).max() ?? rankedAt
         let replay = accounts.map { account -> Account in
             guard [.stale, .unavailable].contains(account.state) else { return account }
-            let known = !account.windows.isEmpty && account.windows.allSatisfy {
+            let known = !account.capacityWindows.isEmpty && account.capacityWindows.allSatisfy {
                 $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil
             }
             return Account(metadata: account.metadata, state: known ? .available : .unknown,
@@ -184,6 +186,7 @@ public struct AccountOverview: Equatable, Sendable {
             let limits = entry.sourceConfigured ? presented.limits.filter {
                 $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             } : []
+            let main = limits.filter(\.isAccountCapacityLimit)
             // AccountCapacity already classifies whole-source failures in readState.
             // A failed sibling must not replace this member's report or banked data.
             let report = reports.filter {
@@ -201,25 +204,25 @@ public struct AccountOverview: Equatable, Sendable {
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
                        periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) }, status: limit.status,
-                       period: MainLimitWindow.infer(from: limit))
+                       period: MainLimitWindow.infer(from: limit), isAccountCapacityLimit: limit.isAccountCapacityLimit)
             }
-            let observed = windows.compactMap(\.observedAt).min() ?? report?.generatedAt
-            let ageSensitive = limits.isEmpty || limits.contains { !$0.usesEventDrivenFreshness }
-            let old = limits.contains { limit in
+            let observed = main.compactMap(\.lastUpdatedAt).min() ?? report?.generatedAt
+            let ageSensitive = main.isEmpty || main.contains { !$0.usesEventDrivenFreshness }
+            let old = main.contains { limit in
                 limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
                     || !limit.usesEventDrivenFreshness && now.timeIntervalSince($0) > maximumAge } ?? false
             } || report.map { $0.generatedAt > now.addingTimeInterval(60)
                 || ageSensitive && now.timeIntervalSince($0.generatedAt) > maximumAge } == true
-            let passed = limits.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
+            let passed = main.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
             let state: AccountCapacityState
             if !entry.isEnabled { state = .off }
             else if entry.readState == .notConnected || (entry.provider == .anthropic && (report?.requiresCredentialReconnect == true || (report == nil && limits.isEmpty))) { state = .notConnected }
             else if entry.readState == .unavailable || report?.status == .failure { state = .unavailable }
-            else if old || passed || (isSavedSnapshot && !limits.isEmpty) || limits.contains(where: { $0.status == .stale }) { state = .stale }
+            else if old || passed || (isSavedSnapshot && !main.isEmpty) || main.contains(where: { $0.status == .stale }) { state = .stale }
             else if entry.readState == .stale { state = .stale }
-            else if entry.readState == .unknown || windows.isEmpty || windows.contains(where: { $0.remainingFraction == nil }) { state = .unknown }
+            else if entry.readState == .unknown || main.isEmpty || main.contains(where: { $0.remainingCapacityRatio == nil }) { state = .unknown }
             else {
-                state = switch ([report?.status ?? .healthy] + limits.map(\.status)).contextPanelWorstStatus {
+                state = switch AccountCapacity.usageStatus(limits: limits, reportStatus: report?.status ?? .healthy) {
                 case .healthy: .available
                 case .close: .closeToLimit
                 case .limited: .limited

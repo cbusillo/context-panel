@@ -2172,130 +2172,55 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison_payload=comparison_payload,
             )
 
-    def test_release_gate_rejects_legacy_v1_comparison(self) -> None:
+    def test_release_gate_rejects_legacy_and_frozen_comparisons(self) -> None:
         surface = "watchos.app"
-        comparison_payload = comparison(surface, "shared-view")
-        comparison_payload.pop("kind")
-        comparison_payload.pop("runtimeState")
-        comparison_payload.pop("runtimeStateReasons")
-        comparison_payload["schemaVersion"] = 1
-        with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
-            self.evaluate(
-                surface,
-                "shared-view",
-                comparison_payload=comparison_payload,
-            )
-
-    def test_release_gate_rejects_legacy_v2_comparison(self) -> None:
-        surface = "watchos.app"
-        comparison_payload = comparison(surface, "shared-view")
-        comparison_payload.pop("runtimeState")
-        comparison_payload.pop("runtimeStateReasons")
-        comparison_payload["schemaVersion"] = 2
-        with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
-            self.evaluate(
-                surface,
-                "shared-view",
-                comparison_payload=comparison_payload,
-            )
-
-    def test_release_gate_rejects_frozen_v4_comparison(self) -> None:
-        surface = "watchos.app"
-        comparison_payload = comparison(surface, "shared-view")
-        for key in (
-            "artifactEvidence",
-            "artifactRiskCodes",
-            "artifactRiskSurfaces",
-            "escalationState",
+        artifact_keys = ("artifactEvidence", "artifactRiskCodes", "artifactRiskSurfaces", "escalationState")
+        runtime_keys = ("runtimeState", "runtimeStateReasons")
+        for version, removed, message in (
+            (1, ("kind", *runtime_keys), "surface comparison is invalid"),
+            (2, runtime_keys, "surface comparison is invalid"),
+            (4, artifact_keys, "schema is not current"),
         ):
-            comparison_payload.pop(key)
-        comparison_payload["schemaVersion"] = 4
-        with self.assertRaisesRegex(ReleaseEvidenceError, "schema is not current"):
-            self.evaluate(
-                surface,
-                "shared-view",
-                comparison_payload=comparison_payload,
-            )
+            with self.subTest(version=version):
+                comparison_payload = comparison(surface, "shared-view")
+                for key in removed:
+                    comparison_payload.pop(key)
+                comparison_payload["schemaVersion"] = version
+                with self.assertRaisesRegex(ReleaseEvidenceError, message):
+                    self.evaluate(
+                        surface,
+                        "shared-view",
+                        comparison_payload=comparison_payload,
+                    )
 
-    def test_signed_lineage_reconstruction_preserves_legacy_v1_comparison_digest(self) -> None:
+    def test_signed_lineage_reconstruction_preserves_legacy_comparison_digests(self) -> None:
         surface = "watchos.app"
-        previous = previous_lineage(
-            surface,
-            "shared-view",
-            legacy_comparison=True,
-        )
-        raw_comparison = previous["generation"]["comparison"]
-        self.assertEqual(
-            previous["ledger"]["comparisonDigest"],
-            hashlib.sha256(
-                json.dumps(
-                    raw_comparison,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest(),
-        )
-        payload = self.evaluate(
-            surface,
-            "shared-view",
-            eligible=True,
-            previous_ledger=previous,
-        )
-        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
-
-    def test_signed_lineage_reconstruction_preserves_legacy_v2_comparison_digest(self) -> None:
-        surface = "watchos.app"
-        previous = previous_lineage(
-            surface,
-            "shared-view",
-            legacy_comparison=True,
-            legacy_comparison_version=2,
-        )
-        raw_comparison = previous["generation"]["comparison"]
-        self.assertEqual(
-            previous["ledger"]["comparisonDigest"],
-            hashlib.sha256(
-                json.dumps(
-                    raw_comparison,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest(),
-        )
-        payload = self.evaluate(
-            surface,
-            "shared-view",
-            eligible=True,
-            previous_ledger=previous,
-        )
-        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
-
-    def test_signed_lineage_reconstruction_preserves_legacy_v3_comparison_digest(self) -> None:
-        surface = "watchos.app"
-        previous = previous_lineage(
-            surface,
-            "shared-view",
-            legacy_comparison=True,
-            legacy_comparison_version=3,
-        )
-        raw_comparison = previous["generation"]["comparison"]
-        self.assertEqual(
-            previous["ledger"]["comparisonDigest"],
-            hashlib.sha256(
-                json.dumps(
-                    raw_comparison,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest(),
-        )
-        payload = self.evaluate(
-            surface,
-            "shared-view",
-            eligible=True,
-            previous_ledger=previous,
-        )
-        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                previous = previous_lineage(
+                    surface,
+                    "shared-view",
+                    legacy_comparison=True,
+                    legacy_comparison_version=version,
+                )
+                raw_comparison = previous["generation"]["comparison"]
+                self.assertEqual(
+                    previous["ledger"]["comparisonDigest"],
+                    hashlib.sha256(
+                        json.dumps(
+                            raw_comparison,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode()
+                    ).hexdigest(),
+                )
+                payload = self.evaluate(
+                    surface,
+                    "shared-view",
+                    eligible=True,
+                    previous_ledger=previous,
+                )
+                self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
 
     def test_signed_lineage_reconstruction_allows_omitted_derived_duration(self) -> None:
         surface = "watchos.app"
@@ -3291,41 +3216,28 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
 
         self.assertEqual(payload["state"], "shadow-approved")
 
-    def test_report_validator_rejects_missing_operator_flow(self) -> None:
+    def test_report_validator_rejects_missing_or_malformed_operator_flow_fields(self) -> None:
         surface = "watchos.app"
-        validation_report = report(surface, visual_class="shared-view")
-        del validation_report["operatorFlow"]
 
-        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
-            self.evaluate(
-                surface,
-                "shared-view",
-                validation_report=validation_report,
-            )
+        def drop_flow(value: dict[str, Any]) -> None:
+            del value["operatorFlow"]
 
-    def test_report_validator_rejects_missing_derived_duration(self) -> None:
-        surface = "watchos.app"
-        validation_report = report(surface, visual_class="shared-view")
-        del validation_report["operatorFlow"]["totalDurationMinutes"]
+        def drop_duration(value: dict[str, Any]) -> None:
+            del value["operatorFlow"]["totalDurationMinutes"]
 
-        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
-            self.evaluate(
-                surface,
-                "shared-view",
-                validation_report=validation_report,
-            )
+        def non_string_scope(value: dict[str, Any]) -> None:
+            value["session"]["requestedSurfaces"] = [surface, 1]
 
-    def test_report_validator_rejects_non_string_operator_surface_scope(self) -> None:
-        surface = "watchos.app"
-        validation_report = report(surface, visual_class="shared-view")
-        validation_report["session"]["requestedSurfaces"] = [surface, 1]
-
-        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
-            self.evaluate(
-                surface,
-                "shared-view",
-                validation_report=validation_report,
-            )
+        for mutate in (drop_flow, drop_duration, non_string_scope):
+            with self.subTest(mutation=mutate.__name__):
+                validation_report = report(surface, visual_class="shared-view")
+                mutate(validation_report)
+                with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
+                    self.evaluate(
+                        surface,
+                        "shared-view",
+                        validation_report=validation_report,
+                    )
 
     def test_report_validator_rejects_shadow_report_in_enforcement(self) -> None:
         surface = "watchos.app"

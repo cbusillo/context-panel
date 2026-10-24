@@ -57,12 +57,16 @@ public extension AccountOverview.Account {
 
     /// The short column: a window under a day long.
     var shortWindow: AccountOverview.Window? {
-        windows.filter { ($0.duration ?? .infinity) < 86_400 }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+        capacityWindows.filter { ($0.duration ?? .infinity) < 86_400 }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
     }
 
-    /// The long column: the tightest of every other window, so the limiting one is never hidden.
+    private var longWindows: [AccountOverview.Window] {
+        windows.filter { ($0.duration ?? .infinity) >= 86_400 }
+    }
+
+    /// The long column: the tightest long window, including model-specific weekly limits.
     var longWindow: AccountOverview.Window? {
-        windows.filter { $0.id != shortWindow?.id }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
+        longWindows.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
     }
 
     /// The earliest run-out across windows, with the window that causes it. Saved data gets none.
@@ -126,7 +130,7 @@ public extension AccountOverview.Account {
     /// The window an account adds to its provider's total: the tightest long window that applies to
     /// the whole account (no model name), so a model-only limit is never pooled with an overall one.
     var poolWindow: AccountOverview.Window? {
-        let long = windows.filter { $0.id != shortWindow?.id }
+        let long = longWindows
         return long.filter { $0.modelLabel == nil }.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
             ?? longWindow
     }
@@ -196,11 +200,16 @@ public enum AccountPaceText {
 
     /// "in 3h 12m", "in 2d 4h"; minute precision under a day.
     public static func countdown(to date: Date, now: Date) -> String {
+        "in " + countdownDistance(to: date, now: now)
+    }
+
+    /// Whole minutes below a day, whole hours after that; shared by all reset countdowns.
+    static func countdownDistance(to date: Date, now: Date) -> String {
         let minutes = max(0, Int(date.timeIntervalSince(now) / 60))
-        if minutes < 60 { return "in \(minutes)m" }
+        if minutes < 60 { return "\(minutes)m" }
         let hours = minutes / 60
-        if hours < 24 { return "in \(hours)h \(minutes % 60)m" }
-        return "in \(hours / 24)d \(hours % 24)h"
+        if hours < 24 { return "\(hours)h \(minutes % 60)m" }
+        return "\(hours / 24)d \(hours % 24)h"
     }
 
     /// A projection, to the hour: "Fri ~11 PM".
@@ -266,7 +275,7 @@ public extension AccountOverview {
 /// its reset. If it reaches empty first, the gap until the reset is the only thing drawn in red.
 /// Only current readings are projected; saved, paused and unconnected accounts get no projection.
 public struct AccountHorizon: Equatable, Sendable {
-    /// The window the shape follows: the account's long column, so the limiting window is never hidden.
+    /// The window the shape follows: the first long-window run-out, else the least projected weekly spare.
     public let window: AccountOverview.Window?
     public let remaining: Double?
     public let resetAt: Date?
@@ -294,12 +303,17 @@ public struct AccountHorizon: Equatable, Sendable {
 }
 
 public extension AccountOverview.Account {
-    /// The long window the horizon follows: the one that runs out first before its reset at the observed burn,
-    /// else the tightest long window, so neither a fast-burning model limit nor the limiting window is hidden.
+    /// The first long window to run out before its reset, else the weekly window with least projected spare
+    /// at its own reset, including model-specific limits. Without a weekly projection, keep the tightest long window.
     func horizonWindow(now: Date) -> AccountOverview.Window? {
         guard isReliable else { return longWindow }
-        let long = windows.filter { $0.id != shortWindow?.id }
-        return long.compactMap { window in Self.runOut(window, now: now).map { (window, $0) } }.min { $0.1 < $1.1 }?.0 ?? longWindow
+        let long = longWindows
+        if let first = long.compactMap({ window in Self.runOut(window, now: now).map { (window, $0) } }).min(by: { $0.1 < $1.1 }) {
+            return first.0
+        }
+        return long.filter { $0.duration == 7 * 86_400 }
+            .compactMap { window in Self.projectedSpare(window, now: now).map { (window, $0) } }
+            .min { $0.1 < $1.1 }?.0 ?? longWindow
     }
 
     /// Run-out before the reset: projected from the observed burn, or now when the window is already empty.
@@ -308,14 +322,22 @@ public extension AccountOverview.Account {
         return window.projectedRunOut(now: now)
     }
 
+    private static func projectedSpare(_ window: AccountOverview.Window, now: Date) -> Double? {
+        guard let burn = window.burnFractionPerHour, let reset = window.naturalResetAt, reset > now,
+              let remaining = window.remainingFraction else { return nil }
+        return max(0, remaining - burn * reset.timeIntervalSince(now) / 3_600)
+    }
+
     func horizon(now: Date) -> AccountHorizon {
-        let window = horizonWindow(now: now)
+        // A provider may report only its short allowance. Forecast that real window,
+        // without inventing a weekly allowance or changing long-window selection.
+        let window = horizonWindow(now: now) ?? shortWindow
         let current = isReliable
         let reset = window?.naturalResetAt.flatMap { $0 > now ? $0 : nil }
         let burn = current ? window?.burnFractionPerHour : nil
         let runOut = current ? window.flatMap { Self.runOut($0, now: now) } : nil
-        let spare: Double? = if runOut != nil { 0 } else if let burn, let reset, let remaining = window?.remainingFraction {
-            max(0, remaining - burn * reset.timeIntervalSince(now) / 3_600)
+        let spare: Double? = if runOut != nil { 0 } else if current {
+            window.flatMap { Self.projectedSpare($0, now: now) }
         } else { nil }
         return AccountHorizon(window: window, remaining: window?.remainingFraction, resetAt: reset, burnPerHour: burn,
                               runOutAt: runOut, spare: spare, isCurrent: current)
@@ -403,7 +425,7 @@ public extension AccountHorizon {
     /// Each midnight inside the span, with its x: the axis every horizon shares.
     static func days(now: Date, span: TimeInterval = AccountHorizon.span, calendar: Calendar = .current) -> [(x: Double, date: Date)] {
         (1...8).compactMap { day in
-            let boundary = calendar.startOfDay(for: now).addingTimeInterval(Double(day) * 86_400)
+            guard let boundary = calendar.date(byAdding: .day, value: day, to: calendar.startOfDay(for: now)) else { return nil }
             let value = boundary.timeIntervalSince(now) / span
             return value > 0 && value < 1 ? (value, boundary) : nil
         }

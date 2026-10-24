@@ -16,6 +16,38 @@ private func capacityLimit(_ id: String, used: Int, at: Date = capacityNow, rese
         used: used, limit: 100, resetsAt: reset ?? capacityNow.addingTimeInterval(86_400), lastUpdatedAt: at)
 }
 
+@Test(arguments: ["GPT-5.3-Codex-Spark", "Another model"])
+func accountCapacityUsesMainOpenAILimitsWhileKeepingModelRows(model: String) throws {
+    let weekly = capacityLimit("a", used: 20)
+    let short = UsageLimit(provider: .openAI, accountID: "a", configuredAccountID: "a", accountName: "Local a",
+        label: "Codex 5-hour", windowLabel: "5-hour", modelLabel: "Codex", unit: .percent,
+        used: 30, limit: 100, resetsAt: capacityNow.addingTimeInterval(3_600), lastUpdatedAt: capacityNow)
+    let modelLimit = UsageLimit(provider: .openAI, accountID: "a", configuredAccountID: "a", accountName: "Local a",
+        label: "\(model) 5-hour", windowLabel: "5-hour", modelLabel: model, unit: .percent,
+        used: 100, limit: 100, resetsAt: capacityNow.addingTimeInterval(3_600), lastUpdatedAt: capacityNow)
+    let limits = [weekly, short, modelLimit]
+    let snapshot = UsageSnapshot(generatedAt: capacityNow, limits: limits)
+    let report = StoredProviderReport(report: ProviderConnectorReport(provider: .openAI, accountID: "a",
+        configuredAccountID: "a", accountName: "Local a", generatedAt: capacityNow, limits: limits))
+    let configuration = [capacityConfiguration("a")]
+    let row = try #require(AccountCapacity.rows(configuration: configuration, snapshot: snapshot,
+        reports: [report], now: capacityNow).first)
+    #expect(row.status == .healthy)
+    #expect(row.limits == limits)
+    for metadata in [nil, AccountDisplayMetadata.local(configuration: configuration,
+        stored: StoredUsageSnapshot(savedAt: capacityNow, snapshot: snapshot, reports: [report]), now: capacityNow)] {
+        let overview = AccountOverview(snapshot: snapshot, reports: [report], metadata: metadata, now: capacityNow)
+        let account = try #require(overview.accounts.first)
+        #expect(account.state == .available)
+        #expect(account.remainingFraction == short.remainingCapacityRatio)
+        #expect(account.windows.count == limits.count)
+        #expect(account.windows.last?.status == .limited)
+        #expect(account.shortWindow?.id == AccountDisplayMetadata.safeID(.openAI, short.id))
+        #expect(account.longWindow?.id == AccountDisplayMetadata.safeID(.openAI, weekly.id))
+        #expect(overview.providerTotals(now: capacityNow).first?.shortRemaining == short.remainingCapacityRatio)
+    }
+}
+
 @Test func accountCapacityKeepsAllFiveAccountsWhenOnlyOneCanBeRead() {
     let configs = [capacityConfiguration("a"), capacityConfiguration("b"), capacityConfiguration("c"),
         capacityConfiguration("d", provider: .anthropic), capacityConfiguration("e", provider: .anthropic)]

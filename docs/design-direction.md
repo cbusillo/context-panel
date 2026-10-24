@@ -9,7 +9,7 @@ Chris chose the **Horizon** design on
 and accepted its hand test on build 1.0.69. It reached `main` through #733,
 which carried the #737 refinement and the #741 Horizon build, and #742. The full
 record, including which earlier facts moved where, is
-[docs/evidence/722-horizon/README.md](evidence/722-horizon/README.md).
+[the Horizon record at 2a03444](https://github.com/cbusillo/context-panel/blob/2a034446470ab8e9d8200575f7e3a2793849f80f/docs/evidence/722-horizon/README.md).
 
 Horizon makes the account the unit on every surface. It is the default account
 layout on the Mac app, widgets, iPhone, iPad, Vision Pro, Watch, and Apple
@@ -21,9 +21,13 @@ so every surface draws the same picture at a different size.
   "2 accounts run out before they reset. The other 4 are fine." Only current
   readings with observed burn count as fine.
 - **A horizon per account.** Each account follows the long window that runs out
-  first before its reset, otherwise its tightest long window. It shows the
+  first before its reset, otherwise the weekly window with the least projected
+  spare at its own reset. Model-specific weekly windows take part in that
+  forecast; account status and remaining capacity still use the main limits.
+  Without a weekly projection, keep the tightest long window. It shows the
   share left now, the observed burn, the run-out time when that comes before
-  the reset, and the share to spare at the reset.
+  the reset, and the share to spare at the reset. If the provider reports only
+  a short window, the horizon follows that window without inventing a weekly allowance.
 - **Red means one thing:** an account runs out before its reset. It is written
   in red in one place per surface; rows and cards say the same fact calmly.
 - **Provider identity** is the provider's name in its own hue (teal OpenAI,

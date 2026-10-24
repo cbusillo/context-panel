@@ -11,7 +11,8 @@ Expected GitHub settings:
 - Delete branches on merge: enabled.
 - Merge commits: enabled.
 - Squash and rebase merges: disabled.
-- Dependabot: enabled for Swift Package Manager and GitHub Actions.
+- Renovate: enabled for Swift Package Manager and GitHub Actions; Dependabot
+  alerts stay on.
 - CodeQL: enabled for Swift on pull requests, pushes to `main`, weekly schedule,
   and manual dispatch.
   Superseded PR analyses cancel without waiting for trusted temp cleanup to
@@ -35,7 +36,7 @@ Expected GitHub settings:
 - Code quality gate on `main`: enabled for `errors`.
 - Force pushes and branch deletion: blocked for `main`.
 - Release environments, activation and owner setup: follow the single authority
-  in [the release guide](release.md#one-time-no-click-setup-owner-only).
+  in [the release guide](release.md#before-starting-a-release).
 - Release environment secret: `CLOUDKIT_MANAGEMENT_TOKEN`, the CloudKit
   management token the schema gate uses when `CloudKit/` changed since the last
   release. Its sole GitHub copy belongs in `release`; never store its value in

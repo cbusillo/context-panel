@@ -5,6 +5,17 @@ import Testing
 
 private let paceNow = Date(timeIntervalSince1970: 1_790_000_000)
 
+@Test(arguments: [(-1.0, "0m"), (59, "0m"), (60, "1m"), (61, "1m"), (3_599, "59m"),
+    (3_600, "1h 0m"), (3_601, "1h 0m"), (86_399, "23h 59m"), (86_400, "1d 0h"), (90_001, "1d 1h")])
+func resetCountdownsUseTheSameMinutePrecision(seconds: Double, distance: String) throws {
+    let reset = paceNow.addingTimeInterval(seconds)
+    let limit = UsageLimit(provider: .openAI, accountID: "a", accountName: "n", label: "Weekly", windowLabel: "Weekly",
+        unit: .percent, used: 20, limit: 100, resetsAt: reset, lastUpdatedAt: paceNow)
+    let summary = try #require(UsageSnapshot(generatedAt: paceNow, limits: [limit]).mainLimitSummaries.first)
+    #expect(AccountPaceText.countdown(to: reset, now: paceNow) == "in " + distance)
+    #expect(summary.resetCountdownText(now: paceNow) == distance + " · " + ContextPanelDateFormatting.resetDeadline(reset, compact: true))
+}
+
 private func paceOverview(weeklyUsed: Int = 85, weeklyResetHours: Double = 120, sampleCount: Int = 24,
                           unitsPerHour: Double = 0.45, label: String = "Weekly",
                           observedAt: Date = paceNow) -> AccountOverview {

@@ -255,7 +255,8 @@ When adding or moving shipping code:
 
 1. Update the reviewed policy mapping.
 2. Keep intentional non-shipping inputs in the pinned ignore list with a reason.
-3. Run `scripts/commit-gate.sh`.
+3. Run `qualityGate.validate.surfaceFingerprintContract` and
+   `surfaceFingerprintTests` from `.github/github.json`; the full gate runs in CI.
 4. Review the manifest comparison before reusing prior device evidence.
 
 Do not add generated Xcode project files, DerivedData, archives, credentials,

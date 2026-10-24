@@ -345,8 +345,6 @@ jobs:
       - name: Show Xcode
         run: xcodebuild -version
 
-      # Changes that touch only documentation or validation tooling skip the
-      # Swift and companion builds (scope job).
       - name: Set up uv for release approval policy lint
         uses: astral-sh/setup-uv@v7
 
@@ -360,14 +358,7 @@ jobs:
         run: uv run scripts/check-release-approvals.py
 
       - name: Run commit gate
-        env:
-          RUN_PRODUCT: ${{ needs.scope.outputs.product != 'false' }}
-        run: |
-          if [[ "$RUN_PRODUCT" == "true" ]]; then
-            scripts/commit-gate.sh
-          else
-            scripts/commit-gate.sh --skip-swift
-          fi
+        run: scripts/commit-gate.sh
 
       - name: Run routine Python test lane
         timeout-minutes: 5

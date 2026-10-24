@@ -116,7 +116,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
 
     public func resetCountdownText(now: Date) -> String? {
         guard let resetsAt, resetsAt >= now.addingTimeInterval(-60) else { return nil }
-        return "\(Self.compactResetDistance(until: resetsAt, now: now)) · \(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
+        return "\(AccountPaceText.countdownDistance(to: resetsAt, now: now)) · \(ContextPanelDateFormatting.resetDeadline(resetsAt, compact: true))"
     }
 
     public var primaryLimit: UsageLimit? {
@@ -325,19 +325,6 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         self.limits = limits
         self.generatedAt = generatedAt
         self.providerMainLimits = providerMainLimits ?? limits
-    }
-
-    private static func compactResetDistance(until date: Date, now: Date) -> String {
-        let seconds = max(Int(date.timeIntervalSince(now)), 0)
-        if seconds < 60 { return "now" }
-        let minutes = max((seconds + 59) / 60, 1)
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = max((minutes + 59) / 60, 1)
-        if hours <= 24 { return "\(hours)h" }
-        let days = hours / 24
-        let remainingHours = hours % 24
-        if remainingHours == 0 { return "\(days)d" }
-        return "\(days)d \(remainingHours)h"
     }
 
     private var numericLimits: [UsageLimit] {
