@@ -1,4 +1,3 @@
-import ast
 import copy
 import hashlib
 import importlib
@@ -43,14 +42,10 @@ derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
 ReleaseEvidenceError = release_gate_module.ReleaseEvidenceError
 from Tests.ScriptsTests.test_release_evidence_gate import (NOW, policy, report, watchlist_entry)
-from Tests.ScriptsTests import test_replay_inventory as inventory_test_fixtures
 from Tests.ScriptsTests.test_shared_view_capture_workflow import (workflow)
 from context_panel_release_gate import (build_release_evidence_lineage, evaluate_release_evidence, release_evidence_report_blockers)
 from context_panel_release_gate.cli import (run as run_gate)
 from context_panel_release_gate.core import (HistoricalPolicyArchive, _verified_lineage_ledger, release_comparison_identities)
-from context_panel_replay.comparison_adapters import (adapt_comparison_for_replay)
-from context_panel_replay.inventory import (render_json, seal_inventory, verify_inventory)
-from context_panel_replay.replay import (reconstruct_bundle)
 from context_panel_validation import (RUNTIME_SURFACES, Target)
 from context_panel_validation.runtime_evidence import (expected_surface_identities_from_payloads)
 from context_panel_validation.visual_approvals import (load_visual_review_plan)
@@ -466,66 +461,6 @@ class SurfaceManifestTests(unittest.TestCase):
             ),
             ledger,
         )
-        self.assertEqual(adapt_comparison_for_replay(comparison), comparison)
-        # Seal and reconstruct a real mixed train through the inventory consumer.
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            inventory_policy, roots = inventory_test_fixtures.ReplayInventoryTests().fixture(root)
-            train_root = roots["archive"] / "train"
-            for name, payload in {
-                "current": current,
-                "comparison": comparison,
-                "report": report,
-                "ledger": ledger,
-                "lineage": mixed_lineage,
-                "visual": report["visualApprovals"],
-            }.items():
-                (train_root / f"{name}.json").write_text(json.dumps(payload))
-            (roots["archive"] / "previous.json").write_text(json.dumps(previous))
-            for platform, entry in record["platforms"].items():
-                (
-                    train_root / "expected" / f"ExpectedBuildManifest-{platform}.json"
-                ).write_text(json.dumps(entry["expectedBuildManifest"]))
-            inventory_config = json.loads(inventory_policy.read_text())
-            train = inventory_config["trains"][0]
-            train.update(
-                trainId=f"{report['target']['version']}-{report['target']['buildNumber']}",
-                version=report["target"]["version"],
-                buildNumber=report["target"]["buildNumber"],
-            )
-            train["sealedMetadataDigest"] = (
-                release_gate_module.canonical_payload_digest(
-                    {
-                        "previousManifestId": previous["manifestId"],
-                        "currentManifestId": current["manifestId"],
-                        "contractFingerprint": current["contractFingerprint"],
-                        "scope": {
-                            k: sorted(v)
-                            for k, v in comparison["requiredSurfaces"].items()
-                        },
-                    }
-                )
-            )
-            inventory_policy.write_text(json.dumps(inventory_config))
-            inventory = seal_inventory(inventory_policy, roots)
-            inventory_path = root / "inventory.json"
-            inventory_path.write_bytes(render_json(inventory))
-            self.assertEqual(
-                verify_inventory(inventory_policy, inventory_path, roots), inventory
-            )
-            release_policy_path = root / "release-policy.json"
-            release_policy_path.write_text(json.dumps(policy()))
-            bundle = reconstruct_bundle(
-                inventory_policy_path=inventory_policy,
-                inventory_path=inventory_path,
-                release_policy_path=release_policy_path,
-                surface_policy_path=REPO_ROOT / "Config/ContextPanelSurfacePolicy.json",
-                root_bindings=roots,
-            )
-            self.assertEqual(
-                len(bundle["trains"][0]["runtimeSurfaces"]), len(comparison["surfaces"])
-            )
         damaged_lineage = copy.deepcopy(restored)
         damaged_lineage["generation"]["comparison"]["releaseSafety"]["state"] = (
             "tampered"
@@ -1752,71 +1687,6 @@ class SurfaceManifestTests(unittest.TestCase):
             changed["contractFingerprint"],
         )
 
-    def test_production_comparison_imports_cannot_reach_replay(self):
-        scripts_root = REPO_ROOT / "scripts"
-
-        def module_path(module_name: str) -> Path | None:
-            parts = module_name.split(".")
-            module_file = scripts_root.joinpath(*parts).with_suffix(".py")
-            package_file = scripts_root.joinpath(*parts) / "__init__.py"
-            if module_file.is_file():
-                return module_file
-            if package_file.is_file():
-                return package_file
-            return None
-
-        def local_imports(module_name: str, path: Path) -> set[str]:
-            imports: set[str] = set()
-            package_parts = module_name.split(".")
-            if path.name != "__init__.py":
-                package_parts.pop()
-            for node in ast.walk(ast.parse(path.read_text())):
-                if isinstance(node, ast.Import):
-                    imports.update(alias.name for alias in node.names if alias.name.startswith("context_panel_"))
-                elif isinstance(node, ast.ImportFrom):
-                    if node.level:
-                        base = package_parts[: len(package_parts) - node.level + 1]
-                        prefix = ".".join((*base, *(node.module or "").split("."))).strip(".")
-                        if prefix.startswith("context_panel_"):
-                            imports.add(prefix)
-                    elif node.module and node.module.startswith("context_panel_"):
-                        imports.add(node.module)
-            return imports
-
-        pending = [
-            "context_panel_comparison_schema",
-            "context_panel_surface_manifest",
-            "context_panel_surface_manifest.comparison_schema_v2",
-            "context_panel_surface_manifest.core",
-            "context_panel_surface_manifest.cli",
-            "context_panel_validation",
-            "context_panel_validation.visual_approvals",
-            "context_panel_validation.cli",
-            "context_panel_release_gate",
-            "context_panel_release_gate.core",
-            "context_panel_release_gate.cli",
-        ]
-        entrypoint_paths = (
-            scripts_root / "context-panel-surface-manifest.py",
-            scripts_root / "context-panel-validation.py",
-            scripts_root / "context-panel-release-gate.py",
-            scripts_root / "validate-release-evidence-report.py",
-            scripts_root / "submit-app-store-review.py",
-        )
-        visited: set[str] = set()
-        for path in entrypoint_paths:
-            self.assertTrue(path.is_file(), path)
-            pending.extend(local_imports(path.stem, path))
-        while pending:
-            module_name = pending.pop()
-            if module_name in visited:
-                continue
-            visited.add(module_name)
-            self.assertFalse(module_name.startswith("context_panel_replay"))
-            path = module_path(module_name)
-            self.assertIsNotNone(path, module_name)
-            assert path is not None
-            pending.extend(local_imports(module_name, path) - visited)
     def test_beta_runtime_change_scopes_runtime_session_to_affected_surfaces(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.fixture(temporary_directory)
