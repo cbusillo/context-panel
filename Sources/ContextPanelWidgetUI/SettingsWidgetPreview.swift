@@ -26,27 +26,24 @@ public enum SettingsWidgetPreviewFamily: String, CaseIterable, Identifiable {
 /// accessibility activation, without disabling or dimming the widget's content.
 public struct SettingsWidgetPreview: View {
     let snapshot: WidgetSnapshot
-    let preferences: WidgetDisplayPreferences
     let family: SettingsWidgetPreviewFamily
     let presentationDate: Date
     @Environment(\.colorScheme) private var colorScheme
 
-    public init(snapshot: WidgetSnapshot, preferences: WidgetDisplayPreferences,
+    public init(snapshot: WidgetSnapshot,
                 family: SettingsWidgetPreviewFamily, presentationDate: Date) {
         self.snapshot = snapshot
-        self.preferences = preferences
         self.family = family
         self.presentationDate = presentationDate
     }
 
     public var body: some View {
         ContextPanelWidgetContentView(
-            family: family.widgetFamily, snapshot: snapshot, displayPreferences: preferences,
+            family: family.widgetFamily, snapshot: snapshot,
             links: ContextPanelWidgetLinks(
                 overview: URL(string: "contextpanel://overview")!,
                 reconnect: URL(string: "contextpanel://reconnect")!,
-                cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!,
-                resetCreditInteraction: .none
+                cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
             ),
             showsResetCreditSurfaces: true, presentationDate: presentationDate,
             allowsNavigation: false

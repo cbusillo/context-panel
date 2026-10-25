@@ -23,13 +23,12 @@ import Testing
     let summary = ProviderResetCreditSummary(availableCount: 2, observedAt: now, coverage: .complete, knownExpiries: deadlines)
     let report = StoredProviderReport(provider: .anthropic, accountID: "local", accountName: "Local Claude",
         generatedAt: now, resetCredits: summary, status: .healthy, errorMessage: nil)
-    let surface = try #require(ResetCreditSurfaceAdvisor.widgetSummary(reports: [report], limits: [], now: now))
+    let surface = try #require(ResetCreditSurfaceAdvisor.appSummary(reports: [report], limits: [], now: now))
     #expect(surface.primaryActionableGuidance == nil)
     #expect(surface.primaryDeadlineGuidance?.provider == .anthropic)
     #expect(surface.primaryDeadlineGuidance?.resetCredits.earliestKnownExpiry == deadlines.first)
     let transitions = ResetCreditSurfaceAdvisor.glanceTransitionDates(reports: [report], limits: [], now: now)
     #expect(deadlines.allSatisfy(transitions.contains))
-    #expect(ResetCreditSurfaceAdvisor.widgetSummary(reports: [report], limits: [], now: deadlines.last!) == nil)
 }
 
 @Test func expiredResetOffersStopCountingExactlyAtTheirDeadlines() {

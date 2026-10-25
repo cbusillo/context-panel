@@ -48,7 +48,7 @@ func snapshotWidgetReloadOnlyForChangedWrites(asyncSave: Bool) async throws {
     let previous = StoredUsageSnapshot(savedAt: now, refreshResult: widgetReloadResult(now: now, used: 32, resetCount: 1))
     try primary.save(previous)
     try mirror.save(previous)
-    #expect(WidgetSnapshot.fromStore(mirror.loadCurrent(), now: now).resetCreditSurfaceSummary(now: now) != nil)
+    #expect(WidgetSnapshot.fromStore(mirror.loadCurrent(), now: now).reports.first?.resetCredits?.availableCount == 1)
     let reloads = WidgetReloadRecorder()
     let publisher = CompanionSyncPublisher(
         stores: CompanionSyncStoreSet(stores: []),
@@ -77,7 +77,7 @@ func snapshotWidgetReloadOnlyForChangedWrites(asyncSave: Bool) async throws {
         snapshotDidChange: {
             let widget = WidgetSnapshot.fromStore(mirror.loadCurrent(), now: now)
             #expect(widget.limits.first?.remaining == 100)
-            #expect(widget.resetCreditSurfaceSummary(now: now) == nil)
+            #expect((widget.reports.first?.resetCredits?.availableCount ?? 0) == 0)
             #expect(primary.loadCurrent().snapshot == mirror.loadCurrent().snapshot)
             reloads.record()
         },

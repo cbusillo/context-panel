@@ -155,12 +155,11 @@ inconsistent, count-only, elapsed-expiry, or unknown weekly-reset evidence uses
 
 The Mac app shows each account's positive observed count, earliest known expiry
 or `expiry unknown`, observation freshness, and advisory reason. Medium and
-large macOS widgets may show one currently actionable account note; selecting it
-opens the matching Context Panel account detail. The iPhone, iPad, and visionOS
-companion app reuses its existing large usage instrument for current-only reset
-visibility, while medium, large, and extra-large companion widgets use the same
-header treatment and open the synced overview. Small widgets, Watch, tvOS, and
-Top Shelf do not include reset-credit copy. No surface opens an OpenAI action
+large widgets mark banked resets on their account rows; the large widget adds
+one callout for the banked reset that lapses first, which opens the reset
+deadlines. The iPhone, iPad, and visionOS companion app reuses its large account
+widget for current-only reset visibility. Watch, tvOS, and Top Shelf do not
+include reset-credit copy. No surface opens an OpenAI action
 surface.
 
 Context Panel's reset-credit integration is permanently read-only. It performs

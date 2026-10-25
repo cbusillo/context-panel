@@ -967,7 +967,6 @@ struct SettingsPane: View {
                         tertiaryText: CPTheme.tertiaryText
                     ),
                     providerLabel: { ProviderBadge(provider: $0) },
-                    onLayoutChange: model.setAccountWidgetLayout,
                     onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
                     onMove: model.moveWidgetMainLimits(from:to:)
                 )
@@ -2362,12 +2361,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         useLastNotice = notice.map { (accountID, $0) }
         saveAccounts()
     }
-    func setAccountWidgetLayout(_ accountRows: Bool) {
-        var updated = widgetPreferences
-        updated.usesAccountRows = accountRows
-        saveWidgetPreferences(updated)
-    }
-
     func setAccount(_ accountID: String, isEnabled: Bool) {
         guard !isRemovingAccount else { return }
         guard let index = accounts.firstIndex(where: { $0.id == accountID && !$0.isRetiredSource }) else { return }

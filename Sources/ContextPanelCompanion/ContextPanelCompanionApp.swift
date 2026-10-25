@@ -429,7 +429,6 @@ private struct CompanionRootView: View {
             ContextPanelWidgetContentView(
                 family: .systemLarge,
                 snapshot: model.snapshot,
-                displayPreferences: model.displayPreferences,
                 links: CompanionDeepLinks.previewLinks,
                 showsResetCreditSurfaces: true,
                 resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
@@ -457,8 +456,7 @@ private struct CompanionRootView: View {
                 isEditable: model.canEditDisplayPreferences,
                 errorMessage: model.displayPreferencesErrorMessage,
                 onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
-                onMove: model.moveWidgetMainLimits(from:to:),
-                onLayoutChange: model.setWidgetAccountLayout(_:)
+                onMove: model.moveWidgetMainLimits(from:to:)
             )
 
             CompanionRefreshSettingsView(
@@ -684,7 +682,6 @@ private struct CompanionValidationGalleryPreview: View {
                         ContextPanelWidgetContentView(
                             family: .systemLarge,
                             snapshot: context.snapshot,
-                            displayPreferences: context.displayPreferences,
                             links: CompanionDeepLinks.previewLinks,
                             showsResetCreditSurfaces: true,
                             resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
@@ -709,8 +706,7 @@ private struct CompanionValidationGalleryPreview: View {
                             isEditable: false,
                             errorMessage: nil,
                             onVisibilityChange: { _, _ in },
-                            onMove: { _, _ in },
-                            onLayoutChange: { _ in }
+                            onMove: { _, _ in }
                         )
                         CompanionRefreshSettingsView(
                             settings: .defaultSettings,
@@ -1065,12 +1061,6 @@ private final class CompanionSyncModel {
         }
     }
 
-    func setWidgetAccountLayout(_ accountRows: Bool) {
-        var updated = displayPreferences
-        updated.usesAccountRows = accountRows
-        saveDisplayPreferences(updated)
-    }
-
     func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
         var updated = displayPreferences
         updated.setMainLimit(
@@ -1293,7 +1283,6 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
     let errorMessage: String?
     let onVisibilityChange: @MainActor (WidgetMainLimitPreference, Bool) -> Void
     let onMove: @MainActor (IndexSet, Int) -> Void
-    var onLayoutChange: (@MainActor (Bool) -> Void)? = nil
 
     var body: some View {
         CompanionSettingsCard {
@@ -1316,14 +1305,8 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                     .foregroundStyle(palette.secondaryText)
 
                 if isLoaded {
-                    Picker("Widget layout", selection: Binding(get: { preferences.usesAccountRows }, set: { onLayoutChange?($0) })) {
-                        Text("Accounts").tag(true)
-                        Text("Windows").tag(false)
-                    }.pickerStyle(.segmented).disabled(!isEditable || onLayoutChange == nil)
-                    if preferences.usesAccountRows {
-                        Text(accountLayoutScopeText)
-                            .font(.footnote).foregroundStyle(palette.secondaryText)
-                    }
+                    Text(accountLayoutScopeText)
+                        .font(.footnote).foregroundStyle(palette.secondaryText)
                     WidgetMainLimitSettingsStack(
                         preferences: preferences,
                         colors: palette.settingsControlColors,
@@ -1363,18 +1346,18 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
             return "Widgets show accounts. These limits still choose what Apple Watch shows."
         }
         #endif
-        return "Widgets show accounts. These limit choices apply when you choose Windows."
+        return "Widgets show accounts."
     }
 
     private var displayPreferencesScopeText: String {
         #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
-            "These choices apply to this companion, its widgets, and Apple Watch. Mac settings remain unchanged."
+            "These choices apply to this companion and Apple Watch. Mac settings remain unchanged."
         } else {
-            "These choices apply to this companion and its widgets. Mac settings remain unchanged."
+            "These choices apply to this companion. Mac settings remain unchanged."
         }
         #else
-        "These choices apply to this companion and its widgets. Mac settings remain unchanged."
+        "These choices apply to this companion. Mac settings remain unchanged."
         #endif
     }
 

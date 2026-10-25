@@ -266,7 +266,6 @@ struct ContextPanelCompanionWidgetView: View {
         ContextPanelWidgetContentView(
             family: family,
             snapshot: entry.snapshot,
-            displayPreferences: entry.displayPreferences,
             links: CompanionDeepLinks.widgetLinks,
             showsResetCreditSurfaces: true,
             resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
