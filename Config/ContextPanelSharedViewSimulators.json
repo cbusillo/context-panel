@@ -19,7 +19,7 @@
       "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.watchOS-26-5",
       "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm",
       "maskedRegions": [
-        { "surface": "watchos.app", "x": 256, "y": 0, "width": 160, "height": 80, "reason": "status-bar clock" }
+        { "surface": "watchos.app", "x": 128, "y": 0, "width": 160, "height": 80, "reason": "status-bar clock" }
       ]
     },
     "tvos": {
