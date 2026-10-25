@@ -815,7 +815,9 @@ percent of an account's main window, which is the general weekly window
   `configurationErrors`, and ranking then ignores use-last for that provider.
   The cushion is the Director's own measured use until the window ends (the
   account's burn minus agent burn attributed through receipts), at least 3
-  points; an unstarted use-last clock gets its starter launch an hour after it
+  points. It is planned use, not a leftover: it shrinks as the reset nears, so
+  the account is planned to end near the floor at its reset, and the reason
+  says how much it sets aside before the reset; an unstarted use-last clock gets its starter launch an hour after it
   is first seen unstarted.
 - **Order and batches:** each launch goes by D'Hondt over the weights (need) in
   Tiers 1–2: starters first, then the highest weight ÷ (1 + launches already
