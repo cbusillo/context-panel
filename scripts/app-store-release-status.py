@@ -42,6 +42,7 @@ RECORD = "context-panel-store-release:v1"
 OBSERVATION = "context-panel-store-observation:v1"
 CHANNELS = "context-panel-store-channels:v1"
 SUBMISSION = "context-panel-store-submission:v1"
+UNRECORDED = "context-panel-store-unrecorded-submission:v1"
 IDENTITY = ("platform", "version", "buildNumber")
 DEFINITION = "docs/release.md#definition-of-released"
 PLAN_LABEL = "plan"
@@ -380,8 +381,9 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
     """Mark the Ship record of a build that was just submitted for App Store review.
 
     A build uploaded outside Ship has no record; the submission already succeeded, so
-    that is reported rather than failed. The monitor cannot watch that build and keeps
-    its previous target for the platform.
+    that is reported rather than failed. The check cannot watch that build and keeps
+    its previous target for the platform. Records of the same platform and version are
+    marked, so a live version is never taken as proof that their build is the live one.
     """
     identity = {"platform": env.get("INPUT_PLATFORM", ""), "version": env.get("INPUT_VERSION", ""),
                 "buildNumber": env.get("INPUT_BUILD_NUMBER", "")}
@@ -401,6 +403,16 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
                 "Keep this record open until the exact build is verified live.\n\n"
                 + marker(SUBMISSION, value)})
         return issue
+    run_url = f"https://github.com/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}"
+    for issue in issues:
+        record = read_marker(RECORD, issue.get("body") or "")
+        if (record is not None and record.get("platform") == identity["platform"]
+                and version_guard.compare_versions(record["version"], identity["version"]) == 0):
+            client.api(f"issues/{issue['number']}/comments", {"body":
+                f"[Build {identity['buildNumber']}]({run_url}) was submitted for {identity['platform']} "
+                f"{identity['version']} without a Ship record, so this record's build can no longer be proven "
+                "live from the public version. The release agent verifies and closes it.\n\n"
+                + marker(UNRECORDED, {**identity, "submittedAt": now.isoformat(), "runURL": run_url})})
     return None
 
 
@@ -413,9 +425,13 @@ def only_submitted_build(client: Any, issues: list[dict], target: dict) -> bool:
     submitted = []
     for issue in issues:
         record = read_marker(RECORD, issue.get("body") or "")
-        if (record is not None and record.get("platform") == target["platform"]
-                and version_guard.compare_versions(record["version"], target["version"]) == 0
-                and submission(client, issue, record) is not None):
+        if (record is None or record.get("platform") != target["platform"]
+                or version_guard.compare_versions(record["version"], target["version"]) != 0):
+            continue
+        comments = client.pages(f"issues/{issue['number']}/comments")
+        if any(read_marker(UNRECORDED, comment.get("body") or "") is not None for comment in comments):
+            return False
+        if submission(client, issue, record) is not None:
             submitted.append(record)
     return len(submitted) == 1 and all(submitted[0].get(key) == target[key] for key in IDENTITY)
 
@@ -431,15 +447,20 @@ def close_live_record(client: Any, issue: dict, record: dict, public_version: st
     issue.update(state="closed", state_reason="completed")
 
 
-def close_finished_release(client: Any, parent: dict) -> bool:
-    """Close a release issue once every sub-issue is closed and every platform has a live record."""
+def close_finished_release(client: Any, parent: dict, live_now: dict[int, str]) -> bool:
+    """Close a release issue once every sub-issue is closed and every platform is live.
+
+    A platform counts only when this run saw its target record live at exactly its
+    version, so a record closed early by hand cannot complete a release.
+    """
     children = client.pages(f"issues/{parent['number']}/sub_issues")
     if not children or any(child.get("state") != "closed" for child in children):
         return False
     live = {}
     for child in sorted(children, key=lambda item: item["number"]):
         record = read_marker(RECORD, child.get("body") or "")
-        if record is not None and child.get("state_reason") == "completed":
+        if (record is not None and child.get("state_reason") == "completed"
+                and live_now.get(child["number"]) == record["platform"]):
             live[record["platform"]] = (child, record)
     if set(live) != set(PLATFORMS):
         return False
@@ -468,6 +489,7 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
     except (OSError, ValueError, KeyError, StatusError):
         app_id = None
     observations = []
+    live_now = {}
     for platform, (issue, record, submitted) in sorted(latest.items()):
         try:
             if app_id is None:
@@ -492,15 +514,18 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
                     "Supervisor watchers: this release-tracking issue remains the durable handoff; "
                     "no submission or store mutation was performed.\n\n" + marker(OBSERVATION, observation))
             client.api(f"issues/{issue['number']}/comments", {"body": body})
-        if (result["status"] == "public version current" and version is not None and submitted is not None
-                and issue.get("state") == "open" and only_submitted_build(client, issues, record)):
-            close_live_record(client, issue, record, version)
+        if (version is not None and submitted is not None
+                and version_guard.compare_versions(version, record["version"]) == 0):
+            if issue.get("state") == "open" and only_submitted_build(client, issues, record):
+                close_live_record(client, issue, record, version)
+            if issue.get("state") == "closed" and issue.get("state_reason") == "completed":
+                live_now[issue["number"]] = platform
         observations.append(observation)
     by_number = {item["number"]: item for item in issues}
     for parent in sorted({number for issue, _, _ in latest.values()
                           if (number := parent_number(client, issue)) is not None}):
         if parent in by_number and by_number[parent].get("state") == "open":
-            close_finished_release(client, by_number[parent])
+            close_finished_release(client, by_number[parent], live_now)
     return observations
 
 

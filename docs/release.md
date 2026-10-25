@@ -92,15 +92,20 @@ No store credentials or store writes are used. The public page parser verifies
 the requested app/platform; it never substitutes another platform's version.
 Public listings do not expose the exact build number, so public version
 equality alone reports only “public version current”. The check closes a record
-as completed, with that proof in a comment, when the public version is current,
-the record carries a submission marker, and it is the only record submitted for
-that platform and version: a version can have only one build live, so that
-build is the live one. Two or more submissions for the version, an unreadable
-page, or a record never submitted leave the record open for the release agent.
+as completed, with that proof in a comment, when the public version equals the
+record's version exactly, the record carries a submission marker, and it is the
+only record submitted for that platform and version: a version can have only
+one build live, so that build is the live one. A newer public version, two or
+more submissions for the version, a submission made without a Ship record
+(which marks every record of that platform and version), an unreadable page,
+or a record never submitted leave the record open for the release agent.
 After each run, the check reads the native parent of each target record. It
-closes that release issue as completed once every sub-issue is closed and each
-of the four platforms has a record closed as completed; superseded records
-closed as not planned don't count. It posts a summary listing each platform's
+closes that release issue as completed once every sub-issue is closed and, for
+each of the four platforms, that run saw the platform's target record closed as
+completed and live at exactly its version. A record closed early by hand does
+not count until it is seen live, and superseded records closed as not planned
+never count. A release whose records are no longer each platform's target is
+left for the release agent. It posts a summary listing each platform's
 live build, and a parent with the `plan` label moves to `plan:done`. Closing
 may lag Apple's release by up to six hours. The check does not submit,
 approve, release, or change App Store Connect, or alter submission evidence

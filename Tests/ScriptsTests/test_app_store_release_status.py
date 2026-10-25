@@ -310,7 +310,10 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertEqual([path for path, _ in client.writes], ["issues/2/comments"])
         self.assertEqual(status.target_records(client, items)["MAC_OS"][2]["submittedAt"], NOW.isoformat())
         self.assertIsNone(status.record_submission(client, items, {**env, "INPUT_BUILD_NUMBER": "950"}, NOW))
-        self.assertEqual(len(client.writes), 1)
+        unrecorded = [path for path, body in client.writes[1:]
+                      if status.read_marker(status.UNRECORDED, body["body"]) is not None]
+        self.assertEqual(unrecorded, ["issues/1/comments", "issues/2/comments"])
+        self.assertFalse(status.only_submitted_build(client, items, value))
 
 
     def test_live_record_with_one_submitted_build_closes_with_proof(self) -> None:
@@ -328,7 +331,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
         def unreadable(_: str) -> str:
             return "<html>unavailable</html>"
 
-        cases = {"behind": ("2.0.9", True, False), "unreadable": (None, True, False),
+        cases = {"behind": ("2.0.9", True, False), "newer": ("2.0.11", True, False), "unreadable": (None, True, False),
                  "never submitted": ("2.0.10", False, False), "two submissions": ("2.0.10", True, True)}
         for name, (public, submitted, second) in cases.items():
             with self.subTest(name):
@@ -363,6 +366,33 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertEqual(client.writes[-1][1]["labels"], ["plan", "release", "plan:done"])
         summary = client.comments[f"issues/{PARENT}/comments"][-1]["body"]
         self.assertTrue(all(platform in summary for platform in status.PLATFORMS))
+
+    def test_submission_without_a_ship_record_keeps_the_record_open(self) -> None:
+        client, value = FakeGitHub(), record()
+        mark_submitted(client, 1, value, hours=10)
+        items = [issue(1, value)]
+        env = {"INPUT_PLATFORM": "MAC_OS", "INPUT_VERSION": value["version"], "INPUT_BUILD_NUMBER": "950",
+               "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "8"}
+        status.record_submission(client, items, env, NOW)
+        status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=store({"MAC_OS": "2.0.10"}))
+        self.assertEqual(closes(client), [])
+
+    def test_hand_closed_record_completes_a_release_only_when_seen_live(self) -> None:
+        for public, expected in (("2.0.9", "open"), ("2.0.10", "closed")):
+            with self.subTest(public=public):
+                client, items = FakeGitHub(), []
+                for number, platform in enumerate(sorted(status.PLATFORMS), start=1):
+                    value = record(platform, hours=10)
+                    mark_submitted(client, number, value, hours=5)
+                    items.append(under_release(issue(number, value)))
+                mac = next(item for item in items if "MAC_OS" in item["body"])
+                mac.update(state="closed", state_reason="completed")
+                parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
+                client.children[f"issues/{PARENT}/sub_issues"] = items
+                versions = {platform: "2.0.10" for platform in status.PLATFORMS} | {"MAC_OS": public}
+                status.monitor(client, [*items, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
+                self.assertEqual(len([path for path in closes(client) if path != f"issues/{PARENT}"]), 3)
+                self.assertEqual(parent["state"], expected)
 
     def test_superseded_records_do_not_complete_a_release(self) -> None:
         client = FakeGitHub()
