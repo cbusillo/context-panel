@@ -518,7 +518,8 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
                 and version_guard.compare_versions(version, record["version"]) == 0):
             if issue.get("state") == "open" and only_submitted_build(client, issues, record):
                 close_live_record(client, issue, record, version)
-            if issue.get("state") == "closed" and issue.get("state_reason") == "completed":
+            if (issue.get("state") == "closed" and issue.get("state_reason") == "completed"
+                    and only_submitted_build(client, issues, record)):
                 live_now[issue["number"]] = platform
         observations.append(observation)
     by_number = {item["number"]: item for item in issues}

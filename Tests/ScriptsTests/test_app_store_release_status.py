@@ -98,6 +98,16 @@ def store(versions: dict[str, str]) -> Any:
     return fetch
 
 
+def release_records(client: FakeGitHub) -> list[dict]:
+    """One submitted record per platform, each a sub-issue of the release."""
+    items = []
+    for number, platform in enumerate(sorted(status.PLATFORMS), start=1):
+        value = record(platform, hours=10)
+        mark_submitted(client, number, value, hours=5)
+        items.append(under_release(issue(number, value)))
+    return items
+
+
 def closes(client: FakeGitHub) -> list[str]:
     return [path for path, body in client.writes if body.get("state") == "closed"]
 
@@ -349,11 +359,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
 
     def test_release_closes_only_when_every_platform_is_live(self) -> None:
         client = FakeGitHub()
-        items = []
-        for number, platform in enumerate(sorted(status.PLATFORMS), start=1):
-            value = record(platform, hours=10)
-            mark_submitted(client, number, value, hours=5)
-            items.append(under_release(issue(number, value)))
+        items = release_records(client)
         parent = {"number": PARENT, "state": "open", "body": "Release",
                   "labels": [{"name": "plan"}, {"name": "plan:waiting"}, {"name": "release"}]}
         client.children[f"issues/{PARENT}/sub_issues"] = items
@@ -380,11 +386,8 @@ class StoreReleaseStatusTests(unittest.TestCase):
     def test_hand_closed_record_completes_a_release_only_when_seen_live(self) -> None:
         for public, expected in (("2.0.9", "open"), ("2.0.10", "closed")):
             with self.subTest(public=public):
-                client, items = FakeGitHub(), []
-                for number, platform in enumerate(sorted(status.PLATFORMS), start=1):
-                    value = record(platform, hours=10)
-                    mark_submitted(client, number, value, hours=5)
-                    items.append(under_release(issue(number, value)))
+                client = FakeGitHub()
+                items = release_records(client)
                 mac = next(item for item in items if "MAC_OS" in item["body"])
                 mac.update(state="closed", state_reason="completed")
                 parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
@@ -393,6 +396,20 @@ class StoreReleaseStatusTests(unittest.TestCase):
                 status.monitor(client, [*items, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
                 self.assertEqual(len([path for path in closes(client) if path != f"issues/{PARENT}"]), 3)
                 self.assertEqual(parent["state"], expected)
+
+    def test_hand_closed_record_without_single_build_proof_does_not_complete_a_release(self) -> None:
+        client = FakeGitHub()
+        items = release_records(client)
+        mac = next(item for item in items if "MAC_OS" in item["body"])
+        mac.update(state="closed", state_reason="completed")
+        env = {"INPUT_PLATFORM": "MAC_OS", "INPUT_VERSION": "2.0.10", "INPUT_BUILD_NUMBER": "950",
+               "GITHUB_REPOSITORY": "example/panel", "GITHUB_RUN_ID": "8"}
+        status.record_submission(client, items, env, NOW)
+        parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
+        client.children[f"issues/{PARENT}/sub_issues"] = items
+        status.monitor(client, [*items, parent], NOW, 48, lookup=lambda: "42",
+                       fetch=store({platform: "2.0.10" for platform in status.PLATFORMS}))
+        self.assertEqual(parent["state"], "open")
 
     def test_superseded_records_do_not_complete_a_release(self) -> None:
         client = FakeGitHub()
