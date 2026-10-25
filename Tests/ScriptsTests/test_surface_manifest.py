@@ -42,6 +42,7 @@ derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
 ReleaseEvidenceError = release_gate_module.ReleaseEvidenceError
 from Tests.ScriptsTests.test_release_evidence_gate import (NOW, policy, report, watchlist_entry)
+from Tests.ScriptsTests.test_ci_change_scope import (imported_scripts)
 from Tests.ScriptsTests.test_shared_view_capture_workflow import (workflow)
 from context_panel_release_gate import (build_release_evidence_lineage, evaluate_release_evidence, release_evidence_report_blockers)
 from context_panel_release_gate.cli import (run as run_gate)
@@ -124,6 +125,7 @@ class SurfaceManifestTests(unittest.TestCase):
             "stamp-context-panel-build.sh",
             "context-panel-write-expected-build.sh",
             "context_panel_comparison_schema.py",
+            "context_panel_expected_build.py",
         ):
             shutil.copy2(REPO_ROOT / "scripts" / filename, scripts / filename)
         shutil.copytree(
@@ -192,6 +194,21 @@ class SurfaceManifestTests(unittest.TestCase):
             set(resolved.governed_files),
             set(resolved.file_hashes) | set(resolved.ignored_files),
         )
+
+    def test_policy_governs_every_script_the_manifest_imports(self):
+        # A script the manifest imports changes what every fingerprint means, so
+        # it must move the contract fingerprint too.
+        policy_json = json.loads((REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text())
+        pattern_lists = {
+            "governedPatterns": policy_json["inventory"]["governedPatterns"],
+            "surface-tooling": policy_json["inputGroups"]["surface-tooling"]["include"],
+        }
+        entry_point = "scripts/context-panel-surface-manifest.py"
+        for name, patterns in pattern_lists.items():
+            governed = set(core_module.expand_patterns(REPO_ROOT, patterns))
+            for path in [entry_point, *imported_scripts(entry_point)]:
+                with self.subTest(policy_list=name, path=path):
+                    self.assertIn(path, governed)
 
     def test_ignored_inputs_are_never_compiled_into_a_project_target(self):
         resolved = resolve_policy(REPO_ROOT)

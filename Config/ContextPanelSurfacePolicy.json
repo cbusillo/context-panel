@@ -62,6 +62,7 @@
       "scripts/stamp-context-panel-build.sh",
       "scripts/context-panel-write-expected-build.sh",
       "scripts/context_panel_comparison_schema.py",
+      "scripts/context_panel_expected_build.py",
       "scripts/context_panel_surface_manifest/**/*.py"
     ],
     "excludedBasenames": [".DS_Store"],
@@ -102,6 +103,7 @@
         "scripts/stamp-context-panel-build.sh",
         "scripts/context-panel-write-expected-build.sh",
         "scripts/context_panel_comparison_schema.py",
+        "scripts/context_panel_expected_build.py",
         "scripts/context_panel_surface_manifest/**/*.py"
       ]
     },
