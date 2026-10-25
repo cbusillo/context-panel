@@ -22,7 +22,6 @@ func accountWidgetKeepsContentSeparateFromBackground(size: String, mode: String)
     let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: limits, status: .healthy, message: "")
     let destination = URL(string: "contextpanel://overview")!
     let view = ContextPanelWidgetContentView(family: family, snapshot: snapshot,
-        displayPreferences: .defaultPreferences,
         links: ContextPanelWidgetLinks(overview: destination, reconnect: destination, cacheStatsSettings: destination),
         presentationDate: now, allowsNavigation: false)
         .environment(\.widgetRenderingMode, renderingMode)

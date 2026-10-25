@@ -24,7 +24,6 @@ import WidgetKit
 // does not offer, EX_SOFTWARE when rendering fails, EX_CANTCREAT when writing fails.
 
 private let interactive = CommandLine.arguments.contains("--interactive")
-private let windowsLayout = CommandLine.arguments.contains("windows")
 private let appStoreScenario: Bool = {
     let arguments = CommandLine.arguments
     guard let index = arguments.firstIndex(of: "--scenario"), index + 1 < arguments.count else { return false }
@@ -66,7 +65,7 @@ private func fail(_ message: String, status: Int32 = EX_USAGE) -> Never {
 }
 
 private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryRoute, output: URL, scenario: Bool, deadlines: Bool, accountPresentation: String?, sixAccounts: Bool) {
-    let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario", "--scale", "--layout", "--interactive"]
+    let names = ["--fixture", "--family", "--appearance", "--presentation", "--output", "--scenario", "--scale", "--interactive"]
     var values: [String: String] = [:]
     var index = 0
     while index < arguments.count {
@@ -78,7 +77,6 @@ private func parseArguments(_ arguments: [String]) -> (route: ValidationGalleryR
         index += 2
     }
     let deadlines = values["--presentation"] == "reset-deadlines"
-    if let layout = values["--layout"], !["accounts", "windows"].contains(layout) { fail("unsupported layout") }
     if let interactive = values["--interactive"], interactive != "yes" { fail("--interactive requires yes") }
     if let scale = values["--scale"], Int(scale).map({ (1...3).contains($0) }) != true {
         fail("--scale requires 1, 2, or 3")
@@ -142,8 +140,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         let overview = snapshot.accountOverview(now: now)
         switch accountPresentation {
         case "settings-display-normal", "settings-display-minimum":
-            var preferences = WidgetDisplayPreferences.defaultPreferences
-            preferences.usesAccountRows = !windowsLayout
+            let preferences = WidgetDisplayPreferences.defaultPreferences
             let family: SettingsWidgetPreviewFamily = switch route.family.widgetFamily {
             case .systemSmall: .small
             case .systemLarge: .large
@@ -159,7 +156,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
                     WidgetDisplaySettingsSections(snapshot: snapshot, preferences: preferences,
                         initialFamily: family, presentationDate: now,
                         providerLabel: { Text($0.shortName) },
-                        onLayoutChange: { _ in }, onVisibilityChange: { _, _ in }, onMove: { _, _ in })
+                        onVisibilityChange: { _, _ in }, onMove: { _, _ in })
                 }.formStyle(.grouped)
             })
         case "account-overview", "vision-overview":
@@ -196,8 +193,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
             view = AnyView(TVAccountBoard(overview: overview, now: now).padding(.horizontal, 72).padding(.vertical, 48))
         default:
             view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
-                displayPreferences: .defaultPreferences,
-                links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!, reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!, resetCreditInteraction: .none),
+                links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!, reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!),
                 showsResetCreditSurfaces: true, presentationDate: now)
                 .cpwThemeVariant(isDark ? .dark : .light))
         }
@@ -218,9 +214,9 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         } else {
             let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: [limit], reports: [report], status: .healthy, message: "")
             let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!,
-                reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!, resetCreditInteraction: .none)
+                reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!)
             view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
-                displayPreferences: .defaultPreferences, links: links, showsResetCreditSurfaces: true, presentationDate: now)
+                links: links, showsResetCreditSurfaces: true, presentationDate: now)
                 .cpwThemeVariant(isDark ? .dark : .light)
                 .background(CPWTheme.surface(variant: isDark ? .dark : .light))
                 .clipShape(RoundedRectangle(cornerRadius: 18)))
@@ -228,10 +224,9 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     } else if route.presentation == .widget {
         view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily,
             snapshot: ValidationGalleryContext(route: route).snapshot,
-            displayPreferences: ValidationGalleryFixtureAdapter().displayPreferences,
             links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel-validation://sample")!,
                 reconnect: URL(string: "contextpanel-validation://sample")!,
-                cacheStatsSettings: URL(string: "contextpanel-validation://sample")!, resetCreditInteraction: .none),
+                cacheStatsSettings: URL(string: "contextpanel-validation://sample")!),
             showsResetCreditSurfaces: true, presentationDate: ValidationFixtureCatalog.referencePresentationDate)
             .cpwThemeVariant(isDark ? .dark : .light)
             .sharedViewFrame(cellFrame(route: route)) { CPWTheme.surface(variant: isDark ? .dark : .light) })

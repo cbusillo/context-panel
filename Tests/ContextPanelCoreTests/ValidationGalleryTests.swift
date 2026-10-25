@@ -89,8 +89,6 @@ import WidgetKit
 
     #expect(snapshot.generatedAt == presentationDate.addingTimeInterval(-50))
     #expect(resetDate == presentationDate.addingTimeInterval(38 * 60))
-    #expect(resetDate.widgetRelativeText(relativeTo: presentationDate) == "in 38m")
-    #expect(fiveHour.widgetResetConfidenceText(presentationDate: presentationDate) == ContextPanelDateFormatting.resetDeadline(resetDate, compact: true))
     #expect(!snapshot.observedBurnRates.isEmpty)
 }
 
@@ -299,8 +297,7 @@ import WidgetKit
     let links = ContextPanelWidgetLinks(
         overview: URL(string: "contextpanel-validation://sample")!,
         reconnect: URL(string: "contextpanel-validation://sample")!,
-        cacheStatsSettings: URL(string: "contextpanel-validation://sample")!,
-        resetCreditInteraction: .none
+        cacheStatsSettings: URL(string: "contextpanel-validation://sample")!
     )
     let stateScenarios = ValidationFixtureID.allCases.map {
         ($0, ValidationGalleryFamily.systemMedium, CPWThemeVariant.light)
@@ -316,7 +313,6 @@ import WidgetKit
         let content = ContextPanelWidgetContentView(
             family: family.widgetFamily,
             snapshot: snapshot,
-            displayPreferences: adapter.displayPreferences,
             links: links,
             showsResetCreditSurfaces: true,
             presentationDate: presentationDate

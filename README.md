@@ -32,9 +32,7 @@ and [AGENTS.md](AGENTS.md) for direction and repository guidance, and
 
 The accepted [Horizon design](docs/design-direction.md) makes the account the
 unit on every surface. Account rows show remaining capacity, observed burn,
-when an account runs out, and how much it has to spare at its reset. The older
-limit-based layout remains available as the **Windows** widget layout in Display
-settings.
+when an account runs out, and how much it has to spare at its reset.
 
 Clicking the widget should open the native app. The app is the place for account
 setup, provider-specific status, refresh history, raw limit details, charts over

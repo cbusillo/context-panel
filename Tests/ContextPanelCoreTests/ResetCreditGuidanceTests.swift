@@ -449,7 +449,7 @@ import Testing
     #expect(guidance.map(\.state) == [.considerUsingNow, .hold(.weeklyCapacityHealthy)])
 }
 
-@Test func resetCreditSurfaceSummarySeparatesAppDiscoveryFromWidgetTrust() throws {
+@Test func resetCreditAppSummaryFallsBackToLastSeenOnlyWhenNothingIsCurrent() throws {
     let now = resetGuidanceDate()
     let staleDate = now.addingTimeInterval(-(SnapshotFreshness.widgetMaximumAge + 1))
     let current = resetGuidanceReport(
@@ -488,11 +488,6 @@ import Testing
         limits: limits,
         now: now
     ))
-    let widget = try #require(ResetCreditSurfaceAdvisor.widgetSummary(
-        reports: [stale, current],
-        limits: limits,
-        now: now
-    ))
     let staleOnly = try #require(ResetCreditSurfaceAdvisor.appSummary(
         reports: [stale],
         limits: limits,
@@ -502,28 +497,7 @@ import Testing
     #expect((app.accountCount, app.accountCountText, app.providerAccountCountText, app.isLastSeenOnly) == (
         1, "1 account", "1 OpenAI account", false
     ))
-    #expect((widget.accountCount, widget.accountCountText, widget.isLastSeenOnly) == (1, "1 account", false))
     #expect((staleOnly.accountCount, staleOnly.isLastSeenOnly) == (1, true))
-    #expect(ResetCreditSurfaceAdvisor.widgetSummary(reports: [stale], limits: limits, now: now) == nil)
-}
-
-@Test func resetCreditSurfaceSummaryKeepsCurrentCountOnlyAvailabilityNeutral() throws {
-    let now = resetGuidanceDate()
-    let report = resetGuidanceReport(now: now, count: 2, coverage: .countOnly)
-    let summary = try #require(ResetCreditSurfaceAdvisor.widgetSummary(
-        reports: [report],
-        limits: [resetGuidanceLimit(
-            accountID: report.accountID,
-            window: .weekly,
-            used: 20,
-            resetsAt: now.addingTimeInterval(3 * 86_400)
-        )],
-        now: now
-    ))
-
-    #expect(summary.accountCount == 1)
-    #expect(summary.primaryActionableGuidance == nil)
-    #expect(!summary.isLastSeenOnly)
 }
 
 @Test func resetCreditGlanceTransitionUsesEarliestTrustBoundary() throws {

@@ -464,8 +464,7 @@ private struct ValidationGalleryWidgetTile: View {
         return ContextPanelWidgetLinks(
             overview: inertURL,
             reconnect: inertURL,
-            cacheStatsSettings: inertURL,
-            resetCreditInteraction: .none
+            cacheStatsSettings: inertURL
         )
     }
 
@@ -485,7 +484,6 @@ private struct ValidationGalleryWidgetTile: View {
                 ContextPanelWidgetContentView(
                     family: family.widgetFamily,
                     snapshot: snapshot,
-                    displayPreferences: displayPreferences,
                     links: links,
                     showsResetCreditSurfaces: true,
                     presentationDate: presentationDate

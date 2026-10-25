@@ -1411,6 +1411,26 @@ import Testing
     #expect(loaded.preference(for: MainLimitSummary(provider: .anthropic, window: .weekly, limits: []))?.isVisible == false)
 }
 
+@Test func widgetDisplayPreferencesStoreKeepsMainLimitsFromARetiredWindowsLayoutChoice() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appending(path: "widget-display-preferences.json")
+    let store = WidgetDisplayPreferencesStore(preferencesURL: url)
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    preferences.setMainLimit(provider: .anthropic, window: .weekly, isVisible: false)
+    try store.save(preferences)
+    var saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    saved["usesAccountRows"] = false
+    try JSONSerialization.data(withJSONObject: saved).write(to: url)
+
+    let loaded = try #require(store.loadIfAvailable())
+    #expect(loaded.mainLimits == preferences.mainLimits)
+    try store.save(loaded)
+    let resaved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    #expect(resaved["usesAccountRows"] == nil)
+}
+
 @Test func widgetDisplayPreferencesStoreSetSavesToReachableMirrorsWhenOneFails() throws {
     let directory = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)

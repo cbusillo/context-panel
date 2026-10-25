@@ -807,8 +807,7 @@ public enum RuntimePresentationDigest {
             ),
             limits: sanitizedLimits(snapshot.limits),
             reports: sanitizedReports(snapshot.reports),
-            accountMetadataDigest: snapshot.accountDisplayMetadata.map(RuntimeReceiptDigest.canonicalDigest),
-            usesAccountRows: displayPreferences.usesAccountRows
+            accountMetadataDigest: snapshot.accountDisplayMetadata.map(RuntimeReceiptDigest.canonicalDigest)
         )
         return RuntimeReceiptDigest.canonicalDigest(payload)
     }
@@ -1072,7 +1071,6 @@ private struct WidgetSnapshotDigestPayload: Encodable {
     let limits: [SanitizedLimitDigestPayload]
     let reports: [SanitizedReportDigestPayload]
     let accountMetadataDigest: String?
-    let usesAccountRows: Bool
 }
 
 private struct CompanionSnapshotDigestPayload: Encodable {

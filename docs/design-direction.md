@@ -43,15 +43,15 @@ so every surface draws the same picture at a different size.
   every size; account names truncate when space is tight. In the desktop's
   vibrant or accented appearance, leave the container to WidgetKit so numbers
   and labels remain distinct from the background.
-- **Settings → Display** shows a read-only preview of the chosen layout, using
-  the shared widget view and saved data. Small, Medium and Large preview sizes
-  are local choices; they do not configure the placed widget. The form scrolls
-  to preserve access to the Windows visibility and ordering controls.
+- **Settings → Display** shows a read-only preview of the widget, using the
+  shared widget view and saved data. Small, Medium and Large preview sizes are
+  local choices; they do not configure the placed widget. The form scrolls to
+  preserve access to the main-limit visibility and ordering controls.
 
 Where the sections below disagree with Horizon for the account layout, Horizon
-wins. They still govern the Windows widget layout, Watch complications, Apple
-TV privacy modes, validation galleries, state coverage, and the semantic rules
-for bars, dials, and accessibility.
+wins. They still govern Watch complications, Apple TV privacy modes, validation
+galleries, state coverage, and the semantic rules for bars, dials, and
+accessibility.
 
 ## Earlier Direction: Quiet Instrument
 
@@ -84,29 +84,6 @@ ledger treatments, diagnostics, history, account management, refresh controls,
 forecast settings, webhook settings, and provider-specific setup flows without
 trying to turn the widget into a dashboard.
 
-## Widget Layout Direction
-
-Use an instrument-first widget hierarchy:
-
-- Small widget: use one visually dominant saved answer plus up to two quieter
-  supporting limits. A useful `Closest to limit` answer takes the first
-  supporting slot; any remaining slot follows saved order. The primary answer
-  gets the larger remaining-capacity number and full-width bar; supporting
-  limits use compact rows with explicit `left`, reset, unknown, and stale
-  meaning. A single saved limit may use the larger one-limit treatment. Stale
-  or setup problem copy takes priority when needed.
-- Medium widget: overall/tightest status plus the most constrained provider or
-  account rows, nearest reset, prompt-cache summary when enabled, and compact
-  sync/refresh state.
-- Large widget: provider groups, several constrained account/model rows, compact
-  used-pressure bars, reset summary, prompt-cache comparison, and refresh/stale
-  state.
-
-The large widget may use a dense ledger-like treatment when realistic
-multi-account data does not fit a dial-led composition. The design preference is
-still instrument-first: clear pressure, reset timing, and state hierarchy before
-raw completeness.
-
 ## Reset-Credit Surface Direction
 
 Reset credits remain account-owned metadata, never pooled capacity. Full count,
@@ -123,38 +100,18 @@ horizontal slots rather than adding cards or reducing visible limit rows.
   when any exist, and fall back to an all-stale `last seen` count only when no
   current observation remains. Selecting the tag opens OpenAI detail; no app
   surface performs a credit action.
-- Medium and large widgets use the existing section-header baseline. Actionable
-  guidance shows one exact account, its credit count, and the expiry deadline;
-  a warning tone marks a reset recommended by the shared assessment. Neutral
-  availability shows the number of credit-bearing accounts, never a global
-  credit total. The optional window layout takes its recommendation, selected
-  account, and accessibility rationale from the shared `ResetAssessment` used
-  by the account panel and agent snapshot; inventory and expiry stay visible
-  when applying is not recommended. Provider exhaustion includes hidden and
-  use-last accounts, and the independent worthwhile 24-hour expiry prompt stays.
-- Medium and large widgets keep reset availability and prompt-cache telemetry
-  visible together whenever both are available. Their single-line header uses a
-  progressive fit ladder: cache drops its rolling average first, reset guidance
-  then drops the account name while retaining the credit count and expiry
-  deadline, and the cache label disappears only as a last resort.
-  Authorization and stale-cache pills shorten to labels
-  and then symbols under the same pressure. Full cache averages, account
-  identity, credit counts, and guidance remain in accessibility and the app.
-  Neither family gives up a saved limit row for reset-credit presentation.
 - Widgets suppress reset-credit signals when the widget is stale, failed, needs
   setup, or when the credit observation is inconsistent or has elapsed. The app
   remains the place to explain and recover those states.
-- The iPhone, iPad, and visionOS companion app reuses its existing large usage
-  instrument rather than adding a card or section. Its in-app reset token is
-  static; medium, large, and extra-large companion widgets use the same header
-  treatment and open the synced overview. Companion surfaces use current
+- The iPhone, iPad, and visionOS companion app reuses its large account widget
+  rather than adding a card or section. Companion surfaces use current
   observations only and never show the Mac app's `last seen` fallback.
 - Small widgets, Watch surfaces, complications, tvOS, and Top Shelf remain
   unchanged. Their one-value, ten-foot, or highly constrained hierarchies do not
   have an honest secondary slot for account-owned reset-credit metadata.
 
 Every Apple Watch complication family is a glance surface and shows remaining
-capacity, matching the primary macOS widget answer. Circular and corner gauges
+capacity, following saved main-limit visibility and order. Circular and corner gauges
 remain one-value surfaces. Inline may show the stable answer plus a useful
 closest limit when both fit, otherwise it shows the next saved limit or falls
 back to one clear value. Rectangular bars and inline copy use the remaining
@@ -470,11 +427,6 @@ The app may explain the comparison in more detail. Medium and large widgets
 keep the same semantics at lower density, while compact surfaces may abbreviate
 weekday names. Spell out weekdays whenever the available width permits.
 
-Prompt-cache telemetry should stay lightweight in the widget: pair the most
-recent cache percentage with the token-weighted rolling average, using status
-color only for the current-vs-average comparison rather than adding another
-capacity bar.
-
 ## Ordering And Density
 
 The first visible saved limit is the stable primary answer. Constraint ranking
@@ -493,11 +445,6 @@ When space is tight, prefer:
 4. provider/account identity
 5. stale, setup, offline, or refresh problem
 6. prompt-cache or forecast detail
-
-Large-widget density should be tested with realistic multi-account snapshots
-before committing to a visible row count. The standard large widget preserves
-five lanes so reset-credit and cache controls remain legible; extra-large may
-show all six OpenAI, Anthropic, and Google 5-hour/weekly lanes when available.
 
 ## Source Of Truth
 
