@@ -7,20 +7,11 @@ before this file. This repository has no DIRECTION.md of its own.
 AGENTS.md is the only agent-instruction file; use nested AGENTS.md files when
 path-specific instructions are needed.
 
-## Product Shape
+## What Context Panel does
 
-Client: the Director.
-
-Context Panel is a native macOS app plus WidgetKit extension for tracking AI
-usage limits across providers, with read-only iPhone, iPad, Vision Pro, Apple
-Watch, and Apple TV companions. Treat multi-account support as a core product
-requirement, not a later enhancement. The provider set is OpenAI, Anthropic,
-and Google.
-
-The widget is for glanceable state: remaining capacity, limit pressure, reset
-time, and whether refreshes are healthy. The app is for setup and detail:
-multiple logins, credential management, provider diagnostics, detailed charts,
-history, and settings.
+Context Panel is a native Mac app and widget for seeing AI usage limits across OpenAI, Anthropic, and Google accounts; the Director is its Client.
+Multiple accounts are a core requirement. The widget shows capacity, pressure, reset times, and refresh health; the app handles setup, credentials, diagnostics, charts, history, and settings.
+Read-only companion apps cover iPhone, iPad, Vision Pro, Apple Watch, and Apple TV. Evidence: [README.md](README.md).
 
 ## Engineering Defaults
 
