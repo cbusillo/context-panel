@@ -49,7 +49,7 @@ struct WatchAppValidationGalleryView: View {
     }
 
     var body: some View {
-        WatchValidationSampleContainer {
+        WatchValidationSampleContainer(showsBanner: fixedState == nil) {
             List {
                 if fixedState == nil {
                     Section("Sample state") {
@@ -175,33 +175,36 @@ struct WatchComplicationValidationGalleryView: View {
 }
 
 private struct WatchValidationSampleContainer<Content: View>: View {
+    var showsBanner = true
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "testtube.2")
-                            .accessibilityHidden(true)
-                        Text("SAMPLE DATA")
-                            .tracking(0.4)
-                        Spacer(minLength: 2)
-                        Text("READ ONLY")
-                    }
+            if showsBanner {
+                HStack(spacing: 6) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "testtube.2")
+                                .accessibilityHidden(true)
+                            Text("SAMPLE DATA")
+                                .tracking(0.4)
+                            Spacer(minLength: 2)
+                            Text("READ ONLY")
+                        }
 
-                    Label("SAMPLE · READ ONLY", systemImage: "testtube.2")
+                        Label("SAMPLE · READ ONLY", systemImage: "testtube.2")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
                 }
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.orange.opacity(0.14))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Sample data. Read only shared-view proof.")
             }
-            .foregroundStyle(.orange)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.orange.opacity(0.14))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Sample data. Read only shared-view proof.")
 
             content
         }

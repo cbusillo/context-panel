@@ -115,8 +115,8 @@ struct TVValidationGalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            sampleBanner
             if !showsOnlyTheSample {
+                sampleBanner
                 controls
                 Divider().opacity(0.25)
             }
