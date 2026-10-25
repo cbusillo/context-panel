@@ -1,8 +1,8 @@
 # Horizon native app and widget review set
 
 Prepared for [#744](https://github.com/cbusillo/context-panel/issues/744),
-October 21, 2026, CP744-C2. **Complete set of 27 unapproved images.
-No ready, App Store upload or submission.**
+October 21, 2026, CP744-C2. **Chris approved these 27 images for the App Store
+listing on October 21, 2026 ([Q612](https://github.com/cbusillo/context-panel/issues/744#issuecomment-6317232568)).**
 
 These images show the native Horizon apps with synthetic account data. Mac app
 images are XCTest screenshots of complete native windows on an isolated
