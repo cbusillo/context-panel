@@ -12,7 +12,9 @@ The base depends on the event:
 The simulator reference job takes about an hour, so it stays off the pull
 request and merge-train path: it runs on pushes to the default branch and on
 manual runs, which are also the only runs App Store submission accepts
-(scripts/shared_view_reference_gate.py).
+(scripts/shared_view_reference_gate.py). One exception: a pull request that
+changes a committed reference image changes how a cell looks, so it also runs
+the simulator job and must re-record every surface before it merges.
 
 The decision fails open: an unknown path, an empty diff, or a Git error runs
 everything. CodeQL is deliberately not gated here. The ruleset on main requires
@@ -60,6 +62,7 @@ REFERENCE_INPUTS = (
     "scripts/context_panel_shared_view_references.py",
     "scripts/context_panel_validation/",
 )
+REFERENCE_IMAGES_PREFIX = "Tests/SharedViewReferences/"
 TRAIN_BRANCH_PREFIX = "launchplane/train/"
 ZERO_SHA = "0" * 40
 
@@ -72,10 +75,17 @@ class Scope:
     # A pull request or merge-train candidate, which the simulator reference
     # job stays off.
     merge_path: bool = False
+    # A pull request that changes a committed reference image, which runs the
+    # simulator reference job anyway.
+    reference_images: bool = False
 
     @property
     def simulator_references(self) -> bool:
-        return self.references and not self.merge_path
+        return self.references and (not self.merge_path or self.reference_images)
+
+
+def _is_reference_image(path: str) -> bool:
+    return path.startswith(REFERENCE_IMAGES_PREFIX) and PurePosixPath(path).suffix == ".png"
 
 
 def _matches(path: str, entries: tuple[str, ...]) -> bool:
@@ -105,12 +115,15 @@ def classify(paths: list[str] | None) -> Scope:
     if not paths:
         return Scope(True, "changed paths are unknown", references=True)
 
+    reference_images = any(_is_reference_image(p) for p in paths)
     product_path = next((p for p in paths if not is_product_irrelevant(p)), None)
     if product_path is not None:
-        return Scope(True, f"{product_path} can affect the product build", references=True)
+        reason = f"{product_path} can affect the product build"
+        return Scope(True, reason, references=True, reference_images=reference_images)
     reference_path = next((p for p in paths if _matches(p, REFERENCE_INPUTS)), None)
     if reference_path is not None:
-        return Scope(False, f"{reference_path} is a reference image job input", references=True)
+        reason = f"{reference_path} is a reference image job input"
+        return Scope(False, reason, references=True, reference_images=reference_images)
     return Scope(False, "every changed path is documentation or validation tooling", references=False)
 
 
@@ -147,7 +160,14 @@ def decide(
     if base is None:
         reason = f"no base to compare for {event} on {ref or 'an unknown ref'}"
         return Scope(True, reason, references=True, merge_path=merge_path)
-    return replace(classify(changed_paths(base, head, cwd=cwd)), merge_path=merge_path)
+    scope = classify(changed_paths(base, head, cwd=cwd))
+    # The pull request already ran the simulator job, so a train candidate
+    # carrying its reference images does not run it again.
+    return replace(
+        scope,
+        merge_path=merge_path,
+        reference_images=scope.reference_images and event == "pull_request",
+    )
 
 
 def changed_paths(base: str, head: str, *, cwd: Path | None = None) -> list[str] | None:

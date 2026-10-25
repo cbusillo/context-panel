@@ -299,6 +299,30 @@ class DecideTests(unittest.TestCase):
                 self.assertTrue(scope.references)
                 self.assertFalse(scope.simulator_references)
 
+    def test_a_pull_request_that_changes_a_reference_image_runs_the_simulator_reference_job(self):
+        for path in (
+            "Tests/SharedViewReferences/macos.widget/stress.png",
+            "Tests/SharedViewReferences/ipados.app/stress.png",
+        ):
+            with self.subTest(path=path):
+                commit(self.root, {"Sources/ContextPanelCore/A.swift": f"{path}\n", path: f"{path}\n"}, path)
+                scope = self.decide("pull_request", "refs/pull/1/merge", pr_base=self.base)
+                self.assertTrue(scope.simulator_references)
+
+    def test_other_reference_changes_on_a_pull_request_keep_the_simulator_reference_job_off(self):
+        commit(self.root, {"Tests/SharedViewReferences/README.md": "notes\n"}, "notes")
+        scope = self.decide("pull_request", "refs/pull/1/merge", pr_base=self.base)
+        self.assertTrue(scope.references)
+        self.assertFalse(scope.simulator_references)
+
+    def test_a_train_candidate_with_reference_images_keeps_the_simulator_reference_job_off(self):
+        git(self.root, "update-ref", "refs/remotes/origin/main", self.base)
+        git(self.root, "switch", "--quiet", "--create", "launchplane/train/batch")
+        commit(self.root, {"Tests/SharedViewReferences/ipados.app/stress.png": "image\n"}, "re-record")
+        scope = self.decide("push", "refs/heads/launchplane/train/batch", before="0" * 40)
+        self.assertTrue(scope.references)
+        self.assertFalse(scope.simulator_references)
+
     def test_main_pushes_and_manual_runs_keep_the_simulator_reference_job(self):
         commit(self.root, {"Sources/ContextPanelCore/A.swift": "changed\n"}, "product")
         for event, ref in (("push", "refs/heads/main"), ("workflow_dispatch", "refs/heads/reference-check/abc")):
