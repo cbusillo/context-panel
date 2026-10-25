@@ -465,6 +465,23 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(ranking([agentOnly, ending]).entry(ending)?.reserve == UseNextRanking.useLastFloor)
 }
 
+// #1003: the cushion is planned personal use before the reset, so it tapers toward the floor instead of being held.
+@Test func useLastCushionTapersAsItsResetNears() throws {
+    let agentOnly = Fixture(name: "agents", weeklyUsed: 10, resetHours: 100, burn: 1)
+    let reserves = try [55.0, 24, 6, 1].map { hours in
+        let useLast = Fixture(name: "use-last", weeklyUsed: 29, resetHours: hours, burn: 0.67, useLast: true)
+        let entry = try #require(ranking([agentOnly, useLast]).entry(useLast))
+        // It still ranks last, and its reason states the cushion it is planning around.
+        #expect(entry.tier == .useLast)
+        #expect(entry.reason == "Use last: sets aside about \(Int(try #require(entry.reserve).rounded()))% for your own use before its reset and spends the rest")
+        return try #require(entry.reserve)
+    }
+    #expect(abs(reserves[0] - 36.85) < 0.01)
+    #expect(zip(reserves, reserves.dropFirst()).allSatisfy { $0 > $1 })
+    // In the final hours only the floor is held, so the account is planned to end near zero.
+    #expect(reserves.last == UseNextRanking.useLastFloor)
+}
+
 @Test func launchReceiptStoreReadsOnlyWellFormedRecentReceipts() throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

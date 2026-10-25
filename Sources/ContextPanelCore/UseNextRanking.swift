@@ -302,7 +302,8 @@ public extension AccountOverview {
                     reason = candidate.useLast ? "Use last: holding its cushion for your own use"
                         : "On pace to use its allowance before its reset"
                 } else if candidate.useLast {
-                    reason = "Use last: keeps about \(Int(candidate.reserve?.rounded() ?? 0))% for your own use and spends the rest before its reset"
+                    // The cushion is planned use, not a leftover: it shrinks as the reset nears.
+                    reason = "Use last: sets aside about \(Int(candidate.reserve?.rounded() ?? 0))% for your own use before its reset and spends the rest"
                 } else {
                     reason = "About \(Int(spare.rounded()))% would go unused at its reset at the current pace"
                 }
