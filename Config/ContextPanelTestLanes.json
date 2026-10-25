@@ -1,7 +1,6 @@
 {
   "schemaVersion": 1,
   "workersByFile": {
-    "Tests/ScriptsTests/test_physical_defect_corpus.py": 2,
     "Tests/ScriptsTests/test_surface_manifest.py": 2,
     "Tests/ScriptsTests/test_release_workflows.py": 6,
     "Tests/ScriptsTests/test_companion_upload_script.py": 6
@@ -63,9 +62,6 @@
     "fast-local-python": [
       "Tests/ScriptsTests/test_runtime_receipts.py",
       "Tests/ScriptsTests/test_runtime_session.py",
-      "Tests/ScriptsTests/test_physical_defect_corpus.py",
-      "Tests/ScriptsTests/test_replay_inventory.py",
-      "Tests/ScriptsTests/test_signed_train_replay.py",
       "Tests/ScriptsTests/test_shared_view_capture.py",
       "Tests/ScriptsTests/test_shared_view_capture_workflow.py",
       "Tests/ScriptsTests/test_shared_view_evidence.py",

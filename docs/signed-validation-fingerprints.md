@@ -237,7 +237,7 @@ serials, profile contents, device lists, and renewal dates do not appear as raw
 fields. These deterministic digests are public-safe comparison identifiers, not
 confidentiality guarantees for low-entropy or externally discoverable values.
 Existing schema v1 expected-build manifests remain valid for release-gate,
-validation, lineage, and replay reconstruction; they are not rewritten or
+validation and lineage; they are not rewritten or
 interpreted as v2.
 
 Stage 4a seals and validates this semantic provenance but does not yet widen

@@ -170,8 +170,7 @@ stress coverage; do not relabel it as evidence for a different matrix context.
 
 Simulator or host-rendered shared views cannot satisfy `actual-runtime` or
 `os-composited-placement`. Preserve historical manifests, receipts, and fixture
-contracts. Use [replay qualification](signed-validation-replay-inventory.md)
-without silently upgrading diagnostic or reference-only evidence.
+contracts, without silently upgrading diagnostic or reference-only evidence.
 
 ## Validation
 
@@ -385,16 +384,6 @@ acceptable.
   review requirement. Every train re-checks only what changed: a rebuild alone
   needs no new runtime proof, and unchanged surfaces carry forward their
   approved evidence.
-- Historical replay input qualification starts with
-  `scripts/context-panel-replay-inventory.py check --json`. Re-sealing requires
-  explicit private root bindings; never discover or record host paths. The
-  generated inventory may contain only digests, enums, targets, and symbolic
-  root-relative paths. Raw receipts, device data, approval bodies, profiles,
-  screenshots, and validation containers remain private. A `reference-only` or
-  `fragile` classification is an explicit residual risk, not missing evidence
-  that may be silently upgraded. The rejected
-  `feat/simulator-first-rc-validation` working tree is never qualification
-  evidence.
 - After the coordinator final report is available, evaluate the full comparison
   with the [release evidence gate](release.md#release-evidence-carry-forward-gate).
   Do not filter or rewrite `requiredSurfaces`.
