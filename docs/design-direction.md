@@ -351,8 +351,9 @@ The semantic defaults are:
 
 Validation galleries are calm diagnostic instruments, not developer preview
 grids. A fixed `Sample data` boundary remains visible outside scrolling and on
-interactive render tiles; shared-view captures omit gallery banners. The selected state, family, and appearance are secondary to
-the rendered production surface; controls should stay compact and native.
+interactive render tiles; shared-view captures omit gallery banners. The selected
+state, family, and appearance are secondary to the rendered production surface;
+controls should stay compact and native.
 
 Validation galleries are operator-only surfaces. Normal product navigation
 must not expose gallery buttons, toolbar actions, list rows, or runway items.

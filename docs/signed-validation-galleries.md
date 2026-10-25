@@ -502,8 +502,8 @@ source, an extension-only compilation boundary keeps the live timeline provider,
 runtime-receipt recorder, widget registration, and WidgetBundle entry point out
 of the Watch app target. The normal Watch root retains its live sync behavior
 outside the gallery. A persistent `Sample data` boundary stays above interactive
-gallery screens; fixed Watch app captures omit it. Gallery output remains shared-view proof; the installed-build
-Watch restart and real placed-complication glance remain required whenever
+gallery screens; fixed Watch app captures omit it. Gallery output remains
+shared-view proof; the installed-build Watch restart and real placed-complication glance remain required whenever
 complication host behavior changed.
 
 ## Apple TV Gallery
