@@ -38,9 +38,9 @@ so every surface draws the same picture at a different size.
   widgets and the Watch.
 - **The Mac app** has a fixed sidebar with Overview, Deadlines, and accounts
   grouped by provider. Account rows fold out to every window and banked reset.
-- **Widgets** default to account rows. The older limit-based layout remains a
-  Display setting named Windows. Keep account percentages fully visible at
-  every size; account names truncate when space is tight. In the desktop's
+- **Widgets** show account rows; there is no other widget layout. Keep account
+  percentages fully visible at every size; account names truncate when space
+  is tight. In the desktop's
   vibrant or accented appearance, leave the container to WidgetKit so numbers
   and labels remain distinct from the background.
 - **Settings → Display** shows a read-only preview of the widget, using the

@@ -1352,12 +1352,12 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
     private var displayPreferencesScopeText: String {
         #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
-            "These choices apply to this companion, its widgets, and Apple Watch. Mac settings remain unchanged."
+            "These choices apply to this companion and Apple Watch. Mac settings remain unchanged."
         } else {
-            "These choices apply to this companion and its widgets. Mac settings remain unchanged."
+            "These choices apply to this companion. Mac settings remain unchanged."
         }
         #else
-        "These choices apply to this companion and its widgets. Mac settings remain unchanged."
+        "These choices apply to this companion. Mac settings remain unchanged."
         #endif
     }
 
