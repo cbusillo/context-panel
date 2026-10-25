@@ -663,10 +663,9 @@ scripts/upload-app-store-connect-companion-app.sh \
   --export-only
 ```
 
-The approved tvOS screenshot set lives under
-`Resources/AppStore/Screenshots/tvos/`. Upload it with the `tvos` screenshot set;
-the uploader maps those approved 1920-by-1080 frames to App Store Connect display
-type `APP_APPLE_TV`. The first tvOS App Store version already has its approved
+Upload the approved tvOS screenshots with the `tvos` screenshot set; the
+uploader maps them to App Store Connect display type `APP_APPLE_TV` (see the
+[screenshot matrix](../Resources/AppStore/Screenshots/screenshot-matrix.md)). The first tvOS App Store version already has its approved
 description and screenshots; verify the live App Store Connect record before
 editing or submitting a later train.
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "approval": "complete unapproved Horizon native app and OS-composited widget review set; no ready/upload/submission",
+  "approval": "approved for the App Store listing by Chris on 2026-10-21 (Q612, https://github.com/cbusillo/context-panel/issues/744#issuecomment-6317232568)",
   "fixtureSource": "Tools/ContextPanelAppStoreCapture/ScreenshotFixture.swift at each recorded sourceCommit",
   "fixtureDate": "2026-10-01T14:07:00Z",
   "assets": [
