@@ -54,6 +54,10 @@ name: Ship
         required: true
         default: true
         type: boolean
+      release_issue:
+        description: Optional open release issue number; each new App Store record becomes its sub-issue.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -255,6 +259,7 @@ jobs:
           INPUT_COMPANION_APP_STORE_CHANNEL: ${{ inputs.companion_app_store_channel }}
           INPUT_TESTFLIGHT_BETA: ${{ inputs.testflight_beta }}
           BUILD_NUMBER: ${{ needs.validate.outputs.build_number }}
+          RELEASE_ISSUE: ${{ inputs.release_issue }}
         run: python3 scripts/app-store-release-status.py record-ship
 
       - name: Summarize Channels
