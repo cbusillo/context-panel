@@ -471,7 +471,7 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     let reserves = try [55.0, 24, 6, 1].map { hours in
         let useLast = Fixture(name: "use-last", weeklyUsed: 29, resetHours: hours, burn: 0.67, useLast: true)
         let entry = try #require(ranking([agentOnly, useLast]).entry(useLast))
-        // It still ranks last, and its reason states the cushion it is planning around.
+        // It stays in the use-last tier, and its reason states the cushion it is planning around.
         #expect(entry.tier == .useLast)
         #expect(entry.reason == "Use last: sets aside about \(Int(try #require(entry.reserve).rounded()))% for your own use before its reset and spends the rest")
         return try #require(entry.reserve)
