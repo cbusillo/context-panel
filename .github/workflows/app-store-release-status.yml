@@ -1,5 +1,5 @@
 ---
-name: App Store Release Drift
+name: App Store Release Status
 
 "on":
   schedule:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    name: Read public store versions and alert on drift
+    name: Read public store versions, alert on drift and close live records
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

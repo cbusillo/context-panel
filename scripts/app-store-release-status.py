@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Track Ship uploads and observe public App Store drift; never submit a build."""
+"""Track Ship uploads, watch public App Store delivery, and close records once live.
+
+Never submits a build or changes App Store Connect."""
 
 from __future__ import annotations
 
@@ -42,6 +44,8 @@ CHANNELS = "context-panel-store-channels:v1"
 SUBMISSION = "context-panel-store-submission:v1"
 IDENTITY = ("platform", "version", "buildNumber")
 DEFINITION = "docs/release.md#definition-of-released"
+PLAN_LABEL = "plan"
+PLAN_DONE = "plan:done"
 
 
 class StatusError(RuntimeError):
@@ -127,24 +131,25 @@ def record_body(repository: str, record: dict) -> str:
         "Next action: the release agent validates TestFlight and runs this Submit dry run, "
         "then follows the existing review/evidence gates. This record does not authorize submission.\n\n"
         f"```sh\n{next_command(repository, record)}\n```\n\n"
-        "Keep this issue open until the exact build is approved and live; "
-        "public version equality alone cannot identify its build number.\n\n"
+        "Keep this issue open until the exact build is approved and live. The App Store Release Status "
+        "check closes it once the public version matches and this is the only build submitted for that "
+        "version.\n\n"
         + marker(RECORD, record) + "\n"
     )
 
 
 class GitHub:
-    """Workflow-token transport. Only issue creation and comments are mutations."""
+    """Workflow-token transport. Mutations: issue creation, comments, sub-issue links and issue closing."""
 
     def __init__(self, repository: str):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
             raise StatusError("invalid GitHub repository")
         self.repository = repository
 
-    def api(self, path: str, body: dict | None = None) -> Any:
+    def api(self, path: str, body: dict | None = None, method: str = "POST") -> Any:
         args = ["gh", "api", f"repos/{self.repository}/{path}"]
         if body is not None:
-            args += ["--method", "POST", "--input", "-"]
+            args += ["--method", method, "--input", "-"]
         result = subprocess.run(args, input=json.dumps(body) if body is not None else None,
                                 text=True, capture_output=True, timeout=60)
         if result.returncode:
@@ -192,6 +197,36 @@ def ensure_record(client: Any, issues: list[dict], record: dict) -> dict:
     })
     issues.append(issue)
     return issue
+
+
+def release_issue(issues: list[dict], value: str) -> dict | None:
+    """The open release issue Ship links its records to; blank means none."""
+    if not value.strip():
+        return None
+    if not value.strip().isdigit():
+        raise StatusError("release_issue must be an issue number")
+    matches = [issue for issue in issues if issue.get("number") == int(value) and issue.get("state") == "open"]
+    if len(matches) != 1:
+        raise StatusError("release_issue is not an open issue in this repository")
+    return matches[0]
+
+
+def parent_number(client: Any, issue: dict) -> int | None:
+    url = issue.get("parent_issue_url")
+    if not isinstance(url, str):
+        return None
+    match = re.fullmatch(rf"https://api\.github\.com/repos/{re.escape(client.repository)}/issues/(\d+)", url)
+    return int(match.group(1)) if match else None
+
+
+def link_to_release(client: Any, issue: dict, parent: dict) -> None:
+    current = parent_number(client, issue)
+    if current == parent["number"]:
+        return
+    if issue.get("parent_issue_url"):
+        raise StatusError("release record already belongs to another release issue")
+    client.api(f"issues/{parent['number']}/sub_issues", {"sub_issue_id": issue["id"]})
+    issue["parent_issue_url"] = f"https://api.github.com/repos/{client.repository}/issues/{parent['number']}"
 
 
 def include_published_mac(client: Any, issues: list[dict]) -> None:
@@ -362,11 +397,64 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
             value = {**identity, "submittedAt": now.isoformat(), "runURL": run_url}
             client.api(f"issues/{issue['number']}/comments", {"body":
                 f"[Submitted for App Store review]({run_url}): {identity['platform']} {identity['version']} "
-                f"({identity['buildNumber']}). The drift monitor now watches this build for this platform. "
+                f"({identity['buildNumber']}). The App Store Release Status check now watches this build for this platform. "
                 "Keep this record open until the exact build is verified live.\n\n"
                 + marker(SUBMISSION, value)})
         return issue
     return None
+
+
+def only_submitted_build(client: Any, issues: list[dict], target: dict) -> bool:
+    """True when the target is the one record submitted for its platform and version.
+
+    A version can have only one build live, so a live version with one submitted build
+    identifies that build. Any second submission for the version leaves it for a person.
+    """
+    submitted = []
+    for issue in issues:
+        record = read_marker(RECORD, issue.get("body") or "")
+        if (record is not None and record.get("platform") == target["platform"]
+                and version_guard.compare_versions(record["version"], target["version"]) == 0
+                and submission(client, issue, record) is not None):
+            submitted.append(record)
+    return len(submitted) == 1 and all(submitted[0].get(key) == target[key] for key in IDENTITY)
+
+
+def close_live_record(client: Any, issue: dict, record: dict, public_version: str) -> None:
+    client.api(f"issues/{issue['number']}/comments", {"body":
+        f"Live on the App Store: {record['platform']} {record['version']} ({record['buildNumber']}).\n\n"
+        f"The public US App Store page shows {public_version}. Build {record['buildNumber']} is the only build "
+        f"submitted for {record['version']} on this platform, and a version can have only one build live, "
+        "so the live version is this build. Closed by the App Store Release Status check.\n\n"
+        f"[Release definition](https://github.com/{client.repository}/blob/main/{DEFINITION})."})
+    client.api(f"issues/{issue['number']}", {"state": "closed", "state_reason": "completed"}, method="PATCH")
+    issue.update(state="closed", state_reason="completed")
+
+
+def close_finished_release(client: Any, parent: dict) -> bool:
+    """Close a release issue once every sub-issue is closed and every platform has a live record."""
+    children = client.pages(f"issues/{parent['number']}/sub_issues")
+    if not children or any(child.get("state") != "closed" for child in children):
+        return False
+    live = {}
+    for child in sorted(children, key=lambda item: item["number"]):
+        record = read_marker(RECORD, child.get("body") or "")
+        if record is not None and child.get("state_reason") == "completed":
+            live[record["platform"]] = (child, record)
+    if set(live) != set(PLATFORMS):
+        return False
+    lines = [f"- {platform}: {record['version']} ({record['buildNumber']}), #{child['number']}"
+             for platform, (child, record) in sorted(live.items())]
+    client.api(f"issues/{parent['number']}/comments", {"body":
+        "Released: every platform is live on the App Store.\n\n" + "\n".join(lines) + "\n\n"
+        "Closed by the App Store Release Status check once every platform record closed."})
+    names = [label["name"] if isinstance(label, dict) else label for label in parent.get("labels", [])]
+    update: dict[str, Any] = {"state": "closed", "state_reason": "completed"}
+    if PLAN_LABEL in names:
+        update["labels"] = [name for name in names if not name.startswith(f"{PLAN_LABEL}:")] + [PLAN_DONE]
+    client.api(f"issues/{parent['number']}", update, method="PATCH")
+    parent.update(state="closed", state_reason="completed")
+    return True
 
 
 def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
@@ -399,12 +487,20 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
                     f"{'Submitted' if submitted else 'Uploaded'} target: {record['version']} ({record['buildNumber']}); "
                     f"public App Store (US): {version or 'unknown'}. "
                     "Upload/TestFlight success is separate from live App Store delivery. "
-                    "Public marketing-version equality cannot prove the exact build, approval, or TestFlight state.\n\n"
+                    "Public marketing-version equality alone cannot prove the exact build, approval, or TestFlight state.\n\n"
                     f"Next release-agent preflight:\n```sh\n{next_command(client.repository, record)}\n```\n\n"
                     "Supervisor watchers: this release-tracking issue remains the durable handoff; "
                     "no submission or store mutation was performed.\n\n" + marker(OBSERVATION, observation))
             client.api(f"issues/{issue['number']}/comments", {"body": body})
+        if (result["status"] == "public version current" and version is not None and submitted is not None
+                and issue.get("state") == "open" and only_submitted_build(client, issues, record)):
+            close_live_record(client, issue, record, version)
         observations.append(observation)
+    by_number = {item["number"]: item for item in issues}
+    for parent in sorted({number for issue, _, _ in latest.values()
+                          if (number := parent_number(client, issue)) is not None}):
+        if parent in by_number and by_number[parent].get("state") == "open":
+            close_finished_release(client, by_number[parent])
     return observations
 
 
@@ -423,14 +519,17 @@ def main() -> int:
         if args.mode == "record-submission":
             issue = record_submission(client, issues, dict(os.environ), now)
             if issue is None:
-                print("::warning::No Ship release record matches the submitted build, so the drift "
-                      "monitor cannot watch it and keeps its previous target for this platform")
+                print("::warning::No Ship release record matches the submitted build, so the App Store "
+                      "Release Status check cannot watch it and keeps its previous target for this platform")
             else:
                 print(f"App Store submission recorded: {issue['html_url']}")
         elif args.mode == "record-ship":
             records = ship_records(dict(os.environ), now)
+            parent = release_issue(issues, os.environ.get("RELEASE_ISSUE", "")) if records else None
             for record in records:
                 issue = ensure_record(client, issues, record)
+                if parent is not None:
+                    link_to_release(client, issue, parent)
                 print(f"App Store submission pending: {issue['html_url']}")
                 summary = os.environ.get("GITHUB_STEP_SUMMARY")
                 if summary:

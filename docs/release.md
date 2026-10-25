@@ -54,16 +54,21 @@ exact uploaded identity, channel results, run link, and the `Submit App Store
 Review` workflow command with `dry_run=true`. Failure to record it fails Ship's
 summary job. Retries reuse the same platform/version/build/source record.
 The release agent owns TestFlight validation and the existing submission gates;
-recording a pending issue grants no submission authority. Keep it open until
-the exact build is verified live, then close it with that proof. Submission,
-rejection, and approval updates belong on the same issue. A real `Submit App
-Store Review` run (not a dry run, cancel or prepare-only run) marks the
-matching record as submitted. A build uploaded outside Ship has no record, so
-the monitor cannot watch it: the run warns, and the monitor keeps its previous
-target for that platform. A record whose build is replaced as the candidate
-never goes live: close it as not planned, with a link to the replacing record.
+recording a pending issue grants no submission authority. The record stays
+open until the exact build is verified live. Submission, rejection, and
+approval updates belong on the same issue. A real `Submit App Store Review` run
+(not a dry run, cancel or prepare-only run) marks the matching record as
+submitted. A build uploaded outside Ship has no record, so the check cannot
+watch it: the run warns, and the check keeps its previous target for that
+platform. A record whose build is replaced as the candidate never goes live:
+close it as not planned, with a link to the replacing record.
 
-`App Store Release Drift` runs every six hours and can also be dispatched
+When Ship's optional `release_issue` input names the release's open plan issue,
+each record Ship creates becomes a native sub-issue of it. Retries keep the
+existing link, and a record that already belongs to another release fails the
+summary job rather than moving.
+
+`App Store Release Status` runs every six hours and can also be dispatched
 manually. `scripts/app-store-release-status.py check --lag-hours 48` reads the
 public US storefront separately for each platform and compares its numeric
 marketing version with that platform's newest build submitted for review.
@@ -85,10 +90,21 @@ Records closed as completed still participate, so premature closeout cannot
 hide drift; records closed as not planned were superseded and are ignored.
 No store credentials or store writes are used. The public page parser verifies
 the requested app/platform; it never substitutes another platform's version.
-Public version equality reports only “public version current”; public listings
-do not expose the exact build number, so this alone cannot close the issue or
-prove the release definition above. The check does not automatically submit,
-approve, release, or alter submission evidence policy.
+Public listings do not expose the exact build number, so public version
+equality alone reports only “public version current”. The check closes a record
+as completed, with that proof in a comment, when the public version is current,
+the record carries a submission marker, and it is the only record submitted for
+that platform and version: a version can have only one build live, so that
+build is the live one. Two or more submissions for the version, an unreadable
+page, or a record never submitted leave the record open for the release agent.
+After each run, the check reads the native parent of each target record. It
+closes that release issue as completed once every sub-issue is closed and each
+of the four platforms has a record closed as completed; superseded records
+closed as not planned don't count. It posts a summary listing each platform's
+live build, and a parent with the `plan` label moves to `plan:done`. Closing
+may lag Apple's release by up to six hours. The check does not submit,
+approve, release, or change App Store Connect, or alter submission evidence
+policy.
 
 ## Release cadence
 
@@ -579,6 +595,7 @@ version=<selected marketing version>
 build_number=<selected build number, or blank for a UTC timestamp>
 testflight_beta=true
 include_internal_testflight_groups=true
+release_issue=<the release's open plan issue number, for an App Store release>
 ```
 
 These inputs include all existing internal groups; leave `testflight_beta_groups`
