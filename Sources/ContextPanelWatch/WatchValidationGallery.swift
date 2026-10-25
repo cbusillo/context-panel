@@ -35,28 +35,20 @@ struct WatchValidationGalleryView: View {
 }
 
 struct WatchAppValidationGalleryView: View {
-    let fixedState: WatchValidationAppState?
-
     @State private var selectedState = WatchValidationAppState.healthy
     private let adapter = WatchValidationFixtureAdapter()
 
-    init(fixedState: WatchValidationAppState? = nil) {
-        self.fixedState = fixedState
-    }
-
     private var context: WatchValidationFixtureContext {
-        adapter.appContext(state: fixedState ?? selectedState)
+        adapter.appContext(state: selectedState)
     }
 
     var body: some View {
-        WatchValidationSampleContainer(showsBanner: fixedState == nil) {
+        WatchValidationSampleContainer {
             List {
-                if fixedState == nil {
-                    Section("Sample state") {
-                        Picker("State", selection: $selectedState) {
-                            ForEach(WatchValidationAppState.allCases) { state in
-                                Text(state.displayName).tag(state)
-                            }
+                Section("Sample state") {
+                    Picker("State", selection: $selectedState) {
+                        ForEach(WatchValidationAppState.allCases) { state in
+                            Text(state.displayName).tag(state)
                         }
                     }
                 }
@@ -70,7 +62,7 @@ struct WatchAppValidationGalleryView: View {
                 )
             }
         }
-        .navigationTitle(fixedState == nil ? "App states" : "Watch app")
+        .navigationTitle("App states")
     }
 }
 
@@ -175,36 +167,33 @@ struct WatchComplicationValidationGalleryView: View {
 }
 
 private struct WatchValidationSampleContainer<Content: View>: View {
-    var showsBanner = true
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsBanner {
-                HStack(spacing: 6) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "testtube.2")
-                                .accessibilityHidden(true)
-                            Text("SAMPLE DATA")
-                                .tracking(0.4)
-                            Spacer(minLength: 2)
-                            Text("READ ONLY")
-                        }
-
-                        Label("SAMPLE · READ ONLY", systemImage: "testtube.2")
+            HStack(spacing: 6) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "testtube.2")
+                            .accessibilityHidden(true)
+                        Text("SAMPLE DATA")
+                            .tracking(0.4)
+                        Spacer(minLength: 2)
+                        Text("READ ONLY")
                     }
-                    .font(.caption2.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+
+                    Label("SAMPLE · READ ONLY", systemImage: "testtube.2")
                 }
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(Color.orange.opacity(0.14))
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Sample data. Read only shared-view proof.")
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
             }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.orange.opacity(0.14))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Sample data. Read only shared-view proof.")
 
             content
         }
