@@ -61,9 +61,9 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
         status: saved ? .stale : .healthy, message: "", accountDisplayMetadata: metadata)
     let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!,
         reconnect: URL(string: "contextpanel://settings")!,
-        cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!, resetCreditInteraction: .none)
+        cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!)
     let view = ContextPanelWidgetContentView(family: family, snapshot: snapshot,
-        displayPreferences: .defaultPreferences, links: links, presentationDate: now)
+        links: links, presentationDate: now)
         .cpwThemeVariant(dark ? .dark : .light)
         .environment(\.colorScheme, dark ? .dark : .light)
         .frame(width: dimensions.width, height: dimensions.height)

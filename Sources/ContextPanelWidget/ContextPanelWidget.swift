@@ -329,7 +329,6 @@ struct ContextPanelWidgetView: View {
         ContextPanelWidgetContentView(
             family: family,
             snapshot: entry.snapshot,
-            displayPreferences: entry.displayPreferences,
             links: ContextPanelWidgetURL.links,
             showsResetCreditSurfaces: true,
             presentationDate: entry.date

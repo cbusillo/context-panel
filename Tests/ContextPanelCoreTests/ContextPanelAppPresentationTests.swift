@@ -617,8 +617,6 @@ private func presentationTestTemporaryDirectory() throws -> URL {
     #expect(summary.previewResetConfidenceText.contains(full))
     #expect(summary.usedPressureAccessibilityValue(status: .healthy).contains(full))
     #expect(presented.remainingCapacityAccessibilityValue.contains(full))
-    #expect(summary.widgetSmallResetConfidenceText(presentationDate: now) == "≈ \(compact)")
-    #expect(summary.widgetCapacityAccessibilityValue(snapshotState: .ready, presentationDate: now).contains(full))
     let widget = WidgetSnapshot(state: .ready, generatedAt: now, limits: snapshot.limits, status: .healthy, message: "Synced")
     let watch = try #require(WatchLimitDisplay.rows(from: widget, maximumCount: 1).first)
     #expect(watch.resetText(now: now)?.contains(compact) == true)

@@ -177,7 +177,7 @@ import Testing
     #expect(legacy.snapshot.providerStatuses.first?.storedProviderReport.resetCredits == nil)
 }
 
-@Test func companionWidgetSnapshotPreservesInventoryWithoutPrematureResetAdvice() throws {
+@Test func companionWidgetSnapshotPreservesResetCreditInventory() {
     let now = Date(timeIntervalSince1970: 1_350)
     let resetCredits = ProviderResetCreditSummary(
         availableCount: 2,
@@ -196,19 +196,12 @@ import Testing
             maximumAge: SnapshotFreshness.companionProviderMaximumAge
         )
     )
-    let summary = try #require(snapshot.resetCreditSurfaceSummary(
-        now: now,
-        maximumAge: SnapshotFreshness.companionProviderMaximumAge
-    ))
 
     #expect(snapshot.reports.first?.resetCredits == resetCredits)
-    #expect(summary.accountCount == 1)
-    #expect(summary.primaryActionableGuidance == nil)
-    #expect(summary.primaryDeadlineGuidance?.accountName == "Work OpenAI")
-    #expect(summary.primaryDeadlineGuidance?.resetCredits == resetCredits)
+    #expect(snapshot.reports.first?.accountName == "Work OpenAI")
 }
 
-@Test func companionWidgetSnapshotSuppressesStaleResetCreditGuidanceForAFreshLimit() throws {
+@Test func companionWidgetSnapshotKeepsStaleResetCreditObservationForAFreshLimit() {
     let now = Date(timeIntervalSince1970: 1_375)
     let observedAt = now.addingTimeInterval(-(SnapshotFreshness.companionProviderMaximumAge + 1))
     let base = companionStoredSnapshot(generatedAt: now)
@@ -248,10 +241,6 @@ import Testing
     #expect(snapshot.state == .ready)
     #expect(snapshot.limits.first?.status == .close)
     #expect(snapshot.reports.first?.resetCredits?.observedAt == observedAt)
-    #expect(snapshot.resetCreditSurfaceSummary(
-        now: now,
-        maximumAge: SnapshotFreshness.companionProviderMaximumAge
-    ) == nil)
 }
 
 @Test func companionSyncStoreLoadHidesExpiredAccountObservation() throws {

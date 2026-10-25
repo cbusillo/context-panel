@@ -166,7 +166,6 @@ private struct CaptureCellView: View {
         ContextPanelWidgetContentView(
             family: route.presentation == .widget ? route.family.widgetFamily : .systemLarge,
             snapshot: snapshot,
-            displayPreferences: adapter.displayPreferences,
             links: CompanionDeepLinks.previewLinks,
             showsResetCreditSurfaces: true,
             resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,

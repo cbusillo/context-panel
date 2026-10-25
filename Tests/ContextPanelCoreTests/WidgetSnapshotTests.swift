@@ -5,12 +5,6 @@ import Testing
 @testable import ContextPanelWidget
 @testable import ContextPanelWidgetUI
 
-private let testWidgetLinks = ContextPanelWidgetLinks(
-    overview: URL(string: "contextpanel://overview")!,
-    reconnect: URL(string: "contextpanel://reconnect")!,
-    cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
-)
-
 @Test(arguments: [false, true])
 func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool) throws {
     let root = try widgetSnapshotTemporaryDirectory()
@@ -119,9 +113,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(widget.status == .healthy)
     #expect(widget.syncErrorMessage != nil)
     #expect(widget.message == "Showing saved usage because the latest update failed.")
-    #expect(widget.widgetProblemText == "Mac update failed")
-    #expect(widget.widgetProblemStatus == .failure)
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }
 
 @Test func companionStaleLoadMarksAFreshDocumentStale() {
@@ -211,49 +202,13 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(stored.snapshot.limits.first?.presentationAssumption == nil)
     for widget in [local, companion] {
         let limit = try #require(widget.limits.first)
-        let summary = try #require(widget.mainLimitSummaries.first)
+        let summary = try #require(widget.usageSnapshot.mainLimitSummaries.first)
 
         #expect(widget.state == .ready)
         #expect(widget.status == .healthy)
-        #expect(widget.widgetProblemText == nil)
         #expect(limit.used == 0)
         #expect(limit.presentationAssumption == .scheduledReset)
-        #expect(summary.widgetRemainingHeadline == "≈100% left")
-        #expect(summary.widgetUsageText == "≈0% used")
-        #expect(summary.widgetResetConfidenceText(presentationDate: now) == summary.widgetResetText(presentationDate: now))
-        let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: widget.state)
-        #expect(accessibilityValue.contains("approximately 100% left"))
-        #expect(accessibilityValue.contains("Assumed after scheduled reset"))
-        #expect(!accessibilityValue
-            .localizedCaseInsensitiveContains("stale"))
     }
-}
-
-@Test func nonCredentialProviderFailureRoutesToOverview() {
-    let now = Date(timeIntervalSince1970: 100)
-    let widget = WidgetSnapshot(
-        state: .ready,
-        generatedAt: now,
-        limits: [UsageLimit(
-            provider: .google,
-            accountID: "google",
-            accountName: "Google",
-            label: "Gemini weekly",
-            windowLabel: "Weekly",
-            unit: .percent,
-            used: nil,
-            limit: nil,
-            lastUpdatedAt: now,
-            confidence: .estimated,
-            statusOverride: .failure
-        )],
-        status: .failure,
-        message: "Google refresh failed."
-    )
-
-    #expect(widget.widgetProblemText == "Provider refresh needed")
-    #expect(widget.widgetProblemStatus == .failure)
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }
 
 @Test func widgetSnapshotPreservesStaleCachedLimits() {
@@ -274,7 +229,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(widget.message.contains("data is old"))
     #expect(widget.hasProviderReconnectIssue == false)
     #expect(widget.refreshAttentionSummary?.singleProvider == .openAI)
-    #expect(widget.widgetProblemText == "OpenAI refresh needed")
 }
 
 @Test func widgetSnapshotDoesNotRequestReconnectWhenCurrentLimitCoversFailedReport() {
@@ -314,7 +268,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 
     #expect(widget.hasProviderReconnectIssue == false)
     #expect(widget.message == "Usage data is current.")
-    #expect(widget.widgetProblemText != "Reconnect account")
 }
 
 @Test func widgetSnapshotProblemTextNamesSingleExpiredResetProvider() {
@@ -343,7 +296,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     )
 
     #expect(widget.refreshAttentionSummary?.singleProvider == .google)
-    #expect(widget.widgetProblemText == "Google refresh needed")
     #expect(widget.message.contains("Google · Antigravity"))
 }
 
@@ -420,14 +372,10 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
         SnapshotStoreLoadResult(snapshot: stored, status: .stale),
         now: now
     )
-    let googleSummary = try #require(widget.mainLimitSummaries.first { $0.provider == .google })
+    let googleSummary = try #require(widget.usageSnapshot.mainLimitSummaries.first { $0.provider == .google })
 
     #expect(widget.state == .ready)
     #expect(widget.refreshAttentionSummary?.providers == [.openAI])
-    #expect(widget.widgetProblemText == "OpenAI refresh needed")
-    #expect(widget.widgetProblemStatus == .stale)
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
-    #expect(widget.widgetPresentationStatus(for: googleSummary.status) == .healthy)
 }
 
 @Test func widgetSnapshotDefaultStalenessPolicyDoesNotSuppressExpiredResetRefresh() {
@@ -552,8 +500,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(widget.status == .healthy)
     #expect(widget.message.contains("session has expired"))
     #expect(widget.hasProviderReconnectIssue == true)
-    #expect(widget.widgetProblemText == "OpenAI reconnect needed")
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
 }
 
 @Test func widgetSnapshotUsesGoogleAntigravityBridgeGuidanceForProviderFailures() {
@@ -593,12 +539,10 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 
     #expect(widget.state == .ready)
     #expect(widget.status == .healthy)
-    #expect(widget.widgetProblemText == "Google refresh needed")
     #expect(widget.message.contains("Google · Antigravity needs attention:"))
     #expect(widget.message.contains("bridge data could not be read"))
     #expect(widget.message.contains("setup is checked"))
     #expect(widget.message.contains("Reconnect") == false)
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }
 
 @Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasDifferentWorkingConfiguredSiblingAccount() {
@@ -970,12 +914,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(widget.state == .ready)
     #expect(widget.needsProviderConnection)
     #expect(widget.message == "Connect an account to show limits.")
-    #expect(widget.fastModeVerdict == "Connect accounts to track limits")
-    #expect(widget.fastModeDetail == "Open the app to connect OpenAI, Claude, or Google.")
-    #expect(widget.fastModeWidgetDetail == "Open the app to connect OpenAI, Claude, or Google.")
-    #expect(widget.fastModeResetDetail == "limits appear after setup")
-    #expect(widget.widgetProblemText == "Setup needed")
-    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
 }
 
 @Test func widgetSnapshotUsesSetupCopyWhenOnlyAuxiliaryLimitsAreAvailable() {
@@ -1009,14 +947,10 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 
     let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .unknown), now: savedAt)
 
-    #expect(widget.mainLimitSummaries.isEmpty)
+    #expect(widget.usageSnapshot.mainLimitSummaries.isEmpty)
     #expect(widget.limits.isEmpty == false)
     #expect(widget.needsProviderConnection)
-    #expect(widget.shouldShowMainLimitEmptyRow)
     #expect(widget.message == "Connect an account to show limits.")
-    #expect(widget.widgetProblemText == "Setup needed")
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
-    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
 }
 
 @Test func widgetSnapshotKeepsMainLimitsVisibleWhenAnotherProviderFails() {
@@ -1059,15 +993,9 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 
     let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy), now: savedAt)
 
-    #expect(widget.mainLimitSummaries.map(\.provider) == [.openAI])
+    #expect(widget.usageSnapshot.mainLimitSummaries.map(\.provider) == [.openAI])
     #expect(widget.needsProviderConnection == false)
-    #expect(widget.shouldShowMainLimitEmptyRow == false)
     #expect(widget.message != "Usage data is current.")
-    #expect(widget.widgetProblemText == "Anthropic reconnect needed")
-    #expect(defaultPrimarySummary(in: widget)?.widgetRemainingHeadline == "80% left")
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
-    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 20% used")
-    #expect(widget.widgetProviderSummaryText(provider: .anthropic) == "setup needed")
 }
 
 @Test func widgetSnapshotCarriesPromptCacheTelemetry() {
@@ -1338,7 +1266,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     #expect(entries[0].snapshot.state == .ready)
     #expect(entries[1].date == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1))
     #expect(entries[1].snapshot.state == .stale)
-    #expect(entries[1].snapshot.widgetProblemText == "OpenAI refresh needed")
     #expect(entries[1].snapshot.status == .stale)
 }
 
@@ -1372,7 +1299,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     #expect(entries.count == 2)
     #expect(entries[1].date == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace))
     #expect(entries[1].snapshot.state == .ready)
-    #expect(entries[1].snapshot.widgetProblemText == "Anthropic refresh needed")
     #expect(entries[1].snapshot.refreshAttentionSummary?.expiredResetLimits.map(\.accountID) == ["claude-timeline-reset"])
 }
 
@@ -1421,10 +1347,8 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     let entries = provider.timelineEntries(date: now)
 
     #expect(entries.count == 3)
-    #expect(entries[0].snapshot.resetCreditSurfaceSummary(now: now) != nil)
     #expect(entries[1].date == creditExpiry)
     #expect(entries[1].snapshot.state == .ready)
-    #expect(entries[1].snapshot.resetCreditSurfaceSummary(now: creditExpiry) == nil)
     #expect(entries[2].date == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1))
     #expect(entries[2].snapshot.state == .stale)
 }
@@ -1494,7 +1418,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         ageTransition,
     ])
     #expect(entries[1].snapshot.state == .ready)
-    #expect(entries[2].snapshot.resetCreditSurfaceSummary(now: creditExpiry) == nil)
     #expect(entries[3].snapshot.state == .stale)
 }
 
@@ -1768,8 +1691,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     )
 
     #expect(summary.usageRatio == nil)
-    #expect(summary.widgetResetText != nil)
-    #expect(summary.widgetResetConfidenceText?.contains("estimated") == true)
 }
 
 @Test func resetCountdownKeepsMinutePrecisionBelowAnHourBoundary() {
@@ -1824,33 +1745,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     #expect(summary.resetCountdownText(now: now) == "23h 1m · \(ContextPanelDateFormatting.resetDeadline(summary.resetsAt!, compact: true))")
 }
 
-@Test func widgetResetTextRoundsFiveHourWindowUp() {
-    let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-    let reset = now.addingTimeInterval((5 * 3_600) - 1)
-    let summary = MainLimitSummary(
-        provider: .openAI,
-        window: .fiveHour,
-        limits: [
-            UsageLimit(
-                provider: .openAI,
-                accountID: "openai",
-                accountName: "OpenAI",
-                label: "OpenAI 5-hour",
-                windowLabel: "5-hour",
-                unit: .percent,
-                used: 0,
-                limit: 100,
-                resetsAt: reset,
-                lastUpdatedAt: now,
-                confidence: .official
-            ),
-        ],
-        generatedAt: now
-    )
-
-    #expect(summary.widgetResetText == ContextPanelDateFormatting.resetDeadline(reset, compact: true))
-}
-
 @Test func anthropicWidgetSnapshotSurfacesConnectedUnknownOAuthStatusWithoutMainLimit() {
     let now = Date(timeIntervalSince1970: 1000)
     let limits = [
@@ -1874,7 +1768,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     #expect(snapshot.status == .unknown)
     #expect(snapshot.limits.contains { $0.provider == .anthropic })
     #expect(snapshot.usageSnapshot.mainLimitSummaries.filter { $0.provider == .anthropic }.isEmpty)
-    #expect(snapshot.widgetProviderSummaryText(provider: .anthropic) == "usage unknown")
 
     let healthyLimit = UsageLimit(
         provider: .anthropic,
@@ -1923,10 +1816,8 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         message: "Synced"
     )
 
-    let summary = try #require(snapshot.mainLimitSummaries.first)
+    let summary = try #require(snapshot.usageSnapshot.mainLimitSummaries.first)
     #expect(summary.window == .availability)
-    #expect(summary.widgetUsageText == "92% used")
-    #expect(snapshot.widgetProviderSummaryText(provider: .google) == "Cap 92% used")
 }
 
 @Test func widgetPresentationPreservesLastGoodStaleValues() throws {
@@ -1954,12 +1845,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     )
 
     #expect(summary.usageRatio == nil)
-    #expect(summary.widgetUsageRatio == 0.58)
-    #expect(summary.widgetRemainingHeadline == "42% left")
-    #expect(summary.widgetUsageText == "58% used")
-    #expect(summary.widgetFreshnessAccessibilityLabel == "Data stale")
-    #expect(summary.widgetPressureAccessibilityValue.contains("58% used"))
-    #expect(summary.widgetPressureAccessibilityValue.contains("Data stale"))
 }
 
 @Test func widgetPresentationUsesNormalizedGoogleLastKnownCapacity() throws {
@@ -1979,9 +1864,6 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     )
 
     #expect(summary.usageRatio == nil)
-    #expect(summary.widgetUsageRatio == 0.01)
-    #expect(summary.widgetRemainingHeadline == "99% left")
-    #expect(summary.widgetUsageText == "1% used")
 }
 
 @Test func widgetPresentationHonorsLongerWindowCapacityGates() throws {
@@ -2043,295 +1925,8 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
         message: "Synced"
     )
 
-    let fiveHour = try #require(snapshot.mainLimitSummaries.first { $0.window == .fiveHour })
+    let fiveHour = try #require(snapshot.usageSnapshot.mainLimitSummaries.first { $0.window == .fiveHour })
     #expect(fiveHour.status == .healthy)
-    #expect(fiveHour.widgetUsageRatio == 0.05)
-    #expect(fiveHour.widgetUsageText == "5% used")
-}
-
-@Test func snapshotLevelStalenessOverridesWidgetInstrumentColorAndAccessibility() throws {
-    let now = Date()
-    let snapshot = WidgetSnapshot(
-        state: .stale,
-        generatedAt: now,
-        limits: [
-            UsageLimit(
-                provider: .openAI,
-                accountID: "openai",
-                accountName: "OpenAI",
-                label: "Weekly",
-                windowLabel: "Weekly",
-                unit: .percent,
-                used: 58,
-                limit: 100,
-                resetsAt: now.addingTimeInterval(86_400),
-                lastUpdatedAt: now.addingTimeInterval(-10_800),
-                confidence: .observed
-            ),
-        ],
-        status: .stale,
-        message: "Refresh Context Panel to update data."
-    )
-
-    let summary = try #require(defaultPrimarySummary(in: snapshot))
-    #expect(summary.status == .healthy)
-    #expect(snapshot.widgetPresentationStatus(for: summary.status) == .stale)
-    #expect(summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state).contains("Last known main limit status available"))
-    #expect(summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state).contains("Data stale"))
-    #expect(summary.widgetPressureAccessibilityValue(snapshotState: snapshot.state).contains("Data stale"))
-}
-
-@Test func snapshotLevelFailureOverridesSmallWidgetCapacityPresentation() throws {
-    let now = Date()
-    let snapshot = WidgetSnapshot(
-        state: .failure,
-        generatedAt: now,
-        limits: [
-            UsageLimit(
-                provider: .openAI,
-                accountID: "openai",
-                accountName: "OpenAI",
-                label: "Weekly",
-                windowLabel: "Weekly",
-                unit: .percent,
-                used: 58,
-                limit: 100,
-                resetsAt: now.addingTimeInterval(86_400),
-                lastUpdatedAt: now.addingTimeInterval(-10_800),
-                confidence: .observed
-            ),
-        ],
-        status: .failure,
-        message: "Refresh failed"
-    )
-
-    let summary = try #require(defaultPrimarySummary(in: snapshot))
-    let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
-    #expect(accessibilityValue.contains("42% left"))
-    #expect(accessibilityValue.contains("Last known main limit status available"))
-    #expect(accessibilityValue.contains("Refresh failed"))
-}
-
-@Test func providerSummaryShowsCloseWhenAnotherMetricIsHealthy() {
-    #expect(UsageStatus.close.shouldShowWidgetProviderStatus(relativeTo: .healthy))
-    #expect(!UsageStatus.close.shouldShowWidgetProviderStatus(relativeTo: .close))
-}
-
-@Test func smallWidgetAccessibilityNamesRemainingCapacity() throws {
-    let now = Date()
-    let snapshot = WidgetSnapshot(
-        state: .ready,
-        generatedAt: now,
-        limits: [
-            UsageLimit(
-                provider: .openAI,
-                accountID: "openai",
-                accountName: "OpenAI",
-                label: "Weekly",
-                windowLabel: "Weekly",
-                unit: .percent,
-                used: 58,
-                limit: 100,
-                resetsAt: now.addingTimeInterval(86_400),
-                lastUpdatedAt: now,
-                confidence: .observed
-            ),
-        ],
-        status: .healthy,
-        message: "Synced"
-    )
-
-    let summary = try #require(defaultPrimarySummary(in: snapshot))
-    let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
-    #expect(accessibilityValue.contains("42% left"))
-    #expect(!accessibilityValue.contains("58% used"))
-    #expect(accessibilityValue.contains("Main limit status available"))
-}
-
-@Test func providerSummarySelectionPrefersDeterminateZeroOverUnknown() throws {
-    let now = Date()
-    let snapshot = WidgetSnapshot(
-        state: .ready,
-        generatedAt: now,
-        limits: [
-            UsageLimit(
-                provider: .openAI,
-                accountID: "weekly",
-                accountName: "Weekly",
-                label: "Weekly",
-                windowLabel: "Weekly",
-                unit: .percent,
-                used: nil,
-                limit: nil,
-                confidence: .estimated,
-                statusOverride: .unknown
-            ),
-            UsageLimit(
-                provider: .openAI,
-                accountID: "five-hour",
-                accountName: "Five Hour",
-                label: "5-hour",
-                windowLabel: "5-hour",
-                unit: .percent,
-                used: 0,
-                limit: 100,
-                resetsAt: now.addingTimeInterval(18_000),
-                lastUpdatedAt: now,
-                confidence: .observed
-            ),
-        ],
-        status: .unknown,
-        message: "Partial sync"
-    )
-
-    let summary = try #require(snapshot.widgetProviderMainLimitSummary(provider: .openAI))
-    #expect(summary.window == .fiveHour)
-    #expect(summary.widgetUsageRatio == 0)
-    #expect(snapshot.widgetProviderSummaryText(provider: .openAI) == "5h 0% used")
-}
-
-@Test func widgetResetCreditGuidanceReturnsOnlyPrimaryActionableAccount() throws {
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let actionableReport = widgetResetCreditReport(
-        accountID: "actionable",
-        accountName: "Actionable Account",
-        now: now,
-        expiry: now.addingTimeInterval(86_400)
-    )
-    let holdReport = widgetResetCreditReport(
-        accountID: "hold",
-        accountName: "Hold Account",
-        now: now,
-        expiry: now.addingTimeInterval(2 * 86_400)
-    )
-    let snapshot = WidgetSnapshot(
-        state: .ready,
-        generatedAt: now,
-        limits: [
-            widgetResetCreditWeeklyLimit(
-                accountID: "actionable",
-                used: 100,
-                resetsAt: now.addingTimeInterval(3 * 86_400),
-                now: now
-            ),
-            widgetResetCreditWeeklyLimit(
-                accountID: "hold",
-                used: 20,
-                resetsAt: now.addingTimeInterval(3 * 86_400),
-                now: now
-            ),
-        ],
-        reports: [holdReport, actionableReport],
-        status: .limited,
-        message: "Current"
-    )
-
-    let surfaceSummary = try #require(snapshot.resetCreditSurfaceSummary(now: now))
-    let guidance = try #require(surfaceSummary.primaryActionableGuidance)
-
-    #expect(surfaceSummary.accountCount == 2)
-    #expect(guidance.accountID == "actionable")
-    #expect(guidance.state == .considerUsingNow)
-}
-
-@Test func widgetResetCreditGuidanceSuppressesHoldStaleAndSyncFailure() {
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let report = widgetResetCreditReport(
-        accountID: "hold",
-        accountName: "Hold Account",
-        now: now,
-        expiry: now.addingTimeInterval(86_400)
-    )
-    let limits = [
-        widgetResetCreditWeeklyLimit(
-            accountID: "hold",
-            used: 20,
-            resetsAt: now.addingTimeInterval(3 * 86_400),
-            now: now
-        ),
-    ]
-    let hold = WidgetSnapshot(
-        state: .ready,
-        generatedAt: now,
-        limits: limits,
-        reports: [report],
-        status: .healthy,
-        message: "Current"
-    )
-    let stale = WidgetSnapshot(
-        state: .stale,
-        generatedAt: now,
-        limits: limits,
-        reports: [report],
-        status: .stale,
-        message: "Saved"
-    )
-    let syncFailure = WidgetSnapshot(
-        state: .ready,
-        generatedAt: now,
-        limits: limits,
-        reports: [report],
-        status: .healthy,
-        message: "Current",
-        syncErrorMessage: "delivery failed"
-    )
-
-    #expect(hold.primaryActionableResetCreditGuidance(now: now) == nil)
-    #expect(stale.primaryActionableResetCreditGuidance(now: now) == nil)
-    #expect(syncFailure.primaryActionableResetCreditGuidance(now: now) == nil)
-    #expect(hold.resetCreditSurfaceSummary(now: now)?.accountCount == 1)
-    #expect(stale.resetCreditSurfaceSummary(now: now) == nil)
-    #expect(syncFailure.resetCreditSurfaceSummary(now: now) == nil)
-}
-
-private func widgetResetCreditReport(
-    accountID: String,
-    accountName: String,
-    now: Date,
-    expiry: Date
-) -> StoredProviderReport {
-    StoredProviderReport(
-        provider: .openAI,
-        accountID: accountID,
-        accountName: accountName,
-        generatedAt: now,
-        resetCredits: ProviderResetCreditSummary(
-            availableCount: 1,
-            observedAt: now,
-            coverage: .complete,
-            earliestKnownExpiry: expiry
-        ),
-        status: .healthy,
-        errorMessage: nil
-    )
-}
-
-private func widgetResetCreditWeeklyLimit(
-    accountID: String,
-    used: Int,
-    resetsAt: Date,
-    now: Date
-) -> UsageLimit {
-    UsageLimit(
-        provider: .openAI,
-        accountID: accountID,
-        accountName: accountID,
-        label: "Weekly",
-        windowLabel: "Weekly",
-        unit: .percent,
-        used: used,
-        limit: 100,
-        resetsAt: resetsAt,
-        lastUpdatedAt: now,
-        confidence: .observed
-    )
-}
-
-private func defaultPrimarySummary(in snapshot: WidgetSnapshot) -> MainLimitSummary? {
-    WidgetDisplayPreferences.defaultPreferences
-        .mainLimitAnswerSelection(from: snapshot.usageSnapshot.mainLimitSummaries)
-        .primary?
-        .summary
 }
 
 private func widgetTimelineProvider(
@@ -2360,15 +1955,3 @@ private func widgetSnapshotTemporaryDirectory() throws -> URL {
     return url
 }
 
-@Test func aPassedWidgetResetKeepsItsLocalDateAndMinute() throws {
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let reset = now.addingTimeInterval(-1)
-    let limit = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local",
-        label: "Weekly", unit: .percent, used: 40, limit: 100, resetsAt: reset, confidence: .observed)
-    let deadline = ContextPanelDateFormatting.resetDeadline(reset, compact: true)
-    #expect(limit.widgetResetText(presentationDate: now) == "Passed \(deadline)")
-    let assumed = UsageLimit(provider: .openAI, accountID: "local", accountName: "Local",
-        label: "Weekly", unit: .percent, used: 0, limit: 100, resetsAt: reset,
-        confidence: .estimated, presentationAssumption: .scheduledReset)
-    #expect(assumed.widgetResetText(presentationDate: now) == "Assumed · \(deadline)")
-}

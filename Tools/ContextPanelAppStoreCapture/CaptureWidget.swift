@@ -31,12 +31,10 @@ private struct CaptureWidgetContent: View {
         ContextPanelWidgetContentView(
             family: family,
             snapshot: ScreenshotFixture.widgetSnapshot,
-            displayPreferences: .defaultPreferences,
             links: ContextPanelWidgetLinks(
                 overview: URL(string: "contextpanel-fixture://overview")!,
                 reconnect: URL(string: "contextpanel-fixture://reconnect")!,
-                cacheStatsSettings: URL(string: "contextpanel-fixture://settings")!,
-                resetCreditInteraction: .none),
+                cacheStatsSettings: URL(string: "contextpanel-fixture://settings")!),
             showsResetCreditSurfaces: true,
             resetCreditMaximumAge: ScreenshotFixture.widgetMaximumAge,
             presentationDate: ScreenshotFixture.date,
