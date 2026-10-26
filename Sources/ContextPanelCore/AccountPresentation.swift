@@ -278,6 +278,11 @@ public enum AccountTerms {
         return reset(window, now: now).map { refills + " " + $0 } ?? unknown
     }
 
+    public static func windowReading(_ window: AccountOverview.Window, includingLeft: Bool = false) -> String {
+        AccountNumbers.window(window) + (includingLeft ? " " + left : "")
+            + ([.stale, .failure].contains(window.status) ? " · " + AccountCapacityState.stale.displayText : "")
+    }
+
     /// A provider group's summary: "3 accounts · 59% left on average · uses ~7% a day", then its outlook. `isShort`
     /// says some account runs out before its reset; the outlook is still drawn calm (`AccountAlarm`).
     public static func providerSummary(_ total: AccountProviderTotal, now: Date) -> (facts: String, outlook: String, isShort: Bool) {

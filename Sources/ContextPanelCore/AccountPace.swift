@@ -87,7 +87,7 @@ public extension AccountOverview.Account {
         var parts = [accessibilityText]
         for window in orderedWindows {
             guard window.remainingFraction != nil else { continue }
-            var part = window.label + " " + AccountNumbers.window(window) + " " + AccountTerms.left
+            var part = window.label + " " + AccountTerms.windowReading(window, includingLeft: true)
             if let reset = AccountTerms.reset(window, now: now) { part += ", " + AccountTerms.resets + " " + reset }
             parts.append(part)
         }

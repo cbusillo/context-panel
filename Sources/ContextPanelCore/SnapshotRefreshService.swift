@@ -330,10 +330,11 @@ public struct SnapshotRefreshRunner: Sendable {
         now: Date = Date()
     ) -> Date? {
         guard let snapshot else { return nil }
-        let ageCheck = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge)
-            .nextAgeStaleTransitionDate(for: snapshot, now: .distantPast)
-        let nextAgeCheck = ageCheck.map { $0 > now ? $0 : now.addingTimeInterval(SnapshotFreshness.refreshNeededAge) }
-        return [nextAgeCheck, resetExpiryRefreshState.nextRefreshCheckDate(for: snapshot, now: now)]
+        let policy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge)
+        let future = policy.nextAgeStaleTransitionDate(for: snapshot, now: now)
+        let overdue = policy.nextAgeStaleTransitionDate(for: snapshot, now: .distantPast).map { $0 <= now } == true
+        let retry = overdue ? now.addingTimeInterval(SnapshotFreshness.refreshNeededAge) : nil
+        return [future, retry, resetExpiryRefreshState.nextRefreshCheckDate(for: snapshot, now: now)]
             .compactMap { $0 }.min()
     }
 
@@ -344,7 +345,8 @@ public struct SnapshotRefreshRunner: Sendable {
         finishedAt: Date
     ) -> TimeInterval {
         let normalWakeAt = startedAt.addingTimeInterval(normalInterval)
-        let wakeAt = [normalWakeAt, nextCheckDate].compactMap { $0 }.min() ?? normalWakeAt
+        let checkAt = nextCheckDate.map { $0 <= startedAt ? startedAt.addingTimeInterval(SnapshotFreshness.resetExpiryRetryDelay) : $0 }
+        let wakeAt = [normalWakeAt, checkAt].compactMap { $0 }.min() ?? normalWakeAt
         return max(wakeAt.timeIntervalSince(finishedAt), 0)
     }
 

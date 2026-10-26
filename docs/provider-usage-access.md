@@ -735,7 +735,10 @@ fraction measures that limiting window, which can change between readings; it
 is not a weekly allowance or a burn-rate sample. Read the `windows` entries
 with `period: fiveHour` and `period: weekly` for their separate remaining
 fractions and resets. Retain each matching entry when model-specific windows
-share a period. For weekly pacing and banked-reset burn summaries, read the
+share a period. Each window's `isCurrent` reports its own freshness, independently
+of a sibling window. A saved window keeps its measurement and observation time,
+but exports no live `burn`; an absent `isCurrent` in an older snapshot is unknown.
+For weekly pacing and banked-reset burn summaries, read the
 weekly window's own `burn`, not changes in the headline. The headline label is null
 without a limiting window. These are additive schema 1 fields; older readers
 retain all existing fields, and consumers of older snapshots treat missing

@@ -6,7 +6,7 @@ private let freshnessNow = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func freshnessLimit(_ provider: Provider, account: String = "primary", window: String = "Weekly",
                             used: Int = 25, observedAt: Date = freshnessNow, reset: Date) -> UsageLimit {
-    UsageLimit(provider: provider, accountID: account, accountName: "Test account", label: window,
+    UsageLimit(provider: provider, accountID: account, configuredAccountID: account, accountName: "Test account", label: window,
         windowLabel: window, unit: .percent, used: used, limit: 100, resetsAt: reset,
         lastUpdatedAt: observedAt, confidence: .observed, freshnessMode: .polling)
 }
@@ -25,6 +25,8 @@ func resetOnlySavesTheExpiredWindowWhileWeeklyForecastStaysUsable(provider: Prov
     #expect(account.shortWindow?.status == .stale)
     #expect(account.shortWindow?.remainingFraction == 0.6)
     #expect(account.shortWindow?.assumption == nil)
+    #expect(account.glanceAccessibilityText(now: freshnessNow, isNext: false).contains(
+        AccountTerms.windowReading(try #require(account.shortWindow), includingLeft: true)))
     #expect(AccountTerms.refill(try #require(account.shortWindow), now: freshnessNow) == AccountCapacityState.stale.displayText)
     #expect(account.horizon(now: freshnessNow).isCurrent)
     #expect(account.horizon(now: freshnessNow).remaining == 0.75)
@@ -93,6 +95,15 @@ func oneOldWindowDoesNotAgeItsFreshSiblingOrAnotherAccount(provider: Provider) t
     let retry = try #require(SnapshotRefreshRunner.nextRefreshCheckDate(snapshot: long, now: past))
     #expect(SnapshotRefreshRunner.nextRefreshCheckInterval(normalInterval: 3_600, nextCheckDate: retry,
         startedAt: past, finishedAt: past) > 0)
+    #expect(SnapshotRefreshRunner.nextRefreshCheckInterval(normalInterval: 3_600, nextCheckDate: past,
+        startedAt: past, finishedAt: past.addingTimeInterval(1)) > 0)
+
+    let near = freshnessLimit(.openAI, account: "near", observedAt: past.addingTimeInterval(-60),
+        reset: past.addingTimeInterval(86_400))
+    let mixed = UsageSnapshot(generatedAt: past, limits: long.limits + [near])
+    let nearDate = try #require(SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge)
+        .nextAgeStaleTransitionDate(for: UsageSnapshot(generatedAt: past, limits: [near]), now: past))
+    #expect(SnapshotRefreshRunner.nextRefreshCheckDate(snapshot: mixed, now: past) == nearDate)
 
     let delayed = freshnessLimit(.anthropic, observedAt: reset.addingTimeInterval(1), reset: reset)
     var retries = ResetExpiryRefreshState()
@@ -100,7 +111,35 @@ func oneOldWindowDoesNotAgeItsFreshSiblingOrAnotherAccount(provider: Provider) t
         refreshedSnapshot: UsageSnapshot(generatedAt: reset.addingTimeInterval(1), limits: [delayed]),
         attemptedAt: reset.addingTimeInterval(1))
     #expect(retries.records.first?.retryCount == 1)
-    #expect(retries.nextRefreshCheckDate(for: UsageSnapshot(generatedAt: reset, limits: [delayed]), now: reset) != nil)
+    #expect(retries.nextRefreshCheckDate(for: UsageSnapshot(generatedAt: reset, limits: [delayed]), now: reset)
+        == reset.addingTimeInterval(1 + SnapshotFreshness.resetExpiryRetryDelay))
+}
+
+@Test(arguments: [false, true])
+func agentExportsEachWindowsFreshnessWithoutLiveBurnForSavedValues(shared: Bool) throws {
+    let configuration = LocalProviderAccountConfiguration(id: "primary", provider: .openAI,
+        connectorKind: .codexRateLimits, displayName: "Test account", authPath: "/never-read/fixture")
+    let document = AccountConfigurationDocument(updatedAt: freshnessNow, accounts: [configuration])
+    let weekly = freshnessLimit(.openAI, reset: freshnessNow.addingTimeInterval(86_400))
+    let short = freshnessLimit(.openAI, window: "5-hour", used: 40, reset: freshnessNow)
+    let report = StoredProviderReport(provider: .openAI, accountID: "primary", configuredAccountID: "primary",
+        accountName: "Test account", generatedAt: freshnessNow, status: .healthy, errorMessage: nil)
+    let stored = StoredUsageSnapshot(savedAt: freshnessNow,
+        snapshot: UsageSnapshot(generatedAt: freshnessNow, limits: [weekly, short]), reports: [report])
+    let remote = shared ? CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: stored,
+        configuration: [configuration], publisherID: "fixture")) : nil
+    let export = AgentAccountSnapshot(configuration: document, stored: stored, history: [], now: freshnessNow,
+        sharedDocument: remote)
+    let account = try #require(export.accounts.first)
+    #expect(account.state == .available)
+    let payload = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(account)) as? [String: Any])
+    let windows = try #require(payload["windows"] as? [[String: Any]])
+    let saved = try #require(windows.first { $0["period"] as? String == MainLimitWindow.fiveHour.rawValue })
+    let current = try #require(windows.first { $0["period"] as? String == MainLimitWindow.weekly.rawValue })
+    #expect(saved["isCurrent"] as? Bool == false)
+    #expect(current["isCurrent"] as? Bool == true)
+    #expect(saved["burn"] is NSNull)
+    #expect(saved["remainingFraction"] as? Double == 0.6)
 }
 
 @Test func transportFailureAndMissingObservationTimesNeverBecomeCurrent() throws {
