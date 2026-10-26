@@ -11,7 +11,7 @@ public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
     }
 }
 
-public struct GoogleAntigravityStatusLineBucket: Codable, Equatable, Sendable {
+public struct GoogleAntigravityUsageBucket: Codable, Equatable, Sendable {
     public let id: String
     public let remainingFraction: Double?
     public let resetsAt: Date?
@@ -25,31 +25,25 @@ public struct GoogleAntigravityStatusLineBucket: Codable, Equatable, Sendable {
     }
 }
 
-public struct GoogleAntigravityStatusLineSnapshot: Codable, Equatable, Sendable {
+public struct GoogleAntigravityUsageSnapshot: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
 
     public let schemaVersion: Int
-    public let sourceVersion: String?
-    public let planTier: String?
     public let observedAt: Date
-    public let buckets: [GoogleAntigravityStatusLineBucket]
+    public let buckets: [GoogleAntigravityUsageBucket]
 
     public init(
         schemaVersion: Int = currentSchemaVersion,
-        sourceVersion: String? = nil,
-        planTier: String? = nil,
         observedAt: Date,
-        buckets: [GoogleAntigravityStatusLineBucket]
+        buckets: [GoogleAntigravityUsageBucket]
     ) {
         self.schemaVersion = schemaVersion
-        self.sourceVersion = sourceVersion
-        self.planTier = planTier
         self.observedAt = observedAt
         self.buckets = buckets
     }
 }
 
-public enum GoogleAntigravityStatusLineStoreError: LocalizedError, Equatable, Sendable {
+public enum GoogleAntigravityUsageStoreError: LocalizedError, Equatable, Sendable {
     case unavailable
     case unsafeDirectory
     case unsafeFile
@@ -76,7 +70,7 @@ public enum GoogleAntigravityStatusLineStoreError: LocalizedError, Equatable, Se
     }
 }
 
-public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
+public struct GoogleAntigravityUsageSnapshotStore: Sendable {
     public static let maximumSnapshotBytes = 64 * 1_024
 
     private static let canonicalSnapshotFileName = "antigravity-status-line.json"
@@ -88,9 +82,9 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
         self.snapshotURL = snapshotURL
     }
 
-    public func load() throws -> GoogleAntigravityStatusLineSnapshot? {
+    public func load() throws -> GoogleAntigravityUsageSnapshot? {
         guard Self.isValidFileName(snapshotURL.lastPathComponent) else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
         guard let directoryDescriptor = try Self.openSecureDirectory(
             snapshotURL.deletingLastPathComponent(),
@@ -107,46 +101,46 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             return nil
         }
 
-        let snapshot: GoogleAntigravityStatusLineSnapshot
+        let snapshot: GoogleAntigravityUsageSnapshot
         do {
-            snapshot = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityStatusLineSnapshot.self, from: data)
+            snapshot = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityUsageSnapshot.self, from: data)
         } catch {
-            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
+            throw GoogleAntigravityUsageStoreError.invalidSnapshot
         }
-        guard snapshot.schemaVersion == GoogleAntigravityStatusLineSnapshot.currentSchemaVersion else {
-            throw GoogleAntigravityStatusLineStoreError.unsupportedSchema(snapshot.schemaVersion)
+        guard snapshot.schemaVersion == GoogleAntigravityUsageSnapshot.currentSchemaVersion else {
+            throw GoogleAntigravityUsageStoreError.unsupportedSchema(snapshot.schemaVersion)
         }
         guard Self.isValid(snapshot: snapshot) else {
-            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
+            throw GoogleAntigravityUsageStoreError.invalidSnapshot
         }
         return snapshot
     }
 
-    public func save(_ snapshot: GoogleAntigravityStatusLineSnapshot) throws {
-        guard snapshot.schemaVersion == GoogleAntigravityStatusLineSnapshot.currentSchemaVersion,
+    public func save(_ snapshot: GoogleAntigravityUsageSnapshot) throws {
+        guard snapshot.schemaVersion == GoogleAntigravityUsageSnapshot.currentSchemaVersion,
               Self.isValid(snapshot: snapshot)
         else {
-            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
+            throw GoogleAntigravityUsageStoreError.invalidSnapshot
         }
         guard Self.isValidFileName(snapshotURL.lastPathComponent) else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
 
         let data: Data
         do {
             data = try Self.makeEncoder().encode(snapshot)
         } catch {
-            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
+            throw GoogleAntigravityUsageStoreError.invalidSnapshot
         }
         guard data.count <= Self.maximumSnapshotBytes else {
-            throw GoogleAntigravityStatusLineStoreError.oversizedFile
+            throw GoogleAntigravityUsageStoreError.oversizedFile
         }
 
         guard let directoryDescriptor = try Self.openSecureDirectory(
             snapshotURL.deletingLastPathComponent(),
             createIfMissing: true
         ) else {
-            throw GoogleAntigravityStatusLineStoreError.unavailable
+            throw GoogleAntigravityUsageStoreError.unavailable
         }
         defer { close(directoryDescriptor) }
         Self.removeStaleTemporaryFiles(
@@ -163,7 +157,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
 
     public func delete() throws {
         guard Self.isValidFileName(snapshotURL.lastPathComponent) else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
         guard let directoryDescriptor = try Self.openSecureDirectory(
             snapshotURL.deletingLastPathComponent(),
@@ -180,7 +174,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
         )
         if descriptor < 0, errno == ENOENT { return }
         guard descriptor >= 0 else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
         defer { close(descriptor) }
 
@@ -190,20 +184,18 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
               information.st_uid == geteuid(),
               information.st_nlink == 1
         else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
         guard unlinkat(directoryDescriptor, snapshotURL.lastPathComponent, 0) == 0 else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
         _ = fsync(directoryDescriptor)
     }
 
-    private static func isValid(snapshot: GoogleAntigravityStatusLineSnapshot) -> Bool {
-        guard snapshot.buckets.count <= GoogleAntigravityStatusLineBridge.maximumBucketCount else { return false }
-        guard snapshot.sourceVersion.map(GoogleAntigravityStatusLineBridge.isValidSourceVersion) ?? true else { return false }
-        guard snapshot.planTier.map(GoogleAntigravityStatusLineBridge.isValidPlanTier) ?? true else { return false }
+    private static func isValid(snapshot: GoogleAntigravityUsageSnapshot) -> Bool {
+        guard snapshot.buckets.count <= GoogleAntigravityUsageBridge.maximumBucketCount else { return false }
         return snapshot.buckets.allSatisfy { bucket in
-            GoogleAntigravityStatusLineBridge.isValidBucketID(bucket.id)
+            GoogleAntigravityUsageBridge.isValidBucketID(bucket.id)
                 && bucket.remainingFraction.map { $0.isFinite && (0 ... 1).contains($0) } ?? true
         }
     }
@@ -225,7 +217,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
                     attributes: [.posixPermissions: 0o700]
                 )
             } catch {
-                throw GoogleAntigravityStatusLineStoreError.unavailable
+                throw GoogleAntigravityUsageStoreError.unavailable
             }
             descriptor = open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         }
@@ -233,7 +225,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             return nil
         }
         guard descriptor >= 0 else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+            throw GoogleAntigravityUsageStoreError.unsafeDirectory
         }
 
         var information = stat()
@@ -243,17 +235,17 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             && information.st_nlink >= 1
         guard isSafeDirectory else {
             close(descriptor)
-            throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+            throw GoogleAntigravityUsageStoreError.unsafeDirectory
         }
 
         if createIfMissing {
             guard fchmod(descriptor, S_IRWXU) == 0 else {
                 close(descriptor)
-                throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+                throw GoogleAntigravityUsageStoreError.unsafeDirectory
             }
         } else if information.st_mode & 0o077 != 0 {
             close(descriptor)
-            throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+            throw GoogleAntigravityUsageStoreError.unsafeDirectory
         }
         return descriptor
     }
@@ -270,7 +262,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
         )
         if descriptor < 0, errno == ENOENT { return nil }
         guard descriptor >= 0 else {
-            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            throw GoogleAntigravityUsageStoreError.unsafeFile
         }
         defer { close(descriptor) }
 
@@ -284,8 +276,8 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
               information.st_size <= maximumBytes
         else {
             throw information.st_size > maximumBytes
-                ? GoogleAntigravityStatusLineStoreError.oversizedFile
-                : GoogleAntigravityStatusLineStoreError.unsafeFile
+                ? GoogleAntigravityUsageStoreError.oversizedFile
+                : GoogleAntigravityUsageStoreError.unsafeFile
         }
 
         var data = Data()
@@ -295,11 +287,11 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             if count == 0 { break }
             if count < 0 {
                 if errno == EINTR { continue }
-                throw GoogleAntigravityStatusLineStoreError.unsafeFile
+                throw GoogleAntigravityUsageStoreError.unsafeFile
             }
             data.append(contentsOf: buffer.prefix(count))
             guard data.count <= maximumBytes else {
-                throw GoogleAntigravityStatusLineStoreError.oversizedFile
+                throw GoogleAntigravityUsageStoreError.oversizedFile
             }
         }
         return data
@@ -441,7 +433,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             S_IRUSR | S_IWUSR
         )
         guard descriptor >= 0 else {
-            throw GoogleAntigravityStatusLineStoreError.writeFailed
+            throw GoogleAntigravityUsageStoreError.writeFailed
         }
 
         var shouldRemoveTemporaryFile = true
@@ -460,7 +452,7 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
                     let written = Darwin.write(descriptor, baseAddress.advanced(by: offset), rawBuffer.count - offset)
                     if written <= 0 {
                         if errno == EINTR { continue }
-                        throw GoogleAntigravityStatusLineStoreError.writeFailed
+                        throw GoogleAntigravityUsageStoreError.writeFailed
                     }
                     offset += written
                 }
@@ -474,12 +466,12 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
                       destinationFileName
                   ) == 0
             else {
-                throw GoogleAntigravityStatusLineStoreError.writeFailed
+                throw GoogleAntigravityUsageStoreError.writeFailed
             }
             shouldRemoveTemporaryFile = false
             _ = fsync(directoryDescriptor)
         } catch {
-            throw error as? GoogleAntigravityStatusLineStoreError ?? .writeFailed
+            throw error as? GoogleAntigravityUsageStoreError ?? .writeFailed
         }
     }
 
@@ -491,88 +483,87 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
     }
 }
 
-public enum GoogleAntigravityStatusLineIngestResult: Equatable, Sendable {
-    case saved(GoogleAntigravityStatusLineSnapshot)
+public enum GoogleAntigravityUsageIngestResult: Equatable, Sendable {
+    case saved(GoogleAntigravityUsageSnapshot)
     case ignoredMissingQuota
     case ignoredEmptyQuota
 }
 
-public enum GoogleAntigravityStatusLineBridgeError: LocalizedError, Equatable, Sendable {
+public enum GoogleAntigravityUsageBridgeError: LocalizedError, Equatable, Sendable {
     case oversizedInput
     case invalidPayload
+    case publicationUnavailable
 
     public var errorDescription: String? {
         switch self {
         case .oversizedInput:
-            "Antigravity status input was too large."
+            "Antigravity usage input was too large."
         case .invalidPayload:
-            "Antigravity status input was invalid."
+            "Antigravity usage input was invalid."
+        case .publicationUnavailable:
+            "The Google reading was saved, but publication could not finish."
         }
     }
 }
 
-public enum GoogleAntigravityStatusLineBridge {
+public enum GoogleAntigravityUsageBridge {
+    public static let ingestArgument = "--ingest-antigravity-usage"
     public static let maximumInputBytes = 64 * 1_024
     public static let maximumBucketCount = 128
 
     public static func ingest(
         data: Data,
         observedAt: Date = Date(),
-        store: GoogleAntigravityStatusLineSnapshotStore
-    ) throws -> GoogleAntigravityStatusLineIngestResult {
+        store: GoogleAntigravityUsageSnapshotStore
+    ) throws -> GoogleAntigravityUsageIngestResult {
         guard data.count <= maximumInputBytes else {
-            throw GoogleAntigravityStatusLineBridgeError.oversizedInput
+            throw GoogleAntigravityUsageBridgeError.oversizedInput
         }
 
         let payload: Payload
         do {
             payload = try JSONDecoder().decode(Payload.self, from: data)
         } catch {
-            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+            throw GoogleAntigravityUsageBridgeError.invalidPayload
         }
-        if let version = payload.version, !isValidSourceVersion(version) {
-            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+        guard payload.status == "SUCCESS", payload.command?.name == "usage" else {
+            throw GoogleAntigravityUsageBridgeError.invalidPayload
         }
-        if let planTier = payload.planTier, !isValidPlanTier(planTier) {
-            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
-        }
-        guard let quota = payload.quota else {
+        guard let groups = payload.command?.data?.groups else {
             return .ignoredMissingQuota
         }
+        guard groups.count <= maximumBucketCount else {
+            throw GoogleAntigravityUsageBridgeError.invalidPayload
+        }
+        let quota = groups.flatMap { $0.buckets ?? [] }
         guard !quota.isEmpty else {
             return .ignoredEmptyQuota
         }
-        guard quota.count <= maximumBucketCount else {
-            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+        guard quota.count <= maximumBucketCount, Set(quota.map(\.id)).count == quota.count else {
+            throw GoogleAntigravityUsageBridgeError.invalidPayload
         }
 
-        let buckets = try quota.map { id, bucket -> GoogleAntigravityStatusLineBucket in
+        let buckets = try quota.map { bucket -> GoogleAntigravityUsageBucket in
+            let id = bucket.id
             guard isValidBucketID(id) else {
-                throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+                throw GoogleAntigravityUsageBridgeError.invalidPayload
             }
             if let remainingFraction = bucket.remainingFraction,
                !remainingFraction.isFinite || !(0 ... 1).contains(remainingFraction) {
-                throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+                throw GoogleAntigravityUsageBridgeError.invalidPayload
             }
 
             let resetsAt: Date?
             if let resetTime = bucket.resetTime {
                 guard let parsed = ContextPanelDateFormatting.date(from: resetTime) else {
-                    throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+                    throw GoogleAntigravityUsageBridgeError.invalidPayload
                 }
                 resetsAt = parsed
-            } else if let resetInSeconds = bucket.resetInSeconds {
-                guard resetInSeconds.isFinite,
-                      (0 ... 366 * 24 * 60 * 60).contains(resetInSeconds)
-                else {
-                    throw GoogleAntigravityStatusLineBridgeError.invalidPayload
-                }
-                resetsAt = observedAt.addingTimeInterval(resetInSeconds)
             } else {
                 resetsAt = nil
             }
 
-            return GoogleAntigravityStatusLineBucket(
+            return GoogleAntigravityUsageBucket(
                 id: id,
                 remainingFraction: bucket.remainingFraction,
                 resetsAt: resetsAt,
@@ -580,9 +571,7 @@ public enum GoogleAntigravityStatusLineBridge {
             )
         }.sorted { $0.id < $1.id }
 
-        let snapshot = GoogleAntigravityStatusLineSnapshot(
-            sourceVersion: payload.version,
-            planTier: payload.planTier,
+        let snapshot = GoogleAntigravityUsageSnapshot(
             observedAt: observedAt,
             buckets: buckets
         )
@@ -590,24 +579,51 @@ public enum GoogleAntigravityStatusLineBridge {
         return .saved(snapshot)
     }
 
-    public static func statusLineText(for result: GoogleAntigravityStatusLineIngestResult) -> String {
-        switch result {
-        case .ignoredMissingQuota:
-            return "Context Panel · quota pending"
-        case .ignoredEmptyQuota:
-            return "Context Panel · quota unavailable"
-        case .saved(let snapshot):
-            guard let remaining = (snapshot.buckets
-                .filter { !$0.isDisabled }
-                .compactMap(\.remainingFraction)
-                .min()) else {
-                return "Context Panel · quota unavailable"
+    @discardableResult
+    public static func publish(
+        store: GoogleAntigravityUsageSnapshotStore,
+        configuration: AccountConfigurationDocument,
+        runner: SnapshotRefreshRunner,
+        now: @Sendable () -> Date = Date.init
+    ) async throws -> SnapshotRefreshRunDecision? {
+        var googleConfiguration = configuration
+        googleConfiguration.accounts.removeAll { $0.connectorKind != .googleAntigravityQuota }
+        guard let connector = AccountConnectorFactory.connectors(
+            from: googleConfiguration,
+            googleAntigravitySnapshotLoader: store
+        ).first else { return nil }
+        var hold: SnapshotRefreshLock.Hold?
+        if let lock = runner.lock {
+            let startedAt = ContinuousClock.now
+            while hold == nil {
+                hold = try lock.tryHold()
+                if hold != nil { break }
+                guard startedAt.duration(to: .now) < .seconds(10) else {
+                    throw GoogleAntigravityUsageBridgeError.publicationUnavailable
+                }
+                try await Task.sleep(for: .milliseconds(250))
             }
-            return "Context Panel · \(Int((remaining * 100).rounded()))% lowest quota"
         }
+        defer { hold?.release() }
+        let publicationTime = now()
+        let result = await connector.refresh(now: publicationTime)
+        let unlockedRunner = SnapshotRefreshRunner(
+            service: runner.service,
+            stalenessPolicy: runner.stalenessPolicy,
+            resetExpiryRefreshStore: runner.resetExpiryRefreshStore,
+            lock: nil
+        )
+        let decision = try await unlockedRunner.saveMerged(
+            refreshResult: result,
+            savedAt: publicationTime,
+            retryFor: .zero,
+            preservesUnreportedAccounts: true
+        )
+        guard case .refreshed(let outcome) = decision, outcome.didSaveSnapshot else {
+            throw GoogleAntigravityUsageBridgeError.publicationUnavailable
+        }
+        return decision
     }
-
-    public static let failureStatusLineText = "Context Panel · quota sync unavailable"
 
     static func isValidBucketID(_ value: String) -> Bool {
         guard !value.isEmpty, value.utf8.count <= 128 else { return false }
@@ -621,62 +637,44 @@ public enum GoogleAntigravityStatusLineBridge {
         }
     }
 
-    static func isValidSourceVersion(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= 32 else { return false }
-        return value.unicodeScalars.allSatisfy { scalar in
-            switch scalar.value {
-            case 43, 45, 46, 48 ... 57, 65 ... 90, 95, 97 ... 122:
-                true
-            default:
-                false
-            }
-        }
-    }
-
-    static func isValidPlanTier(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= 64 else { return false }
-        return value.unicodeScalars.allSatisfy { scalar in
-            switch scalar.value {
-            case 32, 43, 45, 46, 48 ... 57, 65 ... 90, 95, 97 ... 122:
-                true
-            default:
-                false
-            }
-        }
-    }
-
     private struct Payload: Decodable {
-        let version: String?
-        let planTier: String?
-        let quota: [String: Bucket]?
+        let status: String
+        let command: Command?
+    }
 
-        private enum CodingKeys: String, CodingKey {
-            case version
-            case planTier = "plan_tier"
-            case quota
-        }
+    private struct Command: Decodable {
+        let name: String
+        let data: QuotaData?
+    }
+
+    private struct QuotaData: Decodable {
+        let groups: [Group]?
+    }
+
+    private struct Group: Decodable {
+        let buckets: [Bucket]?
     }
 
     private struct Bucket: Decodable {
+        let id: String
         let remainingFraction: Double?
         let resetTime: String?
-        let resetInSeconds: Double?
         let disabled: Bool?
 
         private enum CodingKeys: String, CodingKey {
+            case id
             case remainingFraction = "remaining_fraction"
             case resetTime = "reset_time"
-            case resetInSeconds = "reset_in_seconds"
             case disabled
         }
     }
 }
 
 public protocol GoogleAntigravityQuotaSnapshotLoading: Sendable {
-    func load() throws -> GoogleAntigravityStatusLineSnapshot?
+    func load() throws -> GoogleAntigravityUsageSnapshot?
 }
 
-extension GoogleAntigravityStatusLineSnapshotStore: GoogleAntigravityQuotaSnapshotLoading {}
+extension GoogleAntigravityUsageSnapshotStore: GoogleAntigravityQuotaSnapshotLoading {}
 
 public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     public let provider: Provider = .google
@@ -693,7 +691,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
-        let snapshot: GoogleAntigravityStatusLineSnapshot?
+        let snapshot: GoogleAntigravityUsageSnapshot?
         do {
             snapshot = try snapshotLoader.load()
         } catch {
@@ -713,7 +711,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
 
     private func report(
         account: GoogleAntigravityAccountConfiguration,
-        snapshot: GoogleAntigravityStatusLineSnapshot?,
+        snapshot: GoogleAntigravityUsageSnapshot?,
         now: Date
     ) -> ProviderConnectorReport {
         let localAccountID = ConnectorRedactor.localAccountID(provider: provider, stableID: account.accountID)
@@ -794,7 +792,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     }
 
     private func usageLimit(
-        bucket: GoogleAntigravityStatusLineBucket,
+        bucket: GoogleAntigravityUsageBucket,
         account: GoogleAntigravityAccountConfiguration,
         localAccountID: String,
         observedAt: Date
@@ -820,7 +818,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             confidence: .observed,
             freshnessMode: .eventDriven,
             statusOverride: used == nil ? .unknown : nil,
-            note: "source: AGY documented status-line quota export; bucket: \(bucket.id)"
+            note: "source: AGY /usage quota export; bucket: \(bucket.id)"
         )
     }
 
@@ -864,19 +862,32 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     }
 }
 
-public enum GoogleAntigravityStatusLineSetup {
-    public static let removeCommand = "/statusline delete"
+public enum GoogleAntigravityUsageSetup {
+    public static let hookName = "context-panel-google-usage"
+
+    public static var removeCommand: String {
+        "Remove only the \"\(hookName)\" entry from ~/.gemini/config/hooks.json. Keep every other hook and setting. Restart existing AGY sessions, then use Forget in Context Panel to remove its saved Google reading."
+    }
+
+    public static func hookCommand(applicationBundleURL: URL, agyExecutable: String = "agy") -> String {
+        let executableURL = applicationBundleURL
+            .appending(path: "Contents/Library/LoginItems/ContextPanelRefreshAgent.app/Contents/MacOS/ContextPanelRefreshAgent")
+        return "\(shellQuoted(agyExecutable)) -p '/usage' --output-format json --print-timeout 30s </dev/null 2>/dev/null | \(shellQuoted(executableURL.path)) \(GoogleAntigravityUsageBridge.ingestArgument)"
+    }
 
     public static func setupCommand(applicationBundleURL: URL) -> String {
-        let executableURL = applicationBundleURL
-            .appending(path: "Contents", directoryHint: .isDirectory)
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "LoginItems", directoryHint: .isDirectory)
-            .appending(path: "ContextPanelRefreshAgent.app", directoryHint: .isDirectory)
-            .appending(path: "Contents", directoryHint: .isDirectory)
-            .appending(path: "MacOS", directoryHint: .isDirectory)
-            .appending(path: "ContextPanelRefreshAgent")
-        return "/statusline \(shellQuoted(executableURL.path)) --ingest-antigravity-status-line"
+        let entry: [String: Any] = [hookName: ["Stop": [[
+            "type": "command",
+            "command": hookCommand(applicationBundleURL: applicationBundleURL),
+            "timeout": 60,
+        ]]]]
+        let data = try! JSONSerialization.data(withJSONObject: entry, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        let json = String(decoding: data, as: UTF8.self)
+        return """
+        Set up Context Panel's Google reading in AGY. In ~/.gemini/config/hooks.json, add or replace only the "\(hookName)" entry shown below. Preserve every other hook and setting. Resolve 'agy' in its command to this AGY installation's absolute executable path, keeping shell quoting. Do not read or change login credentials. If an existing custom status line invokes ContextPanelRefreshAgent with --ingest-antigravity-status-line, remove that obsolete Context Panel status line with /statusline delete; preserve any other status line. Restart existing AGY sessions to load the hook.
+
+        \(json)
+        """
     }
 
     static func shellQuoted(_ value: String) -> String {

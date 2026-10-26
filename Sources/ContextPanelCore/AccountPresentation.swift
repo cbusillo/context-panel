@@ -478,7 +478,7 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
         case .available: ((31, 128, 73), (76, 201, 122))
         case .low: ((158, 92, 0), (242, 169, 59))
         case .critical: ((196, 52, 44), (255, 112, 100))
-        case .saved: ((134, 104, 56), (204, 172, 110))
+        case .saved: ((76, 90, 108), (169, 183, 201))
         case .banked: ((10, 122, 160), (92, 205, 236))
         case .next: ((36, 99, 209), (120, 169, 255))
         // Provider identity (Horizon): teal OpenAI, ochre Claude, violet Google. Used for the provider's

@@ -450,7 +450,7 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
     let connectors = AccountConnectorFactory.connectors(
         from: document,
         credentialStore: InMemoryProviderCredentialStore(storage: [:]),
-        googleAntigravitySnapshotLoader: GoogleAntigravityStatusLineSnapshotStore(
+        googleAntigravitySnapshotLoader: GoogleAntigravityUsageSnapshotStore(
             snapshotURL: try temporaryDirectory()
                 .appending(path: "Provider Inputs", directoryHint: .isDirectory)
                 .appending(path: "missing-antigravity.json")
@@ -498,12 +498,12 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
             displayName: "Antigravity"
         ),
     ])
-    let snapshotStore = GoogleAntigravityStatusLineSnapshotStore(
+    let snapshotStore = GoogleAntigravityUsageSnapshotStore(
         snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
     )
-    try snapshotStore.save(GoogleAntigravityStatusLineSnapshot(
+    try snapshotStore.save(GoogleAntigravityUsageSnapshot(
         observedAt: Date(timeIntervalSince1970: 0),
-        buckets: [GoogleAntigravityStatusLineBucket(
+        buckets: [GoogleAntigravityUsageBucket(
             id: "gemini-weekly",
             remainingFraction: 0.8,
             resetsAt: Date(timeIntervalSince1970: 3_600)
@@ -541,12 +541,12 @@ func accountConfigurationStoreOnlyAddsChoicesForRecognizedLegacyDefault(id: Stri
             displayName: "Antigravity Secondary"
         ),
     ])
-    let snapshotStore = GoogleAntigravityStatusLineSnapshotStore(
+    let snapshotStore = GoogleAntigravityUsageSnapshotStore(
         snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
     )
-    try snapshotStore.save(GoogleAntigravityStatusLineSnapshot(
+    try snapshotStore.save(GoogleAntigravityUsageSnapshot(
         observedAt: Date(timeIntervalSince1970: 0),
-        buckets: [GoogleAntigravityStatusLineBucket(
+        buckets: [GoogleAntigravityUsageBucket(
             id: "gemini-weekly",
             remainingFraction: 0.8,
             resetsAt: Date(timeIntervalSince1970: 3_600)
