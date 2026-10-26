@@ -624,23 +624,19 @@ struct SettingsPane: View {
                                     Text(authorizationSummary.text)
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(CPTheme.statusColor(authorizationSummary.status))
+                                    Button("Copy Setup") { model.copyAntigravityBridgeSetupCommand() }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.regular)
+                                    Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.regular)
                                     if model.hasSavedAuthorization(account) {
-                                        Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
-                                            .buttonStyle(.bordered)
-                                            .controlSize(.regular)
                                         Button("Forget", role: .destructive) {
                                             model.forgetAntigravityBridgeData()
                                             refreshAfterAuthorization()
                                         }
                                         .buttonStyle(.bordered)
                                         .controlSize(.regular)
-                                    } else {
-                                        Button("Copy Setup") { model.copyAntigravityBridgeSetupCommand() }
-                                            .buttonStyle(.borderedProminent)
-                                            .controlSize(.regular)
-                                        Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
-                                            .buttonStyle(.bordered)
-                                            .controlSize(.regular)
                                     }
                                 }
                             } else if model.hasSavedAuthorization(account) {
@@ -1622,9 +1618,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         )
     }
 
-    private var antigravityBridgeStore: GoogleAntigravityStatusLineSnapshotStore? {
-        ContextPanelLocations.googleAntigravityStatusLineSnapshotURL().map {
-            GoogleAntigravityStatusLineSnapshotStore(snapshotURL: $0)
+    private var antigravityBridgeStore: GoogleAntigravityUsageSnapshotStore? {
+        ContextPanelLocations.googleAntigravityUsageSnapshotURL().map {
+            GoogleAntigravityUsageSnapshotStore(snapshotURL: $0)
         }
     }
 
@@ -2376,15 +2372,15 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     func copyAntigravityBridgeSetupCommand() {
         copyAntigravityBridgeCommand(
-            GoogleAntigravityStatusLineSetup.setupCommand(applicationBundleURL: Bundle.main.bundleURL),
-            notice: "Copied the AGY bridge setup command. AGY supports one custom status-line command; paste only if you are not replacing another customization."
+            GoogleAntigravityUsageSetup.setupCommand(applicationBundleURL: Bundle.main.bundleURL),
+            notice: "Copied setup instructions. Paste into AGY to add the Context Panel hook, then restart existing AGY sessions. Other hooks stay in place."
         )
     }
 
     func copyAntigravityBridgeRemovalCommand() {
         copyAntigravityBridgeCommand(
-            GoogleAntigravityStatusLineSetup.removeCommand,
-            notice: "Copied the AGY bridge removal command. Paste it into AGY CLI, then use Forget in Context Panel."
+            GoogleAntigravityUsageSetup.removeCommand,
+            notice: "Copied removal instructions. Paste into AGY, restart existing sessions, then use Forget in Context Panel."
         )
     }
 
@@ -2536,8 +2532,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }) {
                 return SettingsAccountRefreshSummary(text: "Bridge active · reset assumed", status: .healthy)
             }
-            let text = snapshot.planTier.map { "Bridge active · \($0)" } ?? "Bridge active"
-            return SettingsAccountRefreshSummary(text: text, status: .healthy)
+            return SettingsAccountRefreshSummary(text: "Bridge active", status: .healthy)
         }
 
         if account.connectorKind == .claudeOAuthUsage,
@@ -3050,7 +3045,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .googleAntigravityQuota:
-            return "Paste Copy Setup into AGY CLI once. Current AGY runs publish quota; AGY supports one status line and Context Panel never reads its login"
+            return "Paste Copy Setup into AGY CLI to add its Stop hook, then restart existing sessions. Interactive and headless runs publish quota; Context Panel never reads its login"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }
@@ -3076,7 +3071,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
-    private func antigravityBridgeSnapshot() -> GoogleAntigravityStatusLineSnapshot? {
+    private func antigravityBridgeSnapshot() -> GoogleAntigravityUsageSnapshot? {
         try? antigravityBridgeStore?.load()
     }
 

@@ -529,8 +529,8 @@ public enum AccountConnectorFactory {
                 let snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading
                 if let googleAntigravitySnapshotLoader {
                     snapshotLoader = googleAntigravitySnapshotLoader
-                } else if let snapshotURL = ContextPanelLocations.googleAntigravityStatusLineSnapshotURL() {
-                    snapshotLoader = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+                } else if let snapshotURL = ContextPanelLocations.googleAntigravityUsageSnapshotURL() {
+                    snapshotLoader = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
                 } else {
                     snapshotLoader = UnavailableGoogleAntigravitySnapshotLoader()
                 }
@@ -636,8 +636,8 @@ public enum AccountConnectorFactory {
 }
 
 private struct UnavailableGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
-    func load() throws -> GoogleAntigravityStatusLineSnapshot? {
-        throw GoogleAntigravityStatusLineStoreError.unavailable
+    func load() throws -> GoogleAntigravityUsageSnapshot? {
+        throw GoogleAntigravityUsageStoreError.unavailable
     }
 }
 

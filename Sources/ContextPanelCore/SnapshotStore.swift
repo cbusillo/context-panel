@@ -926,6 +926,8 @@ public struct JSONSnapshotStore: Sendable {
             mergedGeneratedAt = refreshResult.generatedAt
         } else if refreshResult.reports.isEmpty && !isPromptCacheOnlySnapshot {
             mergedGeneratedAt = current?.snapshot.generatedAt ?? refreshResult.generatedAt
+        } else if preservesUnreportedAccounts && !preservedLimits.isEmpty {
+            mergedGeneratedAt = min(current?.snapshot.generatedAt ?? refreshResult.generatedAt, refreshResult.generatedAt)
         } else {
             mergedGeneratedAt = refreshResult.generatedAt
         }

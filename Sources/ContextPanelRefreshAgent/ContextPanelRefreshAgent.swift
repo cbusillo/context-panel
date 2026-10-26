@@ -17,7 +17,7 @@ struct ContextPanelRefreshAgent {
                 "--provider-credentials-present",
                 "--webhook-credentials-present",
                 "--bookmark-access-summary",
-                "--ingest-antigravity-status-line",
+                GoogleAntigravityUsageBridge.ingestArgument,
                 "--sync-runtime-receipts",
             ].contains($0)
         }
@@ -37,8 +37,9 @@ struct ContextPanelRefreshAgent {
                 checkWebhookCredentials()
             case "--bookmark-access-summary":
                 printBookmarkAccessSummary()
-            case "--ingest-antigravity-status-line":
-                ingestAntigravityStatusLine()
+            case GoogleAntigravityUsageBridge.ingestArgument:
+                await ingestAntigravityUsage()
+                Foundation.exit(0)
             case "--sync-runtime-receipts":
                 await syncRuntimeReceipts()
             default:
@@ -46,6 +47,10 @@ struct ContextPanelRefreshAgent {
             }
         }
 
+        guard utilityArguments.isEmpty || utilityArguments == ["--refresh-once"] else {
+            fputs("ContextPanelRefreshAgent: invalid arguments\n", stderr)
+            Foundation.exit(64)
+        }
         let runner = SnapshotRefreshRunner(service: .appDefault(
             companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
             renewsStaleBookmarks: false,
@@ -224,23 +229,52 @@ struct ContextPanelRefreshAgent {
         return runID
     }
 
-    private static func ingestAntigravityStatusLine() -> Never {
-        guard let snapshotURL = ContextPanelLocations.googleAntigravityStatusLineSnapshotURL() else {
-            print(GoogleAntigravityStatusLineBridge.failureStatusLineText)
-            Foundation.exit(0)
+    private static func ingestAntigravityUsage() async {
+        defer { print("{}") }
+        guard let snapshotURL = ContextPanelLocations.googleAntigravityUsageSnapshotURL() else {
+            fputs("ContextPanelRefreshAgent: Google storage is unavailable\n", stderr)
+            return
         }
-
+        var readingWasSaved = false
         do {
-            let data = try boundedStandardInput(maximumBytes: GoogleAntigravityStatusLineBridge.maximumInputBytes)
-            let result = try GoogleAntigravityStatusLineBridge.ingest(
+            let data = try boundedStandardInput(maximumBytes: GoogleAntigravityUsageBridge.maximumInputBytes, timeout: 40)
+            let result = try GoogleAntigravityUsageBridge.ingest(
                 data: data,
-                store: GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+                store: GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
             )
-            print(GoogleAntigravityStatusLineBridge.statusLineText(for: result))
+            if case .saved(let snapshot) = result {
+                readingWasSaved = true
+                let accountStore = AccountConfigurationStore(
+                    configurationURL: ContextPanelLocations.accountConfigurationURL(),
+                    fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+                )
+                guard FileManager.default.fileExists(atPath: accountStore.configurationURL.path)
+                    || accountStore.fallbackConfigurationURL.map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+                else { return }
+                let configuration = accountStore.load(now: snapshot.observedAt)
+                guard configuration.status == .healthy else { throw GoogleAntigravityUsageBridgeError.publicationUnavailable }
+                let runner = SnapshotRefreshRunner(service: .appDefault(
+                    companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
+                    renewsStaleBookmarks: false,
+                    snapshotDidChange: {
+                        WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
+                        notifyContextPanelWidgetSnapshotUpdated()
+                    }
+                ))
+                if let decision = try await GoogleAntigravityUsageBridge.publish(
+                    store: GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL),
+                    configuration: configuration.document,
+                    runner: runner
+                ) {
+                    await LimitWarningNotificationService.appDefault().notifyIfNeeded(decision: decision)
+                }
+            }
         } catch {
-            print(GoogleAntigravityStatusLineBridge.failureStatusLineText)
+            let message = readingWasSaved
+                ? "ContextPanelRefreshAgent: Google reading saved; publication did not finish\n"
+                : "ContextPanelRefreshAgent: Google usage could not be imported; the last saved reading is preserved\n"
+            fputs(message, stderr)
         }
-        Foundation.exit(0)
     }
 
     private static func boundedStandardInput(
@@ -285,7 +319,7 @@ struct ContextPanelRefreshAgent {
             }
             data.append(contentsOf: buffer.prefix(count))
         }
-        throw GoogleAntigravityStatusLineBridgeError.oversizedInput
+        throw GoogleAntigravityUsageBridgeError.oversizedInput
     }
 
     private static func notifyContextPanelWidgetSnapshotUpdated() {

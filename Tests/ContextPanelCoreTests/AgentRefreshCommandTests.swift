@@ -48,9 +48,9 @@ private let refreshCommandNow = Date(timeIntervalSince1970: 1_800_000_000)
     let fixture = try RefreshCommandFixture(accounts: [account])
     defer { fixture.remove() }
     let observedAt = refreshCommandNow.addingTimeInterval(-86_400)
-    let bridge = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: fixture.root.appending(path: "bridge/quota.json"))
-    try bridge.save(GoogleAntigravityStatusLineSnapshot(observedAt: observedAt,
-        buckets: [GoogleAntigravityStatusLineBucket(id: "gemini-pro", remainingFraction: 0.6,
+    let bridge = GoogleAntigravityUsageSnapshotStore(snapshotURL: fixture.root.appending(path: "bridge/quota.json"))
+    try bridge.save(GoogleAntigravityUsageSnapshot(observedAt: observedAt,
+        buckets: [GoogleAntigravityUsageBucket(id: "gemini-pro", remainingFraction: 0.6,
             resetsAt: refreshCommandNow.addingTimeInterval(3_600))]))
     // Production connector factory, with only the bridge location replaced by a fixture.
     let service = SnapshotRefreshService(accountStore: fixture.accounts,
@@ -180,7 +180,7 @@ func agentRefreshCommandPreservesAccountIdentityAndHonorsRemovals(removingSource
     defer { fixture.remove() }
     let service = SnapshotRefreshService(accountStore: fixture.accounts,
         stores: SnapshotRefreshStores(primary: fixture.snapshots),
-        googleAntigravitySnapshotLoader: GoogleAntigravityStatusLineSnapshotStore(snapshotURL: fixture.root.appending(path: "missing.json")),
+        googleAntigravitySnapshotLoader: GoogleAntigravityUsageSnapshotStore(snapshotURL: fixture.root.appending(path: "missing.json")),
         promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
     let result = await fixture.run(fixture.runner(service))
     #expect(result.exitCode == 1)
