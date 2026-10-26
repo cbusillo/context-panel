@@ -114,7 +114,7 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
     public let nextCapacityAt: Date?
     /// More than one use-last account on this provider: a configuration error; use-last is ignored.
     public let multipleUseLast: Bool
-    /// Every reading is stale; this is the last list, published with its age.
+    /// The ordinary stale-only fallback, published with its age. Codex sign-in exceptions retain launch eligibility separately.
     public let basedOnStaleReadings: Bool
     public let readingsObservedAt: Date?
     /// Account IDs for the next launches in order, by D'Hondt over the weights.
@@ -206,10 +206,14 @@ public extension AccountOverview {
         let now = rankedAt
         let rows = accounts.filter { $0.metadata.provider == provider }
         let multipleUseLast = rows.filter(\.metadata.useLast).count > 1
-        let launchable = rows.filter {
-            [.available, .closeToLimit, .limited].contains($0.state)
-                || ($0.isCodexSignInExpired && $0.state == .unavailable && $0.hasKnownCapacity)
-        }
+        let current = rows.filter { [.available, .closeToLimit, .limited].contains($0.state) }
+        let savedCodex = rows.filter { $0.isCodexSignInExpired && $0.state == .unavailable && $0.hasKnownCapacity }
+        let recentStale = current.isEmpty && !savedCodex.isEmpty ? rows.filter { row in
+            row.state == .stale && row.observedAt.map {
+                (0..<UseNextRanking.staleListMaximumAge).contains(now.timeIntervalSince($0))
+            } == true
+        } : []
+        let launchable = current + savedCodex + recentStale
         let staleOnly = launchable.isEmpty && rows.contains { $0.state == .stale }
         let rankable = staleOnly ? rows.filter { $0.state == .stale } : launchable
         let pending = Self.pendingLaunches(evidence: evidence, rows: rows, now: now)
@@ -231,8 +235,11 @@ public extension AccountOverview {
                   main.confidence != .unknown else { exclude("No weekly reading", nil); continue }
             // An event-driven window past its reset with no use since is assumed full and its next reset is unknown,
             // so its allowance is spread over one whole window from now; the next launch brings a real reading.
-            let assumedFull = main.assumption != nil
-            let remaining = fraction * 100
+            let assumesCodexReset = row.isCodexSignInExpired && main.naturalResetAt.map { reset in
+                main.observedAt.map { $0 < reset && reset <= now } == true
+            } == true
+            let assumedFull = main.assumption != nil || assumesCodexReset
+            let remaining = assumesCodexReset ? 100 : fraction * 100
             guard remaining > 0 else { exclude("Out of quota until its reset", main.naturalResetAt); continue }
             if let gate = row.fiveHourGate, gate.isCurrent || (gate.naturalResetAt ?? .distantPast) > now,
                let gateFraction = gate.remainingFraction {
@@ -243,20 +250,19 @@ public extension AccountOverview {
                     exclude("5-hour limit nearly used; free again at its 5-hour reset", gate.naturalResetAt); continue
                 }
             }
-            let unstarted = provider == .openAI && row.isUnstarted(main)
+            let unstarted = !assumesCodexReset && provider == .openAI && row.isUnstarted(main)
             let fresh = assumedFull ? now.addingTimeInterval(UseNextRanking.windowHours(main.period) * 3_600) : nil
             guard let deadline = unstarted ? now : fresh ?? main.naturalResetAt else { exclude("Reset time unknown", nil); continue }
             let ownBurn = main.isCurrent ? main.burnPoints : nil
             let burn = ownBurn ?? averageBurn
             let useLast = row.metadata.useLast && !multipleUseLast
             // An unstarted clock starts with the first launch, so its share is judged over a full week.
-            let readingDate = row.isCodexSignInExpired ? main.observedAt ?? now : now
-            let hours = unstarted ? UseNextRanking.weekHours : max(UseNextRanking.minimumHours, deadline.timeIntervalSince(readingDate) / 3_600)
+            let hours = unstarted ? UseNextRanking.weekHours : max(UseNextRanking.minimumHours, deadline.timeIntervalSince(now) / 3_600)
             var reserve: Double?
             var need = (remaining - burn * hours) / hours
             if useLast {
                 // Cushion: the Director's own measured use until the window ends, at least the floor.
-                let personal = Self.personalBurn(row: row, burn: main.burnPoints, evidence: evidence,
+                let personal = Self.personalBurn(row: row, burn: ownBurn, evidence: evidence,
                                                  pointsPerLaunch: pointsPerLaunch, now: now)
                 let cushion = max(UseNextRanking.useLastFloor, (personal ?? 0) * hours)
                 reserve = cushion
@@ -270,7 +276,7 @@ public extension AccountOverview {
                 window.id != main.id && window.id != row.fiveHourGate?.id && (window.remainingFraction ?? 1) <= 0
             }.map { window in
                 "\(window.modelLabel ?? window.label) is used up; only that model waits for its reset"
-            } + (assumedFull ? ["Assumed full after its reset; the next launch brings a real reading"] : [])
+            } + (assumedFull ? [AccountTerms.assumedResetLaunch] : [])
                 + (row.isCodexSignInExpired ? [AccountTerms.codexSignInExpired] : [])
             candidates.append(Candidate(row: row, remaining: remaining, burn: burn, burnEstimated: ownBurn == nil,
                                         hours: hours, deadline: deadline, unstarted: unstarted, starter: starter,
@@ -392,7 +398,7 @@ extension AccountOverview {
         var points = 0.0
         var launches = 0
         for row in rows where !(row.metadata.useLast && !multipleUseLast) {
-            guard let burn = row.mainWindow?.burnPoints else { continue }
+            guard let main = row.mainWindow, main.isCurrent, let burn = main.burnPoints else { continue }
             let count = evidence.receipts.filter { $0.accountID == row.id
                 && now.timeIntervalSince($0.launchedAt) <= LaunchReceiptStore.lookback }.count
             guard count > 0 else { continue }

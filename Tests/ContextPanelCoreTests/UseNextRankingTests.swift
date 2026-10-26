@@ -102,10 +102,10 @@ private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, eviden
     #expect(ranking(rows).launchOrder.isEmpty)
 }
 
-@Test func expiredCodexReadingDoesNotGainUrgencyWhenItsOldResetPasses() throws {
+@Test func expiredCodexResetUsesAPlanningAssumptionWithoutChangingItsSavedMeasurement() throws {
     let saved = Fixture(name: "saved", weeklyUsed: 20, resetHours: 1, burn: 50,
                         signInExpired: true, fiveHourUsed: 50, fiveHourResetHours: 1, fiveHourBurn: 50, observedAgo: 7_200)
-    let healthy = Fixture(name: "healthy", weeklyUsed: 50, resetHours: 100, burn: 0.2)
+    let healthy = Fixture(name: "healthy", weeklyUsed: 50, resetHours: 20, burn: 0.2)
     func result(at now: Date) -> UseNextRanking {
         AccountOverview(snapshot: UsageSnapshot(generatedAt: now,
             limits: saved.limits(now: rankNow) + healthy.limits(now: now)),
@@ -117,11 +117,56 @@ private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, eviden
     let later = result(at: rankNow.addingTimeInterval(86_400))
     let before = try #require(original.entry(saved))
     let after = try #require(later.entry(saved))
-    #expect(after.need == before.need)
+    #expect(after.need < before.need)
+    #expect(later.useNextAccountID == healthy.id)
     #expect(after.burnEstimated)
     #expect(after.burn == later.entry(healthy)?.burn)
     #expect(after.notes.contains(AccountTerms.codexSignInExpired))
     #expect(later.launchOrder.contains(saved.id))
+    let exhausted = Fixture(name: "exhausted", weeklyUsed: 100, resetHours: -1,
+                            signInExpired: true, observedAgo: 7_200)
+    let view = overview([exhausted])
+    let assumed = try #require(view.useNextRanking(provider: .openAI).entry(exhausted))
+    #expect(assumed.remaining == 100)
+    #expect(assumed.notes.contains(AccountTerms.assumedResetLaunch))
+    #expect(!assumed.unstarted)
+    #expect(view.accounts.first?.remainingFraction == 0)
+    #expect(view.accounts.first?.windows.first?.used == exhausted.weeklyUsed)
+    #expect(view.accounts.first?.windows.first?.isCurrent == false)
+    #expect(view.accounts.first?.windows.first?.confidence == .observed)
+    #expect(view.accounts.first?.observedAt == rankNow.addingTimeInterval(-exhausted.observedAgo))
+}
+
+@Test func expiredCodexReadingPreservesOnlyRecentOrdinaryStaleSiblings() {
+    let expired = Fixture(name: "expired", weeklyUsed: 20, signInExpired: true, observedAgo: 7_200)
+    let recent = Fixture(name: "recent", weeklyUsed: 20, resetHours: 1,
+                         observedAgo: UseNextRanking.staleListMaximumAge - 60)
+    let old = Fixture(name: "old", weeklyUsed: 20, resetHours: 1,
+                      observedAgo: UseNextRanking.staleListMaximumAge + 60)
+    let result = ranking([expired, recent, old])
+    #expect(result.entry(expired) != nil)
+    #expect(result.entry(recent) != nil)
+    #expect(result.entry(old) == nil)
+    #expect(!result.basedOnStaleReadings)
+    #expect(result.useNextAccountID == result.launchOrder.first)
+    #expect(result.useNextAccountID == recent.id)
+}
+
+@Test func savedBurnDoesNotSizePersonalReserveOrProviderReceiptEstimates() throws {
+    let healthy = Fixture(name: "healthy", weeklyUsed: 50, resetHours: 20, burn: 0.2)
+    let saved = Fixture(name: "saved", weeklyUsed: 20, resetHours: 100, burn: 50,
+                        signInExpired: true, observedAgo: 7_200)
+    let evidence = UseNextEvidence(receipts: [healthy, saved].map {
+        LaunchReceipt(provider: .openAI, accountID: $0.id, launchedAt: rankNow.addingTimeInterval(-60))
+    })
+    let baseline = AccountOverview.pointsPerLaunch(rows: overview([healthy]).accounts, evidence: evidence,
+        now: rankNow, multipleUseLast: false)
+    #expect(AccountOverview.pointsPerLaunch(rows: overview([healthy, saved]).accounts, evidence: evidence,
+        now: rankNow, multipleUseLast: false) == baseline)
+    var personal = saved
+    personal.useLast = true
+    let entry = try #require(ranking([healthy, personal]).entry(personal))
+    #expect(entry.reserve == UseNextRanking.useLastFloor)
 }
 
 private extension UseNextRanking {
@@ -201,7 +246,7 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(entry.remaining == 100)
     #expect(entry.deadline == rankNow.addingTimeInterval(168 * hour))
     #expect(!entry.unstarted && !entry.starter)
-    #expect(entry.notes.contains { $0.contains("Assumed full") })
+    #expect(entry.notes.contains(AccountTerms.assumedResetLaunch))
 
     let measured = Fixture(name: "gemini-measured", provider: .google, weeklyUsed: 50, resetHours: 20, burn: 0.5)
     let both = ranking([quiet, measured], provider: .google)

@@ -109,7 +109,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
                 case .closeToLimit: .close
                 case .limited: .limited
                 case .stale: .stale
-                case .unavailable: .failure
+                case .unavailable: account.isCodexSignInExpired ? .stale : .failure
                 case .refreshing: .loading
                 default: .unknown
                 }

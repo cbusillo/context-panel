@@ -221,7 +221,14 @@ sign-in was rejected, not proof that a renewal key, subscription or account
 access was revoked. The row calmly says **Codex sign-in expired** and retains
 its last good measurements, with their original observation time and freshness.
 Those saved measurements remain eligible for launch selection alongside healthy
-accounts; missing, unknown and exhausted capacity still cannot supply a launch.
+accounts; missing or unknown capacity and limits exhausted before their reset
+still cannot supply a launch.
+After a scheduled reset passes, ranking can use an explicitly noted assumed
+refill, as for quiet Google accounts; it never rewrites the saved measurement or
+its observation time. If only saved readings remain, ordinary stale siblings
+keep their existing recent-stale launch budget alongside the Codex exception.
+The snapshot's `basedOnStaleReadings` flag identifies the ordinary stale-only
+fallback; it does not assert that every candidate is a current measurement.
 Ordinary network and service failures do not get this sign-in exception.
 The next successful usage read clears the label and replaces the saved reading.
 Context Panel adds no renewal-status feed and never excludes an account because

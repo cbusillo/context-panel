@@ -76,6 +76,7 @@ public enum AccountTerms {
     public static let addFirstAccount = "Add your first account"
     public static let unknown = "—"
     public static let assumed = "Assumed"
+    public static let assumedResetLaunch = "Assumed full after its reset; the next launch brings a real reading"
     public static func accountTiming(_ account: AccountOverview.Account, now: Date) -> String {
         if [.stale, .unavailable].contains(account.state) {
             return account.stateText + (account.windows.isEmpty ? "" : account.observedAt.map { " " + AccountPaceText.when($0, now: now) } ?? "")
