@@ -77,7 +77,7 @@ func tvAccountFreshnessDoesNotCallNonCurrentObservationsUpdated(state: AccountCa
 }
 
 @Test(arguments: [UsageStatus.healthy, .stale, .failure, .unknown, .limited, .loading])
-func tvTopShelfSavedCapacityUsesSharedWarmNeutral(status: UsageStatus) {
+func tvTopShelfSavedCapacityUsesSharedSavedToken(status: UsageStatus) {
     let card = TVTopShelfCard(id: "sample", provider: .google, title: "Sample account", headline: "75% left",
         detail: "", status: status, remainingPercent: 75, actionURLString: TVAppRoute.runway.url.absoluteString)
     #expect(card.capacityToken(isStale: true) == .saved)
