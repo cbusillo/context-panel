@@ -115,8 +115,8 @@ struct TVValidationGalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            sampleBanner
             if !showsOnlyTheSample {
+                sampleBanner
                 controls
                 Divider().opacity(0.25)
             }
@@ -214,7 +214,7 @@ struct TVValidationGalleryView: View {
                     maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: context.presentationDate,
                     presentationModeRawValue: $presentationModeRawValue, isRefreshing: state == .loading,
                     notice: context.snapshot.syncErrorMessage, onRefresh: {}, openAccount: { _ in },
-                    openDeadlines: {}, openDetails: {})
+                    openDeadlines: {}, openDetails: {}, openAbout: {})
             } else {
             TVRunwayContent(
                 presentation: presentation,
@@ -226,7 +226,8 @@ struct TVValidationGalleryView: View {
                 presentationDate: context.presentationDate,
                 detailActionMode: .readOnly,
                 onRefresh: {},
-                snapshotReports: context.snapshot.reports
+                snapshotReports: context.snapshot.reports,
+                onAbout: {}
             )
             .accessibilityElement(children: .contain)
 

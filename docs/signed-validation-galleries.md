@@ -218,8 +218,8 @@ com.shinycomputers.contextpanel --context-panel-validation-gallery
 --context-panel-validation-presentation <fullDetail|projectOnly|countsOnly>`.
 The app accepts only that bounded vocabulary; anything else exits with
 `EX_USAGE`, exactly like the Watch app, and there is still no UI entry point,
-feature flag, or persistent unlock. A validation launch shows one sample under
-the "SAMPLE DATA · READ ONLY" banner and never opens CloudKit, registers for
+feature flag, or persistent unlock. A fixed validation launch shows one sample
+without the gallery banner and never opens CloudKit, registers for
 notifications, or relays receipts. Three tvOS-specific rules apply:
 
 - tvOS relaunches an app in the background when it is started immediately
@@ -501,10 +501,11 @@ runtime-receipt relay, or timeline reload path. In the shared Watch widget
 source, an extension-only compilation boundary keeps the live timeline provider,
 runtime-receipt recorder, widget registration, and WidgetBundle entry point out
 of the Watch app target. The normal Watch root retains its live sync behavior
-outside the gallery. A persistent `Sample data` boundary stays above every
-gallery screen. Gallery output remains shared-view proof; the installed-build
-Watch restart and real placed-complication glance remain required whenever
-complication host behavior changed.
+outside the gallery. A persistent `Sample data` boundary stays above interactive
+gallery screens; fixed Watch app captures use the production app frame with
+synthetic content and an inert refresh action. Gallery output remains
+shared-view proof; the installed-build Watch restart and real placed-complication
+glance remain required whenever complication host behavior changed.
 
 ## Apple TV Gallery
 
@@ -520,7 +521,7 @@ same `TVTopShelfDocument` model used by the extension. The app compilation path
 does not include the extension-only provider, App Group document/image cache,
 runtime-receipt recorder, `setImageURL` calls, or
 `topShelfContentDidChange()` publication. A persistent `Sample data · Read
-only` banner remains above every preview.
+only` banner remains above interactive previews; fixed capture launches omit it.
 
 The Top Shelf image is shared-renderer proof, not TVServices composition proof.
 Real Top Shelf placement, host scaling, focus/parallax, expiration behavior,
