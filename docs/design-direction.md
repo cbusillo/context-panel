@@ -235,7 +235,7 @@ The controls, observation summary, and headline stay above account scrolling.
 Inset focus outlines preserve text contrast and percentage baselines. Account
 and deadline detail cards take read-only focus so long lists scroll with the
 remote. Top Shelf
-shows provider and account identity in Full Detail, with shared warm-neutral
+shows provider and account identity in Full Detail, with shared cool slate gray
 capacity fills for saved or failed readings; privacy modes remain anonymous.
 
 Each provider card applies the shared answer rule within that provider: the
