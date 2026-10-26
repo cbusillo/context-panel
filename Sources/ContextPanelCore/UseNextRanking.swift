@@ -274,10 +274,12 @@ public extension AccountOverview {
             if unstarted && useLast && !starter { need = min(need, 0) }
             let notes = row.windows.filter { window in
                 window.id != main.id && window.id != row.fiveHourGate?.id && (window.remainingFraction ?? 1) <= 0
+                    && (window.naturalResetAt ?? .distantFuture) > now
             }.map { window in
                 "\(window.modelLabel ?? window.label) is used up; only that model waits for its reset"
             } + (assumedFull ? [AccountTerms.assumedResetLaunch] : [])
                 + (row.isCodexSignInExpired ? [AccountTerms.codexSignInExpired] : [])
+                + (row.state == .stale ? [AccountCapacityState.stale.displayText] : [])
             candidates.append(Candidate(row: row, remaining: remaining, burn: burn, burnEstimated: ownBurn == nil,
                                         hours: hours, deadline: deadline, unstarted: unstarted, starter: starter,
                                         useLast: useLast, reserve: reserve, need: need, notes: notes))

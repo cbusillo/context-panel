@@ -25,6 +25,7 @@ private struct Fixture {
     var fiveHourResetHours: Double = 3
     var fiveHourBurn: Double? = nil
     var modelWindow: (label: String, used: Int)? = nil
+    var modelResetHours: Double = 120
     var bankedExpiryHours: [Double] = []
     var bankedCountOnly = false
     var unrecognizedResets = 0
@@ -49,7 +50,7 @@ private struct Fixture {
         if let modelWindow {
             limits.append(UsageLimit(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
                 label: "\(modelWindow.label) Weekly", windowLabel: "Weekly", modelLabel: modelWindow.label, unit: .percent,
-                used: modelWindow.used, limit: 100, resetsAt: now.addingTimeInterval(120 * hour), lastUpdatedAt: observed,
+                used: modelWindow.used, limit: 100, resetsAt: now.addingTimeInterval(modelResetHours * hour), lastUpdatedAt: observed,
                 confidence: .observed))
         }
         return limits
@@ -146,10 +147,20 @@ private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, eviden
     let result = ranking([expired, recent, old])
     #expect(result.entry(expired) != nil)
     #expect(result.entry(recent) != nil)
+    #expect(result.entry(recent)?.notes.contains(AccountCapacityState.stale.displayText) == true)
     #expect(result.entry(old) == nil)
     #expect(!result.basedOnStaleReadings)
     #expect(result.useNextAccountID == result.launchOrder.first)
     #expect(result.useNextAccountID == recent.id)
+}
+
+@Test(arguments: [-1.0, 1.0])
+func expiredCodexModelWaitNoteEndsAtItsOwnReset(resetHours: Double) throws {
+    let model = (label: "Sample model", used: 100)
+    let saved = Fixture(name: "saved", weeklyUsed: 20, resetHours: -1, signInExpired: true,
+                        modelWindow: model, modelResetHours: resetHours, observedAgo: 7_200)
+    let entry = try #require(ranking([saved]).entry(saved))
+    #expect(entry.notes.contains { $0.contains(model.label) } == (resetHours > 0))
 }
 
 @Test func savedBurnDoesNotSizePersonalReserveOrProviderReceiptEstimates() throws {

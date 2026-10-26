@@ -6,7 +6,7 @@ Panel stays read-only: a sign-in-rejected usage read displays **Codex sign-in
 expired** and keeps the last good reading launchable. It adds no renewal-status
 feed or needs-sign-in exclusion. The Codex-owned daemon and launcher handle
 renewal and terminal failures separately. The current app behavior is described
-in [provider access](provider-usage-access.md#codex-and-codex-lab-setup); the
+in [provider access](provider-usage-access.md#codex-setup); the
 candidate comparison below is historical context.
 
 This records the recommendation from
@@ -169,7 +169,7 @@ no new entitlement for local networking, but it does need a prototype.
 ## Credential sources
 
 What Context Panel can read from each source is documented in
-[Codex and Codex Lab setup](provider-usage-access.md#codex-and-codex-lab-setup)
+[Codex setup](provider-usage-access.md#codex-setup)
 and [Per-account Codex session quota](provider-usage-access.md#per-account-codex-session-quota).
 This record decides only the recovery route for each one:
 
