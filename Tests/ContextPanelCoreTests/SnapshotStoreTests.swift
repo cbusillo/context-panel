@@ -2090,24 +2090,22 @@ import Testing
     #expect(try credentialStore.load(accountID: "google-antigravity-default") == nil)
 }
 
-@Test func snapshotRefreshServiceRefreshesGoogleFromStatusLineSnapshot() async throws {
+@Test func snapshotRefreshServiceRefreshesGoogleFromUsageSnapshot() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let bridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+    let bridgeStore = GoogleAntigravityUsageSnapshotStore(
         snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
     )
     let savedAt = Date(timeIntervalSince1970: 300)
-    try bridgeStore.save(GoogleAntigravityStatusLineSnapshot(
-        sourceVersion: "1.1.1",
-        planTier: "Google AI Pro",
+    try bridgeStore.save(GoogleAntigravityUsageSnapshot(
         observedAt: savedAt,
         buckets: [
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "gemini-3.1-pro-high-5h",
                 remainingFraction: 0.93,
                 resetsAt: savedAt.addingTimeInterval(3_600)
             ),
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "claude-sonnet-4.6-weekly",
                 remainingFraction: 0.88,
                 resetsAt: savedAt.addingTimeInterval(7 * 24 * 3_600)
@@ -2148,7 +2146,7 @@ import Testing
 @Test func snapshotRefreshServicePersistsGoogleSetupRequiredStateWhenBridgeIsMissing() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let missingBridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+    let missingBridgeStore = GoogleAntigravityUsageSnapshotStore(
         snapshotURL: try temporaryDirectory()
             .appending(path: "Provider Inputs", directoryHint: .isDirectory)
             .appending(path: "missing-antigravity-status-line.json")
@@ -2902,16 +2900,14 @@ import Testing
     let resetStateStore = ResetExpiryRefreshStateStore(
         stateURL: try temporaryDirectory().appending(path: "reset-state.json")
     )
-    let bridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+    let bridgeStore = GoogleAntigravityUsageSnapshotStore(
         snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
     )
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
-    try bridgeStore.save(GoogleAntigravityStatusLineSnapshot(
-        sourceVersion: "1.1.1",
-        planTier: "Google AI Pro",
+    try bridgeStore.save(GoogleAntigravityUsageSnapshot(
         observedAt: savedAt,
-        buckets: [GoogleAntigravityStatusLineBucket(
+        buckets: [GoogleAntigravityUsageBucket(
             id: "gemini-3.1-pro-high-5h",
             remainingFraction: 0.80,
             resetsAt: resetAt
@@ -2980,16 +2976,14 @@ import Testing
     let resetStateStore = ResetExpiryRefreshStateStore(
         stateURL: try temporaryDirectory().appending(path: "reset-state.json")
     )
-    let bridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+    let bridgeStore = GoogleAntigravityUsageSnapshotStore(
         snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
     )
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
-    try bridgeStore.save(GoogleAntigravityStatusLineSnapshot(
-        sourceVersion: "1.1.1",
-        planTier: "Google AI Pro",
+    try bridgeStore.save(GoogleAntigravityUsageSnapshot(
         observedAt: savedAt,
-        buckets: [GoogleAntigravityStatusLineBucket(
+        buckets: [GoogleAntigravityUsageBucket(
             id: "gemini-3.1-pro-high-5h",
             remainingFraction: 0.80,
             resetsAt: resetAt

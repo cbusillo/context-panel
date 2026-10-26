@@ -134,21 +134,18 @@ is required. Inspect
 each account's state and observation time before relying on its capacity. See the
 [agent snapshot contract](docs/provider-usage-access.md#agent-readable-account-snapshot).
 
-For Google Antigravity, Context Panel uses AGY's documented custom status-line
-command as an opt-in local bridge. The signed refresh agent accepts only the
-documented quota allowlist, writes a sanitized App Group snapshot, and never
-reads Antigravity credentials or calls private Google quota endpoints. Bridge
-data updates while AGY CLI runs. Idle time alone does not make the last
-observation stale. After an explicit reset passes, Context Panel preserves the
-last observation internally while presenting `≈100%` remaining and `≈0%` used
-as an assumed reset until the next AGY run confirms the new window. Assumed
-capacity is not written into observed history or treated as high-confidence
-forecast evidence. AGY supports one custom status-line command, so setup is
-guided and never overwrites or chains an existing customization automatically.
-Historical AGY 1.1.1 compatibility was verified against a non-interactive
-`agy --add-dir <workspace> -p <prompt>` execution: the configured callback
-publishes the documented quota payload even though no separate interactive AGY
-session is running.
+For Google Antigravity, Context Panel uses an opt-in AGY Stop hook to run
+`agy -p "/usage" --output-format json` after interactive and headless runs.
+Copy Setup in the Google account settings supplies instructions to paste into
+AGY; the user applies the named hook and restarts existing sessions. Copy
+Remove removes only that hook. The signed refresh agent directly reads the
+bounded, validated quota JSON, saves only a sanitized App Group snapshot, and
+immediately publishes Google readings. It never reads AGY credentials or calls
+private Google endpoints. See the [connector setup and compatibility
+proof](docs/provider-usage-access.md#google-antigravity-connector).
+Idle time alone does not make a reading stale. After a scheduled reset,
+`≈100%` means assumed capacity until the next run supplies an observation;
+assumed capacity is not written to observed history.
 
 The probes exercise shared `ContextPanelCore` connectors from the shell.
 They do not prove signed app or refresh-agent behavior: sandbox access, TCC,

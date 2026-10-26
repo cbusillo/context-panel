@@ -199,7 +199,7 @@ private struct RemovalEmptyCredentials: ProviderCredentialStoring {
     func save(_ data: Data, accountID: String) throws {}
 }
 private struct RemovalEmptyGoogleSnapshot: GoogleAntigravityQuotaSnapshotLoading {
-    func load() throws -> GoogleAntigravityStatusLineSnapshot? { nil }
+    func load() throws -> GoogleAntigravityUsageSnapshot? { nil }
 }
 
 @Test func realDefaultConnectorFailureAndUsageShapesStayDistinctAcrossMacs() async throws {

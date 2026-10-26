@@ -1363,35 +1363,26 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 @Test func googleAntigravityBridgePersistsOnlySanitizedQuotaFields() throws {
     let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
     let snapshotURL = try googleAntigravityTemporarySnapshotURL()
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
     let payload = #"""
     {
-      "version": "1.1.1",
-      "plan_tier": "Google AI Ultra",
+      "status": "SUCCESS",
       "email": "sensitive-email@example.com",
       "cwd": "/Users/sensitive/workspace",
       "conversation_id": "sensitive-conversation-id",
       "transcript_path": "/Users/sensitive/transcript.jsonl",
       "access_token": "sensitive-access-token",
-      "quota": {
-        "gemini-3.1-pro-high-5h": {
-          "remaining_fraction": 0.75,
-          "reset_in_seconds": 3600,
-          "request_id": "sensitive-request-id"
-        },
-        "claude-sonnet-4.6-weekly": {
-          "remaining_fraction": 0.9,
-          "reset_time": "2027-01-16T09:00:00Z"
-        },
-        "gpt-oss-120b-weekly": {
-          "remaining_fraction": 0.2,
-          "disabled": true
-        }
-      }
+      "command": {"name":"usage","data":{"groups":[{"buckets":[
+        {"id":"gemini-3.1-pro-high-5h","remaining_fraction":0.75,
+         "reset_time":"2027-01-15T09:00:00Z","request_id":"sensitive-request-id"},
+        {"id":"claude-sonnet-4.6-weekly","remaining_fraction":0.9,
+         "reset_time":"2027-01-16T09:00:00Z"},
+        {"id":"gpt-oss-120b-weekly","remaining_fraction":0.2,"disabled":true}
+      ]}]}}
     }
     """#.data(using: .utf8)!
 
-    let result = try GoogleAntigravityStatusLineBridge.ingest(
+    let result = try GoogleAntigravityUsageBridge.ingest(
         data: payload,
         observedAt: observedAt,
         store: store
@@ -1407,8 +1398,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     )
 
     #expect(result == .saved(snapshot))
-    #expect(snapshot.sourceVersion == "1.1.1")
-    #expect(snapshot.planTier == "Google AI Ultra")
     #expect(snapshot.observedAt == observedAt)
     #expect(snapshot.buckets.map(\.id) == [
         "claude-sonnet-4.6-weekly",
@@ -1436,21 +1425,20 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 
 @Test func googleAntigravityBridgePreservesLastGoodSnapshotWhenQuotaIsMissing() throws {
     let snapshotURL = try googleAntigravityTemporarySnapshotURL()
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
-    let original = GoogleAntigravityStatusLineSnapshot(
-        sourceVersion: "1.1.0",
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
+    let original = GoogleAntigravityUsageSnapshot(
         observedAt: Date(timeIntervalSince1970: 100),
-        buckets: [GoogleAntigravityStatusLineBucket(id: "gemini-weekly", remainingFraction: 0.8, resetsAt: nil)]
+        buckets: [GoogleAntigravityUsageBucket(id: "gemini-weekly", remainingFraction: 0.8, resetsAt: nil)]
     )
     try store.save(original)
 
-    let missingResult = try GoogleAntigravityStatusLineBridge.ingest(
-        data: Data(#"{"version":"1.1.1","email":"ignored@example.com"}"#.utf8),
+    let missingResult = try GoogleAntigravityUsageBridge.ingest(
+        data: Data(#"{"status":"SUCCESS","command":{"name":"usage","data":{}}}"#.utf8),
         observedAt: Date(timeIntervalSince1970: 200),
         store: store
     )
-    let emptyResult = try GoogleAntigravityStatusLineBridge.ingest(
-        data: Data(#"{"version":"1.1.1","quota":{}}"#.utf8),
+    let emptyResult = try GoogleAntigravityUsageBridge.ingest(
+        data: Data(#"{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[]}}}"#.utf8),
         observedAt: Date(timeIntervalSince1970: 300),
         store: store
     )
@@ -1462,32 +1450,36 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 }
 
 @Test func googleAntigravityBridgeRejectsMalformedKnownFieldsAndOversizedInput() throws {
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: try googleAntigravityTemporarySnapshotURL())
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: try googleAntigravityTemporarySnapshotURL())
     let invalidPayloads = [
-        #"{"version":"bad version!","quota":{}}"#,
-        #"{"plan_tier":"bad/tier","quota":{}}"#,
-        #"{"quota":{"gemini-weekly":{"remaining_fraction":1.1}}}"#,
-        #"{"quota":{"gemini weekly":{"remaining_fraction":0.5}}}"#,
-        #"{"quota":{"gemini-weekly":{"reset_time":"not-a-date"}}}"#,
-        #"{"quota":{"gemini-weekly":{"reset_in_seconds":999999999}}}"#,
+        #"{"id":"gemini-weekly","remaining_fraction":1.1}"#,
+        #"{"id":"gemini-weekly","remaining_fraction":-0.1}"#,
+        #"{"id":"gemini-weekly","remaining_fraction":"private-string"}"#,
+        #"{"id":"gemini weekly","remaining_fraction":0.5}"#,
+        #"{"id":"gemini-weekly","reset_time":"not-a-date"}"#,
+        #"{"id":"gemini-weekly","disabled":"true"}"#,
+        #"{"remaining_fraction":0.5}"#,
     ]
-
-    for payload in invalidPayloads {
+    let original = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100))
+    try store.save(original)
+    for bucket in invalidPayloads {
         do {
-            _ = try GoogleAntigravityStatusLineBridge.ingest(data: Data(payload.utf8), store: store)
+            _ = try GoogleAntigravityUsageBridge.ingest(data: googleAntigravityUsagePayload(buckets: bucket), store: store)
             Issue.record("Expected malformed Antigravity payload to fail")
-        } catch let error as GoogleAntigravityStatusLineBridgeError {
+        } catch let error as GoogleAntigravityUsageBridgeError {
             #expect(error == .invalidPayload)
         }
+        let preserved = try store.load()
+        #expect(preserved == original)
     }
 
     do {
-        _ = try GoogleAntigravityStatusLineBridge.ingest(
-            data: Data(repeating: 0, count: GoogleAntigravityStatusLineBridge.maximumInputBytes + 1),
+        _ = try GoogleAntigravityUsageBridge.ingest(
+            data: Data(repeating: 0, count: GoogleAntigravityUsageBridge.maximumInputBytes + 1),
             store: store
         )
         Issue.record("Expected oversized Antigravity payload to fail")
-    } catch let error as GoogleAntigravityStatusLineBridgeError {
+    } catch let error as GoogleAntigravityUsageBridgeError {
         #expect(error == .oversizedInput)
     }
 }
@@ -1505,9 +1497,9 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     try FileManager.default.createSymbolicLink(at: snapshotURL, withDestinationURL: targetURL)
 
     do {
-        _ = try GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL).load()
+        _ = try GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL).load()
         Issue.record("Expected a symlink Antigravity snapshot to fail")
-    } catch let error as GoogleAntigravityStatusLineStoreError {
+    } catch let error as GoogleAntigravityUsageStoreError {
         #expect(error == .unsafeFile)
     }
 }
@@ -1523,9 +1515,9 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     #expect(mkfifo(snapshotURL.path, S_IRUSR | S_IWUSR) == 0)
 
     do {
-        _ = try GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL).load()
+        _ = try GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL).load()
         Issue.record("Expected a FIFO Antigravity snapshot to fail")
-    } catch let error as GoogleAntigravityStatusLineStoreError {
+    } catch let error as GoogleAntigravityUsageStoreError {
         #expect(error == .unsafeFile)
     }
 }
@@ -1535,7 +1527,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
     defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
 
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
     let original = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100))
     let updated = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 200))
     try store.save(original)
@@ -1602,7 +1594,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     )
 
     let customSnapshotURL = directoryURL.appending(path: "custom-status-line.json")
-    let customStore = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: customSnapshotURL)
+    let customStore = GoogleAntigravityUsageSnapshotStore(snapshotURL: customSnapshotURL)
     let snapshot = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 200))
     try customStore.save(snapshot)
 
@@ -1615,7 +1607,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
     defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
 
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
     try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100)))
 
     let directoryURL = snapshotURL.deletingLastPathComponent()
@@ -1635,7 +1627,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     try FileManager.default.createDirectory(at: directoryEntryURL, withIntermediateDirectories: false)
     try writeGoogleAntigravityTestFile(Data("permissive".utf8), to: permissiveURL, permissions: 0o644)
     try writeGoogleAntigravityTestFile(
-        Data(repeating: 0x41, count: GoogleAntigravityStatusLineSnapshotStore.maximumSnapshotBytes + 1),
+        Data(repeating: 0x41, count: GoogleAntigravityUsageSnapshotStore.maximumSnapshotBytes + 1),
         to: oversizedURL
     )
     try writeGoogleAntigravityTestFile(Data("hard link".utf8), to: hardLinkSourceURL)
@@ -1674,59 +1666,59 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     safeInformation.st_mode = S_IFREG | S_IRUSR | S_IWUSR
     safeInformation.st_uid = geteuid()
     safeInformation.st_nlink = 1
-    safeInformation.st_size = off_t(GoogleAntigravityStatusLineSnapshotStore.maximumSnapshotBytes)
+    safeInformation.st_size = off_t(GoogleAntigravityUsageSnapshotStore.maximumSnapshotBytes)
     safeInformation.st_mtimespec = timespec(
         tv_sec: Int(now.timeIntervalSince1970 - 25 * 60 * 60),
         tv_nsec: 0
     )
 
-    #expect(GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(safeInformation, now: now))
+    #expect(GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(safeInformation, now: now))
 
     var wrongOwner = safeInformation
     wrongOwner.st_uid = safeInformation.st_uid == 0 ? 1 : 0
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(wrongOwner, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(wrongOwner, now: now))
 
     var permissive = safeInformation
     permissive.st_mode |= S_IRGRP
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(permissive, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(permissive, now: now))
 
     var hardLinked = safeInformation
     hardLinked.st_nlink = 2
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(hardLinked, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(hardLinked, now: now))
 
     var oversized = safeInformation
     oversized.st_size += 1
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(oversized, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(oversized, now: now))
 
     var recent = safeInformation
     recent.st_mtimespec = timespec(
         tv_sec: Int(now.timeIntervalSince1970 - 23 * 60 * 60),
         tv_nsec: 0
     )
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(recent, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(recent, now: now))
 
     var exactBoundary = safeInformation
     exactBoundary.st_mtimespec = timespec(
         tv_sec: Int(now.timeIntervalSince1970 - 24 * 60 * 60),
         tv_nsec: 0
     )
-    #expect(GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(exactBoundary, now: now))
+    #expect(GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(exactBoundary, now: now))
 
     var specialModeBits = safeInformation
     specialModeBits.st_mode |= S_ISUID
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(specialModeBits, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(specialModeBits, now: now))
 
     var negativeNanoseconds = safeInformation
     negativeNanoseconds.st_mtimespec.tv_nsec = -1
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(negativeNanoseconds, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(negativeNanoseconds, now: now))
 
     var excessiveNanoseconds = safeInformation
     excessiveNanoseconds.st_mtimespec.tv_nsec = 1_000_000_000
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(excessiveNanoseconds, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(excessiveNanoseconds, now: now))
 
     var fifo = safeInformation
     fifo.st_mode = S_IFIFO | S_IRUSR | S_IWUSR
-    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(fifo, now: now))
+    #expect(!GoogleAntigravityUsageSnapshotStore.isEligibleStaleTemporaryFile(fifo, now: now))
 }
 
 @Test func googleAntigravityStoreIgnoresTemporaryCleanupFailures() throws {
@@ -1734,7 +1726,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
     defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
 
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
     try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100)))
 
     let temporaryURL = googleAntigravityTemporaryFileURL(in: snapshotURL.deletingLastPathComponent())
@@ -1758,7 +1750,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
     defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
 
-    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
     try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100)))
 
     let staleTemporaryURL = googleAntigravityTemporaryFileURL(in: snapshotURL.deletingLastPathComponent())
@@ -1788,32 +1780,30 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 
 @Test func googleAntigravityConnectorMapsFreshObservedBucketsWithoutPrivateAPIs() async throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let snapshot = GoogleAntigravityStatusLineSnapshot(
-        sourceVersion: "1.1.1",
-        planTier: "Google AI Pro",
+    let snapshot = GoogleAntigravityUsageSnapshot(
         observedAt: now,
         buckets: [
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "gemini-3.1-pro-high-5h",
                 remainingFraction: 0.9,
                 resetsAt: now.addingTimeInterval(3_600)
             ),
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "claude-sonnet-4.6-weekly",
                 remainingFraction: 0.85,
                 resetsAt: now.addingTimeInterval(7 * 24 * 3_600)
             ),
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "mystery-model",
                 remainingFraction: 0.95,
                 resetsAt: nil
             ),
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "mystery_model",
                 remainingFraction: 0.96,
                 resetsAt: nil
             ),
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "gpt-oss-120b-weekly",
                 remainingFraction: 0.01,
                 resetsAt: nil,
@@ -1842,7 +1832,6 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     #expect(report.limits.map(\.used) == [10, 15, 5, 4])
     #expect(Set(report.limits.map(\.id)).count == 4)
     #expect(report.limits.map(\.confidence).allSatisfy { $0 == .observed })
-    #expect(report.limits.allSatisfy { $0.note?.contains("documented status-line quota export") == true })
     #expect(!report.limits.contains { $0.label.contains("GPT") })
 }
 
@@ -1853,20 +1842,20 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let futureReset = now.addingTimeInterval(6 * 24 * 3_600)
     let connector = GoogleAntigravityQuotaConnector(
         accounts: [googleAntigravityTestAccount()],
-        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityStatusLineSnapshot(
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityUsageSnapshot(
             observedAt: observedAt,
             buckets: [
-                GoogleAntigravityStatusLineBucket(
+                GoogleAntigravityUsageBucket(
                     id: "gemini-5h",
                     remainingFraction: 0.8,
                     resetsAt: elapsedReset
                 ),
-                GoogleAntigravityStatusLineBucket(
+                GoogleAntigravityUsageBucket(
                     id: "gemini-weekly",
                     remainingFraction: 0.9,
                     resetsAt: futureReset
                 ),
-                GoogleAntigravityStatusLineBucket(
+                GoogleAntigravityUsageBucket(
                     id: "disabled-weekly",
                     remainingFraction: 0.1,
                     resetsAt: now.addingTimeInterval(-3_600),
@@ -1908,9 +1897,9 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let connector = GoogleAntigravityQuotaConnector(
         accounts: [googleAntigravityTestAccount()],
-        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityStatusLineSnapshot(
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityUsageSnapshot(
             observedAt: now,
-            buckets: [GoogleAntigravityStatusLineBucket(
+            buckets: [GoogleAntigravityUsageBucket(
                 id: "disabled-weekly",
                 remainingFraction: 0.1,
                 resetsAt: now.addingTimeInterval(-3_600),
@@ -1939,9 +1928,9 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     )
     let future = GoogleAntigravityQuotaConnector(
         accounts: [account],
-        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityStatusLineSnapshot(
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityUsageSnapshot(
             observedAt: now.addingTimeInterval(301),
-            buckets: [GoogleAntigravityStatusLineBucket(id: "gemini-weekly", remainingFraction: 0.8, resetsAt: nil)]
+            buckets: [GoogleAntigravityUsageBucket(id: "gemini-weekly", remainingFraction: 0.8, resetsAt: nil)]
         ))
     )
 
@@ -1958,14 +1947,34 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     #expect(futureReport.errorMessage?.contains("invalid observation time") == true)
 }
 
-@Test func googleAntigravitySetupCommandsAreQuotedAndReversible() {
-    let bundleURL = URL(fileURLWithPath: "/Applications/Context Panel's Preview.app")
-    let command = GoogleAntigravityStatusLineSetup.setupCommand(applicationBundleURL: bundleURL)
+@Test func googleAntigravityHookPassesUsageToQuotedHelper() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: "hook-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bundle = root.appending(path: "Context Panel's Preview.app")
+    let helper = bundle.appending(path: "Contents/Library/LoginItems/ContextPanelRefreshAgent.app/Contents/MacOS/ContextPanelRefreshAgent")
+    try FileManager.default.createDirectory(at: helper.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let agy = root.appending(path: "fake agy's CLI")
+    let received = root.appending(path: "received.json")
+    let arguments = root.appending(path: "arguments")
+    let fixture = googleAntigravityUsagePayload(buckets: #"{"id":"gemini-weekly","remaining_fraction":0.75}"#)
+    let fixtureURL = root.appending(path: "fixture.json")
+    try fixture.write(to: fixtureURL)
+    try "#!/bin/sh\ncat \(GoogleAntigravityUsageSetup.shellQuoted(fixtureURL.path))\n".write(to: agy, atomically: true, encoding: .utf8)
+    try "#!/bin/sh\nprintf '%s\\n' \"$@\" > \(GoogleAntigravityUsageSetup.shellQuoted(arguments.path))\ncat > \(GoogleAntigravityUsageSetup.shellQuoted(received.path))\nprintf '{}\\n'\n".write(to: helper, atomically: true, encoding: .utf8)
+    for executable in [agy, helper] {
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", GoogleAntigravityUsageSetup.hookCommand(applicationBundleURL: bundle, agyExecutable: agy.path)]
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
 
-    #expect(command.hasPrefix("/statusline '"))
-    #expect(command.contains("Context Panel'\\''s Preview.app"))
-    #expect(command.hasSuffix("ContextPanelRefreshAgent' --ingest-antigravity-status-line"))
-    #expect(GoogleAntigravityStatusLineSetup.removeCommand == "/statusline delete")
+    #expect(process.terminationStatus == 0)
+    #expect(try Data(contentsOf: received) == fixture)
+    #expect(try String(contentsOf: arguments, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "--ingest-antigravity-usage")
 }
 
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
@@ -3280,13 +3289,11 @@ private func googleAntigravityTemporaryFileURL(in directoryURL: URL) -> URL {
     directoryURL.appending(path: ".antigravity-status-line.json.\(UUID().uuidString).tmp")
 }
 
-private func googleAntigravityTestSnapshot(observedAt: Date) -> GoogleAntigravityStatusLineSnapshot {
-    GoogleAntigravityStatusLineSnapshot(
-        sourceVersion: "1.1.3",
-        planTier: "Google AI Pro",
+private func googleAntigravityTestSnapshot(observedAt: Date) -> GoogleAntigravityUsageSnapshot {
+    GoogleAntigravityUsageSnapshot(
         observedAt: observedAt,
         buckets: [
-            GoogleAntigravityStatusLineBucket(
+            GoogleAntigravityUsageBucket(
                 id: "gemini-3.1-pro-high-5h",
                 remainingFraction: 0.75,
                 resetsAt: observedAt.addingTimeInterval(3_600)
@@ -3330,18 +3337,18 @@ private func setGoogleAntigravityTestModificationDate(
 }
 
 private struct StubGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
-    let snapshot: GoogleAntigravityStatusLineSnapshot?
-    let error: GoogleAntigravityStatusLineStoreError?
+    let snapshot: GoogleAntigravityUsageSnapshot?
+    let error: GoogleAntigravityUsageStoreError?
 
     init(
-        snapshot: GoogleAntigravityStatusLineSnapshot? = nil,
-        error: GoogleAntigravityStatusLineStoreError? = nil
+        snapshot: GoogleAntigravityUsageSnapshot? = nil,
+        error: GoogleAntigravityUsageStoreError? = nil
     ) {
         self.snapshot = snapshot
         self.error = error
     }
 
-    func load() throws -> GoogleAntigravityStatusLineSnapshot? {
+    func load() throws -> GoogleAntigravityUsageSnapshot? {
         if let error { throw error }
         return snapshot
     }
@@ -3678,4 +3685,54 @@ private final class ClaudeProfileRoutingHTTPClient: ConnectorHTTPClient, @unchec
     #expect(result.reports[0].limits.first?.note == "plan: Max 5x")
     #expect(result.reports[1].limits.first?.note == nil)
     #expect(http.profileRequestCount == 1)
+}
+
+@Test func googleAntigravityUsageReadsCommandGroupsDirectly() throws {
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: try googleAntigravityTemporarySnapshotURL())
+    let payload = Data(#"""
+    {"status":"SUCCESS","command":{"name":"usage","data":{"groups":[
+      {"name":"Gemini","buckets":[
+        {"id":"gemini-weekly","remaining_fraction":0.8,"reset_time":"2027-01-16T09:00:00Z"},
+        {"id":"gemini-5h","remaining_fraction":0.6,"reset_time":"2027-01-15T11:00:00Z"}]},
+      {"name":"Other models","buckets":[
+        {"id":"3p-weekly","remaining_fraction":0.4,"reset_time":"2027-01-16T10:00:00Z"},
+        {"id":"3p-5h","remaining_fraction":0.2,"reset_time":"2027-01-15T12:00:00Z"}]}]}}}
+    """#.utf8)
+
+    _ = try GoogleAntigravityUsageBridge.ingest(data: payload, store: store)
+
+    let loaded = try store.load()
+    let saved = try #require(loaded)
+    #expect(saved.buckets.map(\.id) == ["3p-5h", "3p-weekly", "gemini-5h", "gemini-weekly"])
+    #expect(saved.buckets.map(\.remainingFraction) == [0.2, 0.4, 0.6, 0.8])
+    #expect(saved.buckets.allSatisfy { $0.resetsAt != nil })
+}
+
+private func googleAntigravityUsagePayload(buckets: String) -> Data {
+    Data("""
+    {"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"buckets":[\(buckets)]}]}}}
+    """.utf8)
+}
+
+@Test func googleAntigravityUsageKeepsMissingCapacityUnknownAndRejectsWrongEnvelopes() throws {
+    let store = GoogleAntigravityUsageSnapshotStore(snapshotURL: try googleAntigravityTemporarySnapshotURL())
+    _ = try GoogleAntigravityUsageBridge.ingest(data: googleAntigravityUsagePayload(buckets: #"{"id":"gemini-weekly"}"#), store: store)
+    let original = try store.load()
+    #expect(original?.buckets.first?.remainingFraction == nil)
+    #expect(original?.buckets.first?.resetsAt == nil)
+    let invalid = [
+        Data("not-json".utf8),
+        Data(#"{"quota":{"gemini-weekly":{"remaining_fraction":0.9}}}"#.utf8),
+        Data(#"{"status":"ERROR","command":{"name":"usage","data":{"groups":[]}}}"#.utf8),
+        Data(#"{"status":"SUCCESS","command":{"name":"other","data":{"groups":[]}}}"#.utf8),
+        googleAntigravityUsagePayload(buckets: #"{"id":"gemini-weekly"},{"id":"gemini-weekly"}"#),
+        googleAntigravityUsagePayload(buckets: (0...GoogleAntigravityUsageBridge.maximumBucketCount).map { "{\"id\":\"bucket-\($0)\"}" }.joined(separator: ",")),
+    ]
+    for payload in invalid {
+        #expect(throws: GoogleAntigravityUsageBridgeError.self) {
+            _ = try GoogleAntigravityUsageBridge.ingest(data: payload, store: store)
+        }
+        let preserved = try store.load()
+        #expect(preserved == original)
+    }
 }

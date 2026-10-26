@@ -161,10 +161,11 @@ MVP connectors:
   calling the usage endpoint.
 - Google provider: retired Gemini CLI credential files, Context Panel Google
   OAuth, Antigravity Keychain access, and private Cloud Code Assist requests are
-  removed. AGY invokes the signed refresh agent through its documented custom
-  status-line command. The utility mode strictly extracts version, plan tier,
-  and quota buckets from bounded standard input, then atomically writes a
-  sanitized App Group snapshot for the normal connector runtime.
+  removed. An AGY Stop hook invokes `/usage` in JSON mode and pipes it to the signed
+  refresh agent. The utility directly extracts quota buckets from bounded
+  standard input, atomically saves a sanitized App Group snapshot and merges
+  Google readings through the normal refresh lock, without refreshing other
+  providers. Guided setup preserves other hooks and never reads AGY login data.
 - Claude provider: store Context Panel-owned Claude OAuth tokens, refresh them
   through Anthropic's OAuth token endpoint when needed, call the Claude OAuth
   usage endpoint, and normalize returned utilization windows into reported

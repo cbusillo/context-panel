@@ -57,7 +57,7 @@ instead of pretending an estimate is exact.
 | OpenAI ChatGPT accounts                       | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode.                                                                                                                                                                                                                                                                                                                                                                               | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint.                                                                             | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists.                                                                                                                                                                    | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation                                                                                                                      |
 | Anthropic API organizations                   | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values.                                                                                                                                                                                                                                                                                                                                                                                                | API rate limits use token bucket behavior; monthly spend limits exist by tier.                                                                                                                                         | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported.                                          | Support official API usage/cost adapter. Capture fast-mode dimensions where available.                                                                                                                                                                                                                                                                     | High                                                                                                                                                                                                              |
 | Claude subscriptions and Claude Code seats    | Context Panel-owned Claude OAuth credentials can call `/api/oauth/usage` and return subscription utilization windows such as five-hour, seven-day, Opus, Sonnet, and OAuth-app buckets. Claude Code status-line JSON, local stats, transcripts, `ccusage`, Claude Code Keychain items, and Claude Desktop/web session storage are not runtime data sources.                                                                                                                                                                                                                                                                            | OAuth usage windows report percent utilization and may include reset timestamps. Missing windows or reset fields remain explicit unknowns rather than being filled from Claude Code local caches.                      | Multiple Claude accounts/seats are possible, but account connection should be conservative.                                                     | Use only Context Panel's Claude OAuth connector for automated Claude subscription refresh. Store Context Panel-owned OAuth tokens in Keychain, refresh them in the app/background agent, and persist normalized limit snapshots. Do not read Claude Code auth, Keychain, status-line caches, `ccusage`, raw transcripts, prompts, or conversation JSONL.   | High for OAuth-reported usage windows; unknown fields stay unknown                                                                                                                                                |
-| Google Antigravity                            | AGY CLI documents a custom status-line command whose JSON can include `version`, `plan_tier`, and a `quota` dictionary. Context Panel consumes only this public extension point and never reads the Antigravity login.                                                                                                                                                                                                                                                                                                                                                                                                                 | Each exported bucket can report remaining fraction and reset time. Observations arrive while AGY runs and remain event-driven rather than being privately polled; idle time alone is not stale.                        | One active AGY CLI login is observed at a time. Keep the normalized model account-aware without claiming concurrent Antigravity profiles.       | Use guided `/statusline` setup targeting the signed refresh agent. Persist only a bounded, validated, privacy-filtered App Group snapshot; do not edit AGY settings automatically, chain arbitrary commands, read Keychain, or call private Cloud Code Assist endpoints.                                                                                   | Medium-high for the documented extension point; quota fields remain optional and event-driven, so only missing, malformed, or unsupported data is unavailable.                                                    |
+| Google Antigravity | AGY Stop hooks deliver the successful `/usage` command JSON directly. | Each bucket reports its own remaining fraction and reset; readings are event-driven. | One active AGY CLI login at a time; no concurrent-profile claim. | Guided hook setup targets the signed refresh agent, which validates and persists only sanitized quota and immediately publishes the Google reading. No AGY login or private endpoint access. | Verified on AGY 1.4.7 for headless Stop and non-recursive `/usage`; unsupported or malformed output preserves the last observation. |
 | Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data.                                                                                                                                                                                                                                                                                                                                                                         | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time.                                                                                                         | Google project is the natural account boundary. Multiple Google accounts/projects should be supported.                                          | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history.                                                                                                                                                                              | Medium-high, but setup is heavier                                                                                                                                                                                 |
 | Google consumer Gemini app subscriptions      | No stable public API for personal Gemini app subscription allowance was found in this pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Provider UI likely remains source of truth, and current public help describes 5-hour refreshes until a weekly limit is reached.                                                                                        | Multiple Google accounts may matter, but automation risk is high.                                                                               | Defer direct Gemini Apps automation for v1 unless a supported API emerges, but keep the shared Google/Gemini display model able to show 5-hour, daily, weekly, or unknown windows.                                                                                                                                                                         | Low for automation; high for the documented need to avoid daily-only Gemini copy                                                                                                                                  |
 
@@ -326,31 +326,40 @@ does not permit third-party software to use an Antigravity login for access to
 Antigravity, so Context Panel must not copy, refresh, or call provider APIs with
 AGY credentials.
 
-The supported integration is AGY CLI's documented custom status-line command:
+The one source is AGY's `/usage` JSON, delivered after each run by its
+[documented Stop hook](https://antigravity.google/docs/hooks/). Setup is guided:
+Context Panel copies instructions; the user pastes them into AGY and applies
+only the named `context-panel-google-usage` entry in
+`~/.gemini/config/hooks.json`, preserving other hooks. Setup resolves AGY's
+executable to an absolute path and targets the signed helper inside
+`/Applications/Context Panel.app`. Existing sessions must restart to load it.
+The migration instructions remove an old Context Panel status line only if it
+invokes the retired ingestion flag; other customizations stay in place.
+Context Panel never edits AGY configuration itself.
 
-1. The user copies a `/statusline ...` command from Context Panel and pastes it
-   into AGY CLI.
-2. AGY invokes the signed embedded `ContextPanelRefreshAgent` executable and
-   sends status-line JSON on standard input.
-3. The early `--ingest-antigravity-status-line` utility mode enforces a 64 KiB
-   input cap and decodes only `version`, optional `plan_tier`, and the optional
-   `quota` dictionary.
-4. Context Panel validates bucket IDs, remaining fractions, disabled state, and
-   reset values, then atomically writes only that sanitized schema plus the
-   local observation time to its App Group.
-5. The normal Google connector reads the sanitized snapshot. It performs no
-   network request and has no access to Antigravity credentials.
+1. AGY's Stop hook runs `agy -p "/usage" --output-format json` with a bounded
+   timeout and pipes stdout to the refresh agent's `--ingest-antigravity-usage`.
+2. The helper bounds input to 64 KiB and requires a successful `usage` command.
+   It directly decodes `command.data.groups[].buckets[]`: bucket ID, optional
+   remaining fraction, reset time and disabled state. It neither translates to
+   the retired status-line schema nor accepts that schema.
+3. Valid observations atomically replace the privacy-filtered App Group bridge.
+   The existing private snapshot filename is retained for saved-data continuity.
+4. The helper immediately merges Google readings into the normalized store
+   using the existing refresh lock and a bounded wait. Other accounts retain
+   their readings; other providers are not refreshed. Widgets and the app are
+   notified through the normal snapshot-change path.
+5. The normal Google connector also reads that same sanitized snapshot. It
+   makes no network request and never accesses AGY credentials.
 
-Historical non-interactive AGY compatibility was validated against the actual
-agent invocation, not inferred from the interactive UI. On 2026-07-12, AGY 1.1.1
-running as `agy --add-dir <workspace> -p <prompt>` advanced the signed
-TestFlight bridge snapshot during the command and published four current quota
-buckets. A subsequent canonical refresh consumed those buckets as healthy
-Google limits. Google's status-line documentation describes the callback in
-terms of the TUI, so print-mode callback execution remains a version-specific
-compatibility dependency rather than a separate documented background API. If
-a future AGY release stops invoking it, Context Panel must show stale or
-unavailable data instead of falling back to credentials or private endpoints.
+On October 26, 2026, AGY 1.4.7 was tested with a temporary project's
+`.agents/hooks.json`, explicitly mounted with `--add-dir`. A successful headless
+prompt fired Stop once; `/usage` launched inside it returned structured JSON
+without re-triggering the hook. The temporary hook and project were removed.
+This proves compatibility on that version. The installed-app proof still
+requires the user to apply setup after a release carries the new reader.
+AGY 1.4.7 no longer invokes custom status lines in headless mode, so the old
+status-line parser and setup path have been removed.
 
 Unknown input fields are deliberately discarded. Email, account identifiers,
 conversation/session IDs, paths, transcript metadata, prompts, raw input,
@@ -388,11 +397,10 @@ provider identifier, but it must not infer a window from reset timing or add
 per-model buckets together as account capacity. Disabled buckets remain
 sanitized source evidence but do not appear as active capacity.
 
-AGY supports one custom status-line command. The first release uses guided
-setup, warns before the user could replace another customization, does not edit
-`~/.gemini/antigravity-cli/settings.json`, and does not execute or chain an
-arbitrary previous command. Teardown uses `/statusline delete`; Context Panel's
-separate Forget action deletes only its sanitized snapshot.
+Copy Remove asks AGY to remove only `context-panel-google-usage` from its
+hooks file. Restart existing sessions after removal. Context Panel's separate
+Forget action deletes only its sanitized snapshot. No login file is read,
+changed or copied by the integration.
 
 ### Claude Subscription Connector
 
