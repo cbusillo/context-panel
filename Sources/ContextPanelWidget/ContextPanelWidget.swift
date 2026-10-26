@@ -338,13 +338,7 @@ struct ContextPanelWidgetView: View {
 
 enum ContextPanelWidgetURL {
     static let overview = URL(string: "contextpanel://overview")!
-    static let reconnect = URL(string: "contextpanel://reconnect")!
-    static let cacheStatsSettings = URL(string: "contextpanel://settings/cache-stats")!
-    static let links = ContextPanelWidgetLinks(
-        overview: overview,
-        reconnect: reconnect,
-        cacheStatsSettings: cacheStatsSettings
-    )
+    static let links = ContextPanelWidgetLinks(overview: overview)
 }
 
 @main

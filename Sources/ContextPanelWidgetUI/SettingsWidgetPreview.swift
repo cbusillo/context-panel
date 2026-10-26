@@ -41,9 +41,7 @@ public struct SettingsWidgetPreview: View {
         ContextPanelWidgetContentView(
             family: family.widgetFamily, snapshot: snapshot,
             links: ContextPanelWidgetLinks(
-                overview: URL(string: "contextpanel://overview")!,
-                reconnect: URL(string: "contextpanel://reconnect")!,
-                cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
+                overview: URL(string: "contextpanel://overview")!
             ),
             showsResetCreditSurfaces: true, presentationDate: presentationDate,
             allowsNavigation: false

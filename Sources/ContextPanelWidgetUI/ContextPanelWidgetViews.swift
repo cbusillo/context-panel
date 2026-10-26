@@ -84,8 +84,6 @@ public extension View {
 
 public struct ContextPanelWidgetLinks: Sendable {
     public let overview: URL
-    public let reconnect: URL
-    public let cacheStatsSettings: URL
 
     public func account(_ provider: Provider, id: String) -> URL {
         var components = URLComponents()
@@ -103,14 +101,8 @@ public struct ContextPanelWidgetLinks: Sendable {
         return components.url ?? overview
     }
 
-    public init(
-        overview: URL,
-        reconnect: URL,
-        cacheStatsSettings: URL
-    ) {
+    public init(overview: URL) {
         self.overview = overview
-        self.reconnect = reconnect
-        self.cacheStatsSettings = cacheStatsSettings
     }
 }
 
