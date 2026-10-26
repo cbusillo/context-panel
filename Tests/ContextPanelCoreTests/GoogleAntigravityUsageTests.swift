@@ -3,7 +3,7 @@ import Testing
 
 @testable import ContextPanelCore
 
-@Test func googleAntigravityUsagePublishesImmediatelyWithoutRefreshingOtherProviders() async throws {
+@Test @MainActor func googleAntigravityUsagePublishesImmediatelyWithoutRefreshingOtherProviders() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let primary = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))
@@ -36,12 +36,12 @@ import Testing
     ]}]}}}
     """#.utf8)
     let result = try GoogleAntigravityUsageBridge.ingest(data: payload, observedAt: observedAt, store: bridge)
-    guard case .saved(let snapshot) = result else {
+    guard case .saved = result else {
         Issue.record("Expected a saved Google observation")
         return
     }
 
-    try await GoogleAntigravityUsageBridge.publish(snapshot: snapshot, configuration: configuration, runner: runner)
+    try await GoogleAntigravityUsageBridge.publish(store: bridge, configuration: configuration, runner: runner, now: { observedAt })
 
     let saved = try #require(primary.loadCurrent().snapshot)
     let google = try #require(saved.snapshot.limits.first { $0.provider == .google })
@@ -51,4 +51,24 @@ import Testing
     #expect(google.configuredAccountID == "google")
     #expect(saved.snapshot.limits.filter { $0.provider == .google }.count == 1)
     #expect(saved.snapshot.limits.first { $0.provider == .openAI } == siblingLimit)
+
+    let newerAt = observedAt.addingTimeInterval(20)
+    _ = try GoogleAntigravityUsageBridge.ingest(data: payload, observedAt: newerAt, store: bridge)
+    try await GoogleAntigravityUsageBridge.publish(store: bridge, configuration: configuration, runner: runner, now: { newerAt })
+    try await GoogleAntigravityUsageBridge.publish(store: bridge, configuration: configuration, runner: runner, now: { newerAt.addingTimeInterval(1) })
+    #expect(primary.loadCurrent().snapshot?.snapshot.limits.first { $0.provider == .google }?.lastUpdatedAt == newerAt)
+
+    let lock = try #require(runner.lock)
+    let acquired = try lock.tryHold()
+    let hold = try #require(acquired)
+    let latestAt = newerAt.addingTimeInterval(20)
+    let writer = Task {
+        defer { hold.release() }
+        try await Task.sleep(for: .milliseconds(50))
+        _ = try GoogleAntigravityUsageBridge.ingest(data: payload, observedAt: latestAt, store: bridge)
+    }
+    try await GoogleAntigravityUsageBridge.publish(store: bridge, configuration: configuration, runner: runner,
+        now: { latestAt.addingTimeInterval(1) })
+    try await writer.value
+    #expect(primary.loadCurrent().snapshot?.snapshot.limits.first { $0.provider == .google }?.lastUpdatedAt == latestAt)
 }

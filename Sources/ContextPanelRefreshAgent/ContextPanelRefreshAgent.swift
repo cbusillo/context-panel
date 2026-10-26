@@ -235,6 +235,7 @@ struct ContextPanelRefreshAgent {
             fputs("ContextPanelRefreshAgent: Google storage is unavailable\n", stderr)
             return
         }
+        var readingWasSaved = false
         do {
             let data = try boundedStandardInput(maximumBytes: GoogleAntigravityUsageBridge.maximumInputBytes, timeout: 40)
             let result = try GoogleAntigravityUsageBridge.ingest(
@@ -242,6 +243,7 @@ struct ContextPanelRefreshAgent {
                 store: GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
             )
             if case .saved(let snapshot) = result {
+                readingWasSaved = true
                 let accountStore = AccountConfigurationStore(
                     configurationURL: ContextPanelLocations.accountConfigurationURL(),
                     fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
@@ -250,7 +252,7 @@ struct ContextPanelRefreshAgent {
                     || accountStore.fallbackConfigurationURL.map({ FileManager.default.fileExists(atPath: $0.path) }) == true
                 else { return }
                 let configuration = accountStore.load(now: snapshot.observedAt)
-                guard configuration.status == .healthy else { throw GoogleAntigravityUsageBridgeError.invalidPayload }
+                guard configuration.status == .healthy else { throw GoogleAntigravityUsageBridgeError.publicationUnavailable }
                 let runner = SnapshotRefreshRunner(service: .appDefault(
                     companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
                     renewsStaleBookmarks: false,
@@ -260,7 +262,7 @@ struct ContextPanelRefreshAgent {
                     }
                 ))
                 if let decision = try await GoogleAntigravityUsageBridge.publish(
-                    snapshot: snapshot,
+                    store: GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL),
                     configuration: configuration.document,
                     runner: runner
                 ) {
@@ -268,7 +270,10 @@ struct ContextPanelRefreshAgent {
                 }
             }
         } catch {
-            fputs("ContextPanelRefreshAgent: Google usage could not be imported; the last saved reading is preserved\n", stderr)
+            let message = readingWasSaved
+                ? "ContextPanelRefreshAgent: Google reading saved; publication did not finish\n"
+                : "ContextPanelRefreshAgent: Google usage could not be imported; the last saved reading is preserved\n"
+            fputs(message, stderr)
         }
     }
 

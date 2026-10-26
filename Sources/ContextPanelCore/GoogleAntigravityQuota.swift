@@ -492,6 +492,7 @@ public enum GoogleAntigravityUsageIngestResult: Equatable, Sendable {
 public enum GoogleAntigravityUsageBridgeError: LocalizedError, Equatable, Sendable {
     case oversizedInput
     case invalidPayload
+    case publicationUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -499,6 +500,8 @@ public enum GoogleAntigravityUsageBridgeError: LocalizedError, Equatable, Sendab
             "Antigravity usage input was too large."
         case .invalidPayload:
             "Antigravity usage input was invalid."
+        case .publicationUnavailable:
+            "The Google reading was saved, but publication could not finish."
         }
     }
 }
@@ -578,32 +581,48 @@ public enum GoogleAntigravityUsageBridge {
 
     @discardableResult
     public static func publish(
-        snapshot: GoogleAntigravityUsageSnapshot,
+        store: GoogleAntigravityUsageSnapshotStore,
         configuration: AccountConfigurationDocument,
-        runner: SnapshotRefreshRunner
+        runner: SnapshotRefreshRunner,
+        now: @Sendable () -> Date = Date.init
     ) async throws -> SnapshotRefreshRunDecision? {
         var googleConfiguration = configuration
         googleConfiguration.accounts.removeAll { $0.connectorKind != .googleAntigravityQuota }
         guard let connector = AccountConnectorFactory.connectors(
             from: googleConfiguration,
-            googleAntigravitySnapshotLoader: SavedSnapshot(snapshot: snapshot)
+            googleAntigravitySnapshotLoader: store
         ).first else { return nil }
-        let result = await connector.refresh(now: snapshot.observedAt)
-        let decision = try await runner.saveMerged(
+        var hold: SnapshotRefreshLock.Hold?
+        if let lock = runner.lock {
+            let startedAt = ContinuousClock.now
+            while hold == nil {
+                hold = try lock.tryHold()
+                if hold != nil { break }
+                guard startedAt.duration(to: .now) < .seconds(10) else {
+                    throw GoogleAntigravityUsageBridgeError.publicationUnavailable
+                }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        defer { hold?.release() }
+        let publicationTime = now()
+        let result = await connector.refresh(now: publicationTime)
+        let unlockedRunner = SnapshotRefreshRunner(
+            service: runner.service,
+            stalenessPolicy: runner.stalenessPolicy,
+            resetExpiryRefreshStore: runner.resetExpiryRefreshStore,
+            lock: nil
+        )
+        let decision = try await unlockedRunner.saveMerged(
             refreshResult: result,
-            savedAt: snapshot.observedAt,
-            retryFor: .seconds(10),
+            savedAt: publicationTime,
+            retryFor: .zero,
             preservesUnreportedAccounts: true
         )
         guard case .refreshed(let outcome) = decision, outcome.didSaveSnapshot else {
-            throw GoogleAntigravityUsageBridgeError.invalidPayload
+            throw GoogleAntigravityUsageBridgeError.publicationUnavailable
         }
         return decision
-    }
-
-    private struct SavedSnapshot: GoogleAntigravityQuotaSnapshotLoading {
-        let snapshot: GoogleAntigravityUsageSnapshot
-        func load() -> GoogleAntigravityUsageSnapshot? { snapshot }
     }
 
     static func isValidBucketID(_ value: String) -> Bool {
