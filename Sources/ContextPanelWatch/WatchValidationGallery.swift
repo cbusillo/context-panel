@@ -35,28 +35,20 @@ struct WatchValidationGalleryView: View {
 }
 
 struct WatchAppValidationGalleryView: View {
-    let fixedState: WatchValidationAppState?
-
     @State private var selectedState = WatchValidationAppState.healthy
     private let adapter = WatchValidationFixtureAdapter()
 
-    init(fixedState: WatchValidationAppState? = nil) {
-        self.fixedState = fixedState
-    }
-
     private var context: WatchValidationFixtureContext {
-        adapter.appContext(state: fixedState ?? selectedState)
+        adapter.appContext(state: selectedState)
     }
 
     var body: some View {
         WatchValidationSampleContainer {
             List {
-                if fixedState == nil {
-                    Section("Sample state") {
-                        Picker("State", selection: $selectedState) {
-                            ForEach(WatchValidationAppState.allCases) { state in
-                                Text(state.displayName).tag(state)
-                            }
+                Section("Sample state") {
+                    Picker("State", selection: $selectedState) {
+                        ForEach(WatchValidationAppState.allCases) { state in
+                            Text(state.displayName).tag(state)
                         }
                     }
                 }
@@ -70,7 +62,7 @@ struct WatchAppValidationGalleryView: View {
                 )
             }
         }
-        .navigationTitle(fixedState == nil ? "App states" : "Watch app")
+        .navigationTitle("App states")
     }
 }
 

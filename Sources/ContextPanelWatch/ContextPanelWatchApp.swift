@@ -42,21 +42,30 @@ private struct WatchValidationLaunchView: View {
     let request: WatchValidationLaunchRequest
 
     var body: some View {
-        NavigationStack {
-            switch request {
-            case .normal:
-                EmptyView()
-            case .galleryIndex:
+        switch request {
+        case .normal, .invalid:
+            EmptyView()
+        case .galleryIndex:
+            NavigationStack {
                 WatchValidationGalleryView()
-            case let .app(state):
-                WatchAppValidationGalleryView(fixedState: state)
-            case let .complication(state, family):
+            }
+        case let .app(state):
+            let context = WatchValidationFixtureAdapter().appContext(state: state)
+            WatchRootContent(isLoading: state == .loading, onRefresh: {}) {
+                WatchUsageContent(
+                    result: context.result,
+                    snapshot: context.snapshot,
+                    displayPreferences: context.displayPreferences,
+                    syncErrorMessage: context.snapshot.syncErrorMessage,
+                    presentationDate: context.presentationDate
+                )
+            }
+        case let .complication(state, family):
+            NavigationStack {
                 WatchComplicationValidationGalleryView(
                     state: state,
                     family: family.contextPanelFamily
                 )
-            case .invalid:
-                EmptyView()
             }
         }
     }
