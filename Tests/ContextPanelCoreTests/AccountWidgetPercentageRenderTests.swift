@@ -59,9 +59,7 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
     }
     let snapshot = WidgetSnapshot(state: saved ? .stale : .ready, generatedAt: now, limits: limits,
         status: saved ? .stale : .healthy, message: "", accountDisplayMetadata: metadata)
-    let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!,
-        reconnect: URL(string: "contextpanel://settings")!,
-        cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!)
+    let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!)
     let view = ContextPanelWidgetContentView(family: family, snapshot: snapshot,
         links: links, presentationDate: now)
         .cpwThemeVariant(dark ? .dark : .light)

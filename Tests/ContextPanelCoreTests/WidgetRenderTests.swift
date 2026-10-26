@@ -9,15 +9,11 @@ import WidgetKit
 @testable import ContextPanelWidgetUI
 
 private let renderTestWidgetLinks = ContextPanelWidgetLinks(
-    overview: URL(string: "contextpanel://overview")!,
-    reconnect: URL(string: "contextpanel://reconnect")!,
-    cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
+    overview: URL(string: "contextpanel://overview")!
 )
 
 private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
-    overview: URL(string: "contextpanelcompanion://overview")!,
-    reconnect: URL(string: "contextpanelcompanion://overview")!,
-    cacheStatsSettings: URL(string: "contextpanelcompanion://overview")!
+    overview: URL(string: "contextpanelcompanion://overview")!
 )
 
 private func resetCreditRenderSnapshot(

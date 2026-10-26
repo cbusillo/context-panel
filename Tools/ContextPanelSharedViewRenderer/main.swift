@@ -193,7 +193,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
             view = AnyView(TVAccountBoard(overview: overview, now: now).padding(.horizontal, 72).padding(.vertical, 48))
         default:
             view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
-                links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!, reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!),
+                links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!),
                 showsResetCreditSurfaces: true, presentationDate: now)
                 .cpwThemeVariant(isDark ? .dark : .light))
         }
@@ -213,8 +213,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
             view = AnyView(BankedResetDeadlinesView(reports: [report], limits: [limit], presentationDate: now).padding(14))
         } else {
             let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: [limit], reports: [report], status: .healthy, message: "")
-            let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!,
-                reconnect: URL(string: "contextpanel://settings")!, cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!)
+            let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!)
             view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily, snapshot: snapshot,
                 links: links, showsResetCreditSurfaces: true, presentationDate: now)
                 .cpwThemeVariant(isDark ? .dark : .light)
@@ -224,9 +223,7 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
     } else if route.presentation == .widget {
         view = AnyView(ContextPanelWidgetContentView(family: route.family.widgetFamily,
             snapshot: ValidationGalleryContext(route: route).snapshot,
-            links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel-validation://sample")!,
-                reconnect: URL(string: "contextpanel-validation://sample")!,
-                cacheStatsSettings: URL(string: "contextpanel-validation://sample")!),
+            links: ContextPanelWidgetLinks(overview: URL(string: "contextpanel-validation://sample")!),
             showsResetCreditSurfaces: true, presentationDate: ValidationFixtureCatalog.referencePresentationDate)
             .cpwThemeVariant(isDark ? .dark : .light)
             .sharedViewFrame(cellFrame(route: route)) { CPWTheme.surface(variant: isDark ? .dark : .light) })

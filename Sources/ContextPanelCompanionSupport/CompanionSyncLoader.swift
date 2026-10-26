@@ -725,16 +725,6 @@ private struct CompanionSyncLoadCandidate: Equatable, Sendable {
 
 public enum CompanionDeepLinks {
     public static let overview = URL(string: "contextpanelcompanion://overview")!
-    public static let reconnect = URL(string: "contextpanelcompanion://overview")!
-    public static let cacheStatsSettings = URL(string: "contextpanelcompanion://overview")!
-    public static let widgetLinks = ContextPanelWidgetLinks(
-        overview: overview,
-        reconnect: reconnect,
-        cacheStatsSettings: cacheStatsSettings
-    )
-    public static let previewLinks = ContextPanelWidgetLinks(
-        overview: overview,
-        reconnect: reconnect,
-        cacheStatsSettings: cacheStatsSettings
-    )
+    public static let widgetLinks = ContextPanelWidgetLinks(overview: overview)
+    public static let previewLinks = ContextPanelWidgetLinks(overview: overview)
 }

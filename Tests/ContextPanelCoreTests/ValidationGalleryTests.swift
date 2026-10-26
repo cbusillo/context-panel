@@ -295,9 +295,7 @@ import WidgetKit
     let presentationDate = ValidationFixtureCatalog.referencePresentationDate
     let adapter = ValidationGalleryFixtureAdapter()
     let links = ContextPanelWidgetLinks(
-        overview: URL(string: "contextpanel-validation://sample")!,
-        reconnect: URL(string: "contextpanel-validation://sample")!,
-        cacheStatsSettings: URL(string: "contextpanel-validation://sample")!
+        overview: URL(string: "contextpanel-validation://sample")!
     )
     let stateScenarios = ValidationFixtureID.allCases.map {
         ($0, ValidationGalleryFamily.systemMedium, CPWThemeVariant.light)

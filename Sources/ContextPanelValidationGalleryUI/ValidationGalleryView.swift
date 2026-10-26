@@ -461,11 +461,7 @@ private struct ValidationGalleryWidgetTile: View {
 
     private var links: ContextPanelWidgetLinks {
         let inertURL = URL(string: "contextpanel-validation://sample")!
-        return ContextPanelWidgetLinks(
-            overview: inertURL,
-            reconnect: inertURL,
-            cacheStatsSettings: inertURL
-        )
+        return ContextPanelWidgetLinks(overview: inertURL)
     }
 
     var body: some View {
