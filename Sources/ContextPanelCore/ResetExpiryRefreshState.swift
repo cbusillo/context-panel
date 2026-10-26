@@ -312,7 +312,7 @@ public extension UsageLimit {
         guard status != .failure, status != .unknown, status != .stale else { return nil }
         guard used != nil || limit != nil else { return nil }
         guard resetsAt > (lastUpdatedAt ?? .distantPast) else { return nil }
-        return resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+        return resetsAt
     }
 }
 

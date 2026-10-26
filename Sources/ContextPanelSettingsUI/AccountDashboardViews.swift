@@ -366,7 +366,7 @@ public struct AccountDashboardPanel: View {
     @ViewBuilder private func fiveHour(_ account: AccountOverview.Account) -> some View {
         if let window = account.shortWindow {
             HStack(spacing: 7) {
-                DashboardRing(fraction: window.remainingFraction, color: palette.secondary, track: palette.track, lineWidth: 3.5)
+                DashboardRing(fraction: window.remainingFraction, color: window.isCurrent ? palette.secondary : palette.stale, track: palette.track, lineWidth: 3.5)
                     .frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(AccountNumbers.window(window)).font(scaledFont(12.5, weight: .semibold))

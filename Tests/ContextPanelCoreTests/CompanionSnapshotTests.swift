@@ -2030,7 +2030,7 @@ func companionSyncPresentationHidesRemoteDeliverySource(source: CompanionSyncSou
         ]
     )
     let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: generatedAt)
-    let now = fiveHourReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+    let now = fiveHourReset.addingTimeInterval(1)
 
     let widget = WidgetSnapshot.fromCompanionSync(
         CompanionSyncLoadResult(document: document, status: .stale),

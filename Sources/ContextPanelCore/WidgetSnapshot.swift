@@ -65,9 +65,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     public func accountOverview(now: Date, widgetsOnly: Bool = false,
                                 maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge) -> AccountOverview {
-        AccountOverview(snapshot: usageSnapshot, reports: reports, metadata: accountDisplayMetadata,
+        let hasExpiredWindow = limits.contains { $0.presented(at: now).presentationStatus(at: now, maximumAge: maximumAge) == .stale }
+        return AccountOverview(snapshot: usageSnapshot, reports: reports, metadata: accountDisplayMetadata,
                         now: now, maximumAge: maximumAge, widgetsOnly: widgetsOnly,
-                        isSavedSnapshot: state == .stale || state == .failure || syncErrorMessage != nil,
+                        isSavedSnapshot: state == .stale && !hasExpiredWindow || state == .failure || syncErrorMessage != nil,
                         accountBurnRates: accountBurnRates ?? [:])
     }
 

@@ -24,13 +24,13 @@ public extension AccountOverview.Window {
 
     /// Share that would be left now if the window were spent evenly up to the reset.
     func evenPaceRemaining(now: Date) -> Double? {
-        guard let duration, let reset = naturalResetAt, assumption == nil else { return nil }
+        guard isCurrent, let duration, let reset = naturalResetAt, assumption == nil else { return nil }
         return min(1, max(0, reset.timeIntervalSince(now) / duration))
     }
 
     /// Observed burn divided by the burn that would land exactly on zero at the reset.
     func paceRatio(now: Date) -> Double? {
-        guard let burn = burnFractionPerHour, let remaining = remainingFraction,
+        guard isCurrent, let burn = burnFractionPerHour, let remaining = remainingFraction,
               let reset = naturalResetAt, reset > now else { return nil }
         guard remaining > 0 else { return burn > 0 ? .infinity : 0 }
         return burn / (remaining / (reset.timeIntervalSince(now) / 3_600))
@@ -38,7 +38,7 @@ public extension AccountOverview.Window {
 
     /// When the observed burn reaches zero, if that comes before the natural reset.
     func projectedRunOut(now: Date) -> Date? {
-        guard let burn = burnFractionPerHour, burn > 0, let remaining = remainingFraction,
+        guard isCurrent, let burn = burnFractionPerHour, burn > 0, let remaining = remainingFraction,
               let reset = naturalResetAt else { return nil }
         let runOut = now.addingTimeInterval(remaining / burn * 3_600)
         return runOut < reset ? runOut : nil
@@ -306,8 +306,8 @@ public extension AccountOverview.Account {
     /// The first long window to run out before its reset, else the weekly window with least projected spare
     /// at its own reset, including model-specific limits. Without a weekly projection, keep the tightest long window.
     func horizonWindow(now: Date) -> AccountOverview.Window? {
-        guard isReliable else { return longWindow }
-        let long = longWindows
+        guard [.available, .closeToLimit, .limited].contains(state) else { return longWindow }
+        let long = longWindows.filter(\.isCurrent)
         if let first = long.compactMap({ window in Self.runOut(window, now: now).map { (window, $0) } }).min(by: { $0.1 < $1.1 }) {
             return first.0
         }
@@ -332,7 +332,7 @@ public extension AccountOverview.Account {
         // A provider may report only its short allowance. Forecast that real window,
         // without inventing a weekly allowance or changing long-window selection.
         let window = horizonWindow(now: now) ?? shortWindow
-        let current = isReliable
+        let current = [.available, .closeToLimit, .limited].contains(state) && window?.isCurrent == true
         let reset = window?.naturalResetAt.flatMap { $0 > now ? $0 : nil }
         let burn = current ? window?.burnFractionPerHour : nil
         let runOut = current ? window.flatMap { Self.runOut($0, now: now) } : nil

@@ -658,9 +658,9 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 
     public func nextAgeStaleTransitionDate(for snapshot: UsageSnapshot, now: Date) -> Date? {
-        guard hasAgeSensitiveLimits(in: snapshot) else { return nil }
-        let transition = snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
-        return transition > now ? transition : nil
+        let observations = snapshot.limits.isEmpty ? [snapshot.generatedAt] : snapshot.limits
+            .filter { !$0.usesEventDrivenFreshness }.map { $0.lastUpdatedAt ?? snapshot.generatedAt }
+        return observations.map { $0.addingTimeInterval(maximumAge + 1) }.filter { $0 > now }.min()
     }
 
     public func refreshAttentionSummary(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> RefreshAttentionSummary? {
@@ -690,12 +690,10 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 
     private func ageIsStale(in snapshot: UsageSnapshot, now: Date) -> Bool {
-        hasAgeSensitiveLimits(in: snapshot)
-            && now.timeIntervalSince(snapshot.generatedAt) > maximumAge
-    }
-
-    private func hasAgeSensitiveLimits(in snapshot: UsageSnapshot) -> Bool {
-        snapshot.limits.isEmpty || snapshot.limits.contains { !$0.usesEventDrivenFreshness }
+        if snapshot.limits.isEmpty { return now.timeIntervalSince(snapshot.generatedAt) > maximumAge }
+        return snapshot.limits.contains {
+            !$0.usesEventDrivenFreshness && now.timeIntervalSince($0.lastUpdatedAt ?? snapshot.generatedAt) > maximumAge
+        }
     }
 
     private func presentationResetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {

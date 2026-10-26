@@ -75,8 +75,11 @@ func accountCapacityUsesMainOpenAILimitsWhileKeepingModelRows(model: String) thr
     let staleReport = StoredProviderReport(provider: .openAI, accountID: "a", configuredAccountID: "a",
         accountName: "Ignored", generatedAt: capacityNow.addingTimeInterval(-SnapshotFreshness.appMaximumAge - 1), status: .healthy, errorMessage: nil)
     let stale = AccountCapacity.rows(configuration: [alias], snapshot: UsageSnapshot(generatedAt: capacityNow,
-        limits: [capacityLimit("a", used: 30)]), reports: [staleReport], now: capacityNow)
+        limits: [capacityLimit("a", used: 30, at: staleReport.generatedAt)]), reports: [staleReport], now: capacityNow)
     #expect(stale.first?.status == .stale)
+    let updated = AccountCapacity.rows(configuration: [alias], snapshot: UsageSnapshot(generatedAt: capacityNow,
+        limits: [capacityLimit("a", used: 30)]), reports: [staleReport], now: capacityNow)
+    #expect(updated.first?.status == .healthy)
 }
 
 @Test func accountBurnRateNeverBorrowsSiblingPace() throws {

@@ -330,7 +330,12 @@ public struct SnapshotRefreshRunner: Sendable {
         now: Date = Date()
     ) -> Date? {
         guard let snapshot else { return nil }
-        return resetExpiryRefreshState.nextRefreshCheckDate(for: snapshot, now: now)
+        let ageCheck = snapshot.limits.filter { !$0.usesEventDrivenFreshness }.map { limit in
+            max((limit.lastUpdatedAt ?? snapshot.generatedAt).addingTimeInterval(SnapshotFreshness.refreshNeededAge),
+                snapshot.generatedAt.addingTimeInterval(SnapshotFreshness.refreshNeededAge))
+        }.min()
+        return [ageCheck, resetExpiryRefreshState.nextRefreshCheckDate(for: snapshot, now: now)]
+            .compactMap { $0 }.min().map { max($0, now) }
     }
 
     public static func nextRefreshCheckInterval(

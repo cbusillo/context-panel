@@ -1607,7 +1607,7 @@ import Testing
     ).count == 1)
     #expect(stored.providerAccessAlerts(
         stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 10_000),
-        now: resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+        now: resetsAt.addingTimeInterval(1)
     ).isEmpty)
     #expect(stored.providerAccessAlerts(
         stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60),
@@ -1663,11 +1663,11 @@ import Testing
 
     #expect(stored.providerAccessAlerts(
         stalenessPolicy: policy,
-        now: fiveHourReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+        now: fiveHourReset.addingTimeInterval(1)
     ).count == 1)
     #expect(stored.providerAccessAlerts(
         stalenessPolicy: policy,
-        now: weeklyReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+        now: weeklyReset.addingTimeInterval(1)
     ).isEmpty)
 }
 
@@ -2491,7 +2491,7 @@ import Testing
     #expect(primary.loadHistory().count == 1)
 }
 
-@Test func snapshotStalenessPolicyMarksExpiredResetAsStaleAfterGrace() throws {
+@Test func snapshotStalenessPolicyMarksExpiredResetAsStaleAtTheBoundary() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
     let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
@@ -2500,8 +2500,8 @@ import Testing
     ))
     let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
 
-    #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(9)) == .limited)
-    #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(10)) == .stale)
+    #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(-1)) == .limited)
+    #expect(policy.status(for: stored, now: resetAt) == .stale)
 }
 
 @Test func snapshotStoreStalenessPolicyCacheLoadsOnlyOnReload() {
@@ -2595,7 +2595,7 @@ import Testing
 
     #expect(policy.status(for: stored, now: now) == .healthy)
     #expect(policy.refreshAttentionSummary(for: stored, now: now) == nil)
-    #expect(policy.nextStaleTransitionDate(for: stored.snapshot, now: now) == resetAt.addingTimeInterval(10))
+    #expect(policy.nextStaleTransitionDate(for: stored.snapshot, now: now) == resetAt)
 }
 
 @Test func snapshotStalenessPolicyRefreshesElapsedAGYResetWithoutShowingStale() {
@@ -2939,7 +2939,7 @@ import Testing
         resetExpiryRefreshStore: resetStateStore,
         lock: nil
     )
-    let firstAttemptAt = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let firstAttemptAt = resetAt
     let secondAttemptAt = firstAttemptAt.addingTimeInterval(SnapshotFreshness.resetExpiryRetryDelay)
 
     if case .refreshed = try await runner.refreshIfNeeded(now: firstAttemptAt) {
@@ -3023,7 +3023,7 @@ import Testing
         resetExpiryRefreshStore: resetStateStore,
         lock: nil
     )
-    let now = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let now = resetAt
 
     let decision = try await runner.refreshIfNeeded(now: now)
 
@@ -3044,7 +3044,7 @@ import Testing
     )
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
-    let firstAttemptAt = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let firstAttemptAt = resetAt
     let promptSaveAt = firstAttemptAt.addingTimeInterval(10)
     let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [UsageLimit(
         id: "google:local:agy:gemini-5h",
@@ -3129,7 +3129,7 @@ import Testing
     )
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
-    let firstAttemptAt = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let firstAttemptAt = resetAt
     let retryAt = firstAttemptAt.addingTimeInterval(SnapshotFreshness.resetExpiryRetryDelay)
     let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [UsageLimit(
         id: "google:local:agy:gemini-5h",

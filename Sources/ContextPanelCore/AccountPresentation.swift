@@ -273,6 +273,7 @@ public enum AccountTerms {
 
     /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.
     public static func refill(_ window: AccountOverview.Window, now: Date) -> String {
+        if window.status == .stale || window.status == .failure { return AccountCapacityState.stale.displayText }
         if let fraction = window.remainingFraction, fraction >= 0.995, window.assumption == nil { return untouched }
         return reset(window, now: now).map { refills + " " + $0 } ?? unknown
     }

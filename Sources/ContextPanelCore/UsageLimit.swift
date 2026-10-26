@@ -345,6 +345,15 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         presentationAssumption == .scheduledReset
     }
 
+    public func presentationStatus(at now: Date, maximumAge: TimeInterval) -> UsageStatus {
+        if let lastUpdatedAt, lastUpdatedAt > now.addingTimeInterval(60)
+            || !usesEventDrivenFreshness && now.timeIntervalSince(lastUpdatedAt) > maximumAge {
+            return .stale
+        }
+        if !isAssumedAfterScheduledReset, let resetsAt, resetsAt <= now { return .stale }
+        return status
+    }
+
     public func presented(at now: Date) -> UsageLimit {
         guard presentationAssumption == nil,
               usesEventDrivenFreshness,

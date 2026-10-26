@@ -53,7 +53,7 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     )
     #expect(!expectedRates.isEmpty)
     #expect(entries[0].snapshot.observedBurnRates == expectedRates)
-    #expect(entries.contains { $0.date == reset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace) })
+    #expect(entries.contains { $0.date == reset })
 }
 
 @Test func widgetKindMatchesSharedReloadIdentity() {
@@ -872,7 +872,7 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
 
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: stored, status: .stale),
-        now: resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1),
+        now: resetsAt.addingTimeInterval(1),
         stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 10_000)
     )
 
@@ -1297,7 +1297,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
     let entries = provider.timelineEntries(date: now)
 
     #expect(entries.count == 2)
-    #expect(entries[1].date == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace))
+    #expect(entries[1].date == resetsAt)
     #expect(entries[1].snapshot.state == .ready)
     #expect(entries[1].snapshot.refreshAttentionSummary?.expiredResetLimits.map(\.accountID) == ["claude-timeline-reset"])
 }
@@ -1413,7 +1413,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
 
     #expect(entries.map(\.date) == [
         now,
-        limitReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace),
+        limitReset,
         creditExpiry,
         ageTransition,
     ])
@@ -1456,7 +1456,7 @@ func widgetSnapshotDoesNotRequestRetiredLabFolderGrant(folder: String) throws {
 
     #expect(
         policy.nextStaleTransitionDate(for: snapshot, now: now)
-            == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+            == resetsAt
     )
     #expect(
         policy.nextAgeStaleTransitionDate(for: snapshot, now: now)

@@ -67,6 +67,9 @@ public struct AccountOverview: Equatable, Sendable {
         /// 5-hour, weekly or daily, inferred from the provider's labels; nil when unknown.
         public var period: MainLimitWindow? = nil
         public var isAccountCapacityLimit: Bool = true
+        public var isCurrent: Bool {
+            [.healthy, .close, .limited].contains(status) && confidence != .unknown && assumption == nil
+        }
     }
 
     public struct Account: Equatable, Sendable, Identifiable {
@@ -90,7 +93,7 @@ public struct AccountOverview: Equatable, Sendable {
             ? nil : limitingWindow?.remainingFraction }
         public var isReliable: Bool {
             [.available, .closeToLimit, .limited].contains(state)
-                && limitingWindow != nil && capacityWindows.allSatisfy { $0.assumption == nil && $0.confidence != .unknown }
+                && limitingWindow != nil && capacityWindows.allSatisfy(\.isCurrent)
         }
         public var unknownExpiryCount: Int? {
             bankedResets.map { max(0, $0.availableCount - ($0.knownExpiries.isEmpty
@@ -203,26 +206,23 @@ public struct AccountOverview: Equatable, Sendable {
                        burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
-                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) }, status: limit.status,
+                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) },
+                       status: isSavedSnapshot ? .stale : limit.presentationStatus(at: now, maximumAge: maximumAge),
                        period: MainLimitWindow.infer(from: limit), isAccountCapacityLimit: limit.isAccountCapacityLimit)
             }
             let observed = main.compactMap(\.lastUpdatedAt).min() ?? report?.generatedAt
-            let ageSensitive = main.isEmpty || main.contains { !$0.usesEventDrivenFreshness }
-            let old = main.contains { limit in
-                limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
-                    || !limit.usesEventDrivenFreshness && now.timeIntervalSince($0) > maximumAge } ?? false
-            } || report.map { $0.generatedAt > now.addingTimeInterval(60)
-                || ageSensitive && now.timeIntervalSince($0.generatedAt) > maximumAge } == true
-            let passed = main.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
+            let fresh = limits.filter { $0.presentationStatus(at: now, maximumAge: maximumAge) != .stale }
+            let freshMain = fresh.filter(\.isAccountCapacityLimit)
             let state: AccountCapacityState
             if !entry.isEnabled { state = .off }
             else if entry.readState == .notConnected || (entry.provider == .anthropic && (report?.requiresCredentialReconnect == true || (report == nil && limits.isEmpty))) { state = .notConnected }
             else if entry.readState == .unavailable || report?.status == .failure { state = .unavailable }
-            else if old || passed || (isSavedSnapshot && !main.isEmpty) || main.contains(where: { $0.status == .stale }) { state = .stale }
-            else if entry.readState == .stale { state = .stale }
+            else if !main.isEmpty && (isSavedSnapshot || freshMain.isEmpty) { state = .stale }
+            else if entry.readState == .stale && freshMain.isEmpty { state = .stale }
             else if entry.readState == .unknown || main.isEmpty || main.contains(where: { $0.remainingCapacityRatio == nil }) { state = .unknown }
             else {
-                state = switch AccountCapacity.usageStatus(limits: limits, reportStatus: report?.status ?? .healthy) {
+                let reportStatus = report?.status == .stale && !freshMain.isEmpty ? .healthy : report?.status ?? .healthy
+                state = switch AccountCapacity.usageStatus(limits: fresh, reportStatus: reportStatus) {
                 case .healthy: .available
                 case .close: .closeToLimit
                 case .limited: .limited
