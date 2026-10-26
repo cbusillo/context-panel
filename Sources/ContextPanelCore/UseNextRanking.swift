@@ -206,15 +206,14 @@ public extension AccountOverview {
         let now = rankedAt
         let rows = accounts.filter { $0.metadata.provider == provider }
         let multipleUseLast = rows.filter(\.metadata.useLast).count > 1
-        let current = rows.filter {
+        let launchable = rows.filter {
             [.available, .closeToLimit, .limited].contains($0.state)
-                || ($0.isCodexSignInExpired && $0.state == .unavailable && !$0.capacityWindows.isEmpty
-                    && $0.capacityWindows.allSatisfy { $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil })
+                || ($0.isCodexSignInExpired && $0.state == .unavailable && $0.hasKnownCapacity)
         }
-        let staleOnly = current.isEmpty && rows.contains { $0.state == .stale }
-        let rankable = staleOnly ? rows.filter { $0.state == .stale } : current
+        let staleOnly = launchable.isEmpty && rows.contains { $0.state == .stale }
+        let rankable = staleOnly ? rows.filter { $0.state == .stale } : launchable
         let pending = Self.pendingLaunches(evidence: evidence, rows: rows, now: now)
-        let measured = rankable.compactMap { $0.mainWindow?.burnPoints }
+        let measured = rankable.compactMap { $0.mainWindow.flatMap { $0.isCurrent ? $0.burnPoints : nil } }
         let averageBurn = measured.isEmpty ? 0 : measured.reduce(0, +) / Double(measured.count)
         let pointsPerLaunch = Self.pointsPerLaunch(rows: rankable, evidence: evidence, now: now, multipleUseLast: multipleUseLast)
 
@@ -239,7 +238,7 @@ public extension AccountOverview {
                let gateFraction = gate.remainingFraction {
                 let gateLeft = gateFraction * 100
                 let hoursToGateReset = gate.naturalResetAt.map { max(0, $0.timeIntervalSince(now) / 3_600) }
-                let projected = (gate.burnPoints ?? 0) * (hoursToGateReset ?? 0)
+                let projected = gate.isCurrent ? (gate.burnPoints ?? 0) * (hoursToGateReset ?? 0) : 0
                 if gateLeft < UseNextRanking.fiveHourGatePoints || projected > 0 && projected >= gateLeft {
                     exclude("5-hour limit nearly used; free again at its 5-hour reset", gate.naturalResetAt); continue
                 }
@@ -247,10 +246,12 @@ public extension AccountOverview {
             let unstarted = provider == .openAI && row.isUnstarted(main)
             let fresh = assumedFull ? now.addingTimeInterval(UseNextRanking.windowHours(main.period) * 3_600) : nil
             guard let deadline = unstarted ? now : fresh ?? main.naturalResetAt else { exclude("Reset time unknown", nil); continue }
-            let burn = main.burnPoints ?? averageBurn
+            let ownBurn = main.isCurrent ? main.burnPoints : nil
+            let burn = ownBurn ?? averageBurn
             let useLast = row.metadata.useLast && !multipleUseLast
             // An unstarted clock starts with the first launch, so its share is judged over a full week.
-            let hours = unstarted ? UseNextRanking.weekHours : max(UseNextRanking.minimumHours, deadline.timeIntervalSince(now) / 3_600)
+            let readingDate = row.isCodexSignInExpired ? main.observedAt ?? now : now
+            let hours = unstarted ? UseNextRanking.weekHours : max(UseNextRanking.minimumHours, deadline.timeIntervalSince(readingDate) / 3_600)
             var reserve: Double?
             var need = (remaining - burn * hours) / hours
             if useLast {
@@ -270,7 +271,8 @@ public extension AccountOverview {
             }.map { window in
                 "\(window.modelLabel ?? window.label) is used up; only that model waits for its reset"
             } + (assumedFull ? ["Assumed full after its reset; the next launch brings a real reading"] : [])
-            candidates.append(Candidate(row: row, remaining: remaining, burn: burn, burnEstimated: main.burnPoints == nil,
+                + (row.isCodexSignInExpired ? [AccountTerms.codexSignInExpired] : [])
+            candidates.append(Candidate(row: row, remaining: remaining, burn: burn, burnEstimated: ownBurn == nil,
                                         hours: hours, deadline: deadline, unstarted: unstarted, starter: starter,
                                         useLast: useLast, reserve: reserve, need: need, notes: notes))
         }

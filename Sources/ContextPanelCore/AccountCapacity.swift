@@ -26,6 +26,11 @@ public struct AccountCapacity: Identifiable, Sendable {
             || (report == nil && limits.isEmpty))
     }
 
+    public var signInExpiryText: String? {
+        provider == .openAI && state == .unavailable && report?.accessState.kind == .signInExpired
+            ? AccountTerms.codexSignInExpired : nil
+    }
+
     /// Shared by the panel and the read-only agent projection.
     public var state: AccountCapacityState {
         guard isEnabled else { return .off }
@@ -66,7 +71,8 @@ public struct AccountCapacity: Identifiable, Sendable {
                 let main = limits.filter(\.isAccountCapacityLimit)
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
                 let fresh = limits.filter {
-                    $0.presentationStatus(at: now, maximumAge: SnapshotFreshness.appMaximumAge,
+                    !($0.lastUpdatedAt == nil && report?.status == .failure)
+                        && $0.presentationStatus(at: now, maximumAge: SnapshotFreshness.appMaximumAge,
                         fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt) != .stale
                 }
                 let hasFreshCapacity = fresh.contains(where: \.isAccountCapacityLimit)

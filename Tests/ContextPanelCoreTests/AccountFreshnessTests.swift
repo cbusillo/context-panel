@@ -2,6 +2,21 @@ import Foundation
 import Testing
 @testable import ContextPanelCore
 
+@Test func failedReportCannotSupplyALegacyWindowsMissingObservation() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let limit = UsageLimit(provider: .openAI, accountID: "legacy", accountName: "Legacy",
+        label: "Codex Weekly", windowLabel: "Weekly", modelLabel: "Codex", unit: .percent,
+        used: 20, limit: 100, resetsAt: now.addingTimeInterval(86_400), confidence: .observed)
+    let report = StoredProviderReport(provider: .openAI, accountID: limit.accountID, accountName: "Legacy",
+        generatedAt: now, status: .failure, accessState: ProviderAccessState(kind: .signInExpired), errorMessage: nil)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: now, limits: [limit]),
+        reports: [report], now: now)
+    let row = try #require(overview.accounts.first)
+    #expect(row.observedAt == nil)
+    #expect(row.windows.first?.isCurrent == false)
+    #expect(overview.useNextRanking(provider: .openAI).launchOrder.isEmpty)
+}
+
 private let freshnessNow = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func freshnessLimit(_ provider: Provider, account: String = "primary", window: String = "Weekly",

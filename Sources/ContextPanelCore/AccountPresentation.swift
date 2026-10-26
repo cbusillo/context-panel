@@ -511,7 +511,7 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
 public extension AccountOverview.Account {
     /// The state word for this account: "Not updating" when a read failed and nothing was ever saved.
     var stateText: String {
-        if isCodexSignInExpired, state == .unavailable || state == .stale { return AccountTerms.codexSignInExpired }
+        if isCodexSignInExpired, state == .unavailable { return AccountTerms.codexSignInExpired }
         return state == .unavailable && windows.isEmpty ? AccountTerms.notUpdating : state.displayText
     }
 

@@ -102,6 +102,28 @@ private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, eviden
     #expect(ranking(rows).launchOrder.isEmpty)
 }
 
+@Test func expiredCodexReadingDoesNotGainUrgencyWhenItsOldResetPasses() throws {
+    let saved = Fixture(name: "saved", weeklyUsed: 20, resetHours: 1, burn: 50,
+                        signInExpired: true, fiveHourUsed: 50, fiveHourResetHours: 1, fiveHourBurn: 50, observedAgo: 7_200)
+    let healthy = Fixture(name: "healthy", weeklyUsed: 50, resetHours: 100, burn: 0.2)
+    func result(at now: Date) -> UseNextRanking {
+        AccountOverview(snapshot: UsageSnapshot(generatedAt: now,
+            limits: saved.limits(now: rankNow) + healthy.limits(now: now)),
+            reports: [saved.report(now: rankNow), healthy.report(now: now)], now: now,
+            accountBurnRates: [saved.name: saved.rates(now: rankNow), healthy.name: healthy.rates(now: now)])
+            .useNextRanking(provider: .openAI)
+    }
+    let original = result(at: rankNow)
+    let later = result(at: rankNow.addingTimeInterval(86_400))
+    let before = try #require(original.entry(saved))
+    let after = try #require(later.entry(saved))
+    #expect(after.need == before.need)
+    #expect(after.burnEstimated)
+    #expect(after.burn == later.entry(healthy)?.burn)
+    #expect(after.notes.contains(AccountTerms.codexSignInExpired))
+    #expect(later.launchOrder.contains(saved.id))
+}
+
 private extension UseNextRanking {
     func entry(_ fixture: Fixture) -> Entry? { entries.first { $0.accountID == fixture.id } }
     func exclusion(_ fixture: Fixture) -> Exclusion? { excluded.first { $0.accountID == fixture.id } }

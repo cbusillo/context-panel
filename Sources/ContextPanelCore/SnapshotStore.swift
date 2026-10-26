@@ -285,10 +285,8 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
             "\(provider.accessProductName) close to limit"
         case .available:
             "\(provider.accessProductName) available"
-        case .unknown:
+        case .unknown, .signInExpired:
             "\(provider.accessProductName) availability unknown"
-        case .signInExpired:
-            AccountTerms.codexSignInExpired
         }
     }
 
@@ -304,10 +302,8 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
             "Provider capacity is close to a limit"
         case .available:
             "Provider access is available"
-        case .unknown:
+        case .unknown, .signInExpired:
             "Provider access is unknown"
-        case .signInExpired:
-            "Codex renews its sign-in; the last good reading is retained"
         }
     }
 

@@ -86,6 +86,11 @@ public struct AccountOverview: Equatable, Sendable {
         public var isCodexSignInExpired: Bool = false
         public var id: String { metadata.id }
         var capacityWindows: [Window] { windows.filter(\.isAccountCapacityLimit) }
+        var hasKnownCapacity: Bool {
+            !capacityWindows.isEmpty && capacityWindows.allSatisfy {
+                $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil && $0.observedAt != nil
+            }
+        }
         public var limitingWindow: Window? {
             guard !capacityWindows.isEmpty, capacityWindows.allSatisfy({ $0.remainingFraction != nil }) else { return nil }
             return capacityWindows.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
@@ -166,9 +171,7 @@ public struct AccountOverview: Equatable, Sendable {
         let observed = accounts.compactMap(\.observedAt).max() ?? rankedAt
         let replay = accounts.map { account -> Account in
             guard [.stale, .unavailable].contains(account.state) else { return account }
-            let known = !account.capacityWindows.isEmpty && account.capacityWindows.allSatisfy {
-                $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil
-            }
+            let known = account.hasKnownCapacity
             let windows = account.windows.map { window -> Window in
                 var replay = window
                 if known, [.stale, .failure].contains(replay.status) { replay.status = .healthy }
@@ -201,6 +204,11 @@ public struct AccountOverview: Equatable, Sendable {
             let report = reports.filter {
                 $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             }.max { $0.generatedAt < $1.generatedAt }
+            func windowStatus(_ limit: UsageLimit) -> UsageStatus {
+                if limit.lastUpdatedAt == nil, report?.status == .failure { return .unknown }
+                return limit.presentationStatus(at: now, maximumAge: maximumAge,
+                    fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt)
+            }
             let windows = limits.map { limit in
                 Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id),
                        label: ConnectorRedactor.safeErrorDescription([AccountTerms.modelName(limit.modelLabel, provider: limit.provider), limit.windowLabel ?? limit.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")),
@@ -213,13 +221,11 @@ public struct AccountOverview: Equatable, Sendable {
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
                        periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) },
-                       status: isSavedSnapshot ? .stale : limit.presentationStatus(at: now, maximumAge: maximumAge,
-                           fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt),
+                       status: isSavedSnapshot ? .stale : windowStatus(limit),
                        period: MainLimitWindow.infer(from: limit), isAccountCapacityLimit: limit.isAccountCapacityLimit)
             }
-            let observed = main.compactMap(\.lastUpdatedAt).min() ?? report?.generatedAt
-            let fresh = limits.filter { $0.presentationStatus(at: now, maximumAge: maximumAge,
-                fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt) != .stale }
+            let observed = main.compactMap(\.lastUpdatedAt).min() ?? (report?.status == .failure ? nil : report?.generatedAt)
+            let fresh = limits.filter { windowStatus($0) != .stale }
             let freshMain = fresh.filter(\.isAccountCapacityLimit)
             let state: AccountCapacityState
             if !entry.isEnabled { state = .off }
