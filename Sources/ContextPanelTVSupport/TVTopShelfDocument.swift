@@ -50,7 +50,7 @@ public struct TVTopShelfCard: Codable, Equatable, Identifiable, Sendable {
         self.remainingPercent = remainingPercent
         self.actionURLString = actionURLString
     }
-    /// Quantitative saved data shares the Mac's warm-neutral treatment, independently of
+    /// Quantitative saved data shares the Mac's cool slate gray treatment, independently of
     /// the provider's identity hue. Refresh failure must never look like fresh capacity.
     public func capacityToken(isStale: Bool) -> AccountColorToken {
         isStale || status == .stale || status == .failure ? .saved : provider?.colorToken ?? .tertiary
