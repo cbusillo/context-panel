@@ -1959,7 +1959,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     let fixture = googleAntigravityUsagePayload(buckets: #"{"id":"gemini-weekly","remaining_fraction":0.75}"#)
     let fixtureURL = root.appending(path: "fixture.json")
     try fixture.write(to: fixtureURL)
-    try "#!/bin/sh\ncat \(GoogleAntigravityUsageSetup.shellQuoted(fixtureURL.path))\n".write(to: agy, atomically: true, encoding: .utf8)
+    try "#!/bin/sh\ncase \"$*\" in \"-p /usage --output-format json --print-timeout \"*) ;; *) exit 65 ;; esac\ncat \(GoogleAntigravityUsageSetup.shellQuoted(fixtureURL.path))\n".write(to: agy, atomically: true, encoding: .utf8)
     try "#!/bin/sh\nprintf '%s\\n' \"$@\" > \(GoogleAntigravityUsageSetup.shellQuoted(arguments.path))\ncat > \(GoogleAntigravityUsageSetup.shellQuoted(received.path))\nprintf '{}\\n'\n".write(to: helper, atomically: true, encoding: .utf8)
     for executable in [agy, helper] {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
@@ -1974,7 +1974,7 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
 
     #expect(process.terminationStatus == 0)
     #expect(try Data(contentsOf: received) == fixture)
-    #expect(try String(contentsOf: arguments, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "--ingest-antigravity-usage")
+    #expect(try String(contentsOf: arguments, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == GoogleAntigravityUsageBridge.ingestArgument)
 }
 
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {

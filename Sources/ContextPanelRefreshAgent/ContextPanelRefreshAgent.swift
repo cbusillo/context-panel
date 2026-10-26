@@ -17,7 +17,7 @@ struct ContextPanelRefreshAgent {
                 "--provider-credentials-present",
                 "--webhook-credentials-present",
                 "--bookmark-access-summary",
-                "--ingest-antigravity-usage",
+                GoogleAntigravityUsageBridge.ingestArgument,
                 "--sync-runtime-receipts",
             ].contains($0)
         }
@@ -37,7 +37,7 @@ struct ContextPanelRefreshAgent {
                 checkWebhookCredentials()
             case "--bookmark-access-summary":
                 printBookmarkAccessSummary()
-            case "--ingest-antigravity-usage":
+            case GoogleAntigravityUsageBridge.ingestArgument:
                 await ingestAntigravityUsage()
                 Foundation.exit(0)
             case "--sync-runtime-receipts":
@@ -242,23 +242,30 @@ struct ContextPanelRefreshAgent {
                 store: GoogleAntigravityUsageSnapshotStore(snapshotURL: snapshotURL)
             )
             if case .saved(let snapshot) = result {
-                let configuration = AccountConfigurationStore(
+                let accountStore = AccountConfigurationStore(
                     configurationURL: ContextPanelLocations.accountConfigurationURL(),
                     fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
-                ).load(now: snapshot.observedAt)
+                )
+                guard FileManager.default.fileExists(atPath: accountStore.configurationURL.path)
+                    || accountStore.fallbackConfigurationURL.map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+                else { return }
+                let configuration = accountStore.load(now: snapshot.observedAt)
                 guard configuration.status == .healthy else { throw GoogleAntigravityUsageBridgeError.invalidPayload }
                 let runner = SnapshotRefreshRunner(service: .appDefault(
+                    companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
                     renewsStaleBookmarks: false,
                     snapshotDidChange: {
                         WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
                         notifyContextPanelWidgetSnapshotUpdated()
                     }
                 ))
-                try await GoogleAntigravityUsageBridge.publish(
+                if let decision = try await GoogleAntigravityUsageBridge.publish(
                     snapshot: snapshot,
                     configuration: configuration.document,
                     runner: runner
-                )
+                ) {
+                    await LimitWarningNotificationService.appDefault().notifyIfNeeded(decision: decision)
+                }
             }
         } catch {
             fputs("ContextPanelRefreshAgent: Google usage could not be imported; the last saved reading is preserved\n", stderr)

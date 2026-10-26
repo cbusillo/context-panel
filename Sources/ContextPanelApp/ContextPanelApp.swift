@@ -2380,7 +2380,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func copyAntigravityBridgeRemovalCommand() {
         copyAntigravityBridgeCommand(
             GoogleAntigravityUsageSetup.removeCommand,
-            notice: "Copied the AGY bridge removal command. Paste it into AGY CLI, then use Forget in Context Panel."
+            notice: "Copied removal instructions. Paste into AGY, restart existing sessions, then use Forget in Context Panel."
         )
     }
 

@@ -11,16 +11,17 @@ import Testing
     let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
     let configuration = AccountConfigurationDocument(updatedAt: observedAt, accounts: [
         LocalProviderAccountConfiguration(id: "google", provider: .google, connectorKind: .googleAntigravityQuota, displayName: "Google"),
+        LocalProviderAccountConfiguration(id: "duplicate", provider: .google, connectorKind: .googleAntigravityQuota, displayName: "Duplicate"),
         LocalProviderAccountConfiguration(id: "paused", provider: .google, connectorKind: .googleAntigravityQuota, displayName: "Paused", isEnabled: false),
         LocalProviderAccountConfiguration(id: "openai", provider: .openAI, connectorKind: .codexRateLimits, displayName: "OpenAI"),
     ])
     try accountStore.save(configuration)
     let siblingLimit = UsageLimit(id: "openai-limit", provider: .openAI, accountID: "openai", configuredAccountID: "openai",
-        accountName: "OpenAI", label: "Weekly", unit: .percent, used: 25, limit: 100, lastUpdatedAt: observedAt.addingTimeInterval(-60))
+        accountName: "OpenAI", label: "Weekly", unit: .percent, used: 25, limit: 100, lastUpdatedAt: observedAt.addingTimeInterval(-3_600))
     let sibling = ProviderConnectorReport(provider: .openAI, accountID: "openai", configuredAccountID: "openai",
-        accountName: "OpenAI", generatedAt: observedAt.addingTimeInterval(-60), limits: [siblingLimit])
-    try primary.save(StoredUsageSnapshot(savedAt: observedAt.addingTimeInterval(-60),
-        refreshResult: ConnectorRefreshResult(generatedAt: observedAt.addingTimeInterval(-60), reports: [sibling])))
+        accountName: "OpenAI", generatedAt: observedAt.addingTimeInterval(-3_600), limits: [siblingLimit])
+    try primary.save(StoredUsageSnapshot(savedAt: observedAt.addingTimeInterval(-3_600),
+        refreshResult: ConnectorRefreshResult(generatedAt: observedAt.addingTimeInterval(-3_600), reports: [sibling])))
     let service = SnapshotRefreshService(accountStore: accountStore, stores: SnapshotRefreshStores(primary: primary),
         connectorFactory: { _ in
             Issue.record("Hook ingestion must not refresh other providers")
@@ -44,6 +45,7 @@ import Testing
 
     let saved = try #require(primary.loadCurrent().snapshot)
     let google = try #require(saved.snapshot.limits.first { $0.provider == .google })
+    #expect(primary.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 300), now: observedAt).status == .stale)
     #expect(google.lastUpdatedAt == observedAt)
     #expect(google.used == 20)
     #expect(google.configuredAccountID == "google")

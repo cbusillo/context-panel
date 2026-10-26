@@ -345,10 +345,12 @@ Context Panel never edits AGY configuration itself.
    the retired status-line schema nor accepts that schema.
 3. Valid observations atomically replace the privacy-filtered App Group bridge.
    The existing private snapshot filename is retained for saved-data continuity.
-4. The helper immediately merges Google readings into the normalized store
+4. The helper immediately merges local Google readings into the normalized store
    using the existing refresh lock and a bounded wait. Other accounts retain
    their readings; other providers are not refreshed. Widgets and the app are
-   notified through the normal snapshot-change path.
+   notified through the normal snapshot-change path. The normal companion
+   publisher and warning delivery run after the local save; remote delivery
+   still depends on CloudKit availability.
 5. The normal Google connector also reads that same sanitized snapshot. It
    makes no network request and never accesses AGY credentials.
 
@@ -356,8 +358,13 @@ On October 26, 2026, AGY 1.4.7 was tested with a temporary project's
 `.agents/hooks.json`, explicitly mounted with `--add-dir`. A successful headless
 prompt fired Stop once; `/usage` launched inside it returned structured JSON
 without re-triggering the hook. The temporary hook and project were removed.
-This proves compatibility on that version. The installed-app proof still
-requires the user to apply setup after a release carries the new reader.
+This proves project-hook compatibility on that version. The documented global
+hook location remains for the post-release check; global hooks were never
+changed by this experiment. The installed-app proof requires the user to apply
+setup after a release carries the new reader and confirm its actual hook and
+command advance the local Google observation. Stop waits for the bounded
+`/usage` export and local publication before the AGY turn finishes; this adds
+export latency but consumes no model turn.
 AGY 1.4.7 no longer invokes custom status lines in headless mode, so the old
 status-line parser and setup path have been removed.
 
@@ -923,7 +930,9 @@ that can write the store directly keep using the directory.
 - [Claude Code authentication](https://code.claude.com/docs/en/authentication)
 - [Claude usage and length limits](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)
 - [Models, usage, and limits in Claude Code](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code)
-- [Antigravity custom status-line commands](https://antigravity.google/docs/cli/commands/statusline)
+- [Antigravity lifecycle hooks](https://antigravity.google/docs/hooks/)
+- [Antigravity usage command](https://antigravity.google/docs/cli/commands/usage/)
+- [Antigravity headless mode](https://antigravity.google/docs/cli/headless/)
 - [Antigravity plans and quota windows](https://antigravity.google/docs/plans)
 - [Antigravity FAQ](https://antigravity.google/docs/faq)
 - [Gemini CLI authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html)

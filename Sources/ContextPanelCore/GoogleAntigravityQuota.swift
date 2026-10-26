@@ -504,6 +504,7 @@ public enum GoogleAntigravityUsageBridgeError: LocalizedError, Equatable, Sendab
 }
 
 public enum GoogleAntigravityUsageBridge {
+    public static let ingestArgument = "--ingest-antigravity-usage"
     public static let maximumInputBytes = 64 * 1_024
     public static let maximumBucketCount = 128
 
@@ -575,19 +576,19 @@ public enum GoogleAntigravityUsageBridge {
         return .saved(snapshot)
     }
 
+    @discardableResult
     public static func publish(
         snapshot: GoogleAntigravityUsageSnapshot,
         configuration: AccountConfigurationDocument,
         runner: SnapshotRefreshRunner
-    ) async throws {
-        let accounts = configuration.accounts.filter {
-            $0.isEnabled && $0.connectorKind == .googleAntigravityQuota
-        }.map { GoogleAntigravityAccountConfiguration(accountID: $0.id, accountName: $0.displayName) }
-        guard !accounts.isEmpty else { return }
-        let result = await GoogleAntigravityQuotaConnector(
-            accounts: accounts,
-            snapshotLoader: SavedSnapshot(snapshot: snapshot)
-        ).refresh(now: snapshot.observedAt)
+    ) async throws -> SnapshotRefreshRunDecision? {
+        var googleConfiguration = configuration
+        googleConfiguration.accounts.removeAll { $0.connectorKind != .googleAntigravityQuota }
+        guard let connector = AccountConnectorFactory.connectors(
+            from: googleConfiguration,
+            googleAntigravitySnapshotLoader: SavedSnapshot(snapshot: snapshot)
+        ).first else { return nil }
+        let result = await connector.refresh(now: snapshot.observedAt)
         let decision = try await runner.saveMerged(
             refreshResult: result,
             savedAt: snapshot.observedAt,
@@ -597,6 +598,7 @@ public enum GoogleAntigravityUsageBridge {
         guard case .refreshed(let outcome) = decision, outcome.didSaveSnapshot else {
             throw GoogleAntigravityUsageBridgeError.invalidPayload
         }
+        return decision
     }
 
     private struct SavedSnapshot: GoogleAntigravityQuotaSnapshotLoading {
@@ -845,13 +847,13 @@ public enum GoogleAntigravityUsageSetup {
     public static let hookName = "context-panel-google-usage"
 
     public static var removeCommand: String {
-        "Remove only the \"\(hookName)\" entry from ~/.gemini/config/hooks.json. Keep every other hook and setting. Then use Forget in Context Panel to remove its saved Google reading."
+        "Remove only the \"\(hookName)\" entry from ~/.gemini/config/hooks.json. Keep every other hook and setting. Restart existing AGY sessions, then use Forget in Context Panel to remove its saved Google reading."
     }
 
     public static func hookCommand(applicationBundleURL: URL, agyExecutable: String = "agy") -> String {
         let executableURL = applicationBundleURL
             .appending(path: "Contents/Library/LoginItems/ContextPanelRefreshAgent.app/Contents/MacOS/ContextPanelRefreshAgent")
-        return "\(shellQuoted(agyExecutable)) -p '/usage' --output-format json --print-timeout 30s </dev/null 2>/dev/null | \(shellQuoted(executableURL.path)) --ingest-antigravity-usage"
+        return "\(shellQuoted(agyExecutable)) -p '/usage' --output-format json --print-timeout 30s </dev/null 2>/dev/null | \(shellQuoted(executableURL.path)) \(GoogleAntigravityUsageBridge.ingestArgument)"
     }
 
     public static func setupCommand(applicationBundleURL: URL) -> String {
