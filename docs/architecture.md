@@ -214,7 +214,7 @@ Freshness is evaluated per window from its observation time. A short window
 that has expired keeps its measured value with a Saved label while a current
 weekly window can still supply its forecast. Neither a newer snapshot envelope
 nor a repeated read of a session-history file renews an observation. Polling
-checks account observation ages on the existing five-minute refresh cadence,
+checks account observation ages on the existing refresh cadence,
 before the display age limit, and requests a reset refresh at the reset itself.
 Event-driven sources retain their existing observation and assumed-reset rules;
 polling them cannot create a new provider measurement.

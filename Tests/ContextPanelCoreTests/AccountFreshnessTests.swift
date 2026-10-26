@@ -29,6 +29,16 @@ func resetOnlySavesTheExpiredWindowWhileWeeklyForecastStaysUsable(provider: Prov
     #expect(account.horizon(now: freshnessNow).isCurrent)
     #expect(account.horizon(now: freshnessNow).remaining == 0.75)
     #expect(!account.isReliable)
+    #expect(overview.providerTotals(now: freshnessNow).first?.longRemaining == 0.75)
+    #expect(overview.providerTotals(now: freshnessNow).first?.shortRemaining == nil)
+
+    let stored = StoredUsageSnapshot(savedAt: snapshot.generatedAt, snapshot: snapshot)
+    let companion = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(
+        document: CompanionSyncDocument(storedSnapshot: stored, publishedAt: freshnessNow), status: .healthy),
+        now: freshnessNow)
+    let shared = try #require(companion.accountOverview(now: freshnessNow).accounts.first)
+    #expect(shared.horizon(now: freshnessNow).isCurrent)
+    #expect(shared.shortWindow?.status == .stale)
 
     let replacement = freshnessLimit(provider, window: "5-hour", used: 0,
         reset: freshnessNow.addingTimeInterval(5 * 3_600))
@@ -78,4 +88,32 @@ func oneOldWindowDoesNotAgeItsFreshSiblingOrAnotherAccount(provider: Provider) t
     let wake = try #require(SnapshotRefreshRunner.nextRefreshCheckDate(snapshot: long, now: freshnessNow))
     #expect(wake > freshnessNow)
     #expect(wake < freshnessNow.addingTimeInterval(SnapshotFreshness.appMaximumAge))
+
+    let past = freshnessNow.addingTimeInterval(SnapshotFreshness.appMaximumAge + 60)
+    let retry = try #require(SnapshotRefreshRunner.nextRefreshCheckDate(snapshot: long, now: past))
+    #expect(SnapshotRefreshRunner.nextRefreshCheckInterval(normalInterval: 3_600, nextCheckDate: retry,
+        startedAt: past, finishedAt: past) > 0)
+
+    let delayed = freshnessLimit(.anthropic, observedAt: reset.addingTimeInterval(1), reset: reset)
+    var retries = ResetExpiryRefreshState()
+    retries.recordAttempt(previousSnapshot: snapshot,
+        refreshedSnapshot: UsageSnapshot(generatedAt: reset.addingTimeInterval(1), limits: [delayed]),
+        attemptedAt: reset.addingTimeInterval(1))
+    #expect(retries.records.first?.retryCount == 1)
+    #expect(retries.nextRefreshCheckDate(for: UsageSnapshot(generatedAt: reset, limits: [delayed]), now: reset) != nil)
+}
+
+@Test func transportFailureAndMissingObservationTimesNeverBecomeCurrent() throws {
+    let old = freshnessNow.addingTimeInterval(-SnapshotFreshness.appMaximumAge - 1)
+    let limit = UsageLimit(provider: .openAI, accountID: "legacy", accountName: "Test account", label: "Weekly",
+        windowLabel: "Weekly", unit: .percent, used: 25, limit: 100, resetsAt: freshnessNow.addingTimeInterval(86_400))
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: old, limits: [limit]), reports: [], now: freshnessNow)
+    #expect(overview.accounts.first?.state == .stale)
+    let expired = freshnessLimit(.anthropic, window: "5-hour", reset: freshnessNow)
+    let current = freshnessLimit(.openAI, reset: freshnessNow.addingTimeInterval(86_400))
+    for limits in [[current], [current, expired]] {
+        let snapshot = WidgetSnapshot(state: .stale, generatedAt: freshnessNow, limits: limits,
+            status: .stale, message: "Saved", syncErrorMessage: "Update unavailable")
+        #expect(snapshot.accountOverview(now: freshnessNow).accounts.allSatisfy { !$0.horizon(now: freshnessNow).isCurrent })
+    }
 }

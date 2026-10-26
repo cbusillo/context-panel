@@ -71,14 +71,14 @@ public extension AccountOverview.Account {
 
     /// The earliest run-out across windows, with the window that causes it. Saved data gets none.
     func earliestRunOut(now: Date) -> (window: AccountOverview.Window, date: Date)? {
-        guard isReliable else { return nil }
+        guard [.available, .closeToLimit, .limited].contains(state) else { return nil }
         return windows.compactMap { window in window.projectedRunOut(now: now).map { (window, $0) } }
             .min { $0.1 < $1.1 }
     }
 
     /// Fastest pace across this account's windows. Saved data gets none.
     func paceRatio(now: Date) -> Double? {
-        guard isReliable else { return nil }
+        guard [.available, .closeToLimit, .limited].contains(state) else { return nil }
         return windows.compactMap { $0.paceRatio(now: now) }.max()
     }
 
@@ -159,9 +159,9 @@ public extension AccountOverview {
         Provider.allCases.compactMap { provider in
             let all = accounts.filter { $0.metadata.provider == provider }
             guard !all.isEmpty else { return nil }
-            let counted = all.filter(\.isReliable)
+            let counted = all.filter { [.available, .closeToLimit, .limited].contains($0.state) && $0.poolWindow?.isCurrent == true }
             let longs = counted.compactMap(\.poolWindow)
-            let shorts = counted.compactMap(\.shortWindow)
+            let shorts = counted.compactMap(\.shortWindow).filter(\.isCurrent)
             func mean(_ values: [Double]) -> Double? { values.isEmpty ? nil : values.reduce(0, +) / Double(values.count) }
             let complete = !longs.isEmpty && longs.count == counted.count
             let evens = longs.compactMap { $0.evenPaceRemaining(now: now) }

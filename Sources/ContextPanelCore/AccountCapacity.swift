@@ -66,7 +66,8 @@ public struct AccountCapacity: Identifiable, Sendable {
                 let main = limits.filter(\.isAccountCapacityLimit)
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
                 let fresh = limits.filter {
-                    $0.presentationStatus(at: now, maximumAge: SnapshotFreshness.appMaximumAge) != .stale
+                    $0.presentationStatus(at: now, maximumAge: SnapshotFreshness.appMaximumAge,
+                        fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt) != .stale
                 }
                 let hasFreshCapacity = fresh.contains(where: \.isAccountCapacityLimit)
                 let reported = report?.status == .stale && hasFreshCapacity ? .healthy : report?.status ?? .unknown

@@ -231,7 +231,8 @@ public extension AccountOverview {
             let assumedFull = main.assumption != nil
             let remaining = fraction * 100
             guard remaining > 0 else { exclude("Out of quota until its reset", main.naturalResetAt); continue }
-            if let gate = row.fiveHourGate, let gateFraction = gate.remainingFraction {
+            if let gate = row.fiveHourGate, gate.isCurrent || (gate.naturalResetAt ?? .distantPast) > now,
+               let gateFraction = gate.remainingFraction {
                 let gateLeft = gateFraction * 100
                 let hoursToGateReset = gate.naturalResetAt.map { max(0, $0.timeIntervalSince(now) / 3_600) }
                 let projected = (gate.burnPoints ?? 0) * (hoursToGateReset ?? 0)

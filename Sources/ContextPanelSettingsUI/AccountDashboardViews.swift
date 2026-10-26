@@ -559,7 +559,7 @@ public struct AccountDashboardDetail: View {
         DashboardCard(title: window.label, trailing: window.id == account.limitingWindow?.id ? AccountTerms.tightest : nil, fillsHeight: true, palette: palette) {
             HStack(alignment: .center, spacing: 16) {
                 ZStack {
-                    DashboardRing(fraction: window.remainingFraction, color: account.isReliable ? palette.provider(account.metadata.provider) : palette.stale,
+                    DashboardRing(fraction: window.remainingFraction, color: window.isCurrent ? palette.provider(account.metadata.provider) : palette.stale,
                                   track: palette.track, lineWidth: 8, evenPace: window.evenPaceRemaining(now: now),
                                   tick: palette.primary)
                     VStack(spacing: -2) {
@@ -593,9 +593,9 @@ public struct AccountDashboardDetail: View {
                     if let even = window.evenPaceRemaining(now: now) {
                         fact("Even pace", AccountNumbers.percentWithSign(even) + " left now")
                     }
-                    if hasBurn { fact("Using", !account.isReliable ? "not current" : window.burnFractionPerHour.map { AccountTerms.burn($0, windowDuration: window.duration) + " · "
+                    if hasBurn { fact("Using", !window.isCurrent ? "not current" : window.burnFractionPerHour.map { AccountTerms.burn($0, windowDuration: window.duration) + " · "
                         + AccountPaceText.ratio(window.paceRatio(now: now)) + " the even pace" } ?? AccountTerms.measuring) }
-                    if account.isReliable, let runOut = window.projectedRunOut(now: now) {
+                    if let runOut = window.projectedRunOut(now: now) {
                         GridRow {
                             Text("Runs out").foregroundStyle(palette.secondary)
                             Text(AccountPaceText.approximately(runOut, now: now) + " · before reset")

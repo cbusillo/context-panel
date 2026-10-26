@@ -168,8 +168,13 @@ public struct AccountOverview: Equatable, Sendable {
             let known = !account.capacityWindows.isEmpty && account.capacityWindows.allSatisfy {
                 $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil
             }
+            let windows = account.windows.map { window -> Window in
+                var replay = window
+                if known, [.stale, .failure].contains(replay.status) { replay.status = .healthy }
+                return replay
+            }
             return Account(metadata: account.metadata, state: known ? .available : .unknown,
-                windows: account.windows, bankedResets: account.bankedResets,
+                windows: windows, bankedResets: account.bankedResets,
                 bankedState: account.bankedState, observedAt: account.observedAt,
                 providerPlan: account.providerPlan, bankedAdvice: account.bankedAdvice,
                 resetAssessment: account.resetAssessment)
@@ -207,11 +212,13 @@ public struct AccountOverview: Equatable, Sendable {
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
                        periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) },
-                       status: isSavedSnapshot ? .stale : limit.presentationStatus(at: now, maximumAge: maximumAge),
+                       status: isSavedSnapshot ? .stale : limit.presentationStatus(at: now, maximumAge: maximumAge,
+                           fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt),
                        period: MainLimitWindow.infer(from: limit), isAccountCapacityLimit: limit.isAccountCapacityLimit)
             }
             let observed = main.compactMap(\.lastUpdatedAt).min() ?? report?.generatedAt
-            let fresh = limits.filter { $0.presentationStatus(at: now, maximumAge: maximumAge) != .stale }
+            let fresh = limits.filter { $0.presentationStatus(at: now, maximumAge: maximumAge,
+                fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt) != .stale }
             let freshMain = fresh.filter(\.isAccountCapacityLimit)
             let state: AccountCapacityState
             if !entry.isEnabled { state = .off }
