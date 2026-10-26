@@ -25,6 +25,8 @@ func resetOnlySavesTheExpiredWindowWhileWeeklyForecastStaysUsable(provider: Prov
     #expect(account.shortWindow?.status == .stale)
     #expect(account.shortWindow?.remainingFraction == 0.6)
     #expect(account.shortWindow?.assumption == nil)
+    #expect(AccountTerms.windowReading(try #require(account.shortWindow)).contains(AccountCapacityState.stale.displayText))
+    #expect(!AccountTerms.windowReading(try #require(account.longWindow)).contains(AccountCapacityState.stale.displayText))
     #expect(account.glanceAccessibilityText(now: freshnessNow, isNext: false).contains(
         AccountTerms.windowReading(try #require(account.shortWindow), includingLeft: true)))
     #expect(AccountTerms.refill(try #require(account.shortWindow), now: freshnessNow) == AccountCapacityState.stale.displayText)

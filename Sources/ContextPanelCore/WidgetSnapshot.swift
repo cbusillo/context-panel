@@ -280,18 +280,20 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         let usesStaleSavedCache = result.status == .stale
             && (result.transportMetadata?.source == .localCache
                 || result.transportMetadata?.source == .appGroup)
+        let hasCurrentCapacity = limits.contains {
+            $0.isAccountCapacityLimit && [.healthy, .close, .limited].contains($0.status)
+        }
         let state: WidgetSnapshotState = if isSetupOnly {
             .setupNeeded
         } else if usesStaleSavedCache
-            || companionStatus == .stale
-            || rawRefreshAttentionSummary?.isSnapshotAgeStale == true
-            || !limits.isEmpty && limits.allSatisfy({ $0.status == .stale }) {
+            || !hasCurrentCapacity && (companionStatus == .stale
+                || rawRefreshAttentionSummary?.isSnapshotAgeStale == true
+                || limits.contains(where: { $0.status == .stale })) {
             .stale
         } else {
             .ready
         }
         let providerAccessSnapshotIsStale = usesStaleSavedCache
-            || rawRefreshAttentionSummary?.isSnapshotAgeStale == true
         let presentationReports = reports.providerAccessPresentationReports(
             snapshotIsStale: providerAccessSnapshotIsStale,
             expiredResetLimits: rawRefreshAttentionSummary?.expiredResetLimits ?? []
@@ -573,8 +575,12 @@ private struct CompanionUsagePresentation {
         limits = snapshot.limits.map { companionLimit in
             let limit = companionLimit.usageLimit
             guard limit.status.canAgeToStale else { return limit }
+            let fallback = accountStates[CompanionUsageAccountKey(limit: companionLimit)]?.observedAt
+            if !limit.usesEventDrivenFreshness, limit.lastUpdatedAt == nil, fallback == nil {
+                return limit.replacingStatusOverride(with: .stale)
+            }
             let status = limit.presented(at: now).presentationStatus(at: now, maximumAge: stalenessPolicy.maximumAge,
-                fallbackObservedAt: snapshot.generatedAt)
+                fallbackObservedAt: fallback)
             return status == limit.status ? limit : limit.replacingStatusOverride(with: status)
         }
         reports = snapshot.providerStatuses.compactMap { companionStatus -> StoredProviderReport? in
