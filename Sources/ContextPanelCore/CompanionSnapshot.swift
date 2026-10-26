@@ -1683,7 +1683,7 @@ private extension ProviderAccessState {
         case .blockedUntilReset, .paidFallbackActive:
             guard let resetsAt, resetsAt > now else { return nil }
             return statusContribution
-        case .available, .pressure, .unknown, .degraded:
+        case .available, .pressure, .unknown, .degraded, .signInExpired:
             return nil
         }
     }

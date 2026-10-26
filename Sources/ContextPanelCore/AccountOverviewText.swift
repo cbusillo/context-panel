@@ -33,7 +33,7 @@ public extension AccountOverview.Account {
         return (window.assumption == nil ? "" : "Assumed · ") + ContextPanelDateFormatting.accountReset(date, compact: true)
     }
     var accessibilityText: String {
-        var text = "\(metadata.provider.accountDisplayName), \(metadata.label), \(state.displayText), \(remainingText) left"
+        var text = "\(metadata.provider.accountDisplayName), \(metadata.label), \(stateText), \(remainingText) left"
         if let date = limitingWindow?.naturalResetAt {
             text += ", \(limitingWindow?.assumption == nil ? "reset" : "assumed after reset") \(ContextPanelDateFormatting.accountReset(date))"
         }

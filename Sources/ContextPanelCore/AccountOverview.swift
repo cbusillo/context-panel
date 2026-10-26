@@ -83,6 +83,7 @@ public struct AccountOverview: Equatable, Sendable {
         public var bankedAdvice: BankedAdvice? = nil
         /// When applying a banked reset is worth it (#791); the value and reasoning for the detail view.
         public var resetAssessment: ResetAssessment? = nil
+        public var isCodexSignInExpired: Bool = false
         public var id: String { metadata.id }
         var capacityWindows: [Window] { windows.filter(\.isAccountCapacityLimit) }
         public var limitingWindow: Window? {
@@ -266,6 +267,7 @@ public struct AccountOverview: Equatable, Sendable {
             }
             var account = Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
                                   bankedState: bankedState, observedAt: observed, providerPlan: plan)
+            account.isCodexSignInExpired = entry.provider == .openAI && report?.accessState.kind == .signInExpired
             account.bankedAdvice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
                 .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
             return account

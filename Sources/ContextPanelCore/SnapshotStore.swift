@@ -287,6 +287,8 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
             "\(provider.accessProductName) available"
         case .unknown:
             "\(provider.accessProductName) availability unknown"
+        case .signInExpired:
+            AccountTerms.codexSignInExpired
         }
     }
 
@@ -304,6 +306,8 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
             "Provider access is available"
         case .unknown:
             "Provider access is unknown"
+        case .signInExpired:
+            "Codex renews its sign-in; the last good reading is retained"
         }
     }
 
@@ -311,7 +315,7 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
         switch accessState.kind {
         case .degraded:
             .close
-        case .available, .pressure, .blockedUntilReset, .paidFallbackActive, .unknown:
+        case .available, .pressure, .blockedUntilReset, .paidFallbackActive, .unknown, .signInExpired:
             accessState.statusContribution ?? .unknown
         }
     }
@@ -359,10 +363,10 @@ extension Array where Element == StoredProviderReport {
                 }
             case .degraded:
                 !matchingExpiredLimits.isEmpty
-            case .available, .pressure, .unknown:
+            case .available, .pressure, .unknown, .signInExpired:
                 false
             }
-            return snapshotIsStale || resetRefreshIsDue
+            return (snapshotIsStale && report.accessState.kind != .signInExpired) || resetRefreshIsDue
                 ? report.withAccessState(.unknown)
                 : report
         }
@@ -389,7 +393,7 @@ private extension ProviderAccessState.Kind {
             2
         case .degraded:
             1
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             0
         }
     }

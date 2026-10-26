@@ -461,7 +461,7 @@ private struct WatchProviderAccessSection: View {
             "dollarsign.circle.fill"
         case .degraded:
             "questionmark.circle.fill"
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             "circle.fill"
         }
     }

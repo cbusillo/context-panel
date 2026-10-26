@@ -352,7 +352,7 @@ private struct TVAccountDetailContent: View {
             VStack(alignment: .leading, spacing: 24) {
                 if let accountID, let account = overview.accounts.first(where: { $0.id == accountID }) {
                     Text(account.metadata.label).font(.largeTitle)
-                    Text(account.metadata.provider.accountDisplayName + " · " + account.state.displayText)
+                    Text(account.metadata.provider.accountDisplayName + " · " + account.stateText)
                     ForEach(account.windows) { window in
                         TVReadOnlyAccountCard {
                             VStack(alignment: .leading, spacing: 12) {

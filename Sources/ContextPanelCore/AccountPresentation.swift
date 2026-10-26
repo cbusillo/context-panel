@@ -71,6 +71,7 @@ public enum AccountTerms {
     public static let updated = "Updated"
     public static let nextSevenDays = "Next 7 days"
     public static let noCurrentReading = "No current reading"
+    public static let codexSignInExpired = "Codex sign-in expired"
     public static let noEligibleAccount = "No eligible account for Use next"
     public static let addFirstAccount = "Add your first account"
     public static let unknown = "—"
@@ -510,7 +511,8 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
 public extension AccountOverview.Account {
     /// The state word for this account: "Not updating" when a read failed and nothing was ever saved.
     var stateText: String {
-        state == .unavailable && windows.isEmpty ? AccountTerms.notUpdating : state.displayText
+        if isCodexSignInExpired, state == .unavailable || state == .stale { return AccountTerms.codexSignInExpired }
+        return state == .unavailable && windows.isEmpty ? AccountTerms.notUpdating : state.displayText
     }
 
     /// Pace exists only where an account has observed burn, including matched synced window estimates.

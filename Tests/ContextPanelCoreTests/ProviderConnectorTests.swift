@@ -1360,6 +1360,78 @@ func codexConnectorNamesExpiredHomeAndRecoversThroughCodex(statusCode: Int) asyn
     #expect(result.sibling.status != .failure)
 }
 
+@Test(arguments: [401, 403], [nil, "refresh-secret"] as [String?])
+func codexSignInRejectionKeepsSavedCapacityLaunchable(statusCode: Int, refreshToken: String?) async throws {
+    let auth = codexRecoveryAuth(accessTokenExpiry: codexRecoveryNow.addingTimeInterval(-60), refreshToken: refreshToken)
+    let result = await codexRecoveryResult(rejectedAuth: auth,
+        rejection: ConnectorHTTPResponse(statusCode: statusCode, data: Data("private response".utf8)))
+    let empty = AccountOverview(snapshot: UsageSnapshot(generatedAt: codexRecoveryNow, limits: []),
+        reports: [StoredProviderReport(report: result.rejected)], now: codexRecoveryNow)
+    #expect(empty.useNextRanking(provider: .openAI).launchOrder.isEmpty)
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let observed = codexRecoveryNow.addingTimeInterval(-7_200)
+    let saved = UsageLimit(provider: .openAI, accountID: result.rejected.accountID, accountName: "Work",
+        label: "Codex Weekly", windowLabel: "Weekly", modelLabel: "Codex", unit: .percent,
+        used: 20, limit: 100, resetsAt: codexRecoveryNow.addingTimeInterval(86_400),
+        lastUpdatedAt: observed, confidence: .observed)
+    try store.save(StoredUsageSnapshot(savedAt: observed, refreshResult: ConnectorRefreshResult(generatedAt: observed,
+        reports: [ProviderConnectorReport(provider: .openAI, accountID: saved.accountID, accountName: "Work",
+            generatedAt: observed, limits: [saved])])))
+    try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: codexRecoveryNow, reports: [result.rejected]),
+        savedAt: codexRecoveryNow)
+    let stored = try #require(store.loadCurrent().snapshot)
+    let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports, now: codexRecoveryNow)
+    let row = try #require(overview.accounts.first)
+    #expect(row.stateText == AccountTerms.codexSignInExpired)
+    #expect(row.accessibilityText.contains(row.stateText))
+    #expect(row.remainingFraction == 0.8)
+    #expect(row.observedAt == observed)
+    #expect(!row.isReliable)
+    #expect(row.windows.allSatisfy { !$0.isCurrent && $0.assumption == nil })
+    #expect(stored.reports.first?.providerAccessAlert == nil)
+    #expect(overview.useNextRanking(provider: .openAI).launchOrder.contains(row.id))
+    let report = try #require(stored.reports.first)
+    let companion = CompanionProviderStatus(report: report)
+    let transported = try JSONDecoder().decode(CompanionProviderStatus.self, from: JSONEncoder().encode(companion))
+    #expect(transported.storedProviderReport.accessState == report.accessState)
+    #expect(AgentAccountSnapshot.Display(account: row, isNext: false, now: codexRecoveryNow).state == row.stateText)
+
+    let healthyLimit = UsageLimit(provider: .openAI, accountID: "healthy-sibling", accountName: "Home",
+        label: "Codex Weekly", windowLabel: "Weekly", modelLabel: "Codex", unit: .percent, used: 50, limit: 100,
+        resetsAt: codexRecoveryNow.addingTimeInterval(172_800), lastUpdatedAt: codexRecoveryNow, confidence: .observed)
+    let mixed = AccountOverview(snapshot: UsageSnapshot(generatedAt: codexRecoveryNow, limits: stored.snapshot.limits + [healthyLimit]),
+        reports: stored.reports + [StoredProviderReport(provider: .openAI, accountID: healthyLimit.accountID,
+            accountName: "Home", generatedAt: codexRecoveryNow, status: .healthy, errorMessage: nil)], now: codexRecoveryNow)
+    #expect(mixed.useNextRanking(provider: .openAI).launchOrder.contains(row.id))
+
+    let success = await codexRecoveryResult(rejectedAuth: auth)
+    try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: codexRecoveryNow, reports: [success.rejected]),
+        savedAt: codexRecoveryNow)
+    let fresh = try #require(store.loadCurrent().snapshot)
+    let recovered = AccountOverview(snapshot: fresh.snapshot, reports: fresh.reports, now: codexRecoveryNow)
+    let recoveredRow = try #require(recovered.accounts.first { $0.id == row.id })
+    #expect(recoveredRow.stateText != AccountTerms.codexSignInExpired)
+    #expect(recoveredRow.isReliable)
+    #expect(recoveredRow.observedAt == codexRecoveryNow)
+}
+
+@Test(arguments: [true, false])
+func codexNetworkFailureDoesNotMakeSavedCapacityLaunchable(networkFailure: Bool) async throws {
+    let auth = codexRecoveryAuth(accessTokenExpiry: codexRecoveryNow.addingTimeInterval(-60), refreshToken: "refresh-secret")
+    let result = await codexRecoveryResult(rejectedAuth: auth,
+        rejection: ConnectorHTTPResponse(statusCode: 500, data: Data("private response".utf8)), networkFailure: networkFailure)
+    let limit = UsageLimit(provider: .openAI, accountID: result.rejected.accountID, accountName: "Work",
+        label: "Codex Weekly", windowLabel: "Weekly", modelLabel: "Codex", unit: .percent,
+        used: 20, limit: 100, resetsAt: codexRecoveryNow.addingTimeInterval(86_400),
+        lastUpdatedAt: codexRecoveryNow.addingTimeInterval(-7_200), confidence: .observed)
+    let overview = AccountOverview(snapshot: UsageSnapshot(generatedAt: codexRecoveryNow, limits: [limit]),
+        reports: [StoredProviderReport(report: result.rejected)], now: codexRecoveryNow)
+    #expect(overview.accounts.first?.stateText != AccountTerms.codexSignInExpired)
+    #expect(overview.useNextRanking(provider: .openAI).launchOrder.isEmpty)
+}
+
 @Test func googleAntigravityBridgePersistsOnlySanitizedQuotaFields() throws {
     let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
     let snapshotURL = try googleAntigravityTemporarySnapshotURL()

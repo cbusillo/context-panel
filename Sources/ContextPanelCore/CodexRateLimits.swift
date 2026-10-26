@@ -481,6 +481,13 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)
             )
         } catch {
+            let accessState: ProviderAccessState
+            switch error as? ConnectorError {
+            case .foregroundRefreshRequired, .invalidAuth:
+                accessState = ProviderAccessState(kind: .signInExpired)
+            default:
+                accessState = .unknown
+            }
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
@@ -490,6 +497,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 limits: [],
                 resetCredits: observedResetCredits?.presented(at: now),
                 status: .failure,
+                accessState: accessState,
                 errorMessage: error.localizedDescription,
                 legacyAccountID: legacyLocalAccountID,
                 sharedAccountIdentity: identity,

@@ -206,7 +206,11 @@ public extension AccountOverview {
         let now = rankedAt
         let rows = accounts.filter { $0.metadata.provider == provider }
         let multipleUseLast = rows.filter(\.metadata.useLast).count > 1
-        let current = rows.filter { [.available, .closeToLimit, .limited].contains($0.state) }
+        let current = rows.filter {
+            [.available, .closeToLimit, .limited].contains($0.state)
+                || ($0.isCodexSignInExpired && $0.state == .unavailable && !$0.capacityWindows.isEmpty
+                    && $0.capacityWindows.allSatisfy { $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil })
+        }
         let staleOnly = current.isEmpty && rows.contains { $0.state == .stale }
         let rankable = staleOnly ? rows.filter { $0.state == .stale } : current
         let pending = Self.pendingLaunches(evidence: evidence, rows: rows, now: now)

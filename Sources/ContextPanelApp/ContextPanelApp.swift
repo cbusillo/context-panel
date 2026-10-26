@@ -4971,7 +4971,7 @@ private struct ProviderAccessAlertCard: View {
             "dollarsign.circle.fill"
         case .degraded:
             "questionmark.circle.fill"
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             "circle.fill"
         }
     }

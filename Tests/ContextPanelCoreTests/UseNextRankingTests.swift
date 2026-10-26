@@ -20,6 +20,7 @@ private struct Fixture {
     var showInWidgets = true
     var sourceConfigured = true
     var readState: AccountCapacityState? = nil
+    var signInExpired = false
     var fiveHourUsed: Int? = nil
     var fiveHourResetHours: Double = 3
     var fiveHourBurn: Double? = nil
@@ -60,7 +61,8 @@ private struct Fixture {
             availableCount: bankedExpiryHours.count, observedAt: observed, coverage: bankedCountOnly ? .countOnly : .complete,
             knownExpiries: bankedExpiryHours.map { now.addingTimeInterval($0 * hour) }, unrecognizedKindCount: unrecognizedResets)
         return StoredProviderReport(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
-                                    generatedAt: observed, resetCredits: banked, status: .healthy, errorMessage: nil)
+                                    generatedAt: observed, resetCredits: banked, status: signInExpired ? .failure : .healthy,
+                                    accessState: signInExpired ? ProviderAccessState(kind: .signInExpired) : .unknown, errorMessage: nil)
     }
 
     func rates(now: Date) -> [String: ObservedBurnRate] {
@@ -86,6 +88,18 @@ private func overview(_ fixtures: [Fixture], now: Date = rankNow, widgetsOnly: B
 private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, evidence: UseNextEvidence = UseNextEvidence(),
                      now: Date = rankNow) -> UseNextRanking {
     overview(fixtures, now: now).useNextRanking(provider: provider, evidence: evidence)
+}
+
+@Test func codexExpiredSignInNeverInventsLaunchCapacity() {
+    let rows = [
+        Fixture(name: "unknown", weeklyUsed: nil, signInExpired: true),
+        Fixture(name: "exhausted", weeklyUsed: 100, signInExpired: true),
+        Fixture(name: "paused", isEnabled: false, signInExpired: true),
+        Fixture(name: "missing", sourceConfigured: false, signInExpired: true),
+        Fixture(name: "short-exhausted", signInExpired: true, fiveHourUsed: 100),
+    ]
+    #expect(ranking(rows).entries.isEmpty)
+    #expect(ranking(rows).launchOrder.isEmpty)
 }
 
 private extension UseNextRanking {
