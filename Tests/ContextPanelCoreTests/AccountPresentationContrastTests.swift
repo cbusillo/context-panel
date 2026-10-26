@@ -22,10 +22,28 @@ private func luminance(_ token: AccountColorToken, dark: Bool) -> Double {
         }
         // Each provider's tinted "use next" card: its words, and every provider name, which also appears on it in callouts.
         for surface in Provider.allCases.map(\.surfaceToken) {
-            for foreground in [AccountColorToken.primary, .secondary, .openAI, .anthropic, .google] {
+            for foreground in [AccountColorToken.primary, .secondary, .saved, .openAI, .anthropic, .google] {
                 let first = luminance(foreground, dark: dark), second = luminance(surface, dark: dark)
                 #expect((max(first, second) + 0.05) / (min(first, second) + 0.05) >= 4.5, "\(foreground) on \(surface), dark \(dark)")
             }
+        }
+    }
+}
+
+@Test func savedPaletteStaysCoolAndLessSaturatedThanProviderAndStatusHues() {
+    func saturation(_ token: AccountColorToken, dark: Bool) -> Double {
+        let rgb = token.rgb(dark: dark)
+        let maximum = max(rgb.red, rgb.green, rgb.blue)
+        return maximum == 0 ? 0 : (maximum - min(rgb.red, rgb.green, rgb.blue)) / maximum
+    }
+    for dark in [false, true] {
+        let saved = AccountColorToken.saved.rgb(dark: dark)
+        let savedSaturation = saturation(.saved, dark: dark)
+        #expect(saved.blue > saved.red && saved.blue >= saved.green && saved.green >= saved.red, "Saved stays a cool neutral")
+        #expect(savedSaturation <= 0.30, "Saved must read as neutral rather than a provider or warning hue")
+        for colored in [AccountColorToken.openAI, .anthropic, .google, .low, .critical, .banked, .next] {
+            #expect(saturation(colored, dark: dark) - savedSaturation >= 0.15,
+                    "Saved must remain visibly less saturated than \(colored), dark \(dark)")
         }
     }
 }

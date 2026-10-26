@@ -290,11 +290,11 @@ without suggesting that selecting a row performs an action.
   full-width forecast band so decision context does not strand the right side or
   push focused provider cards against the bottom edge.
 - tvOS global stale states keep the headline neutral, avoid repeating the same
-  status on every card, and render saved quantitative bars in a warm neutral.
+  status on every card, and render saved quantitative bars in a cool slate gray.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
 - Stale widget data preserves its last-good numeric value when available, colors
-  its quantitative instruments with a distinct warm-neutral treatment, and
+  its quantitative instruments with a distinct cool slate gray treatment, and
   never shares the limited/failure red.
 - Remaining-capacity heroes and used-pressure detail rows are complementary, but
   an individual quantitative cluster must never cross their number and fill
