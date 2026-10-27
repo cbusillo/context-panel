@@ -551,6 +551,9 @@ def remove_active_review_version(
             if submission_version_id != version_id and item_version_id != version_id:
                 continue
             if dry_run:
+                sole_item = is_exact_sole_review_item(client, submission["id"], item_id, version_id)
+                fallback = "available for sole exact item" if sole_item else "unavailable; owning review submission must be preserved"
+                print(f"Dry run: owning-submission cancellation fallback {fallback}")
                 print(f"Dry run: would remove App Store version {version_string} from review submission: {item_id}")
                 return
             try:
@@ -566,6 +569,10 @@ def remove_active_review_version(
                 except AppStoreConnectError as submitted_item_error:
                     if not is_review_submission_state_invalid_for_item_removal(submitted_item_error):
                         raise
+                    if is_exact_sole_review_item(client, submission["id"], item_id, version_id):
+                        cancel_review_submission(client, submission["id"], version_string)
+                        confirm_review_submission_cancellation(client, submission["id"])
+                        return
                     raise AppStoreConnectError(
                         f"App Store version {version_string} review item could not be removed because "
                         "the owning review submission is not in a removable state; cancel or resolve "
@@ -581,6 +588,37 @@ def remove_active_review_version(
             f"App Store version {version_string} is {state}, but no active review submission item was found to remove"
         )
     print(f"No active review submission item found for App Store version {version_string}")
+
+
+def is_exact_sole_review_item(client: ASCClient, submission_id: str, item_id: str, version_id: str) -> bool:
+    payload = paginated_get(
+        client,
+        f"/reviewSubmissions/{submission_id}/items",
+        {"fields[reviewSubmissionItems]": "appStoreVersion"},
+        limit=20,
+    )
+    items = payload.get("data", [])
+    return (
+        len(items) == 1
+        and items[0].get("id") == item_id
+        and relationship_id(items[0], "appStoreVersion") == version_id
+    )
+
+
+def confirm_review_submission_cancellation(client: ASCClient, submission_id: str) -> None:
+    deadline = time.monotonic() + DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS
+    while True:
+        submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
+        state = submission.get("attributes", {}).get("state")
+        if submission.get("id") == submission_id and state == "COMPLETE":
+            print(f"Confirmed canceled review submission: {submission_id}")
+            return
+        if submission.get("id") != submission_id or state != "CANCELING" or time.monotonic() >= deadline:
+            raise AppStoreConnectError(
+                f"Cancellation of owning review submission {submission_id} is unconfirmed ({state}); "
+                "reconcile App Store Connect before retrying"
+            )
+        time.sleep(DEFAULT_VERSION_UNLOCK_POLL_SECONDS)
 
 
 def remove_submitted_review_item(

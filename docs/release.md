@@ -1844,6 +1844,15 @@ cannot submit a replacement build as a side effect, so it does not require a
 build number or release notes. Use `dry_run: true` first to verify the target
 review/version.
 
+If Apple refuses submitted-item removal because of the owning submission's
+state, the helper reads every page of that submission's items. It cancels the
+submission only when its sole item is the exact item and version being
+withdrawn. Any additional item, unknown ownership, or different version keeps
+the refusal. It reads cancellation back to `COMPLETE` before continuing; an
+unconfirmed cancellation stops the run for reconciliation. The dry run reads
+the same item inventory and reports whether this fallback is available, without
+changing App Store Connect. This scope check applies to all four platforms.
+
 App Store Connect can retain an itemless `READY_FOR_REVIEW` draft that points to
 an already released version and has no platform or submission date. The helper
 does not treat that proven orphan shape as an active cross-platform review
