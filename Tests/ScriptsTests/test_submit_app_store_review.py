@@ -1069,8 +1069,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
     def test_unconfirmed_cancel_stops_after_one_write(self) -> None:
         client = SubmittedReviewItemBlockedBySubmissionStateClient(cancel_state="WAITING_FOR_REVIEW")
-        with self.assertRaises(submit_app_store_review.AppStoreConnectError):
-            submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+        with patch.object(time, "monotonic", side_effect=(0, submit_app_store_review.DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS + 1)):
+            with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
         self.assertEqual(sum(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 1)
         self.assertEqual(client.requests[-1][:2], ("GET", "/reviewSubmissions/submission-1"))
 
@@ -1078,8 +1079,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         for state in ("WAITING_FOR_REVIEW", "READY_FOR_SALE"):
             with self.subTest(state=state):
                 client = SubmittedReviewItemBlockedBySubmissionStateClient(withdrawn_state=state)
-                with self.assertRaises(submit_app_store_review.AppStoreConnectError):
-                    submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+                with patch.object(time, "monotonic", side_effect=(0, submit_app_store_review.DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS + 1)):
+                    with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                        submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
                 self.assertEqual(client.requests[-1][:2], ("GET", "/appStoreVersions/version-1-0-13"))
 
     def test_dry_run_reads_sole_item_scope_without_mutations(self) -> None:
@@ -1114,17 +1116,20 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
     def test_cancellation_waits_for_complete_after_canceling(self) -> None:
         client = SubmittedReviewItemBlockedBySubmissionStateClient()
         request = client.request
-        states = iter(("CANCELING", "COMPLETE"))
+        states = iter(("CANCELING", "COMPLETE", "COMPLETE"))
+        version_states = iter(("WAITING_FOR_REVIEW", "DEVELOPER_REJECTED"))
 
         def cancellation_request(method: str, path: str, params: dict[str, Any] | None = None,
                                  body: dict[str, Any] | None = None, allowed: tuple[int, ...] = (200,)) -> dict[str, Any]:
             if method == "GET" and path == "/reviewSubmissions/submission-1":
                 client.cancel_state = next(states)
+            if method == "GET" and path == "/appStoreVersions/version-1-0-13":
+                client.withdrawn_state = next(version_states)
             return request(method, path, params, body, allowed)
 
         with patch.object(client, "request", side_effect=cancellation_request), patch.object(time, "sleep"):
             submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
-        self.assertEqual(sum(r[0] == "GET" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 2)
+        self.assertEqual(sum(r[0] == "GET" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 3)
 
     def test_dry_run_does_not_delete(self):
         client = FakeASCClient()

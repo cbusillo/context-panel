@@ -604,19 +604,20 @@ def confirm_review_submission_cancellation(client: ASCClient, submission_id: str
     while True:
         submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
         state = submission.get("attributes", {}).get("state")
-        if submission.get("id") == submission_id and state == "COMPLETE":
+        if submission.get("id") != submission_id:
+            raise AppStoreConnectError("Cancellation readback returned a different review submission")
+        if state == "COMPLETE":
             version = client.request("GET", f"/appStoreVersions/{version_id}")["data"]
-            if version.get("id") != version_id or version_state(version) != "DEVELOPER_REJECTED":
-                raise AppStoreConnectError(
-                    f"Owning review submission {submission_id} completed, but withdrawal of {version_id} "
-                    "is unconfirmed; reconcile App Store Connect before retrying"
-                )
-            print(f"Confirmed canceled review submission and withdrawn version: {submission_id}")
-            return
-        if submission.get("id") != submission_id or state != "CANCELING" or time.monotonic() >= deadline:
+            if version.get("id") != version_id:
+                raise AppStoreConnectError("Withdrawal readback returned a different App Store version")
+            state = version_state(version)
+            if state == "DEVELOPER_REJECTED":
+                print(f"Confirmed canceled review submission and withdrawn version: {submission_id}")
+                return
+        if state not in REMOVABLE_REVIEW_VERSION_STATES | {"CANCELING"} or time.monotonic() >= deadline:
             raise AppStoreConnectError(
-                f"Cancellation of owning review submission {submission_id} is unconfirmed ({state}); "
-                "reconcile App Store Connect before retrying"
+                f"Cancellation of owning review submission {submission_id} and withdrawal of {version_id} "
+                f"are unconfirmed ({state}); reconcile App Store Connect before retrying"
             )
         time.sleep(DEFAULT_VERSION_UNLOCK_POLL_SECONDS)
 
