@@ -237,7 +237,7 @@ class TestFlightDistributionTests(unittest.TestCase):
         group = {"id": "group-internal", "attributes": {"isInternalGroup": True, "hasAccessToAllBuilds": True}}
         client = mock.Mock()
         client.request.side_effect = [
-            {"data": {"attributes": {"internalBuildState": "PROCESSING"}}},
+            {"data": {"attributes": {"internalBuildState": "MISSING_EXPORT_COMPLIANCE"}}},
             {"data": {"attributes": {"internalBuildState": "IN_BETA_TESTING"}}},
         ]
         with mock.patch.object(time, "monotonic", side_effect=[0, 0, 1]):
@@ -248,7 +248,7 @@ class TestFlightDistributionTests(unittest.TestCase):
 
     def test_all_builds_group_missing_testability_reports_actual_state(self) -> None:
         group = {"id": "group-internal", "attributes": {"isInternalGroup": True, "hasAccessToAllBuilds": True}}
-        for state in ("PROCESSING", "MISSING_EXPORT_COMPLIANCE", None):
+        for state in ("PROCESSING", "MISSING_EXPORT_COMPLIANCE", "EXPIRED", "PROCESSING_EXCEPTION", None):
             with self.subTest(state=state):
                 client = mock.Mock()
                 client.request.return_value = {"data": {"attributes": {"internalBuildState": state}}}
@@ -323,17 +323,6 @@ class TestFlightDistributionTests(unittest.TestCase):
         client.request.return_value = {"data": [{"id": "build-1"}]}
         distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 0, 2)
         self.assertTrue(all(request.args[1] == "/betaGroups/group-external/builds" for request in client.request.call_args_list))
-
-    def test_terminal_internal_states_do_not_wait(self) -> None:
-        group = {"id": "group-internal", "attributes": {"isInternalGroup": True, "hasAccessToAllBuilds": True}}
-        for state in ("EXPIRED", "PROCESSING_EXCEPTION", "MISSING_EXPORT_COMPLIANCE"):
-            with self.subTest(state=state):
-                client = mock.Mock()
-                client.request.return_value = {"data": {"attributes": {"internalBuildState": state}}}
-                with mock.patch.object(time, "sleep") as sleep:
-                    with self.assertRaisesRegex(distribute_testflight_beta.AppStoreConnectError, state):
-                        distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 60, 2)
-                sleep.assert_not_called()
 
     def test_conflict_only_succeeds_when_follow_up_read_confirms_membership(self):
         client = FakeASCClient()

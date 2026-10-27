@@ -445,8 +445,6 @@ def wait_for_beta_availability(
             states.append(f"{group_attributes.get('name', '<unnamed>')}: {state}, membership={membership}")
         status = "; ".join(states)
         print(f"TestFlight readback: {status}")
-        if internal_state in {"EXPIRED", "PROCESSING_EXCEPTION", "MISSING_EXPORT_COMPLIANCE"}:
-            raise AppStoreConnectError(f"TestFlight availability blocked: {status}")
         if available:
             return
         remaining = deadline - time.monotonic()

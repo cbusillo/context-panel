@@ -544,7 +544,7 @@ separate and the readback labels external assignment accordingly. Groups with ac
 groups also require confirmed build membership after assignment. The availability
 wait uses `--wait-timeout-seconds` (one hour by default), separately from the
 processing wait, and `--poll-seconds` controls polling. If availability does not
-arrive within the bound, or a terminal internal state blocks testing, the step fails and reports each group's observed state
+arrive within the bound, the step fails and reports each group's observed state
 and membership in the log and workflow summary. Dry runs check assignment needs
 without waiting for or claiming availability.
 
