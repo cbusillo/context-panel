@@ -420,7 +420,10 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
 
     def test_watch_restart_remote_route_requires_apple_and_both_post_restart_receipts(self) -> None:
         surfaces = ("watchos.app", "watchos.complication")
-        for case in ("complete", "no-apple", "missing-app", "missing-complication", "old-app", "old-complication", "equal-time", "no-time", "closed", "no-runtime", "no-session"):
+        for case in (
+            "complete", "no-apple", "missing-app", "missing-complication", "old-app", "old-complication",
+            "equal-time", "no-time", "closed", "no-runtime", "no-session", "future-receipt", "late-old-receipt",
+        ):
             with self.subTest(case=case):
                 temporary, store, runtime_store, session, _ = self.fixture(surfaces)
                 with temporary:
@@ -430,8 +433,15 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
                         suffix = "app" if surface == "watchos.app" else "complication"
                         if case == f"missing-{suffix}":
                             continue
-                        seconds = 1 if case == f"old-{suffix}" else 20
-                        entries.append(runtime_receipt(surface, status, observed_at=NOW + timedelta(seconds=seconds)))
+                        seconds = 180 if case == "future-receipt" else 1 if case == f"old-{suffix}" else 20
+                        entry = runtime_receipt(surface, status, observed_at=NOW + timedelta(seconds=seconds))
+                        if case.startswith("old-"):
+                            entry["serverReceivedAt"] = (NOW + timedelta(seconds=50)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        entries.append(entry)
+                        if case == "late-old-receipt":
+                            old = runtime_receipt(surface, status, observed_at=NOW + timedelta(seconds=1), process_uuid=SECOND_UUID)
+                            old["serverReceivedAt"] = (NOW + timedelta(seconds=55)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                            entries.append(old)
                     runtime_store.reconcile(session, observation(status, runtime_export(status, entries)))
                     if case == "closed":
                         store.transition(TARGET, "stopped", NOW + timedelta(minutes=1), "operator-stopped")
@@ -449,26 +459,49 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
                     output = io.StringIO()
                     with (
                         mock.patch("context_panel_validation.cli.SessionStateStore", return_value=store),
-                        mock.patch("context_panel_validation.cli.utc_now", return_value=NOW + timedelta(minutes=2)),
+                        mock.patch("context_panel_validation.cli.utc_now", side_effect=[NOW + timedelta(minutes=value) for value in (2, 3, 4)]),
                         mock.patch("context_panel_validation.cli.collect_device_evidence", return_value=()),
-                        mock.patch("context_panel_validation.cli.collect_paired_iphone_evidence", return_value=case != "no-apple"),
+                        mock.patch("context_panel_validation.cli.collect_paired_iphone_evidence", return_value=case != "no-apple") as apple_read,
                         contextlib.redirect_stdout(output),
                     ):
                         result = cli_module.run_record_watch_restart(args)
                     persisted = store.load(TARGET)
-                    if case == "complete":
+                    if case in {"complete", "late-old-receipt"}:
                         self.assertEqual(result, 0)
                         assert persisted is not None
                         evidence = json.loads(output.getvalue())["observation"]
                         self.assertEqual(persisted.watch_restart_observation, evidence)
+                        self.assertEqual(evidence["ascObservedAt"], (NOW + timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ"))
                         self.assertEqual(evidence["restartAt"], restart.strftime("%Y-%m-%dT%H:%M:%SZ"))
                         self.assertEqual({item["surface"] for item in evidence["receipts"]}, set(surfaces))
-                        self.assertEqual(json.loads(output.getvalue())["observation"], evidence)
+                        apple_read.assert_called_once_with(mock.ANY, TARGET, args.asc_env_file, args.tester_email, args.paired_iphone_model)
                         self.assertNotIn(args.tester_email, json.dumps(persisted.to_dict()))
                         self.assertNotIn(args.paired_iphone_model, json.dumps(persisted.to_dict()))
                     else:
-                        self.assertEqual(result, 30)
+                        self.assertEqual(result, cli_module.EXIT_UNKNOWN)
                         self.assertTrue(persisted is None or persisted.watch_restart_recorded_at is None)
+
+    def test_watch_restart_rerun_reports_the_persisted_attestation(self) -> None:
+        temporary, store, _, session, _ = self.fixture(("watchos.app", "watchos.complication"))
+        with temporary:
+            original = {"route": "devicectl", "restartAt": NOW.isoformat(), "ascObservedAt": None, "receipts": []}
+            store.record_watch_restart(TARGET, NOW + timedelta(seconds=10), original, session.id)
+            args = argparse.Namespace(version=TARGET.version, build_number=TARGET.build_number, json=True)
+            output = io.StringIO()
+            with (
+                mock.patch("context_panel_validation.cli.SessionStateStore", return_value=store),
+                mock.patch("context_panel_validation.cli.utc_now", return_value=NOW + timedelta(minutes=2)),
+                mock.patch("context_panel_validation.cli.collect_device_evidence", return_value=(
+                    SimpleNamespace(platform="watchOS", install_state="current"),
+                )),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(cli_module.run_record_watch_restart(args), 0)
+            persisted = store.load(TARGET)
+            assert persisted is not None
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["observation"], original)
+            self.assertEqual(payload["watchRestartRecordedAt"], persisted.watch_restart_recorded_at)
 
     def test_loader_accepts_the_repository_expected_build_manifest_contract(self):
         source_manifest = generate_manifest(

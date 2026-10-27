@@ -158,7 +158,8 @@ open.
 
 The [Watch observation rule](validation-authority.md#validation) accepts the
 exact CoreDevice installation or Apple's paired-iPhone record together with both
-post-restart Watch receipts. Once the exact Watch build is observable, the queue requests one restart with placements intact. The existing
+post-restart Watch receipts. Once the exact Watch build is observable, the queue
+requests one restart with placements intact. The existing
 `record-watch-restart` command records only that operator attestation. A Watch
 app receipt or restart attestation never proves complication execution; the
 complication still requires its own exact-build receipt.

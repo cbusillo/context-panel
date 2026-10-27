@@ -220,7 +220,8 @@ class CoordinatorSessionState:
             "accumulatedPauseSeconds": self.accumulated_pause_seconds,
             "requestedSurfaces": list(self.requested_surfaces),
             "watchRestartRecordedAt": self.watch_restart_recorded_at,
-            "watchRestartObservation": self.watch_restart_observation,
+            **({"watchRestartObservation": self.watch_restart_observation}
+               if self.watch_restart_observation is not None else {}),
             "revision": self.revision,
             "events": [event.to_dict() for event in self.events],
         }
@@ -244,7 +245,8 @@ class CoordinatorSessionState:
             "accumulatedPauseSeconds": self.accumulated_pause_seconds,
             "requestedSurfaces": list(self.requested_surfaces),
             "watchRestartRecordedAt": self.watch_restart_recorded_at,
-            "watchRestartObservation": self.watch_restart_observation,
+            **({"watchRestartObservation": self.watch_restart_observation}
+               if self.watch_restart_observation is not None else {}),
             "revision": self.revision,
             "eventCount": len(self.events),
         }
@@ -340,6 +342,8 @@ def validate_watch_restart_observation(payload: object) -> None:
 
 def validate_session_state(state: CoordinatorSessionState) -> None:
     validate_watch_restart_observation(state.watch_restart_observation)
+    if state.watch_restart_observation is not None and state.watch_restart_recorded_at is None:
+        raise CoordinatorSessionStateError("Watch observation requires a recorded restart")
     validate_target(state.target)
     timestamps = {
         "created": parse_iso8601(state.created_at),
@@ -892,7 +896,7 @@ class SessionStateStore:
         self, target: Target, recorded_at: datetime,
         observation: dict[str, object] | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> CoordinatorSessionState | None:
         validate_watch_restart_observation(observation)
         legacy_path = self._validated_legacy_path(target)
         with self.lock():
@@ -912,12 +916,13 @@ class SessionStateStore:
                     next_state = replace(next_state, watch_restart_observation=observation)
                     self._write_state(self.path(target), next_state)
                 legacy_path.unlink(missing_ok=True)
-                return
+                return next_state
             if state is not None:
                 raise CoordinatorSessionTransitionError(
                     "Watch restart cannot be recorded for a closed session"
                 )
             self._write_legacy_watch_restart(target, recorded_at, observation)
+            return None
 
     @staticmethod
     def _require_compatible_active_target(

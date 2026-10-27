@@ -1775,6 +1775,29 @@ def ordered_receipt_evidence(
     return [item[4] for item in sorted(decorated, key=lambda item: item[:4])]
 
 
+def post_restart_watch_receipts(
+    state: RuntimeEvidenceState, restarted_at: datetime, now: datetime,
+) -> list[dict[str, object]]:
+    proven = {
+        item["surface"] for item in build_runtime_evidence_report(state, now)["surfaces"]
+        if item["state"] == "proven" and item["surface"] in {"watchos.app", "watchos.complication"}
+    }
+    references: list[dict[str, object]] = []
+    for surface in sorted(proven):
+        candidates = [
+            receipt for receipt in state.receipts
+            if receipt.surface == surface
+            and (observed_at := parse_iso8601(receipt.observed_at)) is not None
+            and restarted_at < observed_at <= now
+        ]
+        if candidates:
+            receipt = max(candidates, key=lambda item: item.observed_at)
+            references.append({
+                "surface": surface, "observedAt": receipt.observed_at, "receiptIDs": [receipt.receipt_id],
+            })
+    return references
+
+
 def build_runtime_evidence_report(
     state: RuntimeEvidenceState,
     now: datetime,

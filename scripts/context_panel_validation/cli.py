@@ -41,6 +41,7 @@ from .runtime_evidence import (
     apply_runtime_evidence_to_report,
     build_runtime_evidence_report,
     load_expected_surface_identities,
+    post_restart_watch_receipts,
 )
 from .automation import (
     AUTOMATION_COOLDOWN,
@@ -1483,25 +1484,20 @@ def run_record_watch_restart(args: argparse.Namespace) -> int:
         if session is not None and session.lifecycle in ACTIVE_SESSION_LIFECYCLES:
             runtime = RuntimeEvidenceStore(store).load(session)
             if runtime is not None:
-                report = build_runtime_evidence_report(runtime, recorded_at)
-                receipts = [
-                    {"surface": item["surface"], "observedAt": item["lastObservedAt"],
-                     "receiptIDs": item["receiptIDs"][-1:]}
-                    for item in report["surfaces"]
-                    if item["surface"] in {"watchos.app", "watchos.complication"}
-                    and item["state"] == "proven"
-                    and restarted_at < parse_iso8601(item["lastObservedAt"]) <= recorded_at
-                ]
+                receipts = post_restart_watch_receipts(runtime, restarted_at, recorded_at)
                 tester = getattr(args, "tester_email", None)
                 phone = getattr(args, "paired_iphone_model", None)
-                if len(receipts) == 2 and isinstance(tester, str) and isinstance(phone, str) and tester and phone and collect_paired_iphone_evidence(
-                    runner, target, args.asc_env_file, tester, phone,
+                if (
+                    len(receipts) == 2
+                    and isinstance(tester, str) and tester
+                    and isinstance(phone, str) and phone
+                    and collect_paired_iphone_evidence(runner, target, args.asc_env_file, tester, phone)
                 ):
                     exact_watch_observed = True
                     session_id = session.id
                     observation = {
                         "route": "asc-and-watch-receipts", "restartAt": iso8601(restarted_at),
-                        "ascObservedAt": iso8601(recorded_at), "receipts": receipts,
+                        "ascObservedAt": iso8601(utc_now()), "receipts": receipts,
                     }
     if not exact_watch_observed:
         payload = {
@@ -1519,14 +1515,19 @@ def run_record_watch_restart(args: argparse.Namespace) -> int:
                 "Use an exact CoreDevice observation or the documented ASC and post-restart Watch receipt route."
             )
         return EXIT_UNKNOWN
-    store.record_watch_restart(target, recorded_at, observation, session_id)
+    recorded_at = utc_now()
+    persisted = store.record_watch_restart(target, recorded_at, observation, session_id)
+    attested_at = iso8601(recorded_at)
+    if persisted is not None:
+        attested_at = persisted.watch_restart_recorded_at
+    saved_observation = persisted.watch_restart_observation if persisted is not None else observation
     payload = {
         "schemaVersion": 1,
         "version": target.version,
         "buildNumber": target.build_number,
-        "watchRestartRecordedAt": iso8601(recorded_at),
+        "watchRestartRecordedAt": attested_at,
         "proof": "operator_attestation",
-        "observation": observation,
+        "observation": saved_observation,
         "limitation": "This does not prove complication runtime.",
     }
     if args.json:
