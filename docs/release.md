@@ -1848,7 +1848,8 @@ If Apple refuses submitted-item removal because of the owning submission's
 state, the helper reads every page of that submission's items. It cancels the
 submission only when its sole item is the exact item and version being
 withdrawn. Any additional item, unknown ownership, or different version keeps
-the refusal. It reads cancellation back to `COMPLETE` before continuing; an
+the refusal. It reads cancellation back to `COMPLETE` and verifies the exact withdrawn
+version is `DEVELOPER_REJECTED` before continuing; an
 unconfirmed cancellation stops the run for reconciliation. The dry run reads
 the same item inventory and reports whether this fallback is available, without
 changing App Store Connect. This scope check applies to all four platforms.

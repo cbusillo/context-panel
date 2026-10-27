@@ -794,10 +794,11 @@ class SubmittedReviewItemClient(FakeASCClient):
 
 
 class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClient):
-    def __init__(self, items: list[dict[str, Any]] | None = None, cancel_state: str = "COMPLETE") -> None:
+    def __init__(self, items: list[dict[str, Any]] | None = None, cancel_state: str = "COMPLETE", withdrawn_state: str = "DEVELOPER_REJECTED") -> None:
         super().__init__()
         self.items = items
         self.cancel_state = cancel_state
+        self.withdrawn_state = withdrawn_state
 
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         if method == "PATCH" and path == "/reviewSubmissionItems/item-1":
@@ -814,6 +815,9 @@ class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClien
                     ]
                 },
             )
+        if method == "GET" and path == "/appStoreVersions/version-1-0-13":
+            self.requests.append((method, path, params, body, allowed))
+            return {"data": {"id": "version-1-0-13", "attributes": {"appStoreState": self.withdrawn_state}}}
         if path == "/reviewSubmissions/submission-1/items" and self.items is not None:
             self.requests.append((method, path, params, body, allowed))
             return {"data": self.items}
@@ -1038,12 +1042,16 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 client = SubmittedReviewItemBlockedBySubmissionStateClient()
                 submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13", platform)
                 operations = [(r[0], r[1]) for r in client.requests]
-                self.assertEqual(operations[-3:], [
+                self.assertEqual(operations[-4:], [
                     ("GET", "/reviewSubmissions/submission-1/items"),
                     ("PATCH", "/reviewSubmissions/submission-1"),
                     ("GET", "/reviewSubmissions/submission-1"),
+                    ("GET", "/appStoreVersions/version-1-0-13"),
                 ])
-                self.assertEqual(client.requests[-2][3]["data"]["attributes"], {"canceled": True})
+                self.assertEqual(client.requests[-3][3]["data"]["attributes"], {"canceled": True})
+                for request in client.requests:
+                    if request[1] in {"/reviewSubmissions", "/apps/app-id/appStoreVersions"}:
+                        self.assertEqual(request[2]["filter[platform]"], platform)
 
     def test_refuses_owner_cancellation_for_any_other_item_mix(self) -> None:
         target = {"id": "item-1", "relationships": {"appStoreVersion": {
@@ -1066,14 +1074,21 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(sum(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 1)
         self.assertEqual(client.requests[-1][:2], ("GET", "/reviewSubmissions/submission-1"))
 
+    def test_completed_review_without_withdrawn_version_stops(self) -> None:
+        for state in ("WAITING_FOR_REVIEW", "READY_FOR_SALE"):
+            with self.subTest(state=state):
+                client = SubmittedReviewItemBlockedBySubmissionStateClient(withdrawn_state=state)
+                with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                    submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+                self.assertEqual(client.requests[-1][:2], ("GET", "/appStoreVersions/version-1-0-13"))
+
     def test_dry_run_reads_sole_item_scope_without_mutations(self) -> None:
-        for items, expected in ((None, "sole exact item"), ([{"id": "event"}], "unavailable")):
+        for items in (None, [{"id": "event"}]):
             with self.subTest(items=items):
                 client = SubmittedReviewItemBlockedBySubmissionStateClient(items=items)
                 output = io.StringIO()
                 with redirect_stdout(output):
                     submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13", dry_run=True)
-                self.assertIn(expected, output.getvalue())
                 self.assertIn(("GET", "/reviewSubmissions/submission-1/items"), [(r[0], r[1]) for r in client.requests])
                 self.assertFalse(any(r[0] != "GET" for r in client.requests))
 

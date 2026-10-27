@@ -571,7 +571,7 @@ def remove_active_review_version(
                         raise
                     if is_exact_sole_review_item(client, submission["id"], item_id, version_id):
                         cancel_review_submission(client, submission["id"], version_string)
-                        confirm_review_submission_cancellation(client, submission["id"])
+                        confirm_review_submission_cancellation(client, submission["id"], version_id)
                         return
                     raise AppStoreConnectError(
                         f"App Store version {version_string} review item could not be removed because "
@@ -591,13 +591,7 @@ def remove_active_review_version(
 
 
 def is_exact_sole_review_item(client: ASCClient, submission_id: str, item_id: str, version_id: str) -> bool:
-    payload = paginated_get(
-        client,
-        f"/reviewSubmissions/{submission_id}/items",
-        {"fields[reviewSubmissionItems]": "appStoreVersion"},
-        limit=20,
-    )
-    items = payload.get("data", [])
+    items = review_submission_items(client, submission_id)
     return (
         len(items) == 1
         and items[0].get("id") == item_id
@@ -605,13 +599,19 @@ def is_exact_sole_review_item(client: ASCClient, submission_id: str, item_id: st
     )
 
 
-def confirm_review_submission_cancellation(client: ASCClient, submission_id: str) -> None:
+def confirm_review_submission_cancellation(client: ASCClient, submission_id: str, version_id: str) -> None:
     deadline = time.monotonic() + DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS
     while True:
         submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
         state = submission.get("attributes", {}).get("state")
         if submission.get("id") == submission_id and state == "COMPLETE":
-            print(f"Confirmed canceled review submission: {submission_id}")
+            version = client.request("GET", f"/appStoreVersions/{version_id}")["data"]
+            if version.get("id") != version_id or version_state(version) != "DEVELOPER_REJECTED":
+                raise AppStoreConnectError(
+                    f"Owning review submission {submission_id} completed, but withdrawal of {version_id} "
+                    "is unconfirmed; reconcile App Store Connect before retrying"
+                )
+            print(f"Confirmed canceled review submission and withdrawn version: {submission_id}")
             return
         if submission.get("id") != submission_id or state != "CANCELING" or time.monotonic() >= deadline:
             raise AppStoreConnectError(
@@ -1276,10 +1276,10 @@ def create_review_submission(
     return client.request("POST", "/reviewSubmissions", body=body, allowed=(201,))["data"]
 
 
-def review_submission_item_version_ids(
+def review_submission_items(
     client: ASCClient,
     submission_id: str,
-) -> set[str]:
+) -> list[dict[str, Any]]:
     payload = paginated_get(
         client,
         f"/reviewSubmissions/{submission_id}/items",
@@ -1290,14 +1290,19 @@ def review_submission_item_version_ids(
         },
         limit=20,
     )
-    if any(relationship_id(item, "appStoreVersion") is None for item in payload.get("data", [])):
+    return payload.get("data", [])
+
+
+def review_submission_item_version_ids(client: ASCClient, submission_id: str) -> set[str]:
+    items = review_submission_items(client, submission_id)
+    if any(relationship_id(item, "appStoreVersion") is None for item in items):
         raise AppStoreConnectError(
             "review submission contains an item whose App Store version ownership is unavailable; "
             "inspect App Store Connect before retrying"
         )
     return {
         version_id
-        for item in payload.get("data", [])
+        for item in items
         if (version_id := relationship_id(item, "appStoreVersion")) is not None
     }
 
