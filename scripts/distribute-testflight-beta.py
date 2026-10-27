@@ -391,10 +391,10 @@ def add_build_to_group(
     group_id = group["id"]
     group_name = group["attributes"].get("name", group_id)
     if group["attributes"].get("hasAccessToAllBuilds") is True:
-        print(f"All-builds TestFlight group {group_name} automatically includes valid builds: {group_id}")
+        print(f"All-builds TestFlight group {group_name} uses automatic build assignment: {group_id}")
         return "already-present"
     if group_has_build(client, group_id, build_id):
-        print(f"Build already available to TestFlight group {group_name}: {group_id}")
+        print(f"Build already assigned to TestFlight group {group_name}: {group_id}")
         return "already-present"
     if dry_run:
         print(f"Dry run: would add build {build_id} to TestFlight group {group_name}: {group_id}")
@@ -409,11 +409,45 @@ def add_build_to_group(
     except AppStoreConnectError as error:
         if error.status == 409:
             if group_has_build(client, group_id, build_id):
-                print(f"Build already available to TestFlight group {group_name}: {group_id}")
+                print(f"Build already assigned to TestFlight group {group_name}: {group_id}")
                 return "already-present"
         raise
     print(f"Added build {build_id} to TestFlight group {group_name}: {group_id}")
     return "added"
+
+
+def wait_for_beta_availability(
+    client: ASCClient,
+    build: dict[str, Any],
+    groups: list[dict[str, Any]],
+    wait_timeout_seconds: int,
+    poll_seconds: int,
+) -> None:
+    deadline = time.monotonic() + max(0, wait_timeout_seconds)
+    while True:
+        payload = client.request("GET", f"/builds/{build['id']}/buildBetaDetail")
+        attributes = (payload.get("data") or {}).get("attributes") or {}
+        states = []
+        available = True
+        for group in groups:
+            group_attributes = group["attributes"]
+            state_field = "internalBuildState" if group_attributes.get("isInternalGroup") else "externalBuildState"
+            state = attributes.get(state_field) or "UNKNOWN"
+            membership = "all-builds"
+            has_membership = group_attributes.get("hasAccessToAllBuilds") is True
+            if not has_membership:
+                has_membership = group_has_build(client, group["id"], build["id"])
+                membership = "present" if has_membership else "missing"
+            available = available and state == "IN_BETA_TESTING" and has_membership
+            states.append(f"{group_attributes.get('name', '<unnamed>')}: {state_field}={state}, membership={membership}")
+        status = "; ".join(states)
+        print(f"TestFlight readback: {status}")
+        if available:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AppStoreConnectError(f"TestFlight availability not confirmed within {wait_timeout_seconds}s: {status}")
+        time.sleep(min(max(1, poll_seconds), remaining))
 
 
 def parse_bool(value: str) -> bool:
@@ -500,16 +534,22 @@ def main() -> int:
             )
             for group in groups
         ]
+        if not args.dry_run:
+            wait_for_beta_availability(client, build, groups, args.wait_timeout_seconds, args.poll_seconds)
         added_count = sum(1 for result in results if result == "added")
         already_count = sum(1 for result in results if result == "already-present")
         dry_run_count = sum(1 for result in results if result == "dry-run")
         print(
-            f"TestFlight beta distribution complete for {args.version} ({args.build_number}): "
+            f"TestFlight {'assignment dry run' if args.dry_run else 'availability confirmed'} for {args.version} ({args.build_number}): "
             f"added={added_count}, already_present={already_count}, dry_run={dry_run_count}"
         )
         return 0
     except AppStoreConnectError as error:
         print(f"error: {error}", file=sys.stderr)
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with Path(summary_path).open("a") as summary:
+                summary.write(f"\n### TestFlight distribution failed\n\n{error}\n")
         if error.payload is not None:
             print(json.dumps(error.payload, indent=2, sort_keys=True), file=sys.stderr)
         return 1

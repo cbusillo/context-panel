@@ -1,6 +1,8 @@
 import importlib.util
 import io
 import socket
+import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -21,6 +23,7 @@ class FakeASCClient:
     def __init__(self):
         self.requests: list[tuple[Any, ...]] = []
         self.build_state = "VALID"
+        self.internal_state = "IN_BETA_TESTING"
         self.marketing_version = "1.0.22"
         self.platform = "MAC_OS"
         self.group_builds: dict[str, list[str]] = {"group-internal": []}
@@ -28,6 +31,10 @@ class FakeASCClient:
 
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         self.requests.append((method, path, params, body, allowed))
+        if method == "GET" and path == "/apps":
+            return {"data": [{"id": "app-1", "attributes": {"name": "Fixture"}}]}
+        if method == "GET" and path == "/builds/build-1/buildBetaDetail":
+            return {"data": {"attributes": {"internalBuildState": self.internal_state}}}
         if method == "GET" and path == "/builds":
             build_fields = set((params or {}).get("fields[builds]", "").split(","))
             build: dict[str, Any] = {
@@ -225,6 +232,100 @@ class TestFlightDistributionTests(unittest.TestCase):
 
         self.assertEqual(result, "already-present")
         self.assertEqual(client.requests, [])
+
+    def test_availability_waits_for_internal_state_in_all_builds_group(self) -> None:
+        group = {"id": "group-internal", "attributes": {"isInternalGroup": True, "hasAccessToAllBuilds": True}}
+        client = mock.Mock()
+        client.request.side_effect = [
+            {"data": {"attributes": {"internalBuildState": "PROCESSING"}}},
+            {"data": {"attributes": {"internalBuildState": "IN_BETA_TESTING"}}},
+        ]
+        with mock.patch.object(time, "monotonic", side_effect=[0, 0, 1]):
+            with mock.patch.object(time, "sleep") as sleep:
+                distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 10, 2)
+        sleep.assert_called_once_with(2)
+        self.assertTrue(all(request.args[1] == "/builds/build-1/buildBetaDetail" for request in client.request.call_args_list))
+
+    def test_all_builds_group_missing_testability_reports_actual_state(self) -> None:
+        group = {"id": "group-internal", "attributes": {"isInternalGroup": True, "hasAccessToAllBuilds": True}}
+        for state in ("PROCESSING", "MISSING_EXPORT_COMPLIANCE", None):
+            with self.subTest(state=state):
+                client = mock.Mock()
+                client.request.return_value = {"data": {"attributes": {"internalBuildState": state}}}
+                with self.assertRaisesRegex(distribute_testflight_beta.AppStoreConnectError, state or "UNKNOWN"):
+                    distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 0, 2)
+
+    def test_explicit_group_requires_membership_after_assignment(self) -> None:
+        group = {"id": "group-internal", "attributes": {"isInternalGroup": True}}
+        client = mock.Mock()
+        client.request.side_effect = [
+            {"data": {"attributes": {"internalBuildState": "IN_BETA_TESTING"}}},
+            {"data": []},
+        ]
+        with self.assertRaisesRegex(distribute_testflight_beta.AppStoreConnectError, "membership=missing"):
+            distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 0, 2)
+        client.request.side_effect = [
+            {"data": {"attributes": {"internalBuildState": "IN_BETA_TESTING"}}},
+            {"data": [{"id": "build-1"}]},
+        ]
+        distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 0, 2)
+
+    def test_availability_wait_caps_sleep_at_deadline(self) -> None:
+        group = {"id": "group-internal", "attributes": {"isInternalGroup": True, "hasAccessToAllBuilds": True}}
+        client = mock.Mock()
+        client.request.return_value = {"data": {"attributes": {"internalBuildState": "PROCESSING"}}}
+        with mock.patch.object(time, "monotonic", side_effect=[0, 9, 10]):
+            with mock.patch.object(time, "sleep") as sleep:
+                with self.assertRaisesRegex(distribute_testflight_beta.AppStoreConnectError, "PROCESSING"):
+                    distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 10, 20)
+        sleep.assert_called_once_with(1)
+
+    def test_main_does_not_report_completion_before_availability(self) -> None:
+        args = SimpleNamespace(
+            api_key_id="fixture-key",
+            api_issuer_id="fixture-issuer",
+            bundle_id="fixture.bundle",
+            version="1.0.22",
+            build_number="202606111944",
+            platform="MAC_OS",
+            non_exempt_encryption=False,
+            dry_run=False,
+            wait_timeout_seconds=0,
+            poll_seconds=1,
+            beta_group=[],
+            skip_internal_beta_groups=False,
+        )
+        for state, dry_run, expected_result in (("PROCESSING", False, 1), ("IN_BETA_TESTING", False, 0), ("PROCESSING", True, 0)):
+            with self.subTest(state=state, dry_run=dry_run):
+                client = FakeASCClient()
+                client.internal_state = state
+                args.dry_run = dry_run
+                with mock.patch.multiple(
+                    distribute_testflight_beta,
+                    parse_args=mock.Mock(return_value=args),
+                    expanded_key_path=mock.Mock(return_value=(MODULE_PATH, None)),
+                    make_token=mock.Mock(return_value="fixture-token"),
+                    ASCClient=mock.Mock(return_value=client),
+                ):
+                    with tempfile.TemporaryDirectory() as directory:
+                        summary = Path(directory) / "summary.md"
+                        with mock.patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}):
+                            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                                with mock.patch("sys.stderr", new_callable=io.StringIO):
+                                    self.assertEqual(distribute_testflight_beta.main(), expected_result)
+                        if expected_result:
+                            self.assertIn("internalBuildState=PROCESSING", summary.read_text())
+                self.assertEqual("availability confirmed" in output.getvalue(), state == "IN_BETA_TESTING" and not dry_run)
+
+    def test_external_group_uses_external_beta_state(self) -> None:
+        group = {"id": "group-external", "attributes": {"isInternalGroup": False}}
+        client = mock.Mock()
+        client.request.side_effect = [
+            {"data": {"attributes": {"internalBuildState": "IN_BETA_TESTING", "externalBuildState": "WAITING_FOR_BETA_REVIEW"}}},
+            {"data": [{"id": "build-1"}]},
+        ]
+        with self.assertRaisesRegex(distribute_testflight_beta.AppStoreConnectError, "externalBuildState=WAITING_FOR_BETA_REVIEW"):
+            distribute_testflight_beta.wait_for_beta_availability(client, {"id": "build-1"}, [group], 0, 2)
 
     def test_conflict_only_succeeds_when_follow_up_read_confirms_membership(self):
         client = FakeASCClient()
