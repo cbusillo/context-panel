@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from .asc import DEFAULT_ASC_ENV_FILE, collect_asc_evidence
+from .asc import DEFAULT_ASC_ENV_FILE, collect_asc_evidence, collect_paired_iphone_evidence
 from .models import (
     EXIT_BLOCKED,
     EXIT_INTERNAL,
@@ -156,6 +156,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Record operator confirmation of the required post-install Watch restart",
     )
     add_target_arguments(record)
+    record.add_argument("--restarted-at", help="Confirmed restart time or lower bound, with timezone")
+    record.add_argument("--tester-email", help="Private ASC tester selector; never saved or printed")
+    record.add_argument("--paired-iphone-model", help="Paired iPhone model in the selected tester record")
+    record.add_argument("--asc-env-file", type=Path, default=DEFAULT_ASC_ENV_FILE)
     start_session = subparsers.add_parser(
         "start-session",
         help="Create or recover a durable signed-validation session",
@@ -1457,11 +1461,48 @@ def run_capture_shared_view_evidence(args: argparse.Namespace) -> int:
 
 def run_record_watch_restart(args: argparse.Namespace) -> int:
     target = Target(args.version, args.build_number)
-    devices = collect_device_evidence(SubprocessRunner(), target)
+    recorded_at = utc_now()
+    restart_text = getattr(args, "restarted_at", None)
+    restarted_at = parse_iso8601(restart_text) if restart_text is not None else recorded_at
+    if restarted_at is None or restarted_at > recorded_at:
+        raise CoordinatorSessionError("Watch restart time must include a timezone and cannot be in the future")
+    store = SessionStateStore()
+    runner = SubprocessRunner()
+    devices = collect_device_evidence(runner, target)
+    observation: dict[str, object] = {
+        "route": "devicectl", "restartAt": iso8601(restarted_at),
+        "ascObservedAt": None, "receipts": [],
+    }
+    session_id = None
     exact_watch_observed = any(
         item.platform == "watchOS" and item.install_state == "current"
         for item in devices
     )
+    if not exact_watch_observed and restart_text is not None:
+        session = store.load(target, now=recorded_at)
+        if session is not None and session.lifecycle in ACTIVE_SESSION_LIFECYCLES:
+            runtime = RuntimeEvidenceStore(store).load(session)
+            if runtime is not None:
+                report = build_runtime_evidence_report(runtime, recorded_at)
+                receipts = [
+                    {"surface": item["surface"], "observedAt": item["lastObservedAt"],
+                     "receiptIDs": item["receiptIDs"][-1:]}
+                    for item in report["surfaces"]
+                    if item["surface"] in {"watchos.app", "watchos.complication"}
+                    and item["state"] == "proven"
+                    and restarted_at < parse_iso8601(item["lastObservedAt"]) <= recorded_at
+                ]
+                tester = getattr(args, "tester_email", None)
+                phone = getattr(args, "paired_iphone_model", None)
+                if len(receipts) == 2 and isinstance(tester, str) and isinstance(phone, str) and tester and phone and collect_paired_iphone_evidence(
+                    runner, target, args.asc_env_file, tester, phone,
+                ):
+                    exact_watch_observed = True
+                    session_id = session.id
+                    observation = {
+                        "route": "asc-and-watch-receipts", "restartAt": iso8601(restarted_at),
+                        "ascObservedAt": iso8601(recorded_at), "receipts": receipts,
+                    }
     if not exact_watch_observed:
         payload = {
             "schemaVersion": 1,
@@ -1475,17 +1516,17 @@ def run_record_watch_restart(args: argparse.Namespace) -> int:
         else:
             print(
                 f"Did not record the Watch restart for {target.version} ({target.build_number}).\n"
-                "The exact Watch build is not currently observable; rerun after it is reachable."
+                "Use an exact CoreDevice observation or the documented ASC and post-restart Watch receipt route."
             )
         return EXIT_UNKNOWN
-    recorded_at = utc_now()
-    SessionStateStore().record_watch_restart(target, recorded_at)
+    store.record_watch_restart(target, recorded_at, observation, session_id)
     payload = {
         "schemaVersion": 1,
         "version": target.version,
         "buildNumber": target.build_number,
         "watchRestartRecordedAt": iso8601(recorded_at),
         "proof": "operator_attestation",
+        "observation": observation,
         "limitation": "This does not prove complication runtime.",
     }
     if args.json:

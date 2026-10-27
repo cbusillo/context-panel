@@ -260,6 +260,36 @@ installed build, face state, app diagnostics, and extension-process evidence
 before any recovery action. Do not use uninstall/reinstall or complication
 reselection as the routine workaround.
 
+`record-watch-restart` records the operator's confirmation, not an automatic
+restart. Its exact-build observation uses either CoreDevice's current Watch
+installation or, when the Mac cannot see the Watch, all of these together:
+
+- A read-only App Store Connect `betaTesters.appDevices` record for the selected
+  tester and paired iPhone model shows the exact version and build. The Watch
+  app ships inside the iPhone app; Apple does not list it separately there.
+- The active exact-build coordinator holds validated runtime receipts for both
+  `watchos.app` and `watchos.complication`.
+- Both receipts were written strictly after the confirmed restart time or its
+  operator-supplied lower bound, and no later than the attestation.
+
+For the remote route, supply the restart bound and private tester selection:
+
+```sh
+scripts/context-panel-validation.py record-watch-restart \
+  --version <version> --build-number <build-number> \
+  --restarted-at <ISO-8601-time-with-timezone> \
+  --tester-email <tester-email> --paired-iphone-model <iPhone-model> \
+  --asc-env-file <private-asc-env-file> --json
+```
+
+Invoking the command confirms that the operator restarted the Watch after that
+build was installed. Without `--restarted-at`, the CoreDevice route uses the
+attestation time as the restart lower bound; the remote route refuses. The
+record saves the observation route, restart bound, ASC read time and Watch
+receipt references, without tester emails or device identifiers. This proves
+build observation for the restart attestation only. It does not replace runtime
+validation, physical complication placement review, or any other release gate.
+
 Never run `install` or `reset` while preserving a signed Production publisher.
 Those modes build a local Debug runtime with Development CloudKit and now refuse
 to replace a Production, TestFlight, App Store, or unverified canonical app.

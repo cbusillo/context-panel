@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import contextlib
 import io
@@ -416,6 +417,58 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
         state = runtime_store.attach_expected(session, identities, NOW)
         self.assertIsNotNone(state)
         return temporary_directory, store, runtime_store, session, state
+
+    def test_watch_restart_remote_route_requires_apple_and_both_post_restart_receipts(self) -> None:
+        surfaces = ("watchos.app", "watchos.complication")
+        for case in ("complete", "no-apple", "missing-app", "missing-complication", "old-app", "old-complication", "equal-time", "no-time", "closed", "no-runtime", "no-session"):
+            with self.subTest(case=case):
+                temporary, store, runtime_store, session, _ = self.fixture(surfaces)
+                with temporary:
+                    status = runtime_status(surfaces)
+                    entries = []
+                    for surface in surfaces:
+                        suffix = "app" if surface == "watchos.app" else "complication"
+                        if case == f"missing-{suffix}":
+                            continue
+                        seconds = 1 if case == f"old-{suffix}" else 20
+                        entries.append(runtime_receipt(surface, status, observed_at=NOW + timedelta(seconds=seconds)))
+                    runtime_store.reconcile(session, observation(status, runtime_export(status, entries)))
+                    if case == "closed":
+                        store.transition(TARGET, "stopped", NOW + timedelta(minutes=1), "operator-stopped")
+                    if case == "no-runtime":
+                        store.runtime_evidence_path(session.id).unlink()
+                    if case == "no-session":
+                        store.path(TARGET).unlink()
+                    restart = NOW + timedelta(seconds=20 if case == "equal-time" else 10)
+                    args = argparse.Namespace(
+                        version=TARGET.version, build_number=TARGET.build_number, json=True,
+                        restarted_at=None if case == "no-time" else restart.isoformat(),
+                        tester_email="private@example.invalid", paired_iphone_model="iPhone99,1",
+                        asc_env_file=Path("unused"),
+                    )
+                    output = io.StringIO()
+                    with (
+                        mock.patch("context_panel_validation.cli.SessionStateStore", return_value=store),
+                        mock.patch("context_panel_validation.cli.utc_now", return_value=NOW + timedelta(minutes=2)),
+                        mock.patch("context_panel_validation.cli.collect_device_evidence", return_value=()),
+                        mock.patch("context_panel_validation.cli.collect_paired_iphone_evidence", return_value=case != "no-apple"),
+                        contextlib.redirect_stdout(output),
+                    ):
+                        result = cli_module.run_record_watch_restart(args)
+                    persisted = store.load(TARGET)
+                    if case == "complete":
+                        self.assertEqual(result, 0)
+                        assert persisted is not None
+                        evidence = json.loads(output.getvalue())["observation"]
+                        self.assertEqual(persisted.watch_restart_observation, evidence)
+                        self.assertEqual(evidence["restartAt"], restart.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                        self.assertEqual({item["surface"] for item in evidence["receipts"]}, set(surfaces))
+                        self.assertEqual(json.loads(output.getvalue())["observation"], evidence)
+                        self.assertNotIn(args.tester_email, json.dumps(persisted.to_dict()))
+                        self.assertNotIn(args.paired_iphone_model, json.dumps(persisted.to_dict()))
+                    else:
+                        self.assertEqual(result, 30)
+                        self.assertTrue(persisted is None or persisted.watch_restart_recorded_at is None)
 
     def test_loader_accepts_the_repository_expected_build_manifest_contract(self):
         source_manifest = generate_manifest(

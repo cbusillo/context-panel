@@ -267,6 +267,30 @@ def device(label, platform, install_state="current", condition="reachable"):
 
 
 class AppStoreConnectTests(unittest.TestCase):
+    def test_paired_iphone_requires_exact_tester_app_device_build(self) -> None:
+        target = Target("1.2.3", "456")
+        for case in ("exact", "wrong-version", "wrong-build", "wrong-model", "wrong-platform", "missing", "ambiguous"):
+            with self.subTest(case=case):
+                phone = {
+                    "platform": "MAC_OS" if case == "wrong-platform" else "IOS",
+                    "model": "iPhone99,2" if case == "wrong-model" else "iPhone99,1",
+                    "appBuildVersion": {
+                        "wrong-version": "1.2.2 (456)", "wrong-build": "1.2.3 (455)",
+                    }.get(case, f"{target.version} ({target.build_number})"),
+                }
+                client = FakeASCClient({
+                    "/apps": {"data": [{"id": "fixture-app"}]},
+                    "/betaTesters": {"data": [{"attributes": {
+                        "appDevices": [] if case == "missing" else [phone] * (2 if case == "ambiguous" else 1),
+                    }}]},
+                })
+                self.assertEqual(asc_module.query_paired_iphone_with_client(
+                    client, target, "private@example.invalid", "iPhone99,1",
+                ), case == "exact")
+                params = client.requests[1][1]
+                self.assertEqual(params["filter[apps]"], "fixture-app")
+                self.assertEqual(params["filter[email]"], "private@example.invalid")
+
     def test_network_client_can_only_issue_get_requests(self):
         client = context_panel_validation.ReadOnlyASCClient("token")
         with mock.patch.object(
@@ -1998,7 +2022,9 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["proof"], "operator_attestation")
             self.assertEqual(len(state_files), 1)
-            self.assertNotIn("device", state_files[0].read_text().casefold())
+            observation = json.loads(state_files[0].read_text())["watchRestartObservation"]
+            self.assertEqual(observation, payload["observation"])
+            self.assertEqual(observation["receipts"], [])
 
     def test_record_watch_restart_refuses_unobserved_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
