@@ -52,17 +52,27 @@ import Testing
 
     let other: [String: Any] = ["Stop": [["type": "command", "command": "echo other"]]]
     try write(["other": other, GoogleAntigravityUsageSetup.hookName: ["old": true]], to: hooks)
-    try write(["theme": "dark", "statusLine": ["type": "command", "command": "'/Applications/Context Panel.app/Contents/MacOS/ContextPanelRefreshAgent' --ingest-antigravity-status-line"]], to: settings)
+    let oldAgent = bundle.appending(path: "Contents/MacOS/ContextPanelRefreshAgent")
+    try write(["theme": "dark", "statusLine": ["type": "command", "command": "\(GoogleAntigravityUsageSetup.shellQuoted(oldAgent.path)) --ingest-antigravity-status-line"]], to: settings)
+    let managedHooks = root.appending(path: "managed-hooks.json")
+    let managedSettings = root.appending(path: "managed-settings.json")
+    for (link, target) in [(hooks, managedHooks), (settings, managedSettings)] {
+        try FileManager.default.moveItem(at: link, to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    }
     #expect(try run(setup) == 0)
     #expect(try read(hooks)["other"] as? NSDictionary == other as NSDictionary)
     #expect(try read(hooks)[GoogleAntigravityUsageSetup.hookName] as? NSDictionary == entry)
     #expect(try read(settings) == ["theme": "dark"] as NSDictionary)
+    #expect(try FileManager.default.destinationOfSymbolicLink(atPath: hooks.path) == managedHooks.path)
+    #expect(try FileManager.default.destinationOfSymbolicLink(atPath: settings.path) == managedSettings.path)
     let custom: [String: Any] = ["statusLine": ["command": "echo 'ContextPanelRefreshAgent --ingest-antigravity-status-line'"], "theme": "light"]
     try write(custom, to: settings)
     #expect(try run(setup) == 0)
     #expect(try read(settings) == custom as NSDictionary)
     #expect(try run(GoogleAntigravityUsageSetup.removeCommand) == 0)
     #expect(try read(hooks) == ["other": other] as NSDictionary)
+    #expect(try FileManager.default.destinationOfSymbolicLink(atPath: hooks.path) == managedHooks.path)
     #expect(try read(settings) == custom as NSDictionary)
     #expect(try run(GoogleAntigravityUsageSetup.removeCommand) == 0)
     #expect(try read(hooks) == ["other": other] as NSDictionary)

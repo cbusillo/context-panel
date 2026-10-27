@@ -724,7 +724,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 generatedAt: now,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. Later AGY runs publish quota automatically.",
+                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into Terminal once. Later AGY runs publish quota automatically.",
             accountIdentityStatus: .notExposedByConnector
             )
         }
@@ -902,13 +902,14 @@ public enum GoogleAntigravityUsageSetup {
             const installing = \#(hook != nil);
             function read(path) {
                 if (!fm.fileExistsAtPath(path)) return null;
-                const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
-                if (!text) throw Error('Cannot read ' + path);
-                const value = JSON.parse(ObjC.unwrap(text));
+                const text = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null));
+                if (typeof text !== 'string') throw Error('Cannot read ' + path);
+                const value = JSON.parse(text);
                 if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Expected a JSON object in ' + path);
                 return value;
             }
             function write(path, value) {
+                path = ObjC.unwrap($(path).stringByResolvingSymlinksInPath);
                 const directory = $(path).stringByDeletingLastPathComponent;
                 if (!fm.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(directory, true, {}, null)) throw Error('Cannot create configuration directory');
                 const text = $(JSON.stringify(value, null, 2) + '\n');
@@ -924,7 +925,7 @@ public enum GoogleAntigravityUsageSetup {
                 write(hooksPath, value);
                 const status = settings && settings.statusLine;
                 const command = typeof status === 'string' ? status : status && status.command;
-                if (typeof command === 'string' && /^(?:'[^']*\/ContextPanelRefreshAgent'|"[^"]*\/ContextPanelRefreshAgent"|[^\s'"]*\/ContextPanelRefreshAgent|ContextPanelRefreshAgent)\s+--ingest-antigravity-status-line(?:\s|$)/.test(command.trim())) {
+                if (typeof command === 'string' && /^(?:'(?:[^']|'\\'')*\/ContextPanelRefreshAgent'|"(?:[^"\\]|\\.)*\/ContextPanelRefreshAgent"|[^\s'"]*\/ContextPanelRefreshAgent|ContextPanelRefreshAgent)\s+--ingest-antigravity-status-line(?:\s|$)/.test(command.trim())) {
                     delete settings.statusLine;
                     write(settingsPath, settings);
                 }
