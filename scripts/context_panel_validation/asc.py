@@ -382,3 +382,49 @@ def collect_asc_evidence(runner: Runner, target: Target, env_file: Path) -> ASCE
     finally:
         if temporary_key_path is not None:
             temporary_key_path.unlink(missing_ok=True)
+
+
+def query_paired_iphone_with_client(
+    client: ReadOnlyASCClient,
+    target: Target,
+    tester_email: str,
+    iphone_model: str,
+) -> bool:
+    apps = client.get(
+        "/apps", {"filter[bundleId]": APP_BUNDLE_ID, "fields[apps]": "bundleId", "limit": 1},
+    ).get("data") or []
+    if len(apps) != 1:
+        return False
+    testers = paginated_get(client, "/betaTesters", {
+        "filter[apps]": apps[0]["id"],
+        "filter[email]": tester_email,
+        "fields[betaTesters]": "appDevices",
+    }).get("data") or []
+    if len(testers) != 1:
+        return False
+    phones = [
+        item for item in testers[0].get("attributes", {}).get("appDevices") or []
+        if item.get("platform") == "IOS" and item.get("model") == iphone_model
+    ]
+    return (
+        len(phones) == 1
+        and iphone_model.startswith("iPhone")
+        and phones[0].get("appBuildVersion") == f"{target.version} ({target.build_number})"
+    )
+
+
+def collect_paired_iphone_evidence(
+    runner: Runner, target: Target, env_file: Path, tester_email: str, iphone_model: str,
+) -> bool:
+    credentials = asc_credentials(runner, env_file)
+    if credentials is None:
+        return False
+    key_id, issuer_id, key_path, temporary_key_path = credentials
+    try:
+        client = ReadOnlyASCClient(make_asc_token(key_path, key_id, issuer_id))
+        return query_paired_iphone_with_client(client, target, tester_email, iphone_model)
+    except ASCReadError:
+        return False
+    finally:
+        if temporary_key_path is not None:
+            temporary_key_path.unlink(missing_ok=True)

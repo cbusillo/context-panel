@@ -199,6 +199,7 @@ class CoordinatorSessionState:
     watch_restart_recorded_at: str | None
     revision: int
     events: tuple[CoordinatorSessionEvent, ...]
+    watch_restart_observation: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -219,6 +220,8 @@ class CoordinatorSessionState:
             "accumulatedPauseSeconds": self.accumulated_pause_seconds,
             "requestedSurfaces": list(self.requested_surfaces),
             "watchRestartRecordedAt": self.watch_restart_recorded_at,
+            **({"watchRestartObservation": self.watch_restart_observation}
+               if self.watch_restart_observation is not None else {}),
             "revision": self.revision,
             "events": [event.to_dict() for event in self.events],
         }
@@ -242,6 +245,8 @@ class CoordinatorSessionState:
             "accumulatedPauseSeconds": self.accumulated_pause_seconds,
             "requestedSurfaces": list(self.requested_surfaces),
             "watchRestartRecordedAt": self.watch_restart_recorded_at,
+            **({"watchRestartObservation": self.watch_restart_observation}
+               if self.watch_restart_observation is not None else {}),
             "revision": self.revision,
             "eventCount": len(self.events),
         }
@@ -266,7 +271,7 @@ class CoordinatorSessionState:
             "revision",
             "events",
         }
-        if not isinstance(payload, dict) or set(payload) != expected_keys:
+        if not isinstance(payload, dict) or set(payload) - {"watchRestartObservation"} != expected_keys:
             raise CoordinatorSessionStateError("coordinator session state is invalid")
         target_payload = payload.get("target")
         if not isinstance(target_payload, dict) or set(target_payload) != {
@@ -296,6 +301,7 @@ class CoordinatorSessionState:
             accumulated_pause_seconds=payload.get("accumulatedPauseSeconds"),
             requested_surfaces=tuple(requested_surfaces),
             watch_restart_recorded_at=payload.get("watchRestartRecordedAt"),
+            watch_restart_observation=payload.get("watchRestartObservation"),
             revision=payload.get("revision"),
             events=tuple(CoordinatorSessionEvent.from_dict(event) for event in events_payload),
         )
@@ -303,7 +309,41 @@ class CoordinatorSessionState:
         return state
 
 
+def validate_watch_restart_observation(payload: object) -> None:
+    if payload is None:
+        return
+    if not isinstance(payload, dict) or set(payload) != {"route", "restartAt", "ascObservedAt", "receipts"}:
+        raise CoordinatorSessionStateError("Watch restart observation is invalid")
+    restart = parse_iso8601(payload["restartAt"])
+    receipts = payload["receipts"]
+    if restart is None or not isinstance(receipts, list):
+        raise CoordinatorSessionStateError("Watch restart observation is invalid")
+    if payload["route"] == "devicectl" and not receipts and payload["ascObservedAt"] is None:
+        return
+    observed = parse_iso8601(payload["ascObservedAt"])
+    if payload["route"] != "asc-and-watch-receipts" or observed is None or len(receipts) != 2:
+        raise CoordinatorSessionStateError("Watch restart observation is invalid")
+    surfaces = set()
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or set(receipt) != {"surface", "observedAt", "receiptIDs"}:
+            raise CoordinatorSessionStateError("Watch restart receipt reference is invalid")
+        timestamp = parse_iso8601(receipt["observedAt"])
+        ids = receipt["receiptIDs"]
+        if (timestamp is None or not restart < timestamp <= observed
+                or not isinstance(ids, list) or len(ids) != 1
+                or not isinstance(ids[0], str) or re.fullmatch(r"[0-9a-f]{64}", ids[0]) is None):
+            raise CoordinatorSessionStateError("Watch restart receipt reference is invalid")
+        if receipt["surface"] not in {"watchos.app", "watchos.complication"}:
+            raise CoordinatorSessionStateError("Watch restart receipt surface is invalid")
+        surfaces.add(receipt["surface"])
+    if surfaces != {"watchos.app", "watchos.complication"}:
+        raise CoordinatorSessionStateError("Watch restart receipt surfaces are invalid")
+
+
 def validate_session_state(state: CoordinatorSessionState) -> None:
+    validate_watch_restart_observation(state.watch_restart_observation)
+    if state.watch_restart_observation is not None and state.watch_restart_recorded_at is None:
+        raise CoordinatorSessionStateError("Watch observation requires a recorded restart")
     validate_target(state.target)
     timestamps = {
         "created": parse_iso8601(state.created_at),
@@ -766,6 +806,7 @@ class SessionStateStore:
                     existing = replace(
                         existing,
                         watch_restart_recorded_at=legacy_watch_restart,
+                        watch_restart_observation=self._legacy_watch_restart_observation(target),
                         updated_at=migrated_at,
                         revision=existing.revision + 1,
                         events=events,
@@ -794,6 +835,10 @@ class SessionStateStore:
                 retention,
                 existing_watch_restart or legacy_watch_restart,
             )
+            if existing is not None:
+                state = replace(state, watch_restart_observation=existing.watch_restart_observation)
+            elif legacy_watch_restart is not None:
+                state = replace(state, watch_restart_observation=self._legacy_watch_restart_observation(target))
             self._write_state(self.path(target), state)
             if legacy_watch_restart is not None:
                 self._validated_legacy_path(target).unlink(missing_ok=True)
@@ -847,13 +892,20 @@ class SessionStateStore:
     def watch_restart_recorded(self, target: Target) -> bool:
         return self.watch_restart_recorded_at(target) is not None
 
-    def record_watch_restart(self, target: Target, recorded_at: datetime) -> None:
+    def record_watch_restart(
+        self, target: Target, recorded_at: datetime,
+        observation: dict[str, object] | None = None,
+        session_id: str | None = None,
+    ) -> CoordinatorSessionState | None:
+        validate_watch_restart_observation(observation)
         legacy_path = self._validated_legacy_path(target)
         with self.lock():
             self._prune_locked(recorded_at)
             states = self._load_all_locked(recorded_at)
             self._require_compatible_active_target(states, target)
             state = next((candidate for candidate in states if candidate.target == target), None)
+            if session_id is not None and (state is None or state.id != session_id):
+                raise CoordinatorSessionConflictError("coordinator session changed during Watch observation")
             if state is not None and state.lifecycle in ACTIVE_SESSION_LIFECYCLES:
                 next_state = transition_session_state(
                     state,
@@ -861,14 +913,16 @@ class SessionStateStore:
                     recorded_at,
                 )
                 if next_state != state:
+                    next_state = replace(next_state, watch_restart_observation=observation)
                     self._write_state(self.path(target), next_state)
                 legacy_path.unlink(missing_ok=True)
-                return
+                return next_state
             if state is not None:
                 raise CoordinatorSessionTransitionError(
                     "Watch restart cannot be recorded for a closed session"
                 )
-            self._write_legacy_watch_restart(target, recorded_at)
+            self._write_legacy_watch_restart(target, recorded_at, observation)
+            return None
 
     @staticmethod
     def _require_compatible_active_target(
@@ -948,6 +1002,13 @@ class SessionStateStore:
         validate_session_state(state)
         self._atomic_write(path, state.to_dict())
 
+    def _legacy_watch_restart_observation(self, target: Target) -> dict[str, object] | None:
+        self._legacy_watch_restart_recorded_at(target)
+        payload = json.loads(self._validated_legacy_path(target).read_text())
+        observation = payload.get("watchRestartObservation")
+        validate_watch_restart_observation(observation)
+        return observation
+
     def _legacy_watch_restart_recorded_at(self, target: Target) -> str | None:
         path = self._validated_legacy_path(target)
         if not path.is_file():
@@ -968,12 +1029,15 @@ class SessionStateStore:
             raise CoordinatorSessionStateError("legacy coordinator state is invalid")
         return recorded_at
 
-    def _write_legacy_watch_restart(self, target: Target, recorded_at: datetime) -> None:
+    def _write_legacy_watch_restart(
+        self, target: Target, recorded_at: datetime, observation: dict[str, object] | None = None,
+    ) -> None:
         payload = {
             "schemaVersion": 1,
             "version": target.version,
             "buildNumber": target.build_number,
             "watchRestartRecordedAt": iso8601(normalize_utc(recorded_at)),
+            "watchRestartObservation": observation,
         }
         self._atomic_write(self._validated_legacy_path(target), payload)
 
