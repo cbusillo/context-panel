@@ -713,15 +713,19 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
 final class RuntimeReceiptDirectoryLock {
     private let descriptor: Int32
 
+    static func lockURL(in directoryURL: URL) -> URL {
+        directoryURL.appending(path: ".write.lock")
+    }
+
     static func withLock<Value>(
         directoryURL: URL,
-        coordinator: NSFileCoordinator = NSFileCoordinator(),
+        coordinator: NSFileCoordinator = NSFileCoordinator(filePresenter: nil),
         body: () throws -> Value
     ) throws -> Value {
-        let lockURL = directoryURL.appending(path: ".write.lock")
+        let lockURL = lockURL(in: directoryURL)
         var coordinationError: NSError?
         var result: Result<Value, Error>?
-        // Foundation protects the entire accessor from suspension, including in extensions.
+        // Background task protection: developer.apple.com/documentation/foundation/nsfilecoordinator#File-Coordinators-and-iOS
         // Release the POSIX lock before that protection ends.
         coordinator.coordinate(writingItemAt: lockURL, options: [], error: &coordinationError) { _ in
             result = Result {
@@ -742,7 +746,7 @@ final class RuntimeReceiptDirectoryLock {
     }
 
     private init?(directoryURL: URL) throws {
-        let lockURL = directoryURL.appending(path: ".write.lock")
+        let lockURL = Self.lockURL(in: directoryURL)
         let descriptor = open(
             lockURL.path,
             O_CREAT | O_RDWR | O_CLOEXEC,

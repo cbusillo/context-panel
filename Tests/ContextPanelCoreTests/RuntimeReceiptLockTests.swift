@@ -21,7 +21,7 @@ import Testing
     #expect(coordinator.lockWasReleasedBeforeAccessEnded)
     #expect(receiptLockIsAvailable(in: directory))
 
-    #expect(throws: CocoaError.self) {
+    #expect(throws: CocoaError(.fileWriteUnknown)) {
         try RuntimeReceiptDirectoryLock.withLock(directoryURL: directory, coordinator: coordinator) {
             #expect(coordinator.isAccessing)
             throw CocoaError(.fileWriteUnknown)
@@ -37,14 +37,14 @@ import Testing
     defer { try? FileManager.default.removeItem(at: directory) }
     let coordinator = ReceiptLockCoordinator()
     coordinator.cancelAccess = true
-    #expect(throws: CocoaError.self) {
+    #expect(throws: CocoaError(.userCancelled)) {
         try RuntimeReceiptDirectoryLock.withLock(directoryURL: directory, coordinator: coordinator) {
             Issue.record("Cancelled coordination must not enter the critical section")
         }
     }
-    #expect(!FileManager.default.fileExists(atPath: directory.appending(path: ".write.lock").path))
+    #expect(!FileManager.default.fileExists(atPath: RuntimeReceiptDirectoryLock.lockURL(in: directory).path))
 
-    let descriptor = open(directory.appending(path: ".write.lock").path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+    let descriptor = open(RuntimeReceiptDirectoryLock.lockURL(in: directory).path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
     #expect(descriptor >= 0)
     defer { close(descriptor) }
     #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
@@ -81,7 +81,7 @@ private final class ReceiptLockCoordinator: NSFileCoordinator {
 }
 
 private func receiptLockIsAvailable(in directory: URL) -> Bool {
-    let descriptor = open(directory.appending(path: ".write.lock").path, O_RDWR)
+    let descriptor = open(RuntimeReceiptDirectoryLock.lockURL(in: directory).path, O_RDWR)
     guard descriptor >= 0 else { return false }
     defer { close(descriptor) }
     guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return false }

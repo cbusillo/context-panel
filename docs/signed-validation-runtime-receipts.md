@@ -32,7 +32,7 @@ leaving that accessor, including on errors. Foundation supplies background
 execution protection for coordinated access in apps and extensions; a cancelled
 coordination performs no mutation. A bare POSIX lock across suspension causes
 `RUNNINGBOARD 0xdead10cc` termination, as seen on tvOS in #1046. See Apple's
-[file coordination lifecycle guidance](https://developer.apple.com/documentation/foundation/nsfilecoordinator).
+[file coordination lifecycle guidance, “File Coordinators and iOS”](https://developer.apple.com/documentation/foundation/nsfilecoordinator#File-Coordinators-and-iOS).
 
 ## Receipt Contract
 
