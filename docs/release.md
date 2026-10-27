@@ -1791,7 +1791,10 @@ jobs race and the winning item becomes visible on a different submission. The
 losing job revalidates its own submission immediately before cleanup and attempts
 to cancel it only while the authoritative items endpoint still reports it empty.
 Cleanup verification or cancellation failure is reported without blocking the
-valid owner's submission. A process interruption before item creation can still
+valid owner's submission. If item creation fails, a submission created by that
+run is cleaned up only after an authoritative read still proves it empty;
+unknown ownership or a newly visible item leaves it untouched and preserves the
+original error. A process interruption before item creation can still
 leave an ownerless draft. The helper never guesses its version and instead fails
 closed with active-submission diagnostics if those drafts exhaust the service
 limit.
@@ -1802,7 +1805,8 @@ or dry-run-submit the same rejected marketing version again. Prepare the next
 marketing version, copy the approved metadata and screenshot matrix there, and
 submit that fresh version instead. The submit helper fails fast when the target
 version is in `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or
-`INVALID_BINARY`.
+`INVALID_BINARY`, except the explicit developer-withdrawn replacement described
+below.
 
 Companion App Review may ask for a demo video when the iOS, iPadOS, watchOS,
 visionOS, or tvOS surface depends on a Mac-published CloudKit companion
@@ -1848,7 +1852,8 @@ If Apple refuses submitted-item removal because of the owning submission's
 state, the helper reads every page of that submission's items. It cancels the
 submission only when its sole item is the exact item and version being
 withdrawn. Any additional item, unknown ownership, or different version keeps
-the refusal. It reads cancellation back to `COMPLETE` and verifies the exact withdrawn
+the refusal. It reads cancellation back to `COMPLETE` or confirms Apple returns
+404 for the canceled submission, and in either case verifies the exact withdrawn
 version is `DEVELOPER_REJECTED` before continuing; an
 unconfirmed cancellation stops the run for reconciliation. The dry run reads
 the same item inventory and reports whether this fallback is available, without
@@ -1865,6 +1870,20 @@ When submitting a replacement version, `remove_active_review_version` is not
 cancel-only. It allows the submit script to remove or reuse an existing blocked
 App Store version, then continue creating the target version and submitting the
 new build after the dry-run path has validated that transition.
+
+After a completed withdrawal, dry-run and live replacement allow the explicitly
+named `DEVELOPER_REJECTED` source to become a different marketing version with
+a matching validated new build, only when no active review remains on that
+platform. If Apple blocks creating a separate version, this permits updating
+the withdrawn version's number and build before submitting the replacement.
+A resumed target may continue this same replacement only when the old version
+name is absent and authoritative review items prove either no active owner or
+one owner exclusively for that exact target. Unknown, mixed, duplicate or
+ownerless active submissions refuse before target updates. Known other-platform
+reviews and proven empty released-version orphans are preserved. Apple-rejected
+sources and targets retain their refusal. A withdrawn target requires an explicit
+absent old source, a distinct target, and a validated build. App Store Connect
+does not expose rename history; the old-source input declares replacement intent.
 
 For the local operator route, the same script accepts an API key path or the
 existing App Store Connect environment variables. Run it from a clean checkout

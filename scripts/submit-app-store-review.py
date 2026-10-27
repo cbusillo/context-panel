@@ -602,11 +602,18 @@ def is_exact_sole_review_item(client: ASCClient, submission_id: str, item_id: st
 def confirm_review_submission_cancellation(client: ASCClient, submission_id: str, version_id: str) -> None:
     deadline = time.monotonic() + DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS
     while True:
-        submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
+        submission_not_found = False
+        try:
+            submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
+        except AppStoreConnectError as error:
+            if error.status != 404:
+                raise
+            submission_not_found = True
+            submission = {}
         state = submission.get("attributes", {}).get("state")
-        if submission.get("id") != submission_id:
+        if not submission_not_found and submission.get("id") != submission_id:
             raise AppStoreConnectError("Cancellation readback returned a different review submission")
-        if state == "COMPLETE":
+        if submission_not_found or state == "COMPLETE":
             version = client.request("GET", f"/appStoreVersions/{version_id}")["data"]
             if version.get("id") != version_id:
                 raise AppStoreConnectError("Withdrawal readback returned a different App Store version")
@@ -844,7 +851,7 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
         "usesIdfa": args.uses_idfa,
     }
     state = version_state(version)
-    if state in REJECTED_RELEASE_CANDIDATE_STATES:
+    if state in REJECTED_RELEASE_CANDIDATE_STATES and not can_replace_withdrawn_version(client, app_id, version, args):
         raise AppStoreConnectError(
             f"App Store version {args.version} is {state}; do not resubmit a rejected "
             "release candidate. Prepare the next marketing version, copy the approved "
@@ -862,6 +869,55 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
     return version
 
 
+def can_replace_withdrawn_version(
+    client: ASCClient, app_id: str, source: dict[str, Any], args: argparse.Namespace
+) -> bool:
+    old_version_value = getattr(args, "remove_active_review_version", None)
+    if not isinstance(old_version_value, str):
+        return False
+    old_version = str(old_version_value)
+    current_version = source.get("attributes", {}).get("versionString")
+    if (
+        version_state(source) != "DEVELOPER_REJECTED"
+        or not old_version
+        or old_version == args.version
+        or current_version not in {old_version, args.version}
+        or not getattr(args, "build_number", None)
+    ):
+        return False
+    resumed_target = current_version == args.version
+    platform = namespace_platform(args)
+    if resumed_target and app_store_version(client, app_id, old_version, platform) is not None:
+        return False
+    submissions = review_submissions_for_app(client, app_id)
+    included = included_by_id(submissions)
+    owner_found = False
+    for submission in submissions.get("data", []):
+        attributes = submission.get("attributes", {})
+        if attributes.get("state") not in ACTIVE_REVIEW_SUBMISSION_STATES:
+            continue
+        if attributes.get("platform") not in (None, platform):
+            continue
+        direct_version_id = relationship_id(submission, "appStoreVersionForReview")
+        released_orphan = is_orphan_ready_for_sale_review_draft(submission, included.get(direct_version_id or ""))
+        scope_error = AppStoreConnectError(
+            f"Active review submission {submission['id']} blocks the withdrawn replacement; "
+            "reconcile its ownership before retrying the same approved version and build"
+        )
+        if not resumed_target and not released_orphan:
+            raise scope_error
+        items = review_submission_items(client, submission["id"])
+        if not items and released_orphan:
+            continue
+        version_ids = {relationship_id(item, "appStoreVersion") for item in items}
+        if direct_version_id:
+            version_ids.add(direct_version_id)
+        if not resumed_target or owner_found or len(items) > 1 or None in version_ids or version_ids != {source["id"]}:
+            raise scope_error
+        owner_found = True
+    return True
+
+
 def reuse_removed_app_store_version(
     client: ASCClient, app_id: str, source_version_string: str, args: argparse.Namespace
 ) -> dict[str, Any]:
@@ -870,7 +926,11 @@ def reuse_removed_app_store_version(
         raise AppStoreConnectError(f"App Store version {source_version_string} is not available to reuse")
     state = version_state(version)
     prepare_only = bool(getattr(args, "prepare_only", False))
-    if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+    if (
+        state in REJECTED_RELEASE_CANDIDATE_STATES
+        and not prepare_only
+        and not can_replace_withdrawn_version(client, app_id, version, args)
+    ):
         raise AppStoreConnectError(
             rejected_source_reuse_message(source_version_string, args.version, state),
             payload=version,
@@ -913,7 +973,11 @@ def ensure_replacement_version(client: ASCClient, app_id: str, args: argparse.Na
             raise AppStoreConnectError(f"App Store version {source_version} is not available to reuse")
         source_state = version_state(source)
         prepare_only = bool(getattr(args, "prepare_only", False))
-        if source_state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+        if (
+            source_state in REJECTED_RELEASE_CANDIDATE_STATES
+            and not prepare_only
+            and not can_replace_withdrawn_version(client, app_id, source, args)
+        ):
             raise AppStoreConnectError(
                 rejected_source_reuse_message(source_version, args.version, source_state),
                 payload=source,
@@ -966,7 +1030,7 @@ def dry_run_version_path(
 
     if existing is not None:
         state = version_state(existing)
-        if state in REJECTED_RELEASE_CANDIDATE_STATES:
+        if state in REJECTED_RELEASE_CANDIDATE_STATES and not can_replace_withdrawn_version(client, app_id, existing, args):
             raise AppStoreConnectError(
                 f"App Store version {args.version} is {state}; do not resubmit a rejected "
                 "release candidate. Prepare the next marketing version, copy the approved "
@@ -991,7 +1055,11 @@ def dry_run_version_path(
         )
     state = version_state(source)
     removal_validated = removable_review_version == args.remove_active_review_version
-    if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+    if (
+        state in REJECTED_RELEASE_CANDIDATE_STATES
+        and not prepare_only
+        and not can_replace_withdrawn_version(client, app_id, source, args)
+    ):
         raise AppStoreConnectError(
             rejected_source_reuse_message(args.remove_active_review_version, args.version, state),
             payload=source,
@@ -1397,7 +1465,7 @@ def ensure_review_submission(
 ) -> dict[str, Any]:
     submissions = review_submissions_for_app(client, app_id)
     existing = active_review_submission_for_version(client, submissions, version_id)
-    created_submission_id = None
+    created_submission_id: str | None = None
     if existing:
         state = existing["attributes"].get("state")
         if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
@@ -1461,6 +1529,8 @@ def ensure_review_submission(
                 is_existing_review_item_conflict(error)
                 or is_review_submission_version_slot_taken(error)
             ):
+                if created_submission_id is not None:
+                    cancel_unowned_review_submission_if_still_empty(client, created_submission_id)
                 raise
             visible_version_ids = review_submission_item_version_ids(client, submission["id"])
             if version_id in visible_version_ids:
