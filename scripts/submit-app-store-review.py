@@ -900,20 +900,20 @@ def can_replace_withdrawn_version(
             continue
         direct_version_id = relationship_id(submission, "appStoreVersionForReview")
         released_orphan = is_orphan_ready_for_sale_review_draft(submission, included.get(direct_version_id or ""))
+        scope_error = AppStoreConnectError(
+            f"Active review submission {submission['id']} blocks the withdrawn replacement; "
+            "reconcile its ownership before retrying the same approved version and build"
+        )
         if not resumed_target and not released_orphan:
-            return False
+            raise scope_error
         items = review_submission_items(client, submission["id"])
         if not items and released_orphan:
             continue
-        if not resumed_target or owner_found or len(items) > 1:
-            return False
         version_ids = {relationship_id(item, "appStoreVersion") for item in items}
-        if None in version_ids:
-            return False
         if direct_version_id:
             version_ids.add(direct_version_id)
-        if version_ids != {source["id"]}:
-            return False
+        if not resumed_target or owner_found or len(items) > 1 or None in version_ids or version_ids != {source["id"]}:
+            raise scope_error
         owner_found = True
     return True
 
@@ -1465,7 +1465,7 @@ def ensure_review_submission(
 ) -> dict[str, Any]:
     submissions = review_submissions_for_app(client, app_id)
     existing = active_review_submission_for_version(client, submissions, version_id)
-    created_submission_id = None
+    created_submission_id: str | None = None
     if existing:
         state = existing["attributes"].get("state")
         if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
@@ -1529,6 +1529,8 @@ def ensure_review_submission(
                 is_existing_review_item_conflict(error)
                 or is_review_submission_version_slot_taken(error)
             ):
+                if created_submission_id is not None:
+                    cancel_unowned_review_submission_if_still_empty(client, created_submission_id)
                 raise
             visible_version_ids = review_submission_item_version_ids(client, submission["id"])
             if version_id in visible_version_ids:

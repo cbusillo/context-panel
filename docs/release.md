@@ -1791,7 +1791,10 @@ jobs race and the winning item becomes visible on a different submission. The
 losing job revalidates its own submission immediately before cleanup and attempts
 to cancel it only while the authoritative items endpoint still reports it empty.
 Cleanup verification or cancellation failure is reported without blocking the
-valid owner's submission. A process interruption before item creation can still
+valid owner's submission. If item creation fails, a submission created by that
+run is cleaned up only after an authoritative read still proves it empty;
+unknown ownership or a newly visible item leaves it untouched and preserves the
+original error. A process interruption before item creation can still
 leave an ownerless draft. The helper never guesses its version and instead fails
 closed with active-submission diagnostics if those drafts exhaust the service
 limit.
@@ -1878,7 +1881,9 @@ name is absent and authoritative review items prove either no active owner or
 one owner exclusively for that exact target. Unknown, mixed, duplicate or
 ownerless active submissions refuse before target updates. Known other-platform
 reviews and proven empty released-version orphans are preserved. Apple-rejected
-sources and targets, and other withdrawn-target submissions, retain their refusal.
+sources and targets retain their refusal. A withdrawn target requires an explicit
+absent old source, a distinct target, and a validated build. App Store Connect
+does not expose rename history; the old-source input declares replacement intent.
 
 For the local operator route, the same script accepts an API key path or the
 existing App Store Connect environment variables. Run it from a clean checkout

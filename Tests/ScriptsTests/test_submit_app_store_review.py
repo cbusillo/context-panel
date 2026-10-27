@@ -1415,7 +1415,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             ),
             "rejected replacement for review submission": (
                 {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "REJECTED")]}, None, {}, True,
-                ("do not reuse it as 1.0.14 for review submission", "Run --prepare-only first"), (),
+                (), (),
             ),
             "rejected replacement for prepare-only": (
                 {**replace_13, "prepare_only": True}, {"1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]}, None, {}, False,
@@ -1684,10 +1684,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             prepare_only=False,
         )
 
-        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError):
             submit_app_store_review.ensure_replacement_version(RejectedReuseClient(), "app-id", args)
 
-        self.assertIn("do not reuse it as 1.0.38 for review submission", str(context.exception))
 
     def test_live_replacement_reuses_only_named_withdrawn_source_with_new_build_and_no_review(self) -> None:
         class WithdrawnClient:
@@ -1847,8 +1846,48 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         for items in ([], [{"id": "gained-item"}]):
             with self.subTest(orphan_items=items):
                 source = {"id": "withdrawn-id", "attributes": {"versionString": "old", "appStoreState": "DEVELOPER_REJECTED"}}
-                self.assertEqual(submit_app_store_review.can_replace_withdrawn_version(
-                    EmptyOrphanClient(items), "app-id", source, args), not items)
+                if items:
+                    with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                        submit_app_store_review.can_replace_withdrawn_version(EmptyOrphanClient(items), "app-id", source, args)
+                else:
+                    self.assertTrue(submit_app_store_review.can_replace_withdrawn_version(EmptyOrphanClient(items), "app-id", source, args))
+
+    def test_failed_item_creation_cleans_only_its_still_empty_new_submission(self) -> None:
+        class FailedItemClient:
+            def __init__(self, result_after_failure: str) -> None:
+                self.item_result = result_after_failure
+                self.canceled = False
+                self.failure = submit_app_store_review.AppStoreConnectError("item creation failed", status=500)
+
+            def request(self, method: str, path: str, params: dict[str, Any] | None = None,
+                        body: dict[str, Any] | None = None, **_options: Any) -> dict[str, Any]:
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "created", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise self.failure
+                if method == "GET" and path == "/reviewSubmissions/created/items":
+                    if self.item_result == "read failure":
+                        raise submit_app_store_review.AppStoreConnectError("items read failed", status=500)
+                    if self.item_result == "empty":
+                        return {"data": []}
+                    if self.item_result == "unknown owner":
+                        return {"data": [{"id": "unknown"}]}
+                    return {"data": [{"id": "created-item", "relationships": {"appStoreVersion": {"data": {"id": "target"}}}}]}
+                if method == "PATCH" and path == "/reviewSubmissions/created":
+                    assert body is not None
+                    self.canceled = body["data"]["attributes"].get("canceled") is True
+                    return {}
+                raise AssertionError(f"unexpected request: {method} {path} {params}")
+
+        for item_result in ("empty", "created item", "unknown owner", "read failure"):
+            with self.subTest(item_result=item_result):
+                client = FailedItemClient(item_result)
+                with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+                    submit_app_store_review.ensure_review_submission(client, "app-id", "target", "VISION_OS")
+                self.assertIs(context.exception, client.failure)
+                self.assertEqual(client.canceled, item_result == "empty")
 
     def test_ensure_review_submission_reuses_existing_matching_ready_submission(self):
         class ReviewSubmissionClient:
