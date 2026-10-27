@@ -342,14 +342,20 @@ AGY credentials.
 
 The one source is AGY's `/usage` JSON, delivered after each run by its
 [documented Stop hook](https://antigravity.google/docs/hooks/). Setup is guided:
-Context Panel copies instructions; the user pastes them into AGY and applies
-only the named `context-panel-google-usage` entry in
-`~/.gemini/config/hooks.json`, preserving other hooks. Setup resolves AGY's
+Copy Setup copies one command to paste into Terminal. It uses only stock macOS
+tools (`/bin/sh` and `/usr/bin/osascript -l JavaScript` with Foundation) to add or
+replace only the named `context-panel-google-usage` entry in
+`~/.gemini/config/hooks.json`, preserving other hooks. It creates a missing file
+with mode 0600 and safely handles an empty JSON object. No `jq`, Python, or
+developer tools are required, and it avoids `plutil -replace`'s failure on a
+fresh `{}` seed. Malformed configuration is rejected without overwriting it.
+Running the command twice produces the same configuration. Setup resolves AGY's
 executable to an absolute path and targets the signed helper in the running
 installed app bundle. The supported runtime is `/Applications/Context Panel.app`.
 Existing sessions must restart to load it.
-The migration instructions remove an old Context Panel status line only if it
-invokes the retired ingestion flag; other customizations stay in place.
+The command removes `statusLine` from `~/.gemini/antigravity-cli/settings.json`
+only if it invokes `ContextPanelRefreshAgent --ingest-antigravity-status-line`;
+other status lines and every other setting stay in place.
 Context Panel never edits AGY configuration itself.
 
 1. AGY's Stop hook runs `agy -p "/usage" --output-format json` with a bounded
@@ -421,8 +427,10 @@ provider identifier, but it must not infer a window from reset timing or add
 per-model buckets together as account capacity. Disabled buckets remain
 sanitized source evidence but do not appear as active capacity.
 
-Copy Remove asks AGY to remove only `context-panel-google-usage` from its
-hooks file. Restart existing sessions after removal. Context Panel's separate
+Copy Remove copies a matching Terminal command that removes only
+`context-panel-google-usage` from its hooks file, without requiring AGY on PATH.
+It is safe to run twice or when the file is absent.
+Restart existing sessions after removal. Context Panel's separate
 Forget action deletes only its sanitized snapshot. No login file is read,
 changed or copied by the integration.
 

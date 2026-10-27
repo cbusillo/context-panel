@@ -724,7 +724,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 generatedAt: now,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. Later AGY runs publish quota automatically.",
+                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into Terminal once. Later AGY runs publish quota automatically.",
             accountIdentityStatus: .notExposedByConnector
             )
         }
@@ -866,28 +866,78 @@ public enum GoogleAntigravityUsageSetup {
     public static let hookName = "context-panel-google-usage"
 
     public static var removeCommand: String {
-        "Remove only the \"\(hookName)\" entry from ~/.gemini/config/hooks.json. Keep every other hook and setting. Restart existing AGY sessions, then use Forget in Context Panel to remove its saved Google reading."
+        configurationCommand(hook: nil)
     }
 
     public static func hookCommand(applicationBundleURL: URL, agyExecutable: String = "agy") -> String {
+        shellQuoted(agyExecutable) + hookArguments(applicationBundleURL: applicationBundleURL)
+    }
+
+    private static func hookArguments(applicationBundleURL: URL) -> String {
         let executableURL = applicationBundleURL
             .appending(path: "Contents/Library/LoginItems/ContextPanelRefreshAgent.app/Contents/MacOS/ContextPanelRefreshAgent")
-        return "\(shellQuoted(agyExecutable)) -p '/usage' --output-format json --print-timeout 30s </dev/null 2>/dev/null | \(shellQuoted(executableURL.path)) \(GoogleAntigravityUsageBridge.ingestArgument)"
+        return " -p '/usage' --output-format json --print-timeout 30s </dev/null 2>/dev/null | \(shellQuoted(executableURL.path)) \(GoogleAntigravityUsageBridge.ingestArgument)"
     }
 
     public static func setupCommand(applicationBundleURL: URL) -> String {
-        let entry: [String: Any] = [hookName: ["Stop": [[
-            "type": "command",
-            "command": hookCommand(applicationBundleURL: applicationBundleURL),
-            "timeout": 60,
-        ]]]]
-        let data = try! JSONSerialization.data(withJSONObject: entry, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        let json = String(decoding: data, as: UTF8.self)
-        return """
-        Set up Context Panel's Google reading in AGY. In ~/.gemini/config/hooks.json, add or replace only the "\(hookName)" entry shown below. Preserve every other hook and setting. Resolve 'agy' in its command to this AGY installation's absolute executable path, keeping shell quoting. Do not read or change login credentials. If an existing custom status line invokes ContextPanelRefreshAgent with --ingest-antigravity-status-line, remove that obsolete Context Panel status line with /statusline delete; preserve any other status line. Restart existing AGY sessions to load the hook.
+        configurationCommand(hook: hookArguments(applicationBundleURL: applicationBundleURL))
+    }
 
-        \(json)
+    private static func configurationCommand(hook: String?) -> String {
+        let suffix = String(decoding: try! JSONSerialization.data(withJSONObject: hook ?? "", options: [.fragmentsAllowed]), as: UTF8.self)
+        let resolve = hook == nil ? "agy=''" : """
+        agy=$(command -v agy) || { echo 'AGY was not found. Install AGY and try again.' >&2; exit 1; }
+        case "$agy" in /*) ;; *) echo 'AGY must resolve to an absolute executable path.' >&2; exit 1 ;; esac
         """
+        let script = #"""
+        set -eu
+        umask 077
+        \#(resolve)
+        /usr/bin/osascript -l JavaScript - "$HOME" "$agy" <<'CONTEXT_PANEL_JSON'
+        ObjC.import('Foundation');
+        function run(args) {
+            const fm = $.NSFileManager.defaultManager;
+            const hooksPath = args[0] + '/.gemini/config/hooks.json';
+            const settingsPath = args[0] + '/.gemini/antigravity-cli/settings.json';
+            const installing = \#(hook != nil);
+            function read(path) {
+                if (!fm.fileExistsAtPath(path)) return null;
+                const text = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null));
+                if (typeof text !== 'string') throw Error('Cannot read ' + path);
+                const value = JSON.parse(text);
+                if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Expected a JSON object in ' + path);
+                return value;
+            }
+            function write(path, value) {
+                path = ObjC.unwrap($(path).stringByResolvingSymlinksInPath);
+                const directory = $(path).stringByDeletingLastPathComponent;
+                if (!fm.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(directory, true, {}, null)) throw Error('Cannot create configuration directory');
+                const text = $(JSON.stringify(value, null, 2) + '\n');
+                if (!text.writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, null)) throw Error('Cannot write ' + path);
+                if (!fm.setAttributesOfItemAtPathError({NSFilePosixPermissions: 384}, path, null)) throw Error('Cannot protect ' + path);
+            }
+            const hooks = read(hooksPath);
+            const settings = installing ? read(settingsPath) : null;
+            if (installing) {
+                const quote = value => "'" + value.replace(/'/g, "'\\''") + "'";
+                const value = hooks || {};
+                value['\#(hookName)'] = {Stop: [{type: 'command', command: quote(args[1]) + \#(suffix), timeout: 60}]};
+                write(hooksPath, value);
+                const status = settings && settings.statusLine;
+                const command = typeof status === 'string' ? status : status && status.command;
+                if (typeof command === 'string' && /^(?:'(?:[^']|'\\'')*\/ContextPanelRefreshAgent'|"(?:[^"\\]|\\.)*\/ContextPanelRefreshAgent"|[^\s'"]*\/ContextPanelRefreshAgent|ContextPanelRefreshAgent)\s+--ingest-antigravity-status-line(?:\s|$)/.test(command.trim())) {
+                    delete settings.statusLine;
+                    write(settingsPath, settings);
+                }
+            } else if (hooks && Object.prototype.hasOwnProperty.call(hooks, '\#(hookName)')) {
+                delete hooks['\#(hookName)'];
+                write(hooksPath, hooks);
+            }
+            return 'Context Panel hook ' + (installing ? 'installed' : 'removed') + '. Restart existing AGY sessions.';
+        }
+        CONTEXT_PANEL_JSON
+        """#
+        return "/bin/sh -c \(shellQuoted(script))"
     }
 
     static func shellQuoted(_ value: String) -> String {

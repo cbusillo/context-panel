@@ -2373,14 +2373,14 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func copyAntigravityBridgeSetupCommand() {
         copyAntigravityBridgeCommand(
             GoogleAntigravityUsageSetup.setupCommand(applicationBundleURL: Bundle.main.bundleURL),
-            notice: "Copied setup instructions. Paste into AGY to add the Context Panel hook, then restart existing AGY sessions. Other hooks stay in place."
+            notice: "Copied setup command. Paste into Terminal to add the Context Panel hook, then restart existing AGY sessions. Other hooks stay in place."
         )
     }
 
     func copyAntigravityBridgeRemovalCommand() {
         copyAntigravityBridgeCommand(
             GoogleAntigravityUsageSetup.removeCommand,
-            notice: "Copied removal instructions. Paste into AGY, restart existing sessions, then use Forget in Context Panel."
+            notice: "Copied removal command. Paste into Terminal, restart existing AGY sessions, then use Forget in Context Panel."
         )
     }
 
@@ -3045,7 +3045,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .googleAntigravityQuota:
-            return "Paste Copy Setup into AGY CLI to add its Stop hook, then restart existing sessions. Interactive and headless runs publish quota; Context Panel never reads its login"
+            return "Paste Copy Setup into Terminal to add AGY's Stop hook, then restart existing sessions. Interactive and headless runs publish quota; Context Panel never reads its login"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }

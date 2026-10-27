@@ -136,8 +136,8 @@ each account's state and observation time before relying on its capacity. See th
 
 For Google Antigravity, Context Panel uses an opt-in AGY Stop hook to run
 `agy -p "/usage" --output-format json` after interactive and headless runs.
-Copy Setup in the Google account settings supplies instructions to paste into
-AGY; the user applies the named hook and restarts existing sessions. Copy
+Copy Setup in the Google account settings supplies one command to paste into
+Terminal; the command installs the named hook. Restart existing AGY sessions. Copy
 Remove removes only that hook. The signed refresh agent directly reads the
 bounded, validated quota JSON, saves only a sanitized App Group snapshot, and
 immediately publishes Google readings. It never reads AGY credentials or calls
