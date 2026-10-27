@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import tempfile
+import time
 import unittest
 import urllib.error
 import sys
@@ -709,6 +710,13 @@ class FakeASCClient:
                     }
                 ],
             }
+        if method == "GET" and path == "/reviewSubmissions/submission-1/items":
+            return {"data": [{
+                "id": "item-1",
+                "relationships": {"appStoreVersion": {"data": {
+                    "type": "appStoreVersions", "id": "version-1-0-13",
+                }}},
+            }]}
         if method == "DELETE" and path == "/reviewSubmissionItems/item-1":
             self.deleted_paths.append(path)
             return {}
@@ -786,6 +794,12 @@ class SubmittedReviewItemClient(FakeASCClient):
 
 
 class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClient):
+    def __init__(self, items: list[dict[str, Any]] | None = None, cancel_state: str = "COMPLETE", withdrawn_state: str = "DEVELOPER_REJECTED") -> None:
+        super().__init__()
+        self.items = items
+        self.cancel_state = cancel_state
+        self.withdrawn_state = withdrawn_state
+
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         if method == "PATCH" and path == "/reviewSubmissionItems/item-1":
             self.requests.append((method, path, params, body, allowed))
@@ -801,6 +815,15 @@ class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClien
                     ]
                 },
             )
+        if method == "GET" and path == "/appStoreVersions/version-1-0-13":
+            self.requests.append((method, path, params, body, allowed))
+            return {"data": {"id": "version-1-0-13", "attributes": {"appStoreState": self.withdrawn_state}}}
+        if path == "/reviewSubmissions/submission-1/items" and self.items is not None:
+            self.requests.append((method, path, params, body, allowed))
+            return {"data": self.items}
+        if path == "/reviewSubmissions/submission-1":
+            self.requests.append((method, path, params, body, allowed))
+            return {"data": {"id": "submission-1", "attributes": {"state": self.cancel_state}}}
         return super().request(method, path, params, body, allowed)
 
 
@@ -1013,21 +1036,100 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_body = client.requests[-1][3]
         self.assertEqual(patch_body["data"]["attributes"], {"removed": True})
 
-    def test_raises_when_submitted_item_cannot_be_removed_without_canceling_owner(self):
+    def test_cancels_only_exact_sole_item_and_reads_back_before_returning(self) -> None:
+        for platform in ("MAC_OS", "IOS", "VISION_OS", "TV_OS"):
+            with self.subTest(platform=platform):
+                client = SubmittedReviewItemBlockedBySubmissionStateClient()
+                submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13", platform)
+                operations = [(r[0], r[1]) for r in client.requests]
+                self.assertEqual(operations[-4:], [
+                    ("GET", "/reviewSubmissions/submission-1/items"),
+                    ("PATCH", "/reviewSubmissions/submission-1"),
+                    ("GET", "/reviewSubmissions/submission-1"),
+                    ("GET", "/appStoreVersions/version-1-0-13"),
+                ])
+                self.assertEqual(client.requests[-3][3]["data"]["attributes"], {"canceled": True})
+                for request in client.requests:
+                    if request[1] in {"/reviewSubmissions", "/apps/app-id/appStoreVersions"}:
+                        self.assertEqual(request[2]["filter[platform]"], platform)
+
+    def test_refuses_owner_cancellation_for_any_other_item_mix(self) -> None:
+        target = {"id": "item-1", "relationships": {"appStoreVersion": {
+            "data": {"type": "appStoreVersions", "id": "version-1-0-13"},
+        }}}
+        other = {"id": "other", "relationships": {"appStoreVersion": {
+            "data": {"type": "appStoreVersions", "id": "other-version"},
+        }}}
+        for items in ([], [other], [{"id": "item-1"}], [target, other], [target, {"id": "event"}], [target, target]):
+            with self.subTest(items=items):
+                client = SubmittedReviewItemBlockedBySubmissionStateClient(items=items)
+                with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                    submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+                self.assertFalse(any(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests))
+
+    def test_unconfirmed_cancel_stops_after_one_write(self) -> None:
+        client = SubmittedReviewItemBlockedBySubmissionStateClient(cancel_state="WAITING_FOR_REVIEW")
+        with patch.object(time, "monotonic", side_effect=(0, submit_app_store_review.DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS + 1)):
+            with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+        self.assertEqual(sum(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 1)
+        self.assertEqual(client.requests[-1][:2], ("GET", "/reviewSubmissions/submission-1"))
+
+    def test_completed_review_without_withdrawn_version_stops(self) -> None:
+        for state in ("WAITING_FOR_REVIEW", "READY_FOR_SALE"):
+            with self.subTest(state=state):
+                client = SubmittedReviewItemBlockedBySubmissionStateClient(withdrawn_state=state)
+                with patch.object(time, "monotonic", side_effect=(0, submit_app_store_review.DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS + 1)):
+                    with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                        submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+                self.assertEqual(client.requests[-1][:2], ("GET", "/appStoreVersions/version-1-0-13"))
+
+    def test_dry_run_reads_sole_item_scope_without_mutations(self) -> None:
+        for items in (None, [{"id": "event"}]):
+            with self.subTest(items=items):
+                client = SubmittedReviewItemBlockedBySubmissionStateClient(items=items)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13", dry_run=True)
+                self.assertIn(("GET", "/reviewSubmissions/submission-1/items"), [(r[0], r[1]) for r in client.requests])
+                self.assertFalse(any(r[0] != "GET" for r in client.requests))
+
+    def test_second_page_item_prevents_whole_submission_cancellation(self) -> None:
         client = SubmittedReviewItemBlockedBySubmissionStateClient()
+        request = client.request
 
-        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+        def paged_request(method: str, path: str, params: dict[str, Any] | None = None,
+                          body: dict[str, Any] | None = None, allowed: tuple[int, ...] = (200,)) -> dict[str, Any]:
+            if path == "/reviewSubmissions/submission-1/items":
+                if params and "cursor" in params:
+                    return {"data": [{"id": "event"}]}
+                page: dict[str, Any] = request(method, path, params, body, allowed)
+                page["links"] = {"next": "https://api.appstoreconnect.apple.com/v1/reviewSubmissions/submission-1/items?cursor=next"}
+                return page
+            return request(method, path, params, body, allowed)
+
+        with patch.object(client, "request", side_effect=paged_request):
+            with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+        self.assertFalse(any(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests))
+
+    def test_cancellation_waits_for_complete_after_canceling(self) -> None:
+        client = SubmittedReviewItemBlockedBySubmissionStateClient()
+        request = client.request
+        states = iter(("CANCELING", "COMPLETE", "COMPLETE"))
+        version_states = iter(("WAITING_FOR_REVIEW", "DEVELOPER_REJECTED"))
+
+        def cancellation_request(method: str, path: str, params: dict[str, Any] | None = None,
+                                 body: dict[str, Any] | None = None, allowed: tuple[int, ...] = (200,)) -> dict[str, Any]:
+            if method == "GET" and path == "/reviewSubmissions/submission-1":
+                client.cancel_state = next(states)
+            if method == "GET" and path == "/appStoreVersions/version-1-0-13":
+                client.withdrawn_state = next(version_states)
+            return request(method, path, params, body, allowed)
+
+        with patch.object(client, "request", side_effect=cancellation_request), patch.object(time, "sleep"):
             submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
-
-        mutations = [(request[0], request[1]) for request in client.requests if request[0] in {"DELETE", "PATCH"}]
-        self.assertEqual(
-            mutations,
-            [
-                ("DELETE", "/reviewSubmissionItems/item-1"),
-                ("PATCH", "/reviewSubmissionItems/item-1"),
-            ],
-        )
-        self.assertIn("owning review submission", str(context.exception))
+        self.assertEqual(sum(r[0] == "GET" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 3)
 
     def test_dry_run_does_not_delete(self):
         client = FakeASCClient()
