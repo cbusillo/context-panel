@@ -552,15 +552,12 @@ public struct RuntimeReceiptRelayStateStore: Sendable {
     ) throws {
         let directoryURL = stateURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-            throw RuntimeReceiptRemoteSyncError.busy
+        try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+            var state = loadState(now: now)
+            mutation(&state)
+            state.normalize(now: now)
+            try RuntimeReceiptJSON.makeEncoder().encode(state).write(to: stateURL, options: [.atomic])
         }
-        defer { lock.unlock() }
-
-        var state = loadState(now: now)
-        mutation(&state)
-        state.normalize(now: now)
-        try RuntimeReceiptJSON.makeEncoder().encode(state).write(to: stateURL, options: [.atomic])
     }
 
     private func loadState(now: Date) -> RuntimeReceiptRelayState {
@@ -604,27 +601,24 @@ public struct RuntimeReceiptInboxStore: Sendable {
             at: directoryURL,
             withIntermediateDirectories: true
         )
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-            throw RuntimeReceiptRemoteSyncError.busy
-        }
-        defer { lock.unlock() }
-
-        for envelope in envelopes where envelope.isStructurallyValid
-            && now < envelope.receipt.retentionExpiresAt {
-            let url = directoryURL.appending(path: "\(envelope.receipt.id).json")
-            if let data = try? Data(contentsOf: url),
-               let existing = try? RuntimeReceiptJSON.makeDecoder().decode(
-                   RuntimeReceiptRemoteEnvelope.self,
-                   from: data
-               ) {
-                guard existing == envelope else {
-                    throw RuntimeReceiptRemoteSyncError.conflictingReceipt
+        try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+            for envelope in envelopes where envelope.isStructurallyValid
+                && now < envelope.receipt.retentionExpiresAt {
+                let url = directoryURL.appending(path: "\(envelope.receipt.id).json")
+                if let data = try? Data(contentsOf: url),
+                   let existing = try? RuntimeReceiptJSON.makeDecoder().decode(
+                       RuntimeReceiptRemoteEnvelope.self,
+                       from: data
+                   ) {
+                    guard existing == envelope else {
+                        throw RuntimeReceiptRemoteSyncError.conflictingReceipt
+                    }
+                    continue
                 }
-                continue
+                try RuntimeReceiptJSON.makeEncoder().encode(envelope).write(to: url, options: [.atomic])
             }
-            try RuntimeReceiptJSON.makeEncoder().encode(envelope).write(to: url, options: [.atomic])
+            prune(now: now)
         }
-        prune(now: now)
     }
 
     public func loadEnvelopes(now: Date = Date()) -> [RuntimeReceiptRemoteEnvelope] {
@@ -638,11 +632,9 @@ public struct RuntimeReceiptInboxStore: Sendable {
             at: directoryURL,
             withIntermediateDirectories: true
         )
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-            throw RuntimeReceiptRemoteSyncError.busy
+        try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+            prune(now: now)
         }
-        defer { lock.unlock() }
-        prune(now: now)
     }
 
     private func prune(now: Date) {

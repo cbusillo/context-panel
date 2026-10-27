@@ -192,12 +192,9 @@ public struct RuntimeValidationSessionStore: Sendable {
             at: sessionsDirectoryURL,
             withIntermediateDirectories: true
         )
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-            throw RuntimeReceiptRemoteSyncError.busy
+        try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+            try saveUnlocked(session, now: now)
         }
-        defer { lock.unlock() }
-
-        try saveUnlocked(session, now: now)
     }
 
     public func removeActiveSession() throws {
@@ -208,12 +205,9 @@ public struct RuntimeValidationSessionStore: Sendable {
     public func removeActiveSession(now: Date) throws {
         let directoryURL = sessionURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-            throw RuntimeReceiptRemoteSyncError.busy
+        try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+            try removeActiveSessionUnlocked(now: now)
         }
-        defer { lock.unlock() }
-
-        try removeActiveSessionUnlocked(now: now)
     }
 
     @discardableResult
@@ -233,50 +227,47 @@ public struct RuntimeValidationSessionStore: Sendable {
         }
         let directoryURL = sessionURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-            throw RuntimeReceiptRemoteSyncError.busy
-        }
-        defer { lock.unlock() }
-
-        if let currentState = loadRemoteState() {
-            if currentState.stateUpdatedAt > stateUpdatedAt {
+        return try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+            if let currentState = loadRemoteState() {
+                if currentState.stateUpdatedAt > stateUpdatedAt {
+                    return false
+                }
+                if currentState.stateUpdatedAt == stateUpdatedAt {
+                    if currentState.state == state {
+                        return false
+                    }
+                    if currentState.state == .cleared, state == .active {
+                        return false
+                    }
+                }
+            }
+            switch state {
+            case .active:
+                guard let session,
+                      session.isStructurallyValid(now: now, requiresActive: true)
+                else {
+                    throw RuntimeReceiptRemoteSyncError.invalidSession
+                }
+                try FileManager.default.createDirectory(
+                    at: sessionsDirectoryURL,
+                    withIntermediateDirectories: true
+                )
+                try saveUnlocked(session, now: now)
+            case .cleared:
+                try removeActiveSessionUnlocked(now: now)
+            case .missing:
                 return false
             }
-            if currentState.stateUpdatedAt == stateUpdatedAt {
-                if currentState.state == state {
-                    return false
-                }
-                if currentState.state == .cleared, state == .active {
-                    return false
-                }
-            }
-        }
-        switch state {
-        case .active:
-            guard let session,
-                  session.isStructurallyValid(now: now, requiresActive: true)
-            else {
-                throw RuntimeReceiptRemoteSyncError.invalidSession
-            }
-            try FileManager.default.createDirectory(
-                at: sessionsDirectoryURL,
-                withIntermediateDirectories: true
+            let remoteState = RuntimeValidationSessionRemoteMirrorState(
+                state: state,
+                stateUpdatedAt: stateUpdatedAt
             )
-            try saveUnlocked(session, now: now)
-        case .cleared:
-            try removeActiveSessionUnlocked(now: now)
-        case .missing:
-            return false
+            try Self.makeRemoteStateEncoder().encode(remoteState).write(
+                to: remoteStateURL,
+                options: [.atomic]
+            )
+            return true
         }
-        let remoteState = RuntimeValidationSessionRemoteMirrorState(
-            state: state,
-            stateUpdatedAt: stateUpdatedAt
-        )
-        try Self.makeRemoteStateEncoder().encode(remoteState).write(
-            to: remoteStateURL,
-            options: [.atomic]
-        )
-        return true
     }
 
     private func saveUnlocked(
@@ -465,25 +456,26 @@ public struct RuntimeReceiptStore: Sendable {
             at: directoryURL,
             withIntermediateDirectories: true
         )
-        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
+        do {
+            return try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+                var storedReceipts = loadReceipts()
+                if storedReceipts.contains(where: { stored in
+                    stored.rateLimitKey == receipt.rateLimitKey
+                        && stored.observedAt <= now
+                        && now.timeIntervalSince(stored.observedAt) < session.minimumWriteIntervalSeconds
+                }) {
+                    return .rateLimited
+                }
+
+                let receiptURL = directoryURL.appending(path: "\(receipt.id).json")
+                try Self.makeEncoder().encode(receipt).write(to: receiptURL, options: [.atomic])
+                storedReceipts.append(receipt)
+                prune(storedReceipts, session: session, now: now)
+                return .saved
+            }
+        } catch RuntimeReceiptRemoteSyncError.busy {
             return .busy
         }
-        defer { lock.unlock() }
-
-        var storedReceipts = loadReceipts()
-        if storedReceipts.contains(where: { stored in
-            stored.rateLimitKey == receipt.rateLimitKey
-                && stored.observedAt <= now
-                && now.timeIntervalSince(stored.observedAt) < session.minimumWriteIntervalSeconds
-        }) {
-            return .rateLimited
-        }
-
-        let receiptURL = directoryURL.appending(path: "\(receipt.id).json")
-        try Self.makeEncoder().encode(receipt).write(to: receiptURL, options: [.atomic])
-        storedReceipts.append(receipt)
-        prune(storedReceipts, session: session, now: now)
-        return .saved
     }
 
     public func loadReceipts() -> [RuntimeReceipt] {
@@ -518,14 +510,12 @@ public struct RuntimeReceiptStore: Sendable {
                 at: directoryURL,
                 withIntermediateDirectories: true
             )
-            guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
-                return
-            }
-            defer { lock.unlock() }
-            for receipt in loadReceipts() where now >= receipt.retentionExpiresAt {
-                try? FileManager.default.removeItem(
-                    at: directoryURL.appending(path: "\(receipt.id).json")
-                )
+            try RuntimeReceiptDirectoryLock.withLock(directoryURL: directoryURL) {
+                for receipt in loadReceipts() where now >= receipt.retentionExpiresAt {
+                    try? FileManager.default.removeItem(
+                        at: directoryURL.appending(path: "\(receipt.id).json")
+                    )
+                }
             }
         } catch {
             return
@@ -723,8 +713,40 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
 final class RuntimeReceiptDirectoryLock {
     private let descriptor: Int32
 
-    init?(directoryURL: URL) throws {
-        let lockURL = directoryURL.appending(path: ".write.lock")
+    static func lockURL(in directoryURL: URL) -> URL {
+        directoryURL.appending(path: ".write.lock")
+    }
+
+    static func withLock<Value>(
+        directoryURL: URL,
+        coordinator: NSFileCoordinator = NSFileCoordinator(filePresenter: nil),
+        body: () throws -> Value
+    ) throws -> Value {
+        let lockURL = lockURL(in: directoryURL)
+        var coordinationError: NSError?
+        var result: Result<Value, Error>?
+        // Background task protection: developer.apple.com/documentation/foundation/nsfilecoordinator#File-Coordinators-and-iOS
+        // Release the POSIX lock before that protection ends.
+        coordinator.coordinate(writingItemAt: lockURL, options: [], error: &coordinationError) { _ in
+            result = Result {
+                guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
+                    throw RuntimeReceiptRemoteSyncError.busy
+                }
+                defer { lock.unlock() }
+                return try body()
+            }
+        }
+        if let coordinationError {
+            throw coordinationError
+        }
+        guard let result else {
+            throw CocoaError(.userCancelled)
+        }
+        return try result.get()
+    }
+
+    private init?(directoryURL: URL) throws {
+        let lockURL = Self.lockURL(in: directoryURL)
         let descriptor = open(
             lockURL.path,
             O_CREAT | O_RDWR | O_CLOEXEC,

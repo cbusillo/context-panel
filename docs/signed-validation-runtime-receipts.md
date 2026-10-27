@@ -26,6 +26,14 @@ the macOS app/refresh agent and the companion, Watch, and tvOS host apps mirror
 sessions and drain those local queues. Receipt records never share the companion
 snapshot record type, record names, or subscription.
 
+Local session, receipt, relay-state and inbox mutations take their shared POSIX
+lock only inside an `NSFileCoordinator` write accessor, and release it before
+leaving that accessor, including on errors. Foundation supplies background
+execution protection for coordinated access in apps and extensions; a cancelled
+coordination performs no mutation. A bare POSIX lock across suspension causes
+`RUNNINGBOARD 0xdead10cc` termination, as seen on tvOS in #1046. See Apple's
+[file coordination lifecycle guidance, “File Coordinators and iOS”](https://developer.apple.com/documentation/foundation/nsfilecoordinator#File-Coordinators-and-iOS).
+
 ## Receipt Contract
 
 Every receipt is schema-versioned and has the single evidence class
