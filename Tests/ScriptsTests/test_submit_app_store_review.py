@@ -1404,11 +1404,13 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 target, {None: [waiting_13]}, ("WAITING_FOR_REVIEW", "1.0.13"), {}, True,
                 ("1.0.13 (WAITING_FOR_REVIEW)", "--remove-active-review-version"), (),
             ),
-            "withdrawn source permits fresh target creation": (
-                {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]}, None, {}, False, (), (),
+            "withdrawn source permits exact replacement": (
+                {**replace_13, "prepare_only": False, "build_number": "new-build"},
+                {None: [("1.0.13", "DEVELOPER_REJECTED")], "1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]}, None, {}, False, (), (),
             ),
             "withdrawn source still has an active owner": (
-                {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]},
+                {**replace_13, "prepare_only": False, "build_number": "new-build"},
+                {None: [("1.0.13", "DEVELOPER_REJECTED")], "1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]},
                 ("WAITING_FOR_REVIEW", "1.0.13"), {}, True, (), (),
             ),
             "rejected replacement for review submission": (
@@ -1686,6 +1688,56 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             submit_app_store_review.ensure_replacement_version(RejectedReuseClient(), "app-id", args)
 
         self.assertIn("do not reuse it as 1.0.38 for review submission", str(context.exception))
+
+    def test_live_replacement_reuses_only_named_withdrawn_source_with_new_build_and_no_review(self) -> None:
+        class WithdrawnClient:
+            def __init__(self, withdrawn_state: str, has_active_owner: bool) -> None:
+                self.state = withdrawn_state
+                self.active = has_active_owner
+                self.patches: list[dict[str, Any]] = []
+
+            def request(self, method: str, path: str, params: dict[str, Any] | None = None,
+                        body: dict[str, Any] | None = None, **_options: Any) -> dict[str, Any]:
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    if params and params.get("filter[versionString]") == "new":
+                        return {"data": []}
+                    return {"data": [{"id": "old-id", "attributes": {"versionString": "old", "appStoreState": self.state}}]}
+                if method == "POST" and path == "/appStoreVersions":
+                    raise submit_app_store_review.AppStoreConnectError("create blocked", status=409, payload={
+                        "errors": [{"detail": "You cannot create a new version of the App in the current state."}],
+                    })
+                if method == "GET" and path == "/reviewSubmissions":
+                    if not self.active:
+                        return {"data": []}
+                    return {"data": [{"id": "owner", "attributes": {"state": "WAITING_FOR_REVIEW"}, "relationships": {
+                        "appStoreVersionForReview": {"data": {"type": "appStoreVersions", "id": "old-id"}},
+                    }}]}
+                if method == "PATCH" and path == "/appStoreVersions/old-id":
+                    assert body is not None
+                    self.patches.append(body)
+                    return {"data": {"id": "old-id", "attributes": body["data"]["attributes"]}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        for state, active, build, accepted in (
+            ("DEVELOPER_REJECTED", False, "new-build", True),
+            ("DEVELOPER_REJECTED", True, "new-build", False),
+            ("DEVELOPER_REJECTED", False, None, False),
+            ("REJECTED", False, "new-build", False),
+            ("METADATA_REJECTED", False, "new-build", False),
+            ("INVALID_BINARY", False, "new-build", False),
+        ):
+            with self.subTest(state=state, active=active, build=build):
+                client = WithdrawnClient(state, active)
+                args = SimpleNamespace(version="new", remove_active_review_version="old", build_number=build,
+                                       release_type="AFTER_APPROVAL", copyright="fixture", uses_idfa=False)
+                with patch.object(time, "sleep"):
+                    if accepted:
+                        version, _ = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+                        self.assertEqual(version["attributes"]["versionString"], args.version)
+                    else:
+                        with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                            submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+                self.assertEqual(len(client.patches), int(accepted))
 
     def test_ensure_review_submission_reuses_existing_matching_ready_submission(self):
         class ReviewSubmissionClient:

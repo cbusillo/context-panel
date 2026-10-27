@@ -1867,10 +1867,12 @@ cancel-only. It allows the submit script to remove or reuse an existing blocked
 App Store version, then continue creating the target version and submitting the
 new build after the dry-run path has validated that transition.
 
-After a completed withdrawal, the dry run can qualify creating a fresh target
-version from a `DEVELOPER_REJECTED` source only when that source has no active
-review owner. This does not permit renaming or resubmitting the rejected source:
-if fresh target creation is blocked, the existing reuse refusal still stops it.
+After a completed withdrawal, dry-run and live replacement allow the explicitly
+named `DEVELOPER_REJECTED` source to become a different marketing version with
+a matching validated new build, only when no active review remains on that
+platform. If Apple blocks creating a separate version, this permits updating
+the withdrawn version's number and build before submitting the replacement.
+Apple-rejected sources and rejected target versions retain their refusal.
 
 For the local operator route, the same script accepts an API key path or the
 existing App Store Connect environment variables. Run it from a clean checkout

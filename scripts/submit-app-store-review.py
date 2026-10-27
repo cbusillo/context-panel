@@ -869,6 +869,21 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
     return version
 
 
+def can_replace_withdrawn_version(
+    client: ASCClient, app_id: str, source: dict[str, Any], args: argparse.Namespace
+) -> bool:
+    source_version = source.get("attributes", {}).get("versionString")
+    if (
+        version_state(source) != "DEVELOPER_REJECTED"
+        or not source_version
+        or source_version != args.remove_active_review_version
+        or source_version == args.version
+        or not getattr(args, "build_number", None)
+    ):
+        return False
+    return not active_review_version_ids(client, app_id, namespace_platform(args))
+
+
 def reuse_removed_app_store_version(
     client: ASCClient, app_id: str, source_version_string: str, args: argparse.Namespace
 ) -> dict[str, Any]:
@@ -877,7 +892,11 @@ def reuse_removed_app_store_version(
         raise AppStoreConnectError(f"App Store version {source_version_string} is not available to reuse")
     state = version_state(version)
     prepare_only = bool(getattr(args, "prepare_only", False))
-    if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+    if (
+        state in REJECTED_RELEASE_CANDIDATE_STATES
+        and not prepare_only
+        and not can_replace_withdrawn_version(client, app_id, version, args)
+    ):
         raise AppStoreConnectError(
             rejected_source_reuse_message(source_version_string, args.version, state),
             payload=version,
@@ -920,7 +939,11 @@ def ensure_replacement_version(client: ASCClient, app_id: str, args: argparse.Na
             raise AppStoreConnectError(f"App Store version {source_version} is not available to reuse")
         source_state = version_state(source)
         prepare_only = bool(getattr(args, "prepare_only", False))
-        if source_state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+        if (
+            source_state in REJECTED_RELEASE_CANDIDATE_STATES
+            and not prepare_only
+            and not can_replace_withdrawn_version(client, app_id, source, args)
+        ):
             raise AppStoreConnectError(
                 rejected_source_reuse_message(source_version, args.version, source_state),
                 payload=source,
@@ -998,13 +1021,11 @@ def dry_run_version_path(
         )
     state = version_state(source)
     removal_validated = removable_review_version == args.remove_active_review_version
-    if state == "DEVELOPER_REJECTED" and not prepare_only and removable_version_id not in active_ids:
-        print(
-            f"Dry run: would create fresh App Store version {args.version}; "
-            f"withdrawn version {args.remove_active_review_version} cannot be reused if creation fails"
-        )
-        return
-    if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+    if (
+        state in REJECTED_RELEASE_CANDIDATE_STATES
+        and not prepare_only
+        and not can_replace_withdrawn_version(client, app_id, source, args)
+    ):
         raise AppStoreConnectError(
             rejected_source_reuse_message(args.remove_active_review_version, args.version, state),
             payload=source,
