@@ -794,11 +794,12 @@ class SubmittedReviewItemClient(FakeASCClient):
 
 
 class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClient):
-    def __init__(self, items: list[dict[str, Any]] | None = None, cancel_state: str = "COMPLETE", withdrawn_state: str = "DEVELOPER_REJECTED") -> None:
+    def __init__(self, items: list[dict[str, Any]] | None = None, cancel_state: str = "COMPLETE", withdrawn_state: str = "DEVELOPER_REJECTED", cancel_read_status: int = 200) -> None:
         super().__init__()
         self.items = items
         self.cancel_state = cancel_state
         self.withdrawn_state = withdrawn_state
+        self.cancel_read_status = cancel_read_status
 
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         if method == "PATCH" and path == "/reviewSubmissionItems/item-1":
@@ -823,6 +824,8 @@ class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClien
             return {"data": self.items}
         if path == "/reviewSubmissions/submission-1":
             self.requests.append((method, path, params, body, allowed))
+            if method == "GET" and self.cancel_read_status != 200:
+                raise submit_app_store_review.AppStoreConnectError("cancel readback", status=self.cancel_read_status)
             return {"data": {"id": "submission-1", "attributes": {"state": self.cancel_state}}}
         return super().request(method, path, params, body, allowed)
 
@@ -1074,6 +1077,26 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
         self.assertEqual(sum(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 1)
         self.assertEqual(client.requests[-1][:2], ("GET", "/reviewSubmissions/submission-1"))
+
+    def test_missing_canceled_submission_requires_exact_withdrawn_version(self) -> None:
+        for status, state, accepted in (
+            (404, "DEVELOPER_REJECTED", True),
+            (404, "WAITING_FOR_REVIEW", False),
+            (404, "READY_FOR_SALE", False),
+            (403, "DEVELOPER_REJECTED", False),
+            (500, "DEVELOPER_REJECTED", False),
+        ):
+            with self.subTest(status=status, state=state):
+                client = SubmittedReviewItemBlockedBySubmissionStateClient(withdrawn_state=state, cancel_read_status=status)
+                with patch.object(time, "monotonic", side_effect=(0, submit_app_store_review.DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS + 1)):
+                    if accepted:
+                        submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+                    else:
+                        with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                            submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+                self.assertEqual(sum(r[0] == "PATCH" and r[1] == "/reviewSubmissions/submission-1" for r in client.requests), 1)
+                if accepted:
+                    self.assertEqual(client.requests[-1][:2], ("GET", "/appStoreVersions/version-1-0-13"))
 
     def test_completed_review_without_withdrawn_version_stops(self) -> None:
         for state in ("WAITING_FOR_REVIEW", "READY_FOR_SALE"):
@@ -1381,8 +1404,15 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 target, {None: [waiting_13]}, ("WAITING_FOR_REVIEW", "1.0.13"), {}, True,
                 ("1.0.13 (WAITING_FOR_REVIEW)", "--remove-active-review-version"), (),
             ),
+            "withdrawn source permits fresh target creation": (
+                {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]}, None, {}, False, (), (),
+            ),
+            "withdrawn source still has an active owner": (
+                {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]},
+                ("WAITING_FOR_REVIEW", "1.0.13"), {}, True, (), (),
+            ),
             "rejected replacement for review submission": (
-                {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "DEVELOPER_REJECTED")]}, None, {}, True,
+                {**replace_13, "prepare_only": False}, {"1.0.13": [("1.0.13", "REJECTED")]}, None, {}, True,
                 ("do not reuse it as 1.0.14 for review submission", "Run --prepare-only first"), (),
             ),
             "rejected replacement for prepare-only": (

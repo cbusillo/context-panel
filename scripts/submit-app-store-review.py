@@ -602,11 +602,18 @@ def is_exact_sole_review_item(client: ASCClient, submission_id: str, item_id: st
 def confirm_review_submission_cancellation(client: ASCClient, submission_id: str, version_id: str) -> None:
     deadline = time.monotonic() + DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS
     while True:
-        submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
+        submission_not_found = False
+        try:
+            submission = client.request("GET", f"/reviewSubmissions/{submission_id}")["data"]
+        except AppStoreConnectError as error:
+            if error.status != 404:
+                raise
+            submission_not_found = True
+            submission = {}
         state = submission.get("attributes", {}).get("state")
-        if submission.get("id") != submission_id:
+        if not submission_not_found and submission.get("id") != submission_id:
             raise AppStoreConnectError("Cancellation readback returned a different review submission")
-        if state == "COMPLETE":
+        if submission_not_found or state == "COMPLETE":
             version = client.request("GET", f"/appStoreVersions/{version_id}")["data"]
             if version.get("id") != version_id:
                 raise AppStoreConnectError("Withdrawal readback returned a different App Store version")
@@ -991,6 +998,12 @@ def dry_run_version_path(
         )
     state = version_state(source)
     removal_validated = removable_review_version == args.remove_active_review_version
+    if state == "DEVELOPER_REJECTED" and not prepare_only and removable_version_id not in active_ids:
+        print(
+            f"Dry run: would create fresh App Store version {args.version}; "
+            f"withdrawn version {args.remove_active_review_version} cannot be reused if creation fails"
+        )
+        return
     if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
         raise AppStoreConnectError(
             rejected_source_reuse_message(args.remove_active_review_version, args.version, state),

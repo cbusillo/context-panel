@@ -1848,7 +1848,8 @@ If Apple refuses submitted-item removal because of the owning submission's
 state, the helper reads every page of that submission's items. It cancels the
 submission only when its sole item is the exact item and version being
 withdrawn. Any additional item, unknown ownership, or different version keeps
-the refusal. It reads cancellation back to `COMPLETE` and verifies the exact withdrawn
+the refusal. It reads cancellation back to `COMPLETE` or confirms Apple returns
+404 for the canceled submission, and in either case verifies the exact withdrawn
 version is `DEVELOPER_REJECTED` before continuing; an
 unconfirmed cancellation stops the run for reconciliation. The dry run reads
 the same item inventory and reports whether this fallback is available, without
@@ -1865,6 +1866,11 @@ When submitting a replacement version, `remove_active_review_version` is not
 cancel-only. It allows the submit script to remove or reuse an existing blocked
 App Store version, then continue creating the target version and submitting the
 new build after the dry-run path has validated that transition.
+
+After a completed withdrawal, the dry run can qualify creating a fresh target
+version from a `DEVELOPER_REJECTED` source only when that source has no active
+review owner. This does not permit renaming or resubmitting the rejected source:
+if fresh target creation is blocked, the existing reuse refusal still stops it.
 
 For the local operator route, the same script accepts an API key path or the
 existing App Store Connect environment variables. Run it from a clean checkout
