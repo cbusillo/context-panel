@@ -377,7 +377,7 @@ struct AccountGlanceWidget: View {
         if !horizon.isCurrent {
             facts.append(AccountTerms.accountTiming(account, now: now))
         } else if let short = account.shortWindow, short.remainingFraction != nil {
-            facts.append(AccountTerms.fiveHour + " " + AccountNumbers.window(short))
+            facts.append(AccountTerms.fiveHour + " " + (withRefill ? AccountNumbers.window(short) : AccountTerms.windowReading(short)))
             if withRefill { facts.append(AccountTerms.refill(short, now: now)) }
         }
         let tag: Text? = next

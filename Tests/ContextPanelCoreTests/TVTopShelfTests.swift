@@ -3,6 +3,23 @@ import ContextPanelTVSupport
 import Foundation
 import Testing
 
+@Test func tvTopShelfPresentsCodexSignInRejectionAsSavedCapacity() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let limit = UsageLimit(provider: .openAI, accountID: "codex", accountName: "Codex",
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 25, limit: 100,
+        resetsAt: now.addingTimeInterval(86_400), lastUpdatedAt: now.addingTimeInterval(-7_200), confidence: .observed)
+    let report = StoredProviderReport(provider: .openAI, accountID: limit.accountID, accountName: "Codex",
+        generatedAt: now, status: .failure, accessState: ProviderAccessState(kind: .signInExpired), errorMessage: nil)
+    let metadata = AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(.openAI, limit.accountID),
+        configurationID: "codex", provider: .openAI, label: "Codex")
+    let widget = WidgetSnapshot(state: .ready, generatedAt: now, limits: [limit], reports: [report],
+        status: .failure, message: "", accountDisplayMetadata: [metadata])
+    let document = TVTopShelfDocument(snapshot: widget, mode: .fullDetail, now: now)
+    let card = try #require(document.cards.first)
+    #expect(card.status == .stale)
+    #expect(card.detail.contains(AccountTerms.codexSignInExpired))
+}
+
 @Test func tvTopShelfDocumentExcludesAccountIdentityInEveryMode() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let snapshot = makeTopShelfSnapshot(now: now)

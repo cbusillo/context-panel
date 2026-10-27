@@ -48,6 +48,7 @@ public struct ProviderAccessState: Codable, Equatable, Sendable {
         case paidFallbackActive
         case unknown
         case degraded
+        case signInExpired
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
@@ -75,7 +76,7 @@ public struct ProviderAccessState: Codable, Equatable, Sendable {
         self.resetsAt = switch kind {
         case .blockedUntilReset, .paidFallbackActive:
             resetsAt
-        case .available, .pressure, .unknown, .degraded:
+        case .available, .pressure, .unknown, .degraded, .signInExpired:
             nil
         }
     }
@@ -90,7 +91,7 @@ public struct ProviderAccessState: Codable, Equatable, Sendable {
 
     public var statusContribution: UsageStatus? {
         switch kind {
-        case .available, .unknown:
+        case .available, .unknown, .signInExpired:
             nil
         case .pressure, .paidFallbackActive:
             .close
@@ -105,13 +106,14 @@ public struct ProviderAccessState: Codable, Equatable, Sendable {
         switch kind {
         case .blockedUntilReset, .paidFallbackActive, .degraded:
             true
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             false
         }
     }
 
     public func retainingCurrentProviderObservation(for status: UsageStatus) -> ProviderAccessState {
-        switch status {
+        if kind == .signInExpired, status == .failure || status == .stale { return self }
+        return switch status {
         case .healthy, .close, .limited:
             self
         case .failure, .loading, .stale, .unknown:
@@ -343,6 +345,15 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
 
     public var isAssumedAfterScheduledReset: Bool {
         presentationAssumption == .scheduledReset
+    }
+
+    public func presentationStatus(at now: Date, maximumAge: TimeInterval, fallbackObservedAt: Date? = nil) -> UsageStatus {
+        if let observedAt = lastUpdatedAt ?? fallbackObservedAt, observedAt > now.addingTimeInterval(60)
+            || !usesEventDrivenFreshness && now.timeIntervalSince(observedAt) > maximumAge {
+            return .stale
+        }
+        if !isAssumedAfterScheduledReset, let resetsAt, resetsAt <= now { return .stale }
+        return status
     }
 
     public func presented(at now: Date) -> UsageLimit {

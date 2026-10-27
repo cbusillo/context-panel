@@ -83,7 +83,7 @@ public struct WatchAccountRow: View {
                 .font(.system(size: detailSize)).monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
             if let short = account.shortWindow, account.longWindow != short {
-                Text(AccountTerms.fiveHour + " " + AccountNumbers.window(short) + " " + AccountTerms.left)
+                Text(AccountTerms.fiveHour + " " + AccountTerms.windowReading(short, includingLeft: true))
                     .font(.system(size: detailSize)).monospacedDigit()
                     .foregroundStyle(WatchTokens.color(.secondary))
                     .fixedSize(horizontal: false, vertical: true)

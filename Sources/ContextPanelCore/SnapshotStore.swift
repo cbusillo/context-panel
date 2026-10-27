@@ -285,7 +285,7 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
             "\(provider.accessProductName) close to limit"
         case .available:
             "\(provider.accessProductName) available"
-        case .unknown:
+        case .unknown, .signInExpired:
             "\(provider.accessProductName) availability unknown"
         }
     }
@@ -302,7 +302,7 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
             "Provider capacity is close to a limit"
         case .available:
             "Provider access is available"
-        case .unknown:
+        case .unknown, .signInExpired:
             "Provider access is unknown"
         }
     }
@@ -311,7 +311,7 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
         switch accessState.kind {
         case .degraded:
             .close
-        case .available, .pressure, .blockedUntilReset, .paidFallbackActive, .unknown:
+        case .available, .pressure, .blockedUntilReset, .paidFallbackActive, .unknown, .signInExpired:
             accessState.statusContribution ?? .unknown
         }
     }
@@ -359,10 +359,10 @@ extension Array where Element == StoredProviderReport {
                 }
             case .degraded:
                 !matchingExpiredLimits.isEmpty
-            case .available, .pressure, .unknown:
+            case .available, .pressure, .unknown, .signInExpired:
                 false
             }
-            return snapshotIsStale || resetRefreshIsDue
+            return (snapshotIsStale && report.accessState.kind != .signInExpired) || resetRefreshIsDue
                 ? report.withAccessState(.unknown)
                 : report
         }
@@ -389,7 +389,7 @@ private extension ProviderAccessState.Kind {
             2
         case .degraded:
             1
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             0
         }
     }
@@ -658,9 +658,9 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 
     public func nextAgeStaleTransitionDate(for snapshot: UsageSnapshot, now: Date) -> Date? {
-        guard hasAgeSensitiveLimits(in: snapshot) else { return nil }
-        let transition = snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
-        return transition > now ? transition : nil
+        let observations = snapshot.limits.isEmpty ? [snapshot.generatedAt] : snapshot.limits
+            .filter { !$0.usesEventDrivenFreshness }.map { $0.lastUpdatedAt ?? snapshot.generatedAt }
+        return observations.map { $0.addingTimeInterval(maximumAge + 1) }.filter { $0 > now }.min()
     }
 
     public func refreshAttentionSummary(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> RefreshAttentionSummary? {
@@ -690,12 +690,10 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 
     private func ageIsStale(in snapshot: UsageSnapshot, now: Date) -> Bool {
-        hasAgeSensitiveLimits(in: snapshot)
-            && now.timeIntervalSince(snapshot.generatedAt) > maximumAge
-    }
-
-    private func hasAgeSensitiveLimits(in snapshot: UsageSnapshot) -> Bool {
-        snapshot.limits.isEmpty || snapshot.limits.contains { !$0.usesEventDrivenFreshness }
+        if snapshot.limits.isEmpty { return now.timeIntervalSince(snapshot.generatedAt) > maximumAge }
+        return snapshot.limits.contains {
+            !$0.usesEventDrivenFreshness && now.timeIntervalSince($0.lastUpdatedAt ?? snapshot.generatedAt) > maximumAge
+        }
     }
 
     private func presentationResetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {

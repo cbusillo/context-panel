@@ -61,6 +61,17 @@ func accountCapacityUsesMainOpenAILimitsWhileKeepingModelRows(model: String) thr
     #expect(rows.first?.limits.first?.used == 30)
 }
 
+@Test(arguments: [true, false])
+func capacityCardUsesTheSharedCalmCodexSignInLabel(enabled: Bool) throws {
+    let report = StoredProviderReport(provider: .openAI, accountID: "a", configuredAccountID: "a",
+        accountName: "Local a", generatedAt: capacityNow, status: .failure,
+        accessState: ProviderAccessState(kind: .signInExpired), errorMessage: nil)
+    let row = try #require(AccountCapacity.rows(configuration: [capacityConfiguration("a", enabled: enabled)],
+        snapshot: UsageSnapshot(generatedAt: capacityNow, limits: [capacityLimit("a", used: 30)]),
+        reports: [report], now: capacityNow).first)
+    #expect(row.signInExpiryText == (enabled ? AccountTerms.codexSignInExpired : nil))
+}
+
 @Test func accountCapacitySeparatesFailureStalenessDisabledAndDeduplicatesLogicalAccounts() {
     var alias = capacityConfiguration("a")
     alias.accountAliases = ["a": "Research"]
@@ -75,8 +86,11 @@ func accountCapacityUsesMainOpenAILimitsWhileKeepingModelRows(model: String) thr
     let staleReport = StoredProviderReport(provider: .openAI, accountID: "a", configuredAccountID: "a",
         accountName: "Ignored", generatedAt: capacityNow.addingTimeInterval(-SnapshotFreshness.appMaximumAge - 1), status: .healthy, errorMessage: nil)
     let stale = AccountCapacity.rows(configuration: [alias], snapshot: UsageSnapshot(generatedAt: capacityNow,
-        limits: [capacityLimit("a", used: 30)]), reports: [staleReport], now: capacityNow)
+        limits: [capacityLimit("a", used: 30, at: staleReport.generatedAt)]), reports: [staleReport], now: capacityNow)
     #expect(stale.first?.status == .stale)
+    let updated = AccountCapacity.rows(configuration: [alias], snapshot: UsageSnapshot(generatedAt: capacityNow,
+        limits: [capacityLimit("a", used: 30)]), reports: [staleReport], now: capacityNow)
+    #expect(updated.first?.status == .healthy)
 }
 
 @Test func accountBurnRateNeverBorrowsSiblingPace() throws {

@@ -1493,7 +1493,7 @@ func companionSyncPresentationHidesRemoteDeliverySource(source: CompanionSyncSou
     #expect(widget.message == "Usage data is current.")
 }
 
-@Test func widgetSnapshotFromCompanionSyncUsesProvidedStalenessPolicy() throws {
+@Test func widgetSnapshotFromCompanionSyncKeepsExpiredReadingSavedDuringResetRetry() throws {
     let savedAt = Date(timeIntervalSince1970: 3_200)
     let expiredAt = savedAt.addingTimeInterval(60)
     let expiredLimit = UsageLimit(
@@ -1534,10 +1534,10 @@ func companionSyncPresentationHidesRemoteDeliverySource(source: CompanionSyncSou
         )
     )
 
-    #expect(widget.state == .ready)
-    #expect(widget.status == .limited)
+    #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
     #expect(widget.refreshAttentionSummary == nil)
-    #expect(widget.message == "Usage data is current.")
+    #expect(widget.accountOverview(now: expiredAt.addingTimeInterval(20)).accounts.first?.state == .stale)
 }
 
 @Test func companionWidgetKeepsFreshLanesReadyWhenOneProviderNeedsRefresh() {
@@ -2030,7 +2030,7 @@ func companionSyncPresentationHidesRemoteDeliverySource(source: CompanionSyncSou
         ]
     )
     let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: generatedAt)
-    let now = fiveHourReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+    let now = fiveHourReset.addingTimeInterval(1)
 
     let widget = WidgetSnapshot.fromCompanionSync(
         CompanionSyncLoadResult(document: document, status: .stale),

@@ -216,11 +216,25 @@ back to unrelated top-level tokens. Unsupported API-key and unreadable rows are
 skipped without discarding valid ChatGPT siblings. Multiple independently
 configured client/auth sources remain supported
 and the same ChatGPT account across sources is deduplicated. Context Panel does
-not rotate client refresh tokens. A usage-service 401/403 means credentials were
-rejected, not proof that the subscription or account access was revoked. The
-account's message names its local nickname and asks the user to use Codex once
-with that home, or sign in again there; it says "expired" only when the access
-token's own expiry has passed. The next refresh picks up the renewed sign-in.
+not rotate client refresh tokens. A usage-service 401/403 means the usage read's
+sign-in was rejected, not proof that a renewal key, subscription or account
+access was revoked. The row calmly says **Codex sign-in expired** and retains
+its last good measurements, with their original observation time and freshness.
+Those saved measurements remain eligible for launch selection alongside healthy
+accounts; missing or unknown capacity and limits exhausted before their reset
+still cannot supply a launch.
+After a scheduled reset passes, ranking can use an explicitly noted assumed
+refill, as for quiet Google accounts; it never rewrites the saved measurement or
+its observation time. If only saved readings remain, ordinary stale siblings
+keep their existing recent-stale launch budget alongside the Codex exception.
+The snapshot's `basedOnStaleReadings` flag identifies the ordinary stale-only
+fallback; it does not assert that every candidate is a current measurement.
+Ordinary network and service failures do not get this sign-in exception.
+The next successful usage read clears the label and replaces the saved reading.
+Context Panel adds no renewal-status feed and never excludes an account because
+it infers that the renewal key expired. The program that owns renewal handles
+renewal, terminal-failure alerts and launcher skips, under
+[Q930](https://github.com/cbusillo/context-panel/issues/1028#issuecomment-6428257456).
 [Codex credential recovery](codex-credential-recovery.md) records the
 recommended recovery route and the options that were set aside.
 
@@ -753,7 +767,12 @@ fraction measures that limiting window, which can change between readings; it
 is not a weekly allowance or a burn-rate sample. Read the `windows` entries
 with `period: fiveHour` and `period: weekly` for their separate remaining
 fractions and resets. Retain each matching entry when model-specific windows
-share a period. For weekly pacing and banked-reset burn summaries, read the
+share a period. Each window's `isCurrent` reports its own freshness, independently
+of a sibling window. A saved window keeps its measurement and observation time,
+but exports no live `burn`; an absent `isCurrent` in an older snapshot is unknown.
+Read that flag together with the account's state: a current measurement does not
+make a paused or unavailable account usable.
+For weekly pacing and banked-reset burn summaries, read the
 weekly window's own `burn`, not changes in the headline. The headline label is null
 without a limiting window. These are additive schema 1 fields; older readers
 retain all existing fields, and consumers of older snapshots treat missing

@@ -16,8 +16,8 @@ public struct TVAccountFreshnessSummary: Equatable, Sendable {
             let observed = saved.compactMap(\.observedAt).min()
             text = count + " not updating" + (saved.isEmpty ? "" : " · showing saved readings")
                 + (observed.map { " from " + AccountPaceText.when($0, now: now) } ?? "")
-        } else if let observed = overview.accounts.filter(\.isReliable).compactMap(\.observedAt).max() {
-            text = AccountTerms.updated + " " + AccountPaceText.when(observed, now: now)
+        } else if let observation = overview.widgetObservation(), observation.isCurrent {
+            text = AccountTerms.updated + " " + AccountPaceText.when(observation.date, now: now)
         } else if overview.accounts.contains(where: { $0.state == .refreshing }) {
             text = AccountCapacityState.refreshing.displayText
                 + (overview.accounts.compactMap(\.observedAt).min().map {

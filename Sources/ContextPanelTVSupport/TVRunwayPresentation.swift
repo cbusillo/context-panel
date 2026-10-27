@@ -526,7 +526,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
             "using paid fallback"
         case .degraded:
             "availability uncertain"
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             "status"
         }
     }

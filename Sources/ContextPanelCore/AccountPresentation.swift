@@ -71,10 +71,12 @@ public enum AccountTerms {
     public static let updated = "Updated"
     public static let nextSevenDays = "Next 7 days"
     public static let noCurrentReading = "No current reading"
+    public static let codexSignInExpired = "Codex sign-in expired"
     public static let noEligibleAccount = "No eligible account for Use next"
     public static let addFirstAccount = "Add your first account"
     public static let unknown = "—"
     public static let assumed = "Assumed"
+    public static let assumedResetLaunch = "Assumed full after its reset; the next launch brings a real reading"
     public static func accountTiming(_ account: AccountOverview.Account, now: Date) -> String {
         if [.stale, .unavailable].contains(account.state) {
             return account.stateText + (account.windows.isEmpty ? "" : account.observedAt.map { " " + AccountPaceText.when($0, now: now) } ?? "")
@@ -273,8 +275,14 @@ public enum AccountTerms {
 
     /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.
     public static func refill(_ window: AccountOverview.Window, now: Date) -> String {
+        if window.status == .stale || window.status == .failure { return AccountCapacityState.stale.displayText }
         if let fraction = window.remainingFraction, fraction >= 0.995, window.assumption == nil { return untouched }
         return reset(window, now: now).map { refills + " " + $0 } ?? unknown
+    }
+
+    public static func windowReading(_ window: AccountOverview.Window, includingLeft: Bool = false) -> String {
+        AccountNumbers.window(window) + (includingLeft ? " " + left : "")
+            + ([.stale, .failure].contains(window.status) ? " · " + AccountCapacityState.stale.displayText : "")
     }
 
     /// A provider group's summary: "3 accounts · 59% left on average · uses ~7% a day", then its outlook. `isShort`
@@ -504,7 +512,8 @@ public enum AccountColorToken: String, CaseIterable, Sendable {
 public extension AccountOverview.Account {
     /// The state word for this account: "Not updating" when a read failed and nothing was ever saved.
     var stateText: String {
-        state == .unavailable && windows.isEmpty ? AccountTerms.notUpdating : state.displayText
+        if isCodexSignInExpired, state == .unavailable { return AccountTerms.codexSignInExpired }
+        return state == .unavailable && windows.isEmpty ? AccountTerms.notUpdating : state.displayText
     }
 
     /// Pace exists only where an account has observed burn, including matched synced window estimates.

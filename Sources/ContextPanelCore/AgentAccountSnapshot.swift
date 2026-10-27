@@ -225,9 +225,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let burn: Burn?
         public let confidence: UsageConfidence
         public let presentationAssumption: UsagePresentationAssumption?
+        public let isCurrent: Bool
 
         enum CodingKeys: String, CodingKey {
-            case id, label, period, remainingFraction, unit, used, limit, naturalResetAt, observedAt, burn, confidence, presentationAssumption
+            case id, label, period, remainingFraction, unit, used, limit, naturalResetAt, observedAt, burn, confidence, presentationAssumption, isCurrent
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -244,6 +245,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(burn, forKey: .burn)
             try container.encode(confidence, forKey: .confidence)
             try container.encode(presentationAssumption, forKey: .presentationAssumption)
+            try container.encode(isCurrent, forKey: .isCurrent)
         }
     }
 
@@ -344,16 +346,18 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                     showInWidgets: account.metadata.showInWidgets, useLast: account.metadata.useLast,
                     remainingFraction: account.remainingFraction, limitingWindowID: account.limitingWindow?.id,
                     observedAt: account.observedAt, windows: limits.map { limit in
-                        let rate = canonical.accountBurnRates?[limit.accountID]?[limit.id]
                         let id = AccountDisplayMetadata.safeID(limit.provider, limit.id)
                         let window = account.windows.first { $0.id == id }
+                        let current = [.available, .closeToLimit, .limited].contains(account.state) && window?.isCurrent == true
+                        let rate = current ? canonical.accountBurnRates?[limit.accountID]?[limit.id] : nil
                         return Window(id: id, label: ConnectorRedactor.safeErrorDescription(limit.label),
                             period: window?.period, remainingFraction: window?.remainingFraction,
                             unit: limit.unit, used: limit.used, limit: limit.limit, naturalResetAt: limit.resetsAt,
                             observedAt: limit.lastUpdatedAt,
                             burn: rate.flatMap { $0.sampleCount > 0 ? Burn(unitsPerHour: $0.unitsPerHour,
                                 observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) : nil },
-                            confidence: limit.confidence, presentationAssumption: limit.presentationAssumption)
+                            confidence: limit.confidence, presentationAssumption: limit.presentationAssumption,
+                            isCurrent: window?.isCurrent ?? false)
                     },
                     usageCredits: stored.reports.first { report?.sharedAccountIdentity != nil && $0.sharedAccountIdentity?.accountID == report?.sharedAccountIdentity?.accountID && $0.provider == account.metadata.provider }?.usageCredits,
                     bankedResets: BankedResets(state: account.bankedState, summary: account.bankedResets),
@@ -393,10 +397,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 limitingWindowID: shared?.limitingWindow?.id,
                 observedAt: row.limits.compactMap(\.lastUpdatedAt).min() ?? row.report?.generatedAt,
                 windows: row.limits.map { limit in
-                    let estimate = current && limit.presentationAssumption == nil ? rates[row.id]?[limit.id] : nil
-                    let burn = estimate.flatMap { $0.sampleCount > 0 ? $0 : nil }
                     let id = AccountDisplayMetadata.safeID(row.provider, limit.id)
                     let window = shared?.windows.first { $0.id == id }
+                    let estimate = current && window?.isCurrent == true ? rates[row.id]?[limit.id] : nil
+                    let burn = estimate.flatMap { $0.sampleCount > 0 ? $0 : nil }
                     return Window(
                         id: id,
                         label: ConnectorRedactor.safeErrorDescription(limit.label),
@@ -405,7 +409,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                         naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
                         burn: burn.map { Burn(unitsPerHour: $0.unitsPerHour,
                             observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) },
-                        confidence: limit.confidence, presentationAssumption: limit.presentationAssumption
+                        confidence: limit.confidence, presentationAssumption: limit.presentationAssumption,
+                        isCurrent: window?.isCurrent ?? false
                     )
                 },
                 usageCredits: row.report?.usageCredits,

@@ -143,7 +143,8 @@ private func overviewMetadata(_ account: String, provider: Provider = .openAI, h
 
 @Test func savedTransportSnapshotCannotRecommendFreshLookingRows() {
     let snapshot = WidgetSnapshot(state: .stale, generatedAt: overviewNow,
-        limits: [overviewLimit("saved", "Weekly", used: 10)], status: .stale, message: "Saved")
+        limits: [overviewLimit("saved", "Weekly", used: 10)], status: .stale, message: "Saved",
+        syncErrorMessage: "Update unavailable")
     let overview = snapshot.accountOverview(now: overviewNow)
     #expect(overview.accounts.first?.remainingFraction == 0.9)
     #expect(overview.accounts.first?.state == .stale)

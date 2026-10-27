@@ -33,7 +33,10 @@ public extension AccountOverview {
     /// Current observations lead mixed data; all-saved data uses its oldest represented reading.
     func widgetObservation(in displayedAccounts: [Account]? = nil) -> WidgetObservation? {
         let represented = (displayedAccounts ?? accounts).filter { $0.longWindow?.remainingFraction != nil }
-        if let current = represented.filter(\.isReliable).compactMap(\.observedAt).max() {
+        if let current = represented.compactMap({ account -> Date? in
+            let horizon = account.horizon(now: rankedAt)
+            return horizon.isCurrent ? horizon.window?.observedAt : nil
+        }).max() {
             return WidgetObservation(date: current, isCurrent: true)
         }
         return represented

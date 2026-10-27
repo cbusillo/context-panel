@@ -67,6 +67,9 @@ public struct AccountOverview: Equatable, Sendable {
         /// 5-hour, weekly or daily, inferred from the provider's labels; nil when unknown.
         public var period: MainLimitWindow? = nil
         public var isAccountCapacityLimit: Bool = true
+        public var isCurrent: Bool {
+            [.healthy, .close, .limited].contains(status) && confidence != .unknown && assumption == nil
+        }
     }
 
     public struct Account: Equatable, Sendable, Identifiable {
@@ -80,8 +83,14 @@ public struct AccountOverview: Equatable, Sendable {
         public var bankedAdvice: BankedAdvice? = nil
         /// When applying a banked reset is worth it (#791); the value and reasoning for the detail view.
         public var resetAssessment: ResetAssessment? = nil
+        public var isCodexSignInExpired: Bool = false
         public var id: String { metadata.id }
         var capacityWindows: [Window] { windows.filter(\.isAccountCapacityLimit) }
+        var hasKnownCapacity: Bool {
+            !capacityWindows.isEmpty && capacityWindows.allSatisfy {
+                $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil && $0.observedAt != nil
+            }
+        }
         public var limitingWindow: Window? {
             guard !capacityWindows.isEmpty, capacityWindows.allSatisfy({ $0.remainingFraction != nil }) else { return nil }
             return capacityWindows.min { ($0.remainingFraction ?? 1) < ($1.remainingFraction ?? 1) }
@@ -90,7 +99,7 @@ public struct AccountOverview: Equatable, Sendable {
             ? nil : limitingWindow?.remainingFraction }
         public var isReliable: Bool {
             [.available, .closeToLimit, .limited].contains(state)
-                && limitingWindow != nil && capacityWindows.allSatisfy { $0.assumption == nil && $0.confidence != .unknown }
+                && limitingWindow != nil && capacityWindows.allSatisfy(\.isCurrent)
         }
         public var unknownExpiryCount: Int? {
             bankedResets.map { max(0, $0.availableCount - ($0.knownExpiries.isEmpty
@@ -162,11 +171,14 @@ public struct AccountOverview: Equatable, Sendable {
         let observed = accounts.compactMap(\.observedAt).max() ?? rankedAt
         let replay = accounts.map { account -> Account in
             guard [.stale, .unavailable].contains(account.state) else { return account }
-            let known = !account.capacityWindows.isEmpty && account.capacityWindows.allSatisfy {
-                $0.remainingFraction != nil && $0.confidence != .unknown && $0.assumption == nil
+            let known = account.hasKnownCapacity
+            let windows = account.windows.map { window -> Window in
+                var replay = window
+                if known, [.stale, .failure].contains(replay.status) { replay.status = .healthy }
+                return replay
             }
             return Account(metadata: account.metadata, state: known ? .available : .unknown,
-                windows: account.windows, bankedResets: account.bankedResets,
+                windows: windows, bankedResets: account.bankedResets,
                 bankedState: account.bankedState, observedAt: account.observedAt,
                 providerPlan: account.providerPlan, bankedAdvice: account.bankedAdvice,
                 resetAssessment: account.resetAssessment)
@@ -192,6 +204,11 @@ public struct AccountOverview: Equatable, Sendable {
             let report = reports.filter {
                 $0.provider == entry.provider && AccountDisplayMetadata.safeID($0.provider, $0.accountID) == entry.id
             }.max { $0.generatedAt < $1.generatedAt }
+            func windowStatus(_ limit: UsageLimit) -> UsageStatus {
+                if limit.lastUpdatedAt == nil, report?.status == .failure { return .unknown }
+                return limit.presentationStatus(at: now, maximumAge: maximumAge,
+                    fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt)
+            }
             let windows = limits.map { limit in
                 Window(id: AccountDisplayMetadata.safeID(limit.provider, limit.id),
                        label: ConnectorRedactor.safeErrorDescription([AccountTerms.modelName(limit.modelLabel, provider: limit.provider), limit.windowLabel ?? limit.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")),
@@ -203,26 +220,23 @@ public struct AccountOverview: Equatable, Sendable {
                        burnFractionPerHour: accountBurnRates[limit.accountID]?[limit.id].flatMap { rate in
                            rate.sampleCount > 0 ? limit.limit.flatMap { $0 > 0 ? rate.unitsPerHour / Double($0) : nil } : nil
                        }, modelLabel: AccountTerms.modelName(limit.modelLabel, provider: limit.provider).map { ConnectorRedactor.safeErrorDescription($0) },
-                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) }, status: limit.status,
+                       periodLabel: limit.windowLabel.map { ConnectorRedactor.safeErrorDescription($0) },
+                       status: isSavedSnapshot ? .stale : windowStatus(limit),
                        period: MainLimitWindow.infer(from: limit), isAccountCapacityLimit: limit.isAccountCapacityLimit)
             }
-            let observed = main.compactMap(\.lastUpdatedAt).min() ?? report?.generatedAt
-            let ageSensitive = main.isEmpty || main.contains { !$0.usesEventDrivenFreshness }
-            let old = main.contains { limit in
-                limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
-                    || !limit.usesEventDrivenFreshness && now.timeIntervalSince($0) > maximumAge } ?? false
-            } || report.map { $0.generatedAt > now.addingTimeInterval(60)
-                || ageSensitive && now.timeIntervalSince($0.generatedAt) > maximumAge } == true
-            let passed = main.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
+            let observed = main.compactMap(\.lastUpdatedAt).min() ?? (report?.status == .failure ? nil : report?.generatedAt)
+            let fresh = limits.filter { windowStatus($0) != .stale }
+            let freshMain = fresh.filter(\.isAccountCapacityLimit)
             let state: AccountCapacityState
             if !entry.isEnabled { state = .off }
             else if entry.readState == .notConnected || (entry.provider == .anthropic && (report?.requiresCredentialReconnect == true || (report == nil && limits.isEmpty))) { state = .notConnected }
             else if entry.readState == .unavailable || report?.status == .failure { state = .unavailable }
-            else if old || passed || (isSavedSnapshot && !main.isEmpty) || main.contains(where: { $0.status == .stale }) { state = .stale }
-            else if entry.readState == .stale { state = .stale }
+            else if !main.isEmpty && (isSavedSnapshot || freshMain.isEmpty) { state = .stale }
+            else if entry.readState == .stale && freshMain.isEmpty { state = .stale }
             else if entry.readState == .unknown || main.isEmpty || main.contains(where: { $0.remainingCapacityRatio == nil }) { state = .unknown }
             else {
-                state = switch AccountCapacity.usageStatus(limits: limits, reportStatus: report?.status ?? .healthy) {
+                let reportStatus = report?.status == .stale && !freshMain.isEmpty ? .healthy : report?.status ?? .healthy
+                state = switch AccountCapacity.usageStatus(limits: fresh, reportStatus: reportStatus) {
                 case .healthy: .available
                 case .close: .closeToLimit
                 case .limited: .limited
@@ -259,6 +273,7 @@ public struct AccountOverview: Equatable, Sendable {
             }
             var account = Account(metadata: entry, state: state, windows: windows, bankedResets: banked,
                                   bankedState: bankedState, observedAt: observed, providerPlan: plan)
+            account.isCodexSignInExpired = entry.provider == .openAI && report?.accessState.kind == .signInExpired
             account.bankedAdvice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
                 .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
             return account

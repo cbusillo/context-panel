@@ -91,7 +91,7 @@ public struct AccountOverviewRow: View {
                 .frame(width: 14).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(account.metadata.label).font(.headline)
-                Text(account.metadata.provider.accountDisplayName + " · " + account.state.displayText)
+                Text(account.metadata.provider.accountDisplayName + " · " + account.stateText)
                     .font(.caption).foregroundStyle(.secondary)
                 if account.metadata.useLast { Text("Use last").font(.caption).foregroundStyle(.secondary) }
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -122,7 +122,7 @@ public struct AccountDetailPanel: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(account.metadata.label).font(.largeTitle.weight(.semibold))
-            Text(account.metadata.provider.accountDisplayName + " · " + account.state.displayText).foregroundStyle(.secondary)
+            Text(account.metadata.provider.accountDisplayName + " · " + account.stateText).foregroundStyle(.secondary)
             ForEach(account.windows) { window in
                 GroupBox(window.label) {
                     VStack(alignment: .leading, spacing: 8) {

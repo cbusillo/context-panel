@@ -211,6 +211,14 @@ keeps archive growth from making timeline generation exceed WidgetKit's watchdog
 and delay subsequent reloads.
 The account widget labels an age-stale snapshot as delayed updates while showing
 the saved observations; it does not present a capacity forecast as current.
+Freshness is evaluated per window from its observation time. A short window
+that has expired keeps its measured value with a Saved label while a current
+weekly window can still supply its forecast. Neither a newer snapshot envelope
+nor a repeated read of a session-history file renews an observation. Polling
+checks account observation ages on the existing refresh cadence,
+before the display age limit, and requests a reset refresh at the reset itself.
+Event-driven sources retain their existing observation and assumed-reset rules;
+polling them cannot create a new provider measurement.
 
 A healthy account configuration with no enabled accounts is authoritative. If
 provider state was previously stored, the refresh service writes and publishes

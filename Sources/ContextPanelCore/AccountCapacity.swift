@@ -26,6 +26,11 @@ public struct AccountCapacity: Identifiable, Sendable {
             || (report == nil && limits.isEmpty))
     }
 
+    public var signInExpiryText: String? {
+        provider == .openAI && state == .unavailable && report?.accessState.kind == .signInExpired
+            ? AccountTerms.codexSignInExpired : nil
+    }
+
     /// Shared by the panel and the read-only agent projection.
     public var state: AccountCapacityState {
         guard isEnabled else { return .off }
@@ -65,16 +70,17 @@ public struct AccountCapacity: Identifiable, Sendable {
                 let limits = matchingLimits.filter { $0.accountID == id }
                 let main = limits.filter(\.isAccountCapacityLimit)
                 let report = matchingReports.filter { $0.accountID == id }.max { $0.generatedAt < $1.generatedAt } ?? sourceFailure
-                let expired = main.contains { !$0.isAssumedAfterScheduledReset && ($0.resetsAt ?? .distantFuture) <= now }
-                let ageSensitive = main.isEmpty || main.contains { !$0.usesEventDrivenFreshness }
-                let stale = (report.map { $0.generatedAt > now.addingTimeInterval(60)
-                    || ageSensitive && now.timeIntervalSince($0.generatedAt) > SnapshotFreshness.appMaximumAge } ?? false)
-                    || main.contains { limit in limit.lastUpdatedAt.map { $0 > now.addingTimeInterval(60)
-                        || !limit.usesEventDrivenFreshness && now.timeIntervalSince($0) > SnapshotFreshness.appMaximumAge } ?? false }
+                let fresh = limits.filter {
+                    !($0.lastUpdatedAt == nil && report?.status == .failure)
+                        && $0.presentationStatus(at: now, maximumAge: SnapshotFreshness.appMaximumAge,
+                        fallbackObservedAt: report?.generatedAt ?? snapshot.generatedAt) != .stale
+                }
+                let hasFreshCapacity = fresh.contains(where: \.isAccountCapacityLimit)
+                let reported = report?.status == .stale && hasFreshCapacity ? .healthy : report?.status ?? .unknown
                 let status: UsageStatus = !account.isEnabled ? .unknown
                     : report?.status == .failure ? .failure
-                    : stale || expired ? .stale
-                    : usageStatus(limits: limits, reportStatus: report?.status ?? .unknown)
+                    : !main.isEmpty && !hasFreshCapacity ? .stale
+                    : usageStatus(limits: fresh, reportStatus: reported)
                 // An empty typed name uses the login the newest report carried; older retained
                 // limits may still hold a name typed before it was cleared (#760).
                 let defaultName = account.typedName.map { ids.count > 1 ? "\($0) \(id.suffix(6))" : $0 }

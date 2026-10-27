@@ -721,7 +721,7 @@ private func watchProviderAccessSymbol(_ alert: ProviderAccessAlert) -> String {
         "dollarsign"
     case .degraded:
         "questionmark"
-    case .available, .pressure, .unknown:
+    case .available, .pressure, .unknown, .signInExpired:
         "circle"
     }
 }
@@ -748,7 +748,7 @@ private func watchProviderAccessCornerText(_ alert: ProviderAccessAlert) -> Stri
         "Paid"
     case .degraded:
         "Unknown"
-    case .available, .pressure, .unknown:
+    case .available, .pressure, .unknown, .signInExpired:
         "—"
     }
 }

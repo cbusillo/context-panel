@@ -4966,7 +4966,7 @@ private struct ProviderAccessAlertCard: View {
             "dollarsign.circle.fill"
         case .degraded:
             "questionmark.circle.fill"
-        case .available, .pressure, .unknown:
+        case .available, .pressure, .unknown, .signInExpired:
             "circle.fill"
         }
     }
@@ -7531,7 +7531,7 @@ struct AccountCapacityCard: View {
                             Text(row.name).font(.headline)
                             Spacer()
                             Text(stateText(row)).font(.caption)
-                                .foregroundStyle(CPTheme.statusColor(row.status))
+                                .foregroundStyle(row.signInExpiryText == nil ? CPTheme.statusColor(row.status) : CPTheme.secondaryText)
                         }
                         if row.limits.isEmpty {
                             Text("Usage unknown · burn unknown · next reset unknown")
@@ -7583,6 +7583,7 @@ struct AccountCapacityCard: View {
     }
 
     private func stateText(_ row: AccountCapacity) -> String {
+        if let text = row.signInExpiryText { return text }
         switch row.state {
         case .off: return "Off"
         case .notConnected: return "Not connected · check Settings"
