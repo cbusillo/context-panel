@@ -1694,28 +1694,60 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             def __init__(self, withdrawn_state: str, has_active_owner: bool) -> None:
                 self.state = withdrawn_state
                 self.active = has_active_owner
+                self.current_version = "old"
+                self.attached_build = "old-build"
+                self.owner_state = "WAITING_FOR_REVIEW"
                 self.patches: list[dict[str, Any]] = []
+                self.build_patches = 0
+                self.submitted_owners = 0
+                self.retained_old = False
+                self.submissions: dict[str, Any] | None = None
+                self.items: dict[str, list[dict[str, Any]]] = {"owner": [{
+                    "id": "item", "relationships": {"appStoreVersion": {"data": {"id": "old-id"}}},
+                }]}
+
+            def version(self) -> dict[str, Any]:
+                return {"id": "old-id", "attributes": {"versionString": self.current_version, "appStoreState": self.state},
+                        "relationships": {"build": {"data": {"id": self.attached_build}}}}
 
             def request(self, method: str, path: str, params: dict[str, Any] | None = None,
                         body: dict[str, Any] | None = None, **_options: Any) -> dict[str, Any]:
                 if method == "GET" and path == "/apps/app-id/appStoreVersions":
-                    if params and params.get("filter[versionString]") == "new":
-                        return {"data": []}
-                    return {"data": [{"id": "old-id", "attributes": {"versionString": "old", "appStoreState": self.state}}]}
+                    requested = params.get("filter[versionString]") if params else None
+                    if requested is None or requested == self.current_version:
+                        return {"data": [self.version()]}
+                    if requested == "old" and self.retained_old:
+                        return {"data": [{"id": "other-old", "attributes": {"versionString": "old"}}]}
+                    return {"data": []}
                 if method == "POST" and path == "/appStoreVersions":
                     raise submit_app_store_review.AppStoreConnectError("create blocked", status=409, payload={
                         "errors": [{"detail": "You cannot create a new version of the App in the current state."}],
                     })
                 if method == "GET" and path == "/reviewSubmissions":
+                    if self.submissions is not None:
+                        return self.submissions
                     if not self.active:
                         return {"data": []}
-                    return {"data": [{"id": "owner", "attributes": {"state": "WAITING_FOR_REVIEW"}, "relationships": {
+                    return {"data": [{"id": "owner", "attributes": {"state": self.owner_state}, "relationships": {
                         "appStoreVersionForReview": {"data": {"type": "appStoreVersions", "id": "old-id"}},
                     }}]}
+                if method == "GET" and path.startswith("/reviewSubmissions/") and path.endswith("/items"):
+                    return {"data": self.items[path.split("/")[2]]}
+                if method == "GET" and path == "/appStoreVersions/old-id":
+                    return {"data": self.version()}
                 if method == "PATCH" and path == "/appStoreVersions/old-id":
                     assert body is not None
                     self.patches.append(body)
-                    return {"data": {"id": "old-id", "attributes": body["data"]["attributes"]}}
+                    self.current_version = body["data"]["attributes"].get("versionString", self.current_version)
+                    return {"data": self.version()}
+                if method == "PATCH" and path == "/appStoreVersions/old-id/relationships/build":
+                    assert body is not None
+                    self.attached_build = body["data"]["id"]
+                    self.build_patches += 1
+                    return {}
+                if method == "PATCH" and path == "/reviewSubmissions/owner":
+                    self.submitted_owners += 1
+                    return {"data": {"id": "owner", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         for state, active, build, accepted in (
@@ -1738,6 +1770,85 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                         with self.assertRaises(submit_app_store_review.AppStoreConnectError):
                             submit_app_store_review.ensure_replacement_version(client, "app-id", args)
                 self.assertEqual(len(client.patches), int(accepted))
+
+        args = SimpleNamespace(version="new", remove_active_review_version="old", build_number="new-build",
+                               release_type="AFTER_APPROVAL", copyright="fixture", uses_idfa=False)
+        client = WithdrawnClient("DEVELOPER_REJECTED", False)
+        with patch.object(time, "sleep"):
+            renamed, _ = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+        submit_app_store_review.dry_run_version_path(client, "app-id", args)
+        resumed, _ = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+        self.assertEqual(resumed["id"], renamed["id"])
+        build = {"id": "new-build", "attributes": {"processingState": "VALID"}}
+        submit_app_store_review.attach_build(client, resumed, build, args)
+        submit_app_store_review.dry_run_version_path(client, "app-id", args)
+        client.active = True
+        client.owner_state = "READY_FOR_REVIEW"
+        resumed, _ = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+        submit_app_store_review.attach_build(client, resumed, build, args)
+        submit_app_store_review.dry_run_version_path(client, "app-id", args)
+        submit_app_store_review.ensure_review_submission(client, "app-id", resumed["id"])
+        self.assertEqual(sum("versionString" in patch_body["data"]["attributes"] for patch_body in client.patches), 1)
+        self.assertEqual(client.build_patches, 1)
+        self.assertEqual(client.submitted_owners, 1)
+
+        target = {"id": "old-id", "attributes": {"versionString": "new", "appStoreState": "DEVELOPER_REJECTED"}}
+        owner: dict[str, Any] = {"id": "owner", "attributes": {"state": "READY_FOR_REVIEW", "platform": "MAC_OS"},
+                 "relationships": {"appStoreVersionForReview": {"data": {"id": "old-id"}}}}
+        for mode in ("old exists", "missing build", "missing old", "same version", "Apple rejected", "unknown item",
+                     "mixed items", "empty owner", "duplicate owners", "another owner"):
+            with self.subTest(resume_refusal=mode):
+                client = WithdrawnClient("DEVELOPER_REJECTED", True)
+                client.current_version = "new"
+                client.owner_state = "READY_FOR_REVIEW"
+                options = vars(args).copy()
+                if mode == "old exists":
+                    client.retained_old = True
+                elif mode == "missing build":
+                    options["build_number"] = None
+                elif mode == "missing old":
+                    options["remove_active_review_version"] = None
+                elif mode == "same version":
+                    options["remove_active_review_version"] = "new"
+                elif mode == "Apple rejected":
+                    client.state = "REJECTED"
+                elif mode == "unknown item":
+                    client.items["owner"] = [{"id": "unknown"}]
+                elif mode == "mixed items":
+                    client.items["owner"].append({"id": "event"})
+                elif mode == "empty owner":
+                    client.items["owner"] = []
+                    client.submissions = {"data": [{"id": "owner", "attributes": {"state": "READY_FOR_REVIEW"}}]}
+                elif mode == "duplicate owners":
+                    client.submissions = {"data": [owner, {**owner, "id": "second"}]}
+                    client.items["second"] = client.items["owner"]
+                elif mode == "another owner":
+                    client.items["owner"] = [{"id": "other", "relationships": {"appStoreVersion": {"data": {"id": "other-id"}}}}]
+                with self.assertRaises(submit_app_store_review.AppStoreConnectError):
+                    submit_app_store_review.ensure_version(client, "app-id", SimpleNamespace(**options))
+                self.assertFalse(client.patches)
+
+        client = WithdrawnClient("DEVELOPER_REJECTED", False)
+        client.current_version = "new"
+        client.submissions = {"data": [{**owner, "attributes": {**owner["attributes"], "platform": "IOS"}}]}
+        self.assertTrue(submit_app_store_review.can_replace_withdrawn_version(client, "app-id", target, args))
+
+        class EmptyOrphanClient(OrphanReadyForReviewClient):
+            def __init__(self, authoritative_items: list[dict[str, Any]]) -> None:
+                super().__init__()
+                self.authoritative_items = authoritative_items
+
+            def request(self, method: str, path: str, params: dict[str, Any] | None = None,
+                        body: dict[str, Any] | None = None, allowed: tuple[int, ...] = (200,)) -> dict[str, Any]:
+                if method == "GET" and path == "/reviewSubmissions/orphan-submission/items":
+                    return {"data": self.authoritative_items}
+                return super().request(method, path, params, body, allowed)
+
+        for items in ([], [{"id": "gained-item"}]):
+            with self.subTest(orphan_items=items):
+                source = {"id": "withdrawn-id", "attributes": {"versionString": "old", "appStoreState": "DEVELOPER_REJECTED"}}
+                self.assertEqual(submit_app_store_review.can_replace_withdrawn_version(
+                    EmptyOrphanClient(items), "app-id", source, args), not items)
 
     def test_ensure_review_submission_reuses_existing_matching_ready_submission(self):
         class ReviewSubmissionClient:

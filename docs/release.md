@@ -1802,7 +1802,8 @@ or dry-run-submit the same rejected marketing version again. Prepare the next
 marketing version, copy the approved metadata and screenshot matrix there, and
 submit that fresh version instead. The submit helper fails fast when the target
 version is in `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or
-`INVALID_BINARY`.
+`INVALID_BINARY`, except the explicit developer-withdrawn replacement described
+below.
 
 Companion App Review may ask for a demo video when the iOS, iPadOS, watchOS,
 visionOS, or tvOS surface depends on a Mac-published CloudKit companion
@@ -1872,7 +1873,12 @@ named `DEVELOPER_REJECTED` source to become a different marketing version with
 a matching validated new build, only when no active review remains on that
 platform. If Apple blocks creating a separate version, this permits updating
 the withdrawn version's number and build before submitting the replacement.
-Apple-rejected sources and rejected target versions retain their refusal.
+A resumed target may continue this same replacement only when the old version
+name is absent and authoritative review items prove either no active owner or
+one owner exclusively for that exact target. Unknown, mixed, duplicate or
+ownerless active submissions refuse before target updates. Known other-platform
+reviews and proven empty released-version orphans are preserved. Apple-rejected
+sources and targets, and other withdrawn-target submissions, retain their refusal.
 
 For the local operator route, the same script accepts an API key path or the
 existing App Store Connect environment variables. Run it from a clean checkout
