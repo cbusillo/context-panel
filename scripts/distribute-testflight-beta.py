@@ -425,23 +425,28 @@ def wait_for_beta_availability(
 ) -> None:
     deadline = time.monotonic() + max(0, wait_timeout_seconds)
     while True:
-        payload = client.request("GET", f"/builds/{build['id']}/buildBetaDetail")
-        attributes = (payload.get("data") or {}).get("attributes") or {}
+        attributes = {}
+        if any(group["attributes"].get("isInternalGroup") for group in groups):
+            payload = client.request("GET", f"/builds/{build['id']}/buildBetaDetail")
+            attributes = (payload.get("data") or {}).get("attributes") or {}
+        internal_state = attributes.get("internalBuildState") or "UNKNOWN"
         states = []
         available = True
         for group in groups:
             group_attributes = group["attributes"]
-            state_field = "internalBuildState" if group_attributes.get("isInternalGroup") else "externalBuildState"
-            state = attributes.get(state_field) or "UNKNOWN"
+            is_internal = group_attributes.get("isInternalGroup") is True
+            state = f"internalBuildState={internal_state}" if is_internal else "external assignment only; beta review separate"
             membership = "all-builds"
             has_membership = group_attributes.get("hasAccessToAllBuilds") is True
             if not has_membership:
                 has_membership = group_has_build(client, group["id"], build["id"])
                 membership = "present" if has_membership else "missing"
-            available = available and state == "IN_BETA_TESTING" and has_membership
-            states.append(f"{group_attributes.get('name', '<unnamed>')}: {state_field}={state}, membership={membership}")
+            available = available and (not is_internal or internal_state == "IN_BETA_TESTING") and has_membership
+            states.append(f"{group_attributes.get('name', '<unnamed>')}: {state}, membership={membership}")
         status = "; ".join(states)
         print(f"TestFlight readback: {status}")
+        if internal_state in {"EXPIRED", "PROCESSING_EXCEPTION", "MISSING_EXPORT_COMPLIANCE"}:
+            raise AppStoreConnectError(f"TestFlight availability blocked: {status}")
         if available:
             return
         remaining = deadline - time.monotonic()
@@ -539,8 +544,9 @@ def main() -> int:
         added_count = sum(1 for result in results if result == "added")
         already_count = sum(1 for result in results if result == "already-present")
         dry_run_count = sum(1 for result in results if result == "dry-run")
+        result_label = "assignment dry run" if args.dry_run else "distribution verified"
         print(
-            f"TestFlight {'assignment dry run' if args.dry_run else 'availability confirmed'} for {args.version} ({args.build_number}): "
+            f"TestFlight {result_label} for {args.version} ({args.build_number}): "
             f"added={added_count}, already_present={already_count}, dry_run={dry_run_count}"
         )
         return 0

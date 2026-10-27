@@ -538,13 +538,13 @@ The `TestFlight Beta Distribution` workflow is manually dispatched or called by
 `Ship`. It requires App Store Connect API credentials and consumes an already
 uploaded build number. It waits until the build is visible and `VALID` in App
 Store Connect, then assigns it to TestFlight beta groups. It reads each build's
-`buildBetaDetail` until the selected groups' beta state is `IN_BETA_TESTING`:
-`internalBuildState` for internal groups and `externalBuildState` for external
-groups. Groups with access to all builds need no explicit assignment; other
+`buildBetaDetail.internalBuildState` until it is `IN_BETA_TESTING` for internal
+groups. External groups require confirmed assignment; Apple's beta review remains
+separate and the readback labels external assignment accordingly. Groups with access to all builds need no explicit assignment; other
 groups also require confirmed build membership after assignment. The availability
 wait uses `--wait-timeout-seconds` (one hour by default), separately from the
 processing wait, and `--poll-seconds` controls polling. If availability does not
-arrive within the bound, the step fails and reports each group's observed state
+arrive within the bound, or a terminal internal state blocks testing, the step fails and reports each group's observed state
 and membership in the log and workflow summary. Dry runs check assignment needs
 without waiting for or claiming availability.
 
