@@ -1,13 +1,12 @@
 import importlib.util
 import json
-from pathlib import Path
 import shlex
 import sys
 import unittest
-from unittest import mock
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
-from datetime import datetime, timedelta, timezone
-
+from unittest import mock
 
 PATH = Path(__file__).resolve().parents[2] / "scripts" / "app-store-release-status.py"
 SPEC = importlib.util.spec_from_file_location("store_release_status", PATH)
@@ -16,7 +15,7 @@ if SPEC is None or SPEC.loader is None:
 status = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = status
 SPEC.loader.exec_module(status)
-NOW = datetime(2030, 1, 10, tzinfo=timezone.utc)
+NOW = datetime(2030, 1, 10, tzinfo=UTC)
 
 
 def record(platform: str = "MAC_OS", version: str = "2.0.10", hours: int = 49, build: str = "900") -> dict[str, Any]:
@@ -341,7 +340,7 @@ class StoreReleaseStatusTests(unittest.TestCase):
         def unreadable(_: str) -> str:
             return "<html>unavailable</html>"
 
-        cases = {"behind": ("2.0.9", True, False), "newer": ("2.0.11", True, False), "unreadable": (None, True, False),
+        cases = {"behind": ("2.0.9", True, False), "unreadable": (None, True, False),
                  "never submitted": ("2.0.10", False, False), "two submissions": ("2.0.10", True, True)}
         for name, (public, submitted, second) in cases.items():
             with self.subTest(name):
@@ -356,6 +355,102 @@ class StoreReleaseStatusTests(unittest.TestCase):
                 fetch = unreadable if public is None else store({"MAC_OS": public})
                 status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
                 self.assertEqual(closes(client), [])
+
+    def test_all_older_records_close_as_superseded_once(self) -> None:
+        client = FakeGitHub()
+        items = [issue(1, record(version="2.0.8")), issue(2, record(version="2.0.9")),
+                 issue(3, record()), issue(4, record(version="2.0.11"))]
+        mark_submitted(client, 2, record(version="2.0.9"), hours=10)
+        mark_submitted(client, 4, record(version="2.0.11"), hours=1)
+        fetch = store({"MAC_OS": "2.0.10"})
+        status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
+        self.assertEqual(closes(client), ["issues/1", "issues/2"])
+        for number in (1, 2):
+            self.assertEqual(items[number - 1]["state_reason"], "not_planned")
+            self.assertIn("2.0.10", client.comments[f"issues/{number}/comments"][-1]["body"])
+        writes = len(client.writes)
+        status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
+        self.assertEqual(len(client.writes), writes)
+
+    def test_supersession_requires_newer_public_version_on_the_same_platform(self) -> None:
+        for public in ("2.0.9", "2.0.10", "2.0.10.0", None):
+            with self.subTest(public=public):
+                client = FakeGitHub()
+                value = record("VISION_OS")
+                mark_submitted(client, 1, value, hours=1)
+                items = [issue(1, value), issue(2, record("MAC_OS", version="2.0.11"))]
+                def fetch(url: str, public_version: str | None = public) -> str:
+                    if "platform=mac" in url:
+                        return page("MAC_OS", ["2.0.12"])
+                    return "unavailable" if public_version is None else page("VISION_OS", [public_version])
+                status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
+                self.assertEqual(items[0]["state"], "closed" if public in ("2.0.10", "2.0.10.0") else "open")
+                self.assertNotEqual(items[0].get("state_reason"), "not_planned")
+
+    def test_old_parent_closes_with_live_and_superseded_children_after_targets_move(self) -> None:
+        client = FakeGitHub()
+        items = release_records(client)
+        for item in items[:-1]:
+            item.update(state="closed", state_reason="completed")
+        parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
+        client.children[f"issues/{PARENT}/sub_issues"] = items
+        newer = [issue(number, record(platform, version="2.0.11"))
+                 for number, platform in enumerate(sorted(status.PLATFORMS), start=10)]
+        versions = {platform: "2.0.11" for platform in status.PLATFORMS}
+        versions["IOS"] = "2.0.10"
+        status.monitor(client, [*items, *newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
+        self.assertEqual(parent["state"], "closed")
+        summary = client.comments[f"issues/{PARENT}/comments"][-1]["body"]
+        self.assertIn("2.0.11", summary)
+        self.assertTrue(all(item["state"] == "open" for item in newer))
+
+    def test_parent_reconciliation_resumes_after_every_record_was_superseded(self) -> None:
+        client = FakeGitHub()
+        items = release_records(client)
+        for item in items:
+            item.update(state="closed", state_reason="not_planned")
+        parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
+        client.children[f"issues/{PARENT}/sub_issues"] = items
+        with self.assertRaises(status.StatusError):
+            status.monitor(client, [*items, parent], NOW, 48, lookup=lambda: "42",
+                           fetch=store({platform: "2.0.11" for platform in status.PLATFORMS}))
+        self.assertEqual(closes(client), [f"issues/{PARENT}"])
+
+    def test_unknown_platform_without_a_target_still_alerts(self) -> None:
+        client = FakeGitHub()
+        old = issue(1, record("VISION_OS"), "closed")
+        old["state_reason"] = "not_planned"
+        items = [old, issue(2, record())]
+        def fetch(url: str) -> str:
+            return page("MAC_OS", ["2.0.10"]) if "platform=mac" in url else "unavailable"
+        results = status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
+        self.assertTrue(any(result["platform"] == "VISION_OS" and result["alert"] for result in results))
+        self.assertEqual(closes(client), [])
+
+    def test_interrupted_closure_does_not_repeat_its_comment(self) -> None:
+        for outcome in ("live", "superseded", "parent"):
+            with self.subTest(outcome=outcome):
+                client = FakeGitHub()
+                items = release_records(client)
+                parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
+                client.children[f"issues/{PARENT}/sub_issues"] = items
+                versions = {platform: "2.0.11" if outcome == "superseded" else "2.0.10"
+                            for platform in status.PLATFORMS}
+                newer = issue(10, record(version="2.0.12"))
+                mark_submitted(client, 10, record(version="2.0.12"), hours=1)
+                target = f"issues/{PARENT}" if outcome == "parent" else f"issues/{items[0]['number']}"
+                api = client.api
+                def interrupt(path: str, body: dict | None = None, method: str = "POST",
+                              failed_path: str = target, send: Any = api) -> dict:
+                    if path == failed_path and method == "PATCH":
+                        raise status.StatusError("interrupted close")
+                    return send(path, body, method)
+                with mock.patch.object(client, "api", side_effect=interrupt), self.assertRaises(status.StatusError):
+                    status.monitor(client, [*items, newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
+                before = list(client.comments[f"{target}/comments"])
+                status.monitor(client, [*items, newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
+                self.assertEqual(client.comments[f"{target}/comments"], before)
+                self.assertEqual(parent["state"], "closed")
 
     def test_release_closes_only_when_every_platform_is_live(self) -> None:
         client = FakeGitHub()

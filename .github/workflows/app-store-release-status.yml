@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    name: Read public store versions, alert on drift and close live records
+    name: Read public store versions, alert on drift and close live or superseded records
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
