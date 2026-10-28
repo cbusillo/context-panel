@@ -304,6 +304,8 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     let receipt = LaunchReceipt(provider: .openAI, accountID: a.id, launchedAt: rankNow.addingTimeInterval(-10 * 60))
     let readings = [rankNow.addingTimeInterval(-6 * 60), rankNow.addingTimeInterval(-1 * 60)]
     #expect(ranking([a], evidence: UseNextEvidence(receipts: [receipt], readingTimes: readings)).entry(a)?.pendingLaunches == 0)
+    #expect(ranking([a], evidence: UseNextEvidence(receipts: [receipt], readingTimes: readings,
+        accountReadingTimes: [a.id: []])).entry(a)?.pendingLaunches == 1)
     let old = LaunchReceipt(provider: .openAI, accountID: a.id, launchedAt: rankNow.addingTimeInterval(-31 * 60))
     #expect(ranking([a], evidence: UseNextEvidence(receipts: [old])).entry(a)?.pendingLaunches == 0)
 }
@@ -827,41 +829,86 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
 }
 
 @Test(arguments: [false, true])
-func companionExplainsUseLastWhenMacLaunchHistoryChangesEligibility(useLast: Bool) throws {
+func companionRankingMatchesMacExportWithLaunchHistory(useLast: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
     let personal = Fixture(name: "personal", provider: .anthropic, weeklyUsed: 36, resetHours: 100,
-                           burn: 1, useLast: useLast, fiveHourUsed: 9)
-    let agents = Fixture(name: "agents", provider: .anthropic, weeklyUsed: 100, resetHours: 100, burn: 1)
+                           useLast: useLast, fiveHourUsed: 9)
+    let agents = Fixture(name: "agents", provider: .anthropic, weeklyUsed: 100, resetHours: 100)
     let fixtures = [personal, agents]
-    let stored = StoredUsageSnapshot(savedAt: rankNow,
-        snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
-        reports: fixtures.map { $0.report(now: rankNow) })
-    let configuration = fixtures.map {
+    let identityKey = ProviderAccountIdentityKey.generate()
+    let identities = try fixtures.map { fixture in
+        let material = try #require(ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID, identifier: fixture.name))
+        return identityKey.identity(for: material).bound(toLocalAccountID: fixture.name)
+    }
+    let configuration = AccountConfigurationDocument(updatedAt: rankNow, accounts: fixtures.map {
         LocalProviderAccountConfiguration(id: $0.name, provider: .anthropic, connectorKind: .claudeOAuthUsage,
             displayName: $0.name, useLast: $0.useLast)
+    })
+    let configStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try configStore.save(configuration)
+    let history = (0...2).reversed().map { hoursAgo in
+        let date = rankNow.addingTimeInterval(-Double(hoursAgo) * hour)
+        return StoredUsageSnapshot(savedAt: date,
+            snapshot: UsageSnapshot(generatedAt: date, limits: fixtures.flatMap { fixture in
+                var earlier = fixture
+                earlier.weeklyUsed = (fixture.weeklyUsed ?? 0) - hoursAgo
+                earlier.resetHours = (fixture.resetHours ?? 0) + Double(hoursAgo)
+                earlier.fiveHourResetHours += Double(hoursAgo)
+                return earlier.limits(now: date)
+            }), reports: zip(fixtures, identities).map { fixture, identity in
+                StoredProviderReport(provider: .anthropic, accountID: fixture.name, configuredAccountID: fixture.name,
+                    accountName: fixture.name, generatedAt: date, status: .healthy, errorMessage: nil, sharedAccountIdentity: identity)
+            })
     }
-    let mac = MacSharedAccountPresentation.make(stored: stored, configuration: configuration, now: rankNow,
-        rates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: rankNow)) }))
-    let document = CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: stored, publishedAt: rankNow),
-        accountDisplayMetadata: mac.accountDisplayMetadata, accountBurnRates: mac.accountBurnRates)
+    let stored = try #require(history.last)
+    let snapshotStore = JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots"))
+    for reading in history { try snapshotStore.save(reading) }
+    let receiptDirectory = root.appending(path: LaunchReceiptStore.directoryName)
+    try FileManager.default.createDirectory(at: receiptDirectory, withIntermediateDirectories: true)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let receipts = try fixtures.enumerated().map { index, fixture in
+        let limit = try #require(stored.snapshot.limits.first { $0.accountID == fixture.name })
+        let id = AccountDisplayMetadata.safeID(.anthropic, CompanionLimit(limit: limit,
+            identityConfiguredAccountID: nil, sharedIdentity: identities[index]).companionAccountID)
+        let receipt = LaunchReceipt(provider: .anthropic, accountID: id, launchedAt: rankNow.addingTimeInterval(-hour))
+        try encoder.encode(receipt).write(to: receiptDirectory.appending(path: "receipt-\(index).json"))
+        return receipt
+    }
+    let rates = AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: rankNow)
+    let sync = CompanionSyncStore(documentURL: root.appending(path: "sync.json"))
+    let publisher = CompanionSyncPublisher(stores: CompanionSyncStoreSet(stores: [sync]),
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget.json")),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        accountConfigurationURL: configStore.configurationURL)
+    #expect(publisher.publish(storedSnapshot: stored, publishedAt: rankNow, accountBurnRates: rates).succeeded)
+    let document = try #require(sync.load(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge), now: rankNow).document)
     let decoded = try CompanionSyncPayloadCodec.decode(CompanionSyncPayloadCodec.encode(document))
-    let phone = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: decoded, status: .healthy), now: rankNow)
+    let merged = decoded.mergingForRemotePublish(existing: decoded, now: rankNow)
+    let widget = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: merged, status: .healthy), now: rankNow)
+    let phone = widget
         .accountOverview(now: rankNow, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
-    let desktop = mac.accountOverview(now: rankNow, maximumAge: SnapshotFreshness.appMaximumAge)
-    #expect(phone.useNextRanking(provider: .anthropic) == desktop.useNextRanking(provider: .anthropic))
-    let receipts = desktop.accounts.map {
-        LaunchReceipt(provider: .anthropic, accountID: $0.id, launchedAt: rankNow.addingTimeInterval(-hour))
+    let exported = try AgentAccountSnapshot.read(rootDirectory: root, now: rankNow)
+    let published = try #require(exported.ranking.first { $0.provider == .anthropic })
+    #expect(phone.useNextRanking(provider: .anthropic) == published)
+    #expect(phone.useNext(provider: .anthropic)?.id == exported.answers.useNext.first { $0.provider == .anthropic }?.accountID)
+    #expect(phone.useNext(provider: .anthropic)?.metadata.label == personal.name)
+    #expect(phone.filtered(to: .anthropic).useNext(provider: .anthropic)?.id == published.useNextAccountID)
+    #expect(phone.launchEvidence.receipts.count == receipts.count)
+    let selected = try #require(phone.useNext(provider: .anthropic))
+    let removed = CompanionSyncDocument(snapshot: decoded.snapshot, accountDisplayMetadata: decoded.accountDisplayMetadata,
+        removedDisplayIDs: [selected.id], launchEvidence: decoded.launchEvidence).applyingGlobalRemovals()
+    #expect(removed.launchEvidence?.receipts.contains { $0.accountID == selected.id } == false)
+    #expect(removed.launchEvidence?.accountReadingTimes?[selected.id] == nil)
+    if useLast {
+        let withoutReceipts = phone.useNextRanking(provider: .anthropic, evidence: UseNextEvidence())
+        #expect(withoutReceipts.useNextAccountID == nil)
+        #expect(withoutReceipts.excluded.contains { $0.label == personal.name })
+        let legacy = AccountOverview(snapshot: widget.usageSnapshot, reports: widget.reports,
+            metadata: widget.accountDisplayMetadata, now: rankNow, accountBurnRates: widget.accountBurnRates ?? [:])
+        let held = try #require(withoutReceipts.excluded.first { $0.label == personal.name })
+        let explanation = AccountTerms.useNextUnavailableReason(legacy, provider: .anthropic)
+        #expect(explanation.contains(held.label) && explanation.contains(held.reason))
     }
-    let launcher = desktop.useNextRanking(provider: .anthropic,
-        evidence: UseNextEvidence(receipts: receipts, readingTimes: [rankNow]))
-    #expect(launcher.useNextAccountID == desktop.accounts.first { $0.metadata.label == personal.name }?.id)
-    guard useLast else {
-        #expect(phone.useNext(provider: .anthropic)?.id == launcher.useNextAccountID)
-        return
-    }
-    #expect(phone.useNext(provider: .anthropic) == nil)
-    let held = try #require(phone.useNextRanking(provider: .anthropic).excluded.first { $0.label == personal.name })
-    let explanation = AccountTerms.useNextUnavailableReason(phone, provider: .anthropic)
-    #expect(explanation.contains(held.label))
-    #expect(explanation.contains(held.reason))
-    #expect(explanation != AccountTerms.noEligibleAccount)
 }

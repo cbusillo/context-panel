@@ -204,7 +204,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                             fastModeForecastSettings: forecastSettings,
                             promptCacheWidgetState: promptCacheWidgetState,
                             stalenessPolicy: policy,
-                            configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID, accountIntentDocument: configurationDocument
+                            configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID, accountIntentDocument: configurationDocument,
+                            receipts: LaunchReceiptStore.load(rootDirectory: accountStore.configurationURL.deletingLastPathComponent(), now: date)
                         ),
                         displayPreferences: displayPreferences
                     ),
@@ -223,7 +224,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                     fastModeForecastSettings: forecastSettings,
                     promptCacheWidgetState: promptCacheWidgetState,
                     stalenessPolicy: policy,
-                    configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID, accountIntentDocument: configurationDocument
+                    configuration: configuration, sharedDocument: sharedDocument, publisherID: configurationDocument?.publisherID, accountIntentDocument: configurationDocument,
+                    receipts: LaunchReceiptStore.load(rootDirectory: accountStore.configurationURL.deletingLastPathComponent(), now: date)
                 ),
                 displayPreferences: displayPreferences
             ),

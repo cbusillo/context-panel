@@ -51,17 +51,76 @@ public enum LaunchReceiptStore {
 }
 
 /// What the ranking knows beyond the readings themselves. Every field is optional evidence.
-public struct UseNextEvidence: Equatable, Sendable {
+public struct UseNextEvidence: Codable, Equatable, Sendable {
     public var receipts: [LaunchReceipt]
     /// When each reading was saved (history and current); a receipt counts as reflected after two later readings.
     public var readingTimes: [Date]
     /// For an unstarted OpenAI account, the first reading in the current unstarted run.
     public var unstartedSince: [String: Date]
+    public var accountReadingTimes: [String: [Date]]?
 
-    public init(receipts: [LaunchReceipt] = [], readingTimes: [Date] = [], unstartedSince: [String: Date] = [:]) {
+    public init(receipts: [LaunchReceipt] = [], readingTimes: [Date] = [], unstartedSince: [String: Date] = [:],
+                accountReadingTimes: [String: [Date]]? = nil) {
         self.receipts = receipts
         self.readingTimes = readingTimes
         self.unstartedSince = unstartedSince
+        self.accountReadingTimes = accountReadingTimes
+    }
+
+    public static func make(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot],
+        configuration: [LocalProviderAccountConfiguration], publisherID: String?,
+        receipts: [LaunchReceipt], shared: Bool) -> Self {
+        let readings = history + [stored]
+        let resolve = accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: shared)
+        var accountTimes: [String: [Date]] = [:]
+        for reading in readings {
+            for id in Set(reading.snapshot.limits.map(resolve)) { accountTimes[id, default: []].append(reading.savedAt) }
+        }
+        accountTimes = accountTimes.mapValues { Array(Set($0).sorted().suffix(2)) }
+        return Self(receipts: receipts, readingTimes: Array(Set(readings.map(\.savedAt)).sorted().suffix(2)),
+            unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve),
+            accountReadingTimes: accountTimes)
+    }
+
+    static func accountResolver(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration],
+        publisherID: String?, shared: Bool) -> ProviderRefillDetector.AccountResolver {
+        let reports = Dictionary(readings.flatMap(\.reports).map { ($0.provider.rawValue + ":" + $0.accountID, $0) },
+            uniquingKeysWith: { older, newer in newer.sharedAccountIdentity == nil ? older : newer })
+        return { limit in
+            AccountDisplayMetadata.safeID(limit.provider, shared ? MacSharedAccountPresentation.accountKey(limit: limit,
+                report: reports[limit.provider.rawValue + ":" + limit.accountID], configuration: configuration,
+                publisherID: publisherID) : limit.accountID)
+        }
+    }
+
+    func retainingAccounts(_ ids: Set<String>) -> Self {
+        Self(receipts: receipts.filter { ids.contains($0.accountID) }, readingTimes: readingTimes,
+            unstartedSince: unstartedSince.filter { ids.contains($0.key) },
+            accountReadingTimes: accountReadingTimes?.filter { ids.contains($0.key) })
+    }
+
+    func merging(_ other: Self, now: Date) -> Self {
+        let grouped = { (values: [LaunchReceipt]) in
+            Dictionary(grouping: values) { "\($0.provider.rawValue):\($0.accountID):\($0.launchedAt.timeIntervalSince1970)" }
+        }
+        let receipts = grouped(self.receipts).merging(grouped(other.receipts)) { $0.count >= $1.count ? $0 : $1 }
+            .sorted { $0.key < $1.key }.flatMap(\.value)
+            .filter { LaunchReceiptStore.isUsable($0, now: now) }
+        let times = (accountReadingTimes ?? [:]).merging(other.accountReadingTimes ?? [:]) { Array(Set($0 + $1)).sorted() }
+            .mapValues { Array($0.sorted().suffix(2)) }
+        return Self(receipts: receipts, readingTimes: Array(Set(readingTimes + other.readingTimes).sorted().suffix(2)),
+            unstartedSince: unstartedSince.merging(other.unstartedSince) { _, newer in newer },
+            accountReadingTimes: times.isEmpty ? nil : times)
+    }
+
+    func reidentifyingAccounts(using aliases: [String: String]) -> Self {
+        Self(receipts: receipts.map { LaunchReceipt(provider: $0.provider, accountID: aliases[$0.accountID] ?? $0.accountID, launchedAt: $0.launchedAt) },
+            readingTimes: readingTimes,
+            unstartedSince: Dictionary(unstartedSince.map { (aliases[$0.key] ?? $0.key, $0.value) }, uniquingKeysWith: min),
+            accountReadingTimes: accountReadingTimes.map { times in
+                Dictionary(times.map { (aliases[$0.key] ?? $0.key, $0.value) },
+                    uniquingKeysWith: { Array(Set($0 + $1).sorted().suffix(2)) })
+            })
     }
 }
 
@@ -202,8 +261,10 @@ public extension AccountOverview {
         }
     }
 
-    func useNextRanking(provider: Provider, evidence: UseNextEvidence = UseNextEvidence()) -> UseNextRanking {
+    func useNextRanking(provider: Provider, evidence suppliedEvidence: UseNextEvidence? = nil) -> UseNextRanking {
+        var evidence = suppliedEvidence ?? launchEvidence
         let now = rankedAt
+        evidence.receipts = evidence.receipts.filter { LaunchReceiptStore.isUsable($0, now: now) }
         let rows = accounts.filter { $0.metadata.provider == provider }
         let multipleUseLast = rows.filter(\.metadata.useLast).count > 1
         let current = rows.filter { [.available, .closeToLimit, .limited].contains($0.state) }
@@ -389,7 +450,7 @@ extension AccountOverview {
         return evidence.receipts.reduce(into: [:]) { counts, receipt in
             guard ids.contains(receipt.accountID), receipt.launchedAt <= now.addingTimeInterval(60),
                   now.timeIntervalSince(receipt.launchedAt) < UseNextRanking.receiptReflectedAfter,
-                  Set(readings.filter { $0 > receipt.launchedAt }).count < 2 else { return }
+                  Set((evidence.accountReadingTimes?[receipt.accountID] ?? readings).filter { $0 > receipt.launchedAt }).count < 2 else { return }
             counts[receipt.accountID, default: 0] += 1
         }
     }

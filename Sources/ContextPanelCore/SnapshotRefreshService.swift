@@ -615,10 +615,16 @@ public struct SnapshotRefreshService: Sendable {
     public func invalidateSharedAccounts() { companionSyncPublisher?.sharedAccountCache?.invalidate() }
     public func receiveSharedAccounts(now: Date) async { _ = await companionSyncPublisher?.receiveSharedAccounts(now: now) }
     public func sharedAccountPresentation(stored: StoredUsageSnapshot, now: Date,
-        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:]) -> WidgetSnapshot? {
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:],
+        launchEvidence: UseNextEvidence? = nil) -> WidgetSnapshot? {
         guard let publisher = companionSyncPublisher else { return nil }
-        let document = publisher.presentationDocument(storedSnapshot: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates)
+        let document = publisher.presentationDocument(storedSnapshot: stored, now: now, accountBurnRates: accountBurnRates,
+            observedBurnRates: observedBurnRates, launchEvidence: launchEvidence)
         return WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: document, status: .healthy), now: now)
+    }
+
+    public func loadLaunchReceipts(now: Date) -> [LaunchReceipt] {
+        LaunchReceiptStore.load(rootDirectory: accountStore.configurationURL.deletingLastPathComponent(), now: now)
     }
 
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
@@ -670,7 +676,8 @@ public struct SnapshotRefreshService: Sendable {
             fastModeForecastSettings: forecastSettings,
             promptCacheWidgetState: cacheState, stalenessPolicy: policy,
             configuration: document?.accounts, sharedDocument: cache.load(now: now),
-            publisherID: document?.publisherID, accountIntentDocument: document
+            publisherID: document?.publisherID, accountIntentDocument: document,
+            receipts: LaunchReceiptStore.load(rootDirectory: accountStore.configurationURL.deletingLastPathComponent(), now: now)
         )
     }
 

@@ -281,14 +281,7 @@ public enum AccountTerms {
         let reasons = ranking.excluded.map { "\($0.label): \($0.reason)" }
             + ranking.entries.filter { $0.weight <= 0 }.map { "\($0.label): \($0.reason)" }
         guard !reasons.isEmpty else { return noEligibleAccount }
-        let holdsPersonalCapacity = overview.accounts.contains { account in
-            account.metadata.provider == provider && account.metadata.useLast
-                && (ranking.excluded.contains { $0.accountID == account.id && $0.reason.hasPrefix("Use last:") }
-                    || ranking.entries.contains { $0.accountID == account.id && $0.weight <= 0 })
-        }
-        return reasons.joined(separator: "\n") + (holdsPersonalCapacity
-            ? "\nYour Mac's launch ranking also uses recent launch history to estimate your personal use."
-            : "")
+        return reasons.joined(separator: "\n")
     }
 
     /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.

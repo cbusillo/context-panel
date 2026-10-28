@@ -33,7 +33,8 @@ public extension CompanionSyncDocument {
                 }
                 return retained
             }, accountIdentityAliases: accountIdentityAliases,
-            accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates)
+            accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates,
+            launchEvidence: launchEvidence?.retainingAccounts(Set(filtered.limits.map { AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID) })))
     }
 
     /// Pool burn rates stay only for pools whose live windows the filtered snapshot leaves unchanged.

@@ -5581,6 +5581,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
     @Published private(set) var accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
+    @Published private(set) var launchEvidence = UseNextEvidence()
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
@@ -5623,7 +5624,8 @@ final class ContextPanelAppModel: ObservableObject {
 
     var currentSnapshot: UsageSnapshot {
         if fixedPresentationDate == nil, let storedSnapshot,
-           let shared = refreshService.sharedAccountPresentation(stored: storedSnapshot, now: presentationDate, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
+           let shared = refreshService.sharedAccountPresentation(stored: storedSnapshot, now: presentationDate,
+               accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates, launchEvidence: launchEvidence) {
             return shared.usageSnapshot
         }
         return observedSnapshot.presented(at: presentationDate)
@@ -5959,6 +5961,9 @@ final class ContextPanelAppModel: ObservableObject {
         observedBurnRatesTask?.cancel()
         let refreshService = refreshService
         let currentSnapshot = observedSnapshot
+        let currentStored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now, snapshot: currentSnapshot)
+        let configuration = configuredAccounts
+        let publisherID = configuredPublisherID
         let generatedAt = currentSnapshot.generatedAt
         observedBurnRatesTask = Task.detached(priority: .userInitiated) { [weak self] in
             let history = refreshService.loadHistory(
@@ -5971,9 +5976,12 @@ final class ContextPanelAppModel: ObservableObject {
                 now: now
             )
             let accountRates = AccountBurnRateEstimator.observedBurnRates(current: currentSnapshot, history: history, now: now)
+            let evidence = UseNextEvidence.make(stored: currentStored, history: history, configuration: configuration,
+                publisherID: publisherID, receipts: refreshService.loadLaunchReceipts(now: now), shared: true)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self?.observedSnapshot.generatedAt == generatedAt else { return }
+                self?.launchEvidence = evidence
                 self?.observedBurnRates = rates
                 self?.accountBurnRates = accountRates
             }
@@ -5990,7 +5998,8 @@ final class ContextPanelAppModel: ObservableObject {
     func accountOverview(at now: Date) -> AccountOverview {
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
-        if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now, accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates) {
+        if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now,
+            accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates, launchEvidence: launchEvidence) {
             return shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
         }
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,

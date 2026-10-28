@@ -103,7 +103,15 @@ public extension CompanionSyncDocument {
                 }
                 return result
             },
-            accountIdentityAliases: valid, accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates)
+            accountIdentityAliases: valid, accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates,
+            launchEvidence: launchEvidence?.reidentifyingAccounts(using: Dictionary(valid.compactMap { mapping in
+                alias(mapping.provider, mapping.legacyAccountID).map {
+                    (AccountDisplayMetadata.safeID($0.provider, $0.legacyAccountID),
+                     AccountDisplayMetadata.safeID($0.provider, $0.replacementAccountID))
+                }
+            }, uniquingKeysWith: { first, _ in first })).retainingAccounts(Set(filtered.limits.map {
+                AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID)
+            })))
     }
 
     static func mergedIdentityAliases(_ a: [CompanionAccountIdentityAlias], _ b: [CompanionAccountIdentityAlias]) -> [CompanionAccountIdentityAlias] {

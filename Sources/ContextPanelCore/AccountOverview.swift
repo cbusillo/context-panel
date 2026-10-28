@@ -127,10 +127,12 @@ public struct AccountOverview: Equatable, Sendable {
     public let deadlines: [Deadline]
     /// The moment the readings were judged; Use next measures time left from here.
     public let rankedAt: Date
-    private init(accounts: [Account], deadlines: [Deadline], rankedAt: Date) {
+    public let launchEvidence: UseNextEvidence
+    private init(accounts: [Account], deadlines: [Deadline], rankedAt: Date, launchEvidence: UseNextEvidence) {
         self.accounts = accounts
         self.deadlines = deadlines
         self.rankedAt = rankedAt
+        self.launchEvidence = launchEvidence
     }
 
     /// Present shared-provider advice under the local report IDs used by provider diagnostics.
@@ -151,7 +153,7 @@ public struct AccountOverview: Equatable, Sendable {
     /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.
     public func filtered(to provider: Provider) -> AccountOverview {
         AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },
-                        deadlines: deadlines.filter { $0.provider == provider }, rankedAt: rankedAt)
+                        deadlines: deadlines.filter { $0.provider == provider }, rankedAt: rankedAt, launchEvidence: launchEvidence)
     }
 
     public var closest: Account? {
@@ -183,15 +185,16 @@ public struct AccountOverview: Equatable, Sendable {
                 providerPlan: account.providerPlan, bankedAdvice: account.bankedAdvice,
                 resetAssessment: account.resetAssessment)
         }
-        return AccountOverview(accounts: replay, deadlines: deadlines, rankedAt: observed)
+        return AccountOverview(accounts: replay, deadlines: deadlines, rankedAt: observed, launchEvidence: launchEvidence)
     }
     public var nextDeadline: Deadline? { deadlines.first { $0.state == .available } }
 
     public init(snapshot: UsageSnapshot, reports: [StoredProviderReport], metadata: [AccountDisplayMetadata]? = nil,
                 now: Date, maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge,
                 widgetsOnly: Bool = false, isSavedSnapshot: Bool = false,
-                accountBurnRates: [String: [String: ObservedBurnRate]] = [:]) {
+                accountBurnRates: [String: [String: ObservedBurnRate]] = [:], launchEvidence: UseNextEvidence = UseNextEvidence()) {
         rankedAt = now
+        self.launchEvidence = launchEvidence
         let presented = snapshot.presented(at: now)
         let entries = metadata ?? Self.inferredMetadata(snapshot: snapshot, reports: reports)
         let allAccounts = entries.map { entry in

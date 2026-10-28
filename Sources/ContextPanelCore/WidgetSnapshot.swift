@@ -30,6 +30,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let accountDisplayMetadata: [AccountDisplayMetadata]?
     /// Per-account, per-window burn keyed by provider account ID then limit ID. Optional so older payloads decode.
     public let accountBurnRates: [String: [String: ObservedBurnRate]]?
+    public let launchEvidence: UseNextEvidence?
 
     public init(
         state: WidgetSnapshotState,
@@ -45,7 +46,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         refreshAttentionSummary: RefreshAttentionSummary? = nil,
         syncErrorMessage: String? = nil,
         accountDisplayMetadata: [AccountDisplayMetadata]? = nil,
-        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil
+        accountBurnRates: [String: [String: ObservedBurnRate]]? = nil,
+        launchEvidence: UseNextEvidence? = nil
     ) {
         self.state = state
         self.generatedAt = generatedAt
@@ -61,6 +63,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.safeErrorDescription)
         self.accountDisplayMetadata = accountDisplayMetadata
         self.accountBurnRates = accountBurnRates
+        self.launchEvidence = launchEvidence
     }
 
     public func accountOverview(now: Date, widgetsOnly: Bool = false,
@@ -68,7 +71,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         AccountOverview(snapshot: usageSnapshot, reports: reports, metadata: accountDisplayMetadata,
                         now: now, maximumAge: maximumAge, widgetsOnly: widgetsOnly,
                         isSavedSnapshot: state == .failure || syncErrorMessage != nil,
-                        accountBurnRates: accountBurnRates ?? [:])
+                        accountBurnRates: accountBurnRates ?? [:], launchEvidence: launchEvidence ?? UseNextEvidence())
     }
 
     public var usageSnapshot: UsageSnapshot {
@@ -159,7 +162,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
         configuration: [LocalProviderAccountConfiguration]? = nil,
         sharedDocument: CompanionSyncDocument? = nil,
-        publisherID: String? = nil, accountIntentDocument: AccountConfigurationDocument? = nil
+        publisherID: String? = nil, accountIntentDocument: AccountConfigurationDocument? = nil,
+        receipts: [LaunchReceipt] = []
     ) -> WidgetSnapshot {
         if let sharedDocument, result.snapshot == nil {
             return MacSharedAccountPresentation.make(stored: StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: []),
@@ -171,7 +175,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             return MacSharedAccountPresentation.make(stored: stored, configuration: configuration ?? [],
                 publisherID: publisherID, remote: sharedDocument, accountIntentDocument: accountIntentDocument, now: now, rates: rates,
                 observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
-                stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
+                stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings,
+                launchEvidence: UseNextEvidence.make(stored: stored, history: history, configuration: configuration ?? [],
+                    publisherID: publisherID, receipts: receipts, shared: true))
         }
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -232,7 +238,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
             refreshAttentionSummary: refreshAttentionSummary,
             accountDisplayMetadata: configuration.map { AccountDisplayMetadata.local(configuration: $0, stored: stored, now: now) },
-            accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)
+            accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
+            launchEvidence: UseNextEvidence.make(stored: stored, history: history, configuration: configuration ?? [],
+                publisherID: publisherID, receipts: receipts, shared: false)
         )
     }
 
@@ -342,7 +350,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary,
             syncErrorMessage: result.errorMessage,
             accountDisplayMetadata: document.accountDisplayMetadata,
-            accountBurnRates: document.accountBurnRates
+            accountBurnRates: document.accountBurnRates, launchEvidence: document.launchEvidence
         )
     }
 

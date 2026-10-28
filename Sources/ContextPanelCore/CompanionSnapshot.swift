@@ -66,6 +66,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let accountDisplayMetadata: [AccountDisplayMetadata]?
     public let removedDisplayIDs: [String]?
     public let accountBurnRates: [String: [String: ObservedBurnRate]]?
+    public let launchEvidence: UseNextEvidence?
     public let accountIdentityAliases: [CompanionAccountIdentityAlias]?
     public let accountRemovalDates: [String: Date]?
     public let accountRestorationDates: [String: Date]?
@@ -81,6 +82,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case accountDisplayMetadata
         case removedDisplayIDs
         case accountBurnRates
+        case launchEvidence
         case accountIdentityAliases
         case accountRemovalDates
         case accountRestorationDates
@@ -98,7 +100,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         accountBurnRates: [String: [String: ObservedBurnRate]]? = nil,
         accountIdentityAliases: [CompanionAccountIdentityAlias]? = nil,
         accountRemovalDates: [String: Date]? = nil,
-        accountRestorationDates: [String: Date]? = nil
+        accountRestorationDates: [String: Date]? = nil,
+        launchEvidence: UseNextEvidence? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
@@ -113,6 +116,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         self.accountIdentityAliases = accountIdentityAliases
         self.accountRemovalDates = accountRemovalDates
         self.accountRestorationDates = accountRestorationDates
+        self.launchEvidence = launchEvidence
     }
 
     public init(
@@ -128,7 +132,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         accountBurnRates: [String: [String: ObservedBurnRate]]? = nil,
         accountIdentityAliases: [CompanionAccountIdentityAlias]? = nil,
         accountRemovalDates: [String: Date]? = nil,
-        accountRestorationDates: [String: Date]? = nil
+        accountRestorationDates: [String: Date]? = nil,
+        launchEvidence: UseNextEvidence? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
@@ -142,7 +147,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             accountBurnRates: accountBurnRates,
             accountIdentityAliases: accountIdentityAliases,
             accountRemovalDates: accountRemovalDates,
-            accountRestorationDates: accountRestorationDates
+            accountRestorationDates: accountRestorationDates, launchEvidence: launchEvidence
         )
     }
 
@@ -163,6 +168,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         accountDisplayMetadata = try container.decodeIfPresent([AccountDisplayMetadata].self, forKey: .accountDisplayMetadata)
         removedDisplayIDs = try container.decodeIfPresent([String].self, forKey: .removedDisplayIDs)
         accountBurnRates = try container.decodeIfPresent([String: [String: ObservedBurnRate]].self, forKey: .accountBurnRates)
+        launchEvidence = try container.decodeIfPresent(UseNextEvidence.self, forKey: .launchEvidence)
         accountIdentityAliases = try? container.decode([CompanionAccountIdentityAlias].self, forKey: .accountIdentityAliases)
         accountRemovalDates = try container.decodeIfPresent([String: Date].self, forKey: .accountRemovalDates)
         accountRestorationDates = try container.decodeIfPresent([String: Date].self, forKey: .accountRestorationDates)
@@ -185,7 +191,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             accountBurnRates: accountBurnRates,
             accountIdentityAliases: accountIdentityAliases,
             accountRemovalDates: accountRemovalDates,
-            accountRestorationDates: accountRestorationDates
+            accountRestorationDates: accountRestorationDates, launchEvidence: launchEvidence
         )
     }
 }
@@ -1283,10 +1289,12 @@ public struct CompanionSyncPublisher: Sendable {
     }
 
     public func presentationDocument(storedSnapshot: StoredUsageSnapshot, now: Date,
-        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:]) -> CompanionSyncDocument {
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:],
+        launchEvidence: UseNextEvidence? = nil) -> CompanionSyncDocument {
         let cached = sharedAccountCache?.load(now: now)?.verifiedAccountsOnly()
         let local = makeDocument(storedSnapshot: storedSnapshot, publishedAt: now,
-            observedBurnRates: observedBurnRates, removalUserScope: cached?.cloudKitUserScope, accountBurnRates: accountBurnRates)
+            observedBurnRates: observedBurnRates, removalUserScope: cached?.cloudKitUserScope,
+            accountBurnRates: accountBurnRates, launchEvidence: launchEvidence)
         return local.mergingForRemotePublish(existing: cached, now: now)
     }
 
@@ -1295,7 +1303,8 @@ public struct CompanionSyncPublisher: Sendable {
         publishedAt: Date,
         observedBurnRates: [String: ObservedBurnRate],
         removalUserScope: CompanionCloudKitUserScope? = nil,
-        accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
+        accountBurnRates: [String: [String: ObservedBurnRate]] = [:],
+        launchEvidence suppliedEvidence: UseNextEvidence? = nil
     ) -> CompanionSyncDocument {
         let scopedReports = storedSnapshot.reports.filter { report in
             guard let bound = report.sharedAccountIdentity?.userScope, let removalUserScope else { return true }
@@ -1310,6 +1319,14 @@ public struct CompanionSyncPublisher: Sendable {
             (try? Data(contentsOf: url)).flatMap {
                 try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
             }
+        }
+        let launchEvidence = suppliedEvidence ?? accountConfigurationURL.map { url in
+            let root = url.deletingLastPathComponent()
+            let history = JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots")).loadHistory(
+                query: SnapshotStoreQuery(since: min(publishedAt, storedSnapshot.snapshot.generatedAt).addingTimeInterval(-LaunchReceiptStore.lookback), limit: 2_000))
+            return UseNextEvidence.make(stored: storedSnapshot, history: history,
+                configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID,
+                receipts: LaunchReceiptStore.load(rootDirectory: root, now: publishedAt), shared: true)
         }
         let snapshot = CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
             configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)
@@ -1359,7 +1376,7 @@ public struct CompanionSyncPublisher: Sendable {
                     }
                 }
                 return dates
-            }
+            }, launchEvidence: launchEvidence
         )
     }
 
