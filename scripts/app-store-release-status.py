@@ -9,15 +9,16 @@ import argparse
 import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta, timezone
 from html.parser import HTMLParser
+from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -132,9 +133,8 @@ def record_body(repository: str, record: dict) -> str:
         "Next action: the release agent validates TestFlight and runs this Submit dry run, "
         "then follows the existing review/evidence gates. This record does not authorize submission.\n\n"
         f"```sh\n{next_command(repository, record)}\n```\n\n"
-        "Keep this issue open until the exact build is approved and live. The App Store Release Status "
-        "check closes it once the public version matches and this is the only build submitted for that "
-        "version.\n\n"
+        "The App Store Release Status check closes this record when its exact build is verified live, "
+        "or as superseded when a newer public version is live on this platform.\n\n"
         + marker(RECORD, record) + "\n"
     )
 
@@ -142,7 +142,7 @@ def record_body(repository: str, record: dict) -> str:
 class GitHub:
     """Workflow-token transport. Mutations: issue creation, comments, sub-issue links and issue closing."""
 
-    def __init__(self, repository: str):
+    def __init__(self, repository: str) -> None:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
             raise StatusError("invalid GitHub repository")
         self.repository = repository
@@ -447,27 +447,50 @@ def close_live_record(client: Any, issue: dict, record: dict, public_version: st
     issue.update(state="closed", state_reason="completed")
 
 
-def close_finished_release(client: Any, parent: dict, live_now: dict[int, str]) -> bool:
-    """Close a release issue once every sub-issue is closed and every platform is live.
+def close_superseded_record(client: Any, issue: dict, record: dict, public_version: str) -> None:
+    client.api(f"issues/{issue['number']}/comments", {"body":
+        f"Superseded: {record['platform']} {record['version']} ({record['buildNumber']}).\n\n"
+        f"The public US App Store page shows newer version {public_version} on {record['platform']}. "
+        "This closes the pending record without claiming its build went live. "
+        "Closed by the App Store Release Status check."})
+    client.api(f"issues/{issue['number']}", {"state": "closed", "state_reason": "not_planned"}, method="PATCH")
+    issue.update(state="closed", state_reason="not_planned")
 
-    A platform counts only when this run saw its target record live at exactly its
-    version, so a record closed early by hand cannot complete a release.
-    """
+
+def reconcile_records(client: Any, issues: list[dict], versions: dict[str, str | None]) -> dict[int, str]:
+    resolved = {}
+    for issue in issues:
+        record = read_marker(RECORD, issue.get("body") or "")
+        if record is None or (public_version := versions.get(record["platform"])) is None:
+            continue
+        comparison = version_guard.compare_versions(public_version, record["version"])
+        if comparison > 0:
+            if issue.get("state") == "open":
+                close_superseded_record(client, issue, record, public_version)
+            resolved[issue["number"]] = f"superseded by {public_version}"
+        elif (comparison == 0 and issue.get("state_reason") != "not_planned"
+              and only_submitted_build(client, issues, record)):
+            if issue.get("state") == "open":
+                close_live_record(client, issue, record, public_version)
+            if issue.get("state_reason") == "completed":
+                resolved[issue["number"]] = "live"
+    return resolved
+
+
+def close_finished_release(client: Any, parent: dict, resolved: dict[int, str]) -> bool:
     children = client.pages(f"issues/{parent['number']}/sub_issues")
     if not children or any(child.get("state") != "closed" for child in children):
         return False
-    live = {}
-    for child in sorted(children, key=lambda item: item["number"]):
-        record = read_marker(RECORD, child.get("body") or "")
-        if (record is not None and child.get("state_reason") == "completed"
-                and live_now.get(child["number"]) == record["platform"]):
-            live[record["platform"]] = (child, record)
-    if set(live) != set(PLATFORMS):
+    records = [(child, record) for child in sorted(children, key=lambda item: item["number"])
+               if (record := read_marker(RECORD, child.get("body") or "")) is not None]
+    if (any(child["number"] not in resolved for child, _ in records)
+            or {record["platform"] for _, record in records} != set(PLATFORMS)):
         return False
-    lines = [f"- {platform}: {record['version']} ({record['buildNumber']}), #{child['number']}"
-             for platform, (child, record) in sorted(live.items())]
+    lines = [f"- {record['platform']}: {record['version']} ({record['buildNumber']}), "
+             f"#{child['number']}: {resolved[child['number']]}" for child, record in records]
     client.api(f"issues/{parent['number']}/comments", {"body":
-        "Released: every platform is live on the App Store.\n\n" + "\n".join(lines) + "\n\n"
+        "Release records reconciled: every platform record is live or superseded.\n\n"
+        + "\n".join(lines) + "\n\n"
         "Closed by the App Store Release Status check once every platform record closed."})
     names = [label["name"] if isinstance(label, dict) else label for label in parent.get("labels", [])]
     update: dict[str, Any] = {"state": "closed", "state_reason": "completed"}
@@ -482,22 +505,25 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
             lookup: Callable[[], str] = public_app_id,
             fetch: Callable[[str], str] = fetch_text) -> list[dict]:
     latest = target_records(client, issues)
-    if not latest:
+    records = latest_records(issues)
+    if not records:
         raise StatusError("no Ship release records; public delivery is unknown")
     try:
         app_id = lookup()
     except (OSError, ValueError, KeyError, StatusError):
         app_id = None
     observations = []
-    live_now = {}
-    for platform, (issue, record, submitted) in sorted(latest.items()):
+    versions = {}
+    for platform in sorted(records):
         try:
             if app_id is None:
                 raise StatusError("public App Store lookup unavailable")
             url = f"https://apps.apple.com/us/app/id{app_id}?platform={PLATFORMS[platform]}"
-            version = public_page_version(fetch(url), platform, app_id)
+            versions[platform] = public_page_version(fetch(url), platform, app_id)
         except (OSError, ValueError, StatusError):
-            version = None
+            versions[platform] = None
+    for platform, (issue, record, submitted) in sorted(latest.items()):
+        version = versions[platform]
         result = evaluate(record, version, now, lag_hours, since=submitted and submitted["submittedAt"])
         observation = {"platform": platform, "version": record["version"], "buildNumber": record["buildNumber"], **result}
         previous = [read_marker(OBSERVATION, comment.get("body") or "")
@@ -514,19 +540,18 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
                     "Supervisor watchers: this release-tracking issue remains the durable handoff; "
                     "no submission or store mutation was performed.\n\n" + marker(OBSERVATION, observation))
             client.api(f"issues/{issue['number']}/comments", {"body": body})
-        if (version is not None and submitted is not None
-                and version_guard.compare_versions(version, record["version"]) == 0):
-            if issue.get("state") == "open" and only_submitted_build(client, issues, record):
-                close_live_record(client, issue, record, version)
-            if (issue.get("state") == "closed" and issue.get("state_reason") == "completed"
-                    and only_submitted_build(client, issues, record)):
-                live_now[issue["number"]] = platform
         observations.append(observation)
+    resolved = reconcile_records(client, issues, versions)
     by_number = {item["number"]: item for item in issues}
-    for parent in sorted({number for issue, _, _ in latest.values()
-                          if (number := parent_number(client, issue)) is not None}):
+    parents = set()
+    for issue in issues:
+        if read_marker(RECORD, issue.get("body") or "") is not None:
+            number = parent_number(client, issue)
+            if number is not None:
+                parents.add(number)
+    for parent in sorted(parents):
         if parent in by_number and by_number[parent].get("state") == "open":
-            close_finished_release(client, by_number[parent], live_now)
+            close_finished_release(client, by_number[parent], resolved)
     return observations
 
 
@@ -541,7 +566,7 @@ def main() -> int:
             raise StatusError("lag hours must be positive")
         client = GitHub(args.repo or "")
         issues = client.issues()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if args.mode == "record-submission":
             issue = record_submission(client, issues, dict(os.environ), now)
             if issue is None:

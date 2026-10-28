@@ -87,7 +87,7 @@ in review or rejected without querying or changing App Store Connect. An
 unreadable or changed public page alerts as **unknown**, immediately. Identical
 observations produce no duplicate comments; a later recovery is recorded.
 Records closed as completed still participate, so premature closeout cannot
-hide drift; records closed as not planned were superseded and are ignored.
+hide drift; records closed as not planned are excluded from alert targets.
 No store credentials or store writes are used. The public page parser verifies
 the requested app/platform; it never substitutes another platform's version.
 Public listings do not expose the exact build number, so public version
@@ -95,18 +95,27 @@ equality alone reports only “public version current”. The check closes a rec
 as completed, with that proof in a comment, when the public version equals the
 record's version exactly, the record carries a submission marker, and it is the
 only record submitted for that platform and version: a version can have only
-one build live, so that build is the live one. A newer public version, two or
-more submissions for the version, a submission made without a Ship record
-(which marks every existing record of that platform and version), an unreadable page,
-or a record never submitted leave the record open for the release agent.
-After each run, the check reads the native parent of each target record. It
-closes that release issue as completed once every sub-issue is closed and, for
-each of the four platforms, that run saw the platform's target record closed as
-completed and live at exactly its version, with the same single-build proof. A
-record closed early by hand does not count until it is seen live, and superseded records closed as not planned
-never count. A release whose records are no longer each platform's target is
-left for the release agent. It posts a summary listing each platform's
-live build, and a parent with the `plan` label moves to `plan:done`. Closing
+one build live, so that build is the live one. Two or more submissions for the
+version, a submission made without a Ship record (which marks every existing
+record of that platform and version), an unreadable page, or a record never
+submitted cannot prove that build live.
+
+Separately, the check reconciles every platform record, including older records
+that are no longer alert targets. A strictly newer public version on the same
+platform closes an open record as **not planned**, with a comment naming the
+newer version. This is supersession, not proof that the old build went live;
+it also covers skipped TestFlight uploads and withdrawn submissions. Equality,
+an older public version, and unknown public evidence never qualify as
+supersession. A newer upload or submission alone does not qualify either.
+
+After each run, the check reads the native parents of all platform records. It
+closes a release parent once every sub-issue is closed, all four platforms have
+records, and this run verifies every platform record either live with the
+single-build proof above or superseded by a newer public version. Hand closure
+alone cannot complete a release, and moving the alert targets to a new release
+does not strand the old parent. The summary names each record's outcome without
+claiming superseded builds were released. A parent with the `plan` label moves
+to `plan:done`. Closing
 may lag Apple's release by up to six hours. The check does not submit,
 approve, release, or change App Store Connect, or alter submission evidence
 policy.
