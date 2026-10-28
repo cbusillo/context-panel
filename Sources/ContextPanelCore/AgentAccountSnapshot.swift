@@ -294,30 +294,24 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         let rates = AccountBurnRateEstimator.observedBurnRates(
             current: stored.snapshot, history: history, now: now
         )
+        let localEvidence = UseNextEvidence.make(stored: stored, history: history,
+            configuration: configuration.accounts, publisherID: configuration.publisherID, receipts: receipts,
+            shared: sharedDocument != nil || stored.reports.contains { $0.sharedAccountIdentity != nil })
         let canonical: WidgetSnapshot? = if sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
             MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
-                publisherID: configuration.publisherID, remote: sharedDocument, accountIntentDocument: configuration, now: now, rates: rates)
+                publisherID: configuration.publisherID, remote: sharedDocument, accountIntentDocument: configuration,
+                now: now, rates: rates, launchEvidence: localEvidence)
         } else { nil }
         let overview = canonical?.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
             ?? AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
                 metadata: AccountDisplayMetadata.local(configuration: configuration.accounts, stored: stored, now: now), now: now,
-                accountBurnRates: rates)
+                accountBurnRates: rates, launchEvidence: localEvidence)
         let readings = history + [stored]
         // History rows resolve to the IDs this snapshot publishes, through the same key shared presentation uses.
-        let reports = Dictionary(readings.flatMap(\.reports).map { ($0.provider.rawValue + ":" + $0.accountID, $0) },
-                                 uniquingKeysWith: { older, newer in newer.sharedAccountIdentity == nil ? older : newer })
-        let configured = configuration.accounts
-        let publisherID = configuration.publisherID
-        let shared = canonical != nil
-        let resolve: ProviderRefillDetector.AccountResolver = { limit in
-            AccountDisplayMetadata.safeID(limit.provider, shared ? MacSharedAccountPresentation.accountKey(limit: limit,
-                report: reports[limit.provider.rawValue + ":" + limit.accountID], configuration: configured,
-                publisherID: publisherID) : limit.accountID)
-        }
-        let evidence = UseNextEvidence(receipts: receipts, readingTimes: readings.map(\.savedAt),
-                                       unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve))
+        let resolve = UseNextEvidence.accountResolver(readings: readings, configuration: configuration.accounts,
+            publisherID: configuration.publisherID, shared: canonical != nil)
         ranking = Provider.allCases.filter { provider in overview.accounts.contains { $0.metadata.provider == provider } }
-            .map { overview.useNextRanking(provider: $0, evidence: evidence) }
+            .map { overview.useNextRanking(provider: $0) }
         let nextIDs = Set(ranking.compactMap(\.useNextAccountID))
         answers = Answers(closestAccountID: overview.closest?.id, useNext: ranking.compactMap { provider in
             provider.useNextAccountID.map { Recommendation(provider: provider.provider, accountID: $0) }
