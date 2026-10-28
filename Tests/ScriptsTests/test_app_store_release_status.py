@@ -416,6 +416,17 @@ class StoreReleaseStatusTests(unittest.TestCase):
                            fetch=store({platform: "2.0.11" for platform in status.PLATFORMS}))
         self.assertEqual(closes(client), [f"issues/{PARENT}"])
 
+    def test_unknown_platform_without_a_target_still_alerts(self) -> None:
+        client = FakeGitHub()
+        old = issue(1, record("VISION_OS"), "closed")
+        old["state_reason"] = "not_planned"
+        items = [old, issue(2, record())]
+        def fetch(url: str) -> str:
+            return page("MAC_OS", ["2.0.10"]) if "platform=mac" in url else "unavailable"
+        results = status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
+        self.assertTrue(any(result["platform"] == "VISION_OS" and result["alert"] for result in results))
+        self.assertEqual(closes(client), [])
+
     def test_interrupted_closure_does_not_repeat_its_comment(self) -> None:
         for outcome in ("live", "superseded", "parent"):
             with self.subTest(outcome=outcome):

@@ -524,6 +524,9 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
             versions[platform] = public_page_version(fetch(url), platform, app_id)
         except (OSError, ValueError, StatusError):
             versions[platform] = None
+    for platform, version in versions.items():
+        if platform not in latest and version is None:
+            observations.append({"platform": platform, "status": "unknown", "publicVersion": None, "alert": True})
     for platform, (issue, record, submitted) in sorted(latest.items()):
         version = versions[platform]
         result = evaluate(record, version, now, lag_hours, since=submitted and submitted["submittedAt"])
