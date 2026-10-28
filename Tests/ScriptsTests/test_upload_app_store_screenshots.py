@@ -407,6 +407,16 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
 
         self.assertEqual(len(paths), len(set(paths)))
 
+    def test_ios_approved_set_composes_the_device_specific_sets_in_upload_order(self):
+        approved_sets = upload_app_store_screenshots.APPROVED_SETS
+
+        expected = sum(
+            (approved_sets[set_name] for set_name in ("iphone", "iphone65", "ipad", "watch")),
+            (),
+        )
+
+        self.assertEqual(approved_sets["ios"], expected)
+
     def test_selected_assets_preserves_configured_set_and_asset_order(self):
         configured_sets = {
             "first": (
