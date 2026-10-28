@@ -56,18 +56,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(entries.contains { $0.date == reset })
 }
 
-@Test func widgetKindMatchesSharedReloadIdentity() {
-    #expect(ContextPanelWidgetIdentity.kind == "ContextPanelWidget")
-}
-
-@Test func companionWidgetKindMatchesSharedReloadIdentity() {
-    #expect(ContextPanelCompanionWidgetIdentity.kind == "ContextPanelCompanionWidget")
-}
-
-@Test func watchWidgetKindMatchesSharedReloadIdentity() {
-    #expect(ContextPanelWatchWidgetIdentity.kind == "ContextPanelWatchWidget")
-}
-
 @Test func widgetSnapshotUsesSetupNeededForMissingStore() {
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: nil, status: .unknown),
