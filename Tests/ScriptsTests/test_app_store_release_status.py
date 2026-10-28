@@ -3,7 +3,7 @@ import json
 import shlex
 import sys
 import unittest
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -401,7 +401,6 @@ class StoreReleaseStatusTests(unittest.TestCase):
         status.monitor(client, [*items, *newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
         self.assertEqual(parent["state"], "closed")
         summary = client.comments[f"issues/{PARENT}/comments"][-1]["body"]
-        self.assertIn("superseded", summary.lower())
         self.assertIn("2.0.11", summary)
         self.assertTrue(all(item["state"] == "open" for item in newer))
 
@@ -412,9 +411,35 @@ class StoreReleaseStatusTests(unittest.TestCase):
             item.update(state="closed", state_reason="not_planned")
         parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
         client.children[f"issues/{PARENT}/sub_issues"] = items
-        status.monitor(client, [*items, parent], NOW, 48, lookup=lambda: "42",
-                       fetch=store({platform: "2.0.11" for platform in status.PLATFORMS}))
+        with self.assertRaises(status.StatusError):
+            status.monitor(client, [*items, parent], NOW, 48, lookup=lambda: "42",
+                           fetch=store({platform: "2.0.11" for platform in status.PLATFORMS}))
         self.assertEqual(closes(client), [f"issues/{PARENT}"])
+
+    def test_interrupted_closure_does_not_repeat_its_comment(self) -> None:
+        for outcome in ("live", "superseded", "parent"):
+            with self.subTest(outcome=outcome):
+                client = FakeGitHub()
+                items = release_records(client)
+                parent = {"number": PARENT, "state": "open", "body": "Release", "labels": []}
+                client.children[f"issues/{PARENT}/sub_issues"] = items
+                versions = {platform: "2.0.11" if outcome == "superseded" else "2.0.10"
+                            for platform in status.PLATFORMS}
+                newer = issue(10, record(version="2.0.12"))
+                mark_submitted(client, 10, record(version="2.0.12"), hours=1)
+                target = f"issues/{PARENT}" if outcome == "parent" else f"issues/{items[0]['number']}"
+                api = client.api
+                def interrupt(path: str, body: dict | None = None, method: str = "POST",
+                              target: str = target, api: Any = api) -> dict:
+                    if path == target and method == "PATCH":
+                        raise status.StatusError("interrupted close")
+                    return api(path, body, method)
+                with mock.patch.object(client, "api", side_effect=interrupt), self.assertRaises(status.StatusError):
+                    status.monitor(client, [*items, newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
+                before = list(client.comments[f"{target}/comments"])
+                status.monitor(client, [*items, newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
+                self.assertEqual(client.comments[f"{target}/comments"], before)
+                self.assertEqual(parent["state"], "closed")
 
     def test_release_closes_only_when_every_platform_is_live(self) -> None:
         client = FakeGitHub()

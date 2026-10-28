@@ -14,7 +14,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from types import ModuleType
@@ -436,25 +436,29 @@ def only_submitted_build(client: Any, issues: list[dict], target: dict) -> bool:
     return len(submitted) == 1 and all(submitted[0].get(key) == target[key] for key in IDENTITY)
 
 
+def close_issue(client: Any, issue: dict, body: str, update: dict) -> None:
+    comments = client.pages(f"issues/{issue['number']}/comments")
+    if not any(comment.get("body") == body for comment in comments):
+        client.api(f"issues/{issue['number']}/comments", {"body": body})
+    client.api(f"issues/{issue['number']}", update, method="PATCH")
+    issue.update(update)
+
+
 def close_live_record(client: Any, issue: dict, record: dict, public_version: str) -> None:
-    client.api(f"issues/{issue['number']}/comments", {"body":
-        f"Live on the App Store: {record['platform']} {record['version']} ({record['buildNumber']}).\n\n"
+    body = (f"Live on the App Store: {record['platform']} {record['version']} ({record['buildNumber']}).\n\n"
         f"The public US App Store page shows {public_version}. Build {record['buildNumber']} is the only build "
         f"submitted for {record['version']} on this platform, and a version can have only one build live, "
         "so the live version is this build. Closed by the App Store Release Status check.\n\n"
-        f"[Release definition](https://github.com/{client.repository}/blob/main/{DEFINITION})."})
-    client.api(f"issues/{issue['number']}", {"state": "closed", "state_reason": "completed"}, method="PATCH")
-    issue.update(state="closed", state_reason="completed")
+        f"[Release definition](https://github.com/{client.repository}/blob/main/{DEFINITION}).")
+    close_issue(client, issue, body, {"state": "closed", "state_reason": "completed"})
 
 
 def close_superseded_record(client: Any, issue: dict, record: dict, public_version: str) -> None:
-    client.api(f"issues/{issue['number']}/comments", {"body":
-        f"Superseded: {record['platform']} {record['version']} ({record['buildNumber']}).\n\n"
+    body = (f"Superseded: {record['platform']} {record['version']} ({record['buildNumber']}).\n\n"
         f"The public US App Store page shows newer version {public_version} on {record['platform']}. "
         "This closes the pending record without claiming its build went live. "
-        "Closed by the App Store Release Status check."})
-    client.api(f"issues/{issue['number']}", {"state": "closed", "state_reason": "not_planned"}, method="PATCH")
-    issue.update(state="closed", state_reason="not_planned")
+        "Closed by the App Store Release Status check.")
+    close_issue(client, issue, body, {"state": "closed", "state_reason": "not_planned"})
 
 
 def reconcile_records(client: Any, issues: list[dict], versions: dict[str, str | None]) -> dict[int, str]:
@@ -488,16 +492,14 @@ def close_finished_release(client: Any, parent: dict, resolved: dict[int, str]) 
         return False
     lines = [f"- {record['platform']}: {record['version']} ({record['buildNumber']}), "
              f"#{child['number']}: {resolved[child['number']]}" for child, record in records]
-    client.api(f"issues/{parent['number']}/comments", {"body":
-        "Release records reconciled: every platform record is live or superseded.\n\n"
+    body = ("Release records reconciled: every platform record is live or superseded.\n\n"
         + "\n".join(lines) + "\n\n"
-        "Closed by the App Store Release Status check once every platform record closed."})
+        "Closed by the App Store Release Status check once every platform record closed.")
     names = [label["name"] if isinstance(label, dict) else label for label in parent.get("labels", [])]
     update: dict[str, Any] = {"state": "closed", "state_reason": "completed"}
     if PLAN_LABEL in names:
         update["labels"] = [name for name in names if not name.startswith(f"{PLAN_LABEL}:")] + [PLAN_DONE]
-    client.api(f"issues/{parent['number']}", update, method="PATCH")
-    parent.update(state="closed", state_reason="completed")
+    close_issue(client, parent, body, update)
     return True
 
 
@@ -552,6 +554,8 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
     for parent in sorted(parents):
         if parent in by_number and by_number[parent].get("state") == "open":
             close_finished_release(client, by_number[parent], resolved)
+    if not latest:
+        raise StatusError("no active Ship release targets; public delivery is unknown")
     return observations
 
 
