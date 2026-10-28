@@ -146,7 +146,9 @@ public struct AccountDashboardPanel: View {
                         .font(scaledFont(12)).monospacedDigit().foregroundStyle(palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(AccountTerms.noEligibleAccount).font(scaledFont(12)).foregroundStyle(palette.secondary)
+                    Text(AccountTerms.useNextUnavailableReason(overview, provider: provider))
+                        .font(scaledFont(12)).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(compact ? 14 : 18)
@@ -159,7 +161,8 @@ public struct AccountDashboardPanel: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(provider.accountDisplayName + ", " + AccountTerms.useNext + ", " + (account.map {
             $0.metadata.label + ", " + AccountNumbers.percentWithSign($0.horizon(now: now).remaining) + " " + AccountTerms.horizonLeft($0.horizon(now: now).window) + ", "
-                + AccountTerms.useNextReason($0, $0.horizon(now: now), now: now) } ?? AccountTerms.noEligibleAccount))
+                + AccountTerms.useNextReason($0, $0.horizon(now: now), now: now) }
+                ?? AccountTerms.useNextUnavailableReason(overview, provider: provider)))
     }
 
     // MARK: Callout

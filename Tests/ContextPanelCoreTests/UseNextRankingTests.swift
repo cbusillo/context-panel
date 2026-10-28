@@ -825,3 +825,43 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
         #expect(snapshot.resetPrompts.count == (personalUsed == 100 ? 1 : 0))
     }
 }
+
+@Test(arguments: [false, true])
+func companionExplainsUseLastWhenMacLaunchHistoryChangesEligibility(useLast: Bool) throws {
+    let personal = Fixture(name: "personal", provider: .anthropic, weeklyUsed: 36, resetHours: 100,
+                           burn: 1, useLast: useLast, fiveHourUsed: 9)
+    let agents = Fixture(name: "agents", provider: .anthropic, weeklyUsed: 100, resetHours: 100, burn: 1)
+    let fixtures = [personal, agents]
+    let stored = StoredUsageSnapshot(savedAt: rankNow,
+        snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+        reports: fixtures.map { $0.report(now: rankNow) })
+    let configuration = fixtures.map {
+        LocalProviderAccountConfiguration(id: $0.name, provider: .anthropic, connectorKind: .claudeOAuthUsage,
+            displayName: $0.name, useLast: $0.useLast)
+    }
+    let mac = MacSharedAccountPresentation.make(stored: stored, configuration: configuration, now: rankNow,
+        rates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: rankNow)) }))
+    let document = CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: stored, publishedAt: rankNow),
+        accountDisplayMetadata: mac.accountDisplayMetadata, accountBurnRates: mac.accountBurnRates)
+    let decoded = try CompanionSyncPayloadCodec.decode(CompanionSyncPayloadCodec.encode(document))
+    let phone = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: decoded, status: .healthy), now: rankNow)
+        .accountOverview(now: rankNow, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+    let desktop = mac.accountOverview(now: rankNow, maximumAge: SnapshotFreshness.appMaximumAge)
+    #expect(phone.useNextRanking(provider: .anthropic) == desktop.useNextRanking(provider: .anthropic))
+    let receipts = desktop.accounts.map {
+        LaunchReceipt(provider: .anthropic, accountID: $0.id, launchedAt: rankNow.addingTimeInterval(-hour))
+    }
+    let launcher = desktop.useNextRanking(provider: .anthropic,
+        evidence: UseNextEvidence(receipts: receipts, readingTimes: [rankNow]))
+    #expect(launcher.useNextAccountID == desktop.accounts.first { $0.metadata.label == personal.name }?.id)
+    guard useLast else {
+        #expect(phone.useNext(provider: .anthropic)?.id == launcher.useNextAccountID)
+        return
+    }
+    #expect(phone.useNext(provider: .anthropic) == nil)
+    let held = try #require(phone.useNextRanking(provider: .anthropic).excluded.first { $0.label == personal.name })
+    let explanation = AccountTerms.useNextUnavailableReason(phone, provider: .anthropic)
+    #expect(explanation.contains(held.label))
+    #expect(explanation.contains(held.reason))
+    #expect(explanation != AccountTerms.noEligibleAccount)
+}

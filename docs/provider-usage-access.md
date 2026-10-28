@@ -863,6 +863,11 @@ percent of an account's main window, which is the general weekly window
   the account is planned to end near the floor at its reset, and the reason
   says how much it sets aside before the reset; an unstarted use-last clock gets its starter launch an hour after it
   is first seen unstarted.
+  Companions receive observed burn without launch receipts, so they treat that
+  burn as personal use. A companion can therefore hold a Use last account
+  while the Mac launcher, with receipt attribution, can use it. The account
+  dashboard explains the hold and this difference when no account qualifies;
+  it also shows other exclusion reasons and asks for a refresh for saved readings.
 - **Order and batches:** each launch goes by D'Hondt over the weights (need) in
   Tiers 1–2: starters first, then the highest weight ÷ (1 + launches already
   given), ties to the lower tier. The published list is in that order, so Use
