@@ -168,7 +168,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         if let sharedDocument, result.snapshot == nil {
             return MacSharedAccountPresentation.make(stored: StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: []),
                 configuration: configuration ?? [], publisherID: publisherID, remote: sharedDocument, accountIntentDocument: accountIntentDocument,
-                now: now, stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings)
+                now: now, stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings,
+                launchEvidence: UseNextEvidence(receipts: receipts))
         }
         if let stored = result.snapshot, sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
             let rates = AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now)

@@ -90,10 +90,19 @@ private func integrationDocument(_ fixture: (StoredUsageSnapshot, LocalProviderA
     #expect(cache.load(now: integrationNow.addingTimeInterval(cache.verifiedScopeLeaseSeconds + 1)) == nil)
     let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
     try encoder.encode(AccountConfigurationDocument(updatedAt: integrationNow, accounts: [])).write(to: root.appending(path: "accounts.json"))
+    let receiptDirectory = root.appending(path: LaunchReceiptStore.directoryName)
+    try FileManager.default.createDirectory(at: receiptDirectory, withIntermediateDirectories: true)
+    try encoder.encode(LaunchReceipt(provider: .openAI, accountID: AccountDisplayMetadata.safeID(.openAI, fixture.2.accountID),
+        launchedAt: integrationNow.addingTimeInterval(-60))).write(to: receiptDirectory.appending(path: "remote.json"))
     let agent = try AgentAccountSnapshot.read(rootDirectory: root, now: integrationNow)
     #expect(agent.accounts.count == 1)
     #expect(agent.accounts.first?.sharedAccountIdentity?.accountID == fixture.2.accountID)
     #expect(agent.accounts.first?.windows.first?.used == 30)
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: nil, status: .unknown), now: integrationNow,
+        sharedDocument: document, receipts: LaunchReceiptStore.load(rootDirectory: root, now: integrationNow))
+    let ranked = widget.accountOverview(now: integrationNow).useNextRanking(provider: .openAI)
+    #expect(ranked == agent.ranking.first { $0.provider == .openAI })
+    #expect(ranked.entries.first?.pendingLaunches == 1)
     #expect(!FileManager.default.fileExists(atPath: root.appending(path: "Snapshots/current-snapshot.json").path))
 }
 

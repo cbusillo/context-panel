@@ -831,8 +831,8 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
     }
 }
 
-@Test(arguments: [false, true])
-func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
+@Test(arguments: [false, true], [false, true])
+func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool, legacyReceipts: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let personal = Fixture(name: "personal", provider: .anthropic, weeklyUsed: 36, resetHours: 100,
@@ -840,9 +840,12 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
     let agents = Fixture(name: "agents", provider: .anthropic, weeklyUsed: 100, resetHours: 100)
     let fixtures = [personal, agents]
     let identityKey = ProviderAccountIdentityKey.generate()
-    let identities = try fixtures.map { fixture in
-        let material = try #require(ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID, identifier: fixture.name))
-        return identityKey.identity(for: material).bound(toLocalAccountID: fixture.name)
+    let materials = try fixtures.map {
+        try #require(ProviderAccountIdentityMaterial(provider: .anthropic, kind: .claudeAccountUUID, identifier: $0.name))
+    }
+    let rawIDs = zip(fixtures, materials).map { $1.localHistoryID(configurationID: $0.name) }
+    let identities = zip(materials, rawIDs).map { material, rawID in
+        identityKey.identity(for: material).bound(toLocalAccountID: rawID)
     }
     let configuration = AccountConfigurationDocument(updatedAt: rankNow, accounts: fixtures.map {
         LocalProviderAccountConfiguration(id: $0.name, provider: .anthropic, connectorKind: .claudeOAuthUsage,
@@ -853,16 +856,17 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
     let history = (0...2).reversed().map { hoursAgo in
         let date = rankNow.addingTimeInterval(-Double(hoursAgo) * hour)
         return StoredUsageSnapshot(savedAt: date,
-            snapshot: UsageSnapshot(generatedAt: date, limits: fixtures.flatMap { fixture in
+            snapshot: UsageSnapshot(generatedAt: date, limits: zip(fixtures, rawIDs).flatMap { fixture, rawID in
                 var earlier = fixture
                 earlier.weeklyUsed = (fixture.weeklyUsed ?? 0) - hoursAgo
                 earlier.resetHours = (fixture.resetHours ?? 0) + Double(hoursAgo)
                 earlier.fiveHourResetHours += Double(hoursAgo)
-                return earlier.limits(now: date)
-            }), reports: zip(fixtures, identities).map { fixture, identity in
-                StoredProviderReport(provider: .anthropic, accountID: fixture.name, configuredAccountID: fixture.name,
+                return earlier.limits(now: date).map { $0.reidentified(accountID: rawID, configuredAccountID: fixture.name) }
+            }), reports: fixtures.indices.map { index in
+                let fixture = fixtures[index]
+                return StoredProviderReport(provider: .anthropic, accountID: rawIDs[index], configuredAccountID: fixture.name,
                     accountName: fixture.name, generatedAt: date, status: .healthy, errorMessage: nil,
-                    sharedAccountIdentity: verified ? identity : nil)
+                    sharedAccountIdentity: verified ? identities[index] : nil)
             })
     }
     let stored = try #require(history.last)
@@ -873,10 +877,11 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     let receipts = try fixtures.enumerated().map { index, fixture in
-        let limit = try #require(stored.snapshot.limits.first { $0.accountID == fixture.name })
-        let id = verified ? AccountDisplayMetadata.safeID(.anthropic, CompanionLimit(limit: limit,
+        let limit = try #require(stored.snapshot.limits.first { $0.configuredAccountID == fixture.name })
+        let id = legacyReceipts ? AccountDisplayMetadata.safeID(.anthropic, CompanionLimit(limit: limit).companionAccountID)
+            : verified ? AccountDisplayMetadata.safeID(.anthropic, CompanionLimit(limit: limit,
             identityConfiguredAccountID: nil, sharedIdentity: identities[index]).companionAccountID)
-            : AccountDisplayMetadata.safeID(.anthropic, fixture.name)
+            : AccountDisplayMetadata.safeID(.anthropic, limit.accountID)
         let receipt = LaunchReceipt(provider: .anthropic, accountID: id, launchedAt: rankNow.addingTimeInterval(-hour))
         try encoder.encode(receipt).write(to: receiptDirectory.appending(path: "receipt-\(index).json"))
         return receipt
@@ -896,6 +901,9 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
         .accountOverview(now: rankNow, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
     let exported = try AgentAccountSnapshot.read(rootDirectory: root, now: rankNow)
     let published = try #require(exported.ranking.first { $0.provider == .anthropic })
+    let preview = publisher.presentationDocument(storedSnapshot: stored, now: rankNow, accountBurnRates: rates)
+    #expect(WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: preview, status: .healthy), now: rankNow)
+        .accountOverview(now: rankNow).useNext(provider: .anthropic)?.metadata.label == personal.name)
     if verified { #expect(phone.useNextRanking(provider: .anthropic) == published) }
     let selectedID = try #require(exported.answers.useNext.first { $0.provider == .anthropic }?.accountID)
     #expect(phone.useNext(provider: .anthropic)?.metadata.label == exported.accounts.first { $0.id == selectedID }?.label)
@@ -919,7 +927,8 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
     }
 }
 
-@Test func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservation() throws {
+@Test(arguments: [false, true], [false, true])
+func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservation(hasRemoval: Bool, hasAlias: Bool) throws {
     let observed = rankNow.addingTimeInterval(-60)
     let account = Fixture(name: "shared", observedAgo: 60)
     let stored = StoredUsageSnapshot(savedAt: observed,
@@ -934,8 +943,14 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
         launchEvidence: UseNextEvidence(receipts: [receipts[0]], accountReadingTimes: [id: [observed]]))
     let failure = StoredProviderReport(provider: .openAI, accountID: account.name, configuredAccountID: account.name,
         accountName: account.name, generatedAt: rankNow, status: .failure, errorMessage: nil)
+    let material = try #require(ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID, identifier: "unrelated"))
+    let identity = ProviderAccountIdentityKey.generate().identity(for: material)
+    let alias = CompanionAccountIdentityAlias(provider: .openAI, legacyAccountID: "unrelated-legacy",
+        replacementAccountID: identity.accountID, configurationID: "unrelated-configuration", observedAt: rankNow, reusableIdentity: nil)
     let failed = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(savedAt: rankNow,
         snapshot: UsageSnapshot(generatedAt: rankNow, limits: []), reports: [failure]),
+        removedDisplayIDs: hasRemoval ? [AccountDisplayMetadata.safeID(.openAI, "unrelated-removed")] : nil,
+        accountIdentityAliases: hasAlias ? [alias] : nil,
         launchEvidence: UseNextEvidence(receipts: [receipts[1]],
             accountReadingTimes: [id: [rankNow.addingTimeInterval(-10), rankNow]]))
     let merged = failed.mergingForRemotePublish(existing: existing, now: rankNow)
@@ -958,9 +973,10 @@ func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
     }
     let document = CompanionSyncDocument(snapshot: CompanionSnapshot(generatedAt: rankNow, publishedAt: rankNow,
         limits: [], providerStatuses: [], promptCacheSummaries: []),
-        launchEvidence: UseNextEvidence(receipts: receipts, accountReadingTimes: [id: [rankNow]]))
+        launchEvidence: UseNextEvidence(receipts: receipts, readingTimes: [rankNow], accountReadingTimes: [id: [rankNow]]))
     let encoded = try CompanionSyncPayloadCodec.encode(document)
     let decoded = try CompanionSyncPayloadCodec.decode(encoded)
+    #expect(decoded.launchEvidence == document.launchEvidence)
     let roundTrip = try #require(decoded.launchEvidence).receipts
     #expect(roundTrip.sorted { ($0.receiptID ?? "") < ($1.receiptID ?? "") }
         == receipts.sorted { ($0.receiptID ?? "") < ($1.receiptID ?? "") })

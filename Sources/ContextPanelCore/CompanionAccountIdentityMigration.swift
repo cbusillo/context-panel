@@ -109,9 +109,7 @@ public extension CompanionSyncDocument {
                     (AccountDisplayMetadata.safeID($0.provider, $0.legacyAccountID),
                      AccountDisplayMetadata.safeID($0.provider, $0.replacementAccountID))
                 }
-            }, uniquingKeysWith: { first, _ in first })).retainingAccounts(Set(filtered.limits.map {
-                AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID)
-            })))
+            }, uniquingKeysWith: { first, _ in first })).excludingAccounts(retiredDisplayIDs))
     }
 
     static func mergedIdentityAliases(_ a: [CompanionAccountIdentityAlias], _ b: [CompanionAccountIdentityAlias]) -> [CompanionAccountIdentityAlias] {

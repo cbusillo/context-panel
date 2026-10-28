@@ -5581,7 +5581,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
     @Published private(set) var accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
-    @Published private(set) var launchEvidence = UseNextEvidence()
+    @Published private(set) var launchEvidence: UseNextEvidence?
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
@@ -5872,6 +5872,7 @@ final class ContextPanelAppModel: ObservableObject {
         let model = ContextPanelAppModel(refreshService: refreshService, runtimeReceiptRecorder: .disabled(),
             enablesRuntimeReceiptRelay: false, fixedPresentationDate: now)
         model.storedSnapshot = stored
+        model.launchEvidence = snapshot.launchEvidence
         model.storeStatus = snapshot.status
         model.historyCount = historyCount
         model.widgetPreferences = preferences
@@ -6004,7 +6005,7 @@ final class ContextPanelAppModel: ObservableObject {
         }
         return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
             metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : fixtureDisplayMetadata, now: now,
-            accountBurnRates: accountBurnRates)
+            accountBurnRates: accountBurnRates, launchEvidence: launchEvidence ?? UseNextEvidence())
     }
 
     func bankedAdviceByLocalAccountID(provider: Provider, overview: AccountOverview) -> [String: AccountOverview.BankedAdvice] {

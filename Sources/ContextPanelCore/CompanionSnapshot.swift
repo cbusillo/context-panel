@@ -1292,9 +1292,11 @@ public struct CompanionSyncPublisher: Sendable {
         accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:],
         launchEvidence: UseNextEvidence? = nil) -> CompanionSyncDocument {
         let cached = sharedAccountCache?.load(now: now)?.verifiedAccountsOnly()
+        let savedEvidence = launchEvidence ?? stores.load(policy: SnapshotStoreStalenessPolicy(
+            maximumAge: SnapshotFreshness.appMaximumAge), now: now).document?.launchEvidence
         let local = makeDocument(storedSnapshot: storedSnapshot, publishedAt: now,
             observedBurnRates: observedBurnRates, removalUserScope: cached?.cloudKitUserScope,
-            accountBurnRates: accountBurnRates, launchEvidence: launchEvidence)
+            accountBurnRates: accountBurnRates, launchEvidence: savedEvidence ?? UseNextEvidence())
         return local.mergingForRemotePublish(existing: cached, now: now)
     }
 

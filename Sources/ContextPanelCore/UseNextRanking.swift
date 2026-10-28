@@ -5,7 +5,7 @@ import Foundation
 
 /// One count-only record a launcher writes for each agent session it starts.
 /// It names the provider, the snapshot's opaque account ID and the launch time; nothing else.
-public struct LaunchReceipt: Codable, Equatable, Sendable {
+public struct LaunchReceipt: Codable, Hashable, Sendable {
     public static let currentSchemaVersion = 1
     public let schemaVersion: Int
     public let provider: Provider
@@ -76,9 +76,18 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         let readings = history + [stored]
         let companionResolve = accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: true)
         let resolve = shared ? companionResolve : accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: false)
-        let aliases = Dictionary(readings.flatMap { $0.snapshot.limits }.flatMap {
-            [(AccountDisplayMetadata.safeID($0.provider, $0.accountID), resolve($0)), (companionResolve($0), resolve($0))]
+        var aliases = Dictionary(readings.flatMap { $0.snapshot.limits }.flatMap { limit in
+            return [(AccountDisplayMetadata.safeID(limit.provider, limit.accountID), resolve(limit)),
+                    (companionResolve(limit), resolve(limit))]
         }, uniquingKeysWith: { _, current in current })
+        for reading in readings {
+            for alias in CompanionAccountIdentityAlias.verifiedAliases(stored: reading, configuration: configuration,
+                publisherID: publisherID) where alias.reusableIdentity != nil {
+                if let id = aliases[AccountDisplayMetadata.safeID(alias.provider, alias.replacementAccountID)] {
+                    aliases[AccountDisplayMetadata.safeID(alias.provider, alias.legacyAccountID)] = id
+                }
+            }
+        }
         let receipts = receipts.map { LaunchReceipt(provider: $0.provider, accountID: aliases[$0.accountID] ?? $0.accountID,
             launchedAt: $0.launchedAt, receiptID: $0.receiptID) }
         var accountTimes: [String: [Date]] = [:]
@@ -106,6 +115,14 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         Self(receipts: receipts.filter { ids.contains($0.accountID) }, readingTimes: readingTimes,
             unstartedSince: unstartedSince.filter { ids.contains($0.key) },
             accountReadingTimes: accountReadingTimes?.filter { ids.contains($0.key) })
+    }
+
+    func excludingAccounts(_ ids: Set<String>) -> Self {
+        var result = self
+        result.receipts.removeAll { ids.contains($0.accountID) }
+        result.unstartedSince = unstartedSince.filter { !ids.contains($0.key) }
+        result.accountReadingTimes = accountReadingTimes?.filter { !ids.contains($0.key) }
+        return result
     }
 
     func merging(_ other: Self, now: Date) -> Self {
@@ -165,9 +182,15 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             }
             try container.encode(groups, forKey: .launches)
         } else { try container.encode(receipts, forKey: .receipts) }
-        if accountReadingTimes == nil { try container.encode(readingTimes, forKey: .readingTimes) }
+        try container.encode(readingTimes, forKey: .readingTimes)
         try container.encode(unstartedSince, forKey: .unstartedSince)
         try container.encodeIfPresent(accountReadingTimes, forKey: .accountReadingTimes)
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        let counts = { (receipts: [LaunchReceipt]) in Dictionary(grouping: receipts, by: { $0 }).mapValues { $0.count } }
+        return counts(lhs.receipts) == counts(rhs.receipts) && lhs.readingTimes == rhs.readingTimes
+            && lhs.unstartedSince == rhs.unstartedSince && lhs.accountReadingTimes == rhs.accountReadingTimes
     }
 }
 
