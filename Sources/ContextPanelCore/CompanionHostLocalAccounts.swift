@@ -52,6 +52,7 @@ public extension CompanionSyncDocument {
                 filtered.limits.contains { $0.companionAccountID == id }
             },
             accountIdentityAliases: accountIdentityAliases,
-            accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates)
+            accountRemovalDates: accountRemovalDates, accountRestorationDates: accountRestorationDates,
+            launchEvidence: launchEvidence?.retainingAccounts(kept))
     }
 }

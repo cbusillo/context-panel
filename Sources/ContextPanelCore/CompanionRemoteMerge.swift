@@ -68,8 +68,31 @@ public extension CompanionSyncDocument {
             accountBurnRates: mergedAccountBurnRates(existing: existingDocument, incoming: incomingDocument, retainedSnapshot: retained.snapshot),
             accountIdentityAliases: identityAliases.isEmpty ? nil : identityAliases,
             accountRemovalDates: removalDates.isEmpty ? nil : removalDates,
-            accountRestorationDates: restorationDates.isEmpty ? nil : restorationDates
+            accountRestorationDates: restorationDates.isEmpty ? nil : restorationDates,
+            launchEvidence: mergedLaunchEvidence(existing: existingDocument, incoming: incomingDocument,
+                retainedSnapshot: retained.snapshot, now: now)
         ).applyingGlobalRemovals()
+    }
+
+    private func mergedLaunchEvidence(existing: Self?, incoming: Self, retainedSnapshot: CompanionSnapshot, now: Date) -> UseNextEvidence? {
+        guard existing?.launchEvidence != nil || incoming.launchEvidence != nil else { return nil }
+        let retained = companionRemoteAccountData(in: retainedSnapshot)
+        let new = companionRemoteAccountData(in: incoming.snapshot)
+        let old = existing.map { companionRemoteAccountData(in: $0.snapshot) } ?? [:]
+        var evidence = (existing?.launchEvidence ?? UseNextEvidence()).merging(incoming.launchEvidence ?? UseNextEvidence(), now: now)
+        evidence.accountReadingTimes = [:]
+        for (key, selected) in retained {
+            let id = AccountDisplayMetadata.safeID(key.provider, key.companionAccountID)
+            let chosen: UseNextEvidence?
+            if new[key]?.semanticSelectionData == selected.semanticSelectionData {
+                chosen = incoming.launchEvidence ?? (old[key]?.semanticSelectionData == selected.semanticSelectionData ? existing?.launchEvidence : nil)
+            } else if old[key]?.semanticSelectionData == selected.semanticSelectionData {
+                chosen = existing?.launchEvidence
+            } else { chosen = nil }
+            evidence.unstartedSince[id] = chosen?.unstartedSince[id]
+            evidence.accountReadingTimes?[id] = chosen?.accountReadingTimes?[id] ?? chosen?.readingTimes ?? []
+        }
+        return evidence.retainingAccounts(Set(retained.keys.map { AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID) }))
     }
 
     private func mergedAccountBurnRates(existing: CompanionSyncDocument?, incoming: CompanionSyncDocument,
@@ -185,7 +208,7 @@ private extension CompanionSyncDocument {
             accountBurnRates: accountBurnRates,
             accountIdentityAliases: accountIdentityAliases,
             accountRemovalDates: accountRemovalDates,
-            accountRestorationDates: accountRestorationDates
+            accountRestorationDates: accountRestorationDates, launchEvidence: launchEvidence
         )
     }
 
