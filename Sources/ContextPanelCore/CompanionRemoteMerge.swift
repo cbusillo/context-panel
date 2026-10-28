@@ -80,13 +80,17 @@ public extension CompanionSyncDocument {
         let new = companionRemoteAccountData(in: incoming.snapshot)
         let old = existing.map { companionRemoteAccountData(in: $0.snapshot) } ?? [:]
         var evidence = (existing?.launchEvidence ?? UseNextEvidence()).merging(incoming.launchEvidence ?? UseNextEvidence(), now: now)
+        evidence.accountReadingTimes = [:]
         for (key, selected) in retained {
             let id = AccountDisplayMetadata.safeID(key.provider, key.companionAccountID)
+            let chosen: UseNextEvidence?
             if new[key]?.semanticSelectionData == selected.semanticSelectionData {
-                evidence.unstartedSince[id] = incoming.launchEvidence?.unstartedSince[id]
+                chosen = incoming.launchEvidence ?? (old[key]?.semanticSelectionData == selected.semanticSelectionData ? existing?.launchEvidence : nil)
             } else if old[key]?.semanticSelectionData == selected.semanticSelectionData {
-                evidence.unstartedSince[id] = existing?.launchEvidence?.unstartedSince[id]
-            } else { evidence.unstartedSince[id] = nil }
+                chosen = existing?.launchEvidence
+            } else { chosen = nil }
+            evidence.unstartedSince[id] = chosen?.unstartedSince[id]
+            evidence.accountReadingTimes?[id] = chosen?.accountReadingTimes?[id] ?? chosen?.readingTimes ?? []
         }
         return evidence.retainingAccounts(Set(retained.keys.map { AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID) }))
     }

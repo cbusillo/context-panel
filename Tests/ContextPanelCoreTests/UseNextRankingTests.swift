@@ -592,7 +592,10 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
         .write(to: directory.appending(path: "wrong-provider.json"))
     try Data("not json".utf8).write(to: directory.appending(path: "broken.json"))
     let loaded = LaunchReceiptStore.load(rootDirectory: root, now: rankNow)
-    #expect(loaded == [LaunchReceipt(provider: .openAI, accountID: id, launchedAt: rankNow.addingTimeInterval(-60))])
+    #expect(loaded.map(\.accountID) == [id])
+    #expect(loaded.map(\.launchedAt) == [rankNow.addingTimeInterval(-60)])
+    #expect(loaded.first?.receiptID != nil)
+    #expect(LaunchReceiptStore.load(rootDirectory: root, now: rankNow).map(\.receiptID) == loaded.map(\.receiptID))
     #expect(LaunchReceiptStore.load(rootDirectory: root.appending(path: "missing"), now: rankNow).isEmpty)
 }
 
@@ -829,11 +832,11 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
 }
 
 @Test(arguments: [false, true])
-func companionRankingMatchesMacExportWithLaunchHistory(useLast: Bool) throws {
+func companionRankingMatchesMacExportWithLaunchHistory(verified: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let personal = Fixture(name: "personal", provider: .anthropic, weeklyUsed: 36, resetHours: 100,
-                           useLast: useLast, fiveHourUsed: 9)
+                           useLast: true, fiveHourUsed: 9)
     let agents = Fixture(name: "agents", provider: .anthropic, weeklyUsed: 100, resetHours: 100)
     let fixtures = [personal, agents]
     let identityKey = ProviderAccountIdentityKey.generate()
@@ -858,7 +861,8 @@ func companionRankingMatchesMacExportWithLaunchHistory(useLast: Bool) throws {
                 return earlier.limits(now: date)
             }), reports: zip(fixtures, identities).map { fixture, identity in
                 StoredProviderReport(provider: .anthropic, accountID: fixture.name, configuredAccountID: fixture.name,
-                    accountName: fixture.name, generatedAt: date, status: .healthy, errorMessage: nil, sharedAccountIdentity: identity)
+                    accountName: fixture.name, generatedAt: date, status: .healthy, errorMessage: nil,
+                    sharedAccountIdentity: verified ? identity : nil)
             })
     }
     let stored = try #require(history.last)
@@ -870,8 +874,9 @@ func companionRankingMatchesMacExportWithLaunchHistory(useLast: Bool) throws {
     encoder.dateEncodingStrategy = .iso8601
     let receipts = try fixtures.enumerated().map { index, fixture in
         let limit = try #require(stored.snapshot.limits.first { $0.accountID == fixture.name })
-        let id = AccountDisplayMetadata.safeID(.anthropic, CompanionLimit(limit: limit,
+        let id = verified ? AccountDisplayMetadata.safeID(.anthropic, CompanionLimit(limit: limit,
             identityConfiguredAccountID: nil, sharedIdentity: identities[index]).companionAccountID)
+            : AccountDisplayMetadata.safeID(.anthropic, fixture.name)
         let receipt = LaunchReceipt(provider: .anthropic, accountID: id, launchedAt: rankNow.addingTimeInterval(-hour))
         try encoder.encode(receipt).write(to: receiptDirectory.appending(path: "receipt-\(index).json"))
         return receipt
@@ -891,17 +896,18 @@ func companionRankingMatchesMacExportWithLaunchHistory(useLast: Bool) throws {
         .accountOverview(now: rankNow, maximumAge: SnapshotFreshness.companionProviderMaximumAge)
     let exported = try AgentAccountSnapshot.read(rootDirectory: root, now: rankNow)
     let published = try #require(exported.ranking.first { $0.provider == .anthropic })
-    #expect(phone.useNextRanking(provider: .anthropic) == published)
-    #expect(phone.useNext(provider: .anthropic)?.id == exported.answers.useNext.first { $0.provider == .anthropic }?.accountID)
+    if verified { #expect(phone.useNextRanking(provider: .anthropic) == published) }
+    let selectedID = try #require(exported.answers.useNext.first { $0.provider == .anthropic }?.accountID)
+    #expect(phone.useNext(provider: .anthropic)?.metadata.label == exported.accounts.first { $0.id == selectedID }?.label)
     #expect(phone.useNext(provider: .anthropic)?.metadata.label == personal.name)
-    #expect(phone.filtered(to: .anthropic).useNext(provider: .anthropic)?.id == published.useNextAccountID)
+    #expect(phone.filtered(to: .anthropic).useNext(provider: .anthropic)?.metadata.label == personal.name)
     #expect(phone.launchEvidence.receipts.count == receipts.count)
     let selected = try #require(phone.useNext(provider: .anthropic))
     let removed = CompanionSyncDocument(snapshot: decoded.snapshot, accountDisplayMetadata: decoded.accountDisplayMetadata,
         removedDisplayIDs: [selected.id], launchEvidence: decoded.launchEvidence).applyingGlobalRemovals()
     #expect(removed.launchEvidence?.receipts.contains { $0.accountID == selected.id } == false)
     #expect(removed.launchEvidence?.accountReadingTimes?[selected.id] == nil)
-    if useLast {
+    do {
         let withoutReceipts = phone.useNextRanking(provider: .anthropic, evidence: UseNextEvidence())
         #expect(withoutReceipts.useNextAccountID == nil)
         #expect(withoutReceipts.excluded.contains { $0.label == personal.name })
@@ -911,4 +917,54 @@ func companionRankingMatchesMacExportWithLaunchHistory(useLast: Bool) throws {
         let explanation = AccountTerms.useNextUnavailableReason(legacy, provider: .anthropic)
         #expect(explanation.contains(held.label) && explanation.contains(held.reason))
     }
+}
+
+@Test func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservation() throws {
+    let observed = rankNow.addingTimeInterval(-60)
+    let account = Fixture(name: "shared", observedAgo: 60)
+    let stored = StoredUsageSnapshot(savedAt: observed,
+        snapshot: UsageSnapshot(generatedAt: observed, limits: account.limits(now: rankNow)),
+        reports: [account.report(now: rankNow)])
+    let snapshot = CompanionSnapshot(storedSnapshot: stored, publishedAt: observed)
+    let id = AccountDisplayMetadata.safeID(.openAI, try #require(snapshot.limits.first).companionAccountID)
+    let receipts = ["publisher-one", "publisher-two"].map {
+        LaunchReceipt(provider: .openAI, accountID: id, launchedAt: rankNow.addingTimeInterval(-30), receiptID: $0)
+    }
+    let existing = CompanionSyncDocument(snapshot: snapshot,
+        launchEvidence: UseNextEvidence(receipts: [receipts[0]], accountReadingTimes: [id: [observed]]))
+    let failure = StoredProviderReport(provider: .openAI, accountID: account.name, configuredAccountID: account.name,
+        accountName: account.name, generatedAt: rankNow, status: .failure, errorMessage: nil)
+    let failed = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(savedAt: rankNow,
+        snapshot: UsageSnapshot(generatedAt: rankNow, limits: []), reports: [failure]),
+        launchEvidence: UseNextEvidence(receipts: [receipts[1]],
+            accountReadingTimes: [id: [rankNow.addingTimeInterval(-10), rankNow]]))
+    let merged = failed.mergingForRemotePublish(existing: existing, now: rankNow)
+    let evidence = try #require(merged.launchEvidence)
+    #expect(Set(evidence.receipts.compactMap(\.receiptID)) == Set(receipts.compactMap(\.receiptID)))
+    #expect(evidence.accountReadingTimes?[id] == [observed])
+    let rows = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: existing, status: .healthy), now: rankNow)
+        .accountOverview(now: rankNow).accounts
+    #expect(AccountOverview.pendingLaunches(evidence: evidence, rows: rows, now: rankNow)[id] == receipts.count)
+    #expect(merged.mergingForRemotePublish(existing: merged, now: rankNow).launchEvidence?.receipts.count == receipts.count)
+    let expired = evidence.merging(UseNextEvidence(), now: rankNow.addingTimeInterval(LaunchReceiptStore.lookback))
+    #expect(expired.receipts.isEmpty)
+}
+
+@Test func launchEvidenceFitsTheCloudKitRecordAtTheSupportedReceiptStoreCapacity() throws {
+    let id = AccountDisplayMetadata.safeID(.anthropic, "synthetic")
+    let receipts = (0..<(2 * LaunchReceiptStore.maximumFileCount)).map {
+        LaunchReceipt(provider: .anthropic, accountID: id, launchedAt: rankNow.addingTimeInterval(-Double($0)),
+            receiptID: AccountDisplayMetadata.safeID(.anthropic, "event-\($0)"))
+    }
+    let document = CompanionSyncDocument(snapshot: CompanionSnapshot(generatedAt: rankNow, publishedAt: rankNow,
+        limits: [], providerStatuses: [], promptCacheSummaries: []),
+        launchEvidence: UseNextEvidence(receipts: receipts, accountReadingTimes: [id: [rankNow]]))
+    let encoded = try CompanionSyncPayloadCodec.encode(document)
+    let decoded = try CompanionSyncPayloadCodec.decode(encoded)
+    let roundTrip = try #require(decoded.launchEvidence).receipts
+    #expect(roundTrip.sorted { ($0.receiptID ?? "") < ($1.receiptID ?? "") }
+        == receipts.sorted { ($0.receiptID ?? "") < ($1.receiptID ?? "") })
+    // Apple's CKRecord limit excludes assets, but this payload is an inline bytes field.
+    #expect(encoded.count < 1_000_000)
+    print("Companion payload with \(receipts.count) launch receipts: \(encoded.count) bytes")
 }

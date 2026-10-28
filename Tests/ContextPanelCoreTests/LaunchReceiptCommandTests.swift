@@ -40,8 +40,10 @@ private func recordLaunch(_ arguments: [String], input: Data, root: URL, now: Da
     let stored = try Data(contentsOf: directory.appending(path: name))
     let object = try #require(try JSONSerialization.jsonObject(with: stored) as? [String: Any])
     #expect(Set(object.keys) == LaunchReceiptCommand.receiptKeys)
-    #expect(LaunchReceiptStore.load(rootDirectory: root, now: receiptNow)
-        == [LaunchReceipt(provider: .openAI, accountID: receiptAccount, launchedAt: receiptNow)])
+    let loaded = LaunchReceiptStore.load(rootDirectory: root, now: receiptNow)
+    #expect(loaded.map(\.accountID) == [receiptAccount])
+    #expect(loaded.map(\.launchedAt) == [receiptNow])
+    #expect(loaded.first?.receiptID != nil)
 }
 
 @Test func recordLaunchPrunesOnlyThisLaunchersDayOldReceipts() throws {

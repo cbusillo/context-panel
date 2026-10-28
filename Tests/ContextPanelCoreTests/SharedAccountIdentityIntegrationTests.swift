@@ -460,3 +460,20 @@ private actor IntegrationRemoteSink {
     #expect(outcome.storeOutcomes.contains { $0.storeRole == remote.storeRole && !$0.succeeded })
     #expect(local.load(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge), now: integrationNow).document?.snapshot.limits.count == 1)
 }
+
+@Test func reusableIdentityAliasCarriesLaunchEvidenceToTheAuthenticatedAccount() throws {
+    let known = integrationFixture(setupID: "setup", providerID: "account-one", used: 30)
+    let limit = try #require(known.0.snapshot.limits.first)
+    let legacySnapshot = CompanionSnapshot(generatedAt: integrationNow, publishedAt: integrationNow,
+        limits: [CompanionLimit(limit: limit)], providerStatuses: [], promptCacheSummaries: [])
+    let legacyID = AccountDisplayMetadata.safeID(.openAI, try #require(legacySnapshot.limits.first).companionAccountID)
+    let receipt = LaunchReceipt(provider: .openAI, accountID: legacyID, launchedAt: integrationNow.addingTimeInterval(-60),
+        receiptID: "synthetic-event")
+    let old = CompanionSyncDocument(snapshot: legacySnapshot, cloudKitUserScope: integrationScope,
+        launchEvidence: UseNextEvidence(receipts: [receipt], accountReadingTimes: [legacyID: [integrationNow]]))
+    let authenticated = integrationDocument(known, publisher: "host")
+    let migrated = authenticated.mergingForRemotePublish(existing: old, now: integrationNow)
+    let sharedID = AccountDisplayMetadata.safeID(.openAI, known.2.accountID)
+    #expect(migrated.launchEvidence?.receipts.first?.accountID == sharedID)
+    #expect(migrated.launchEvidence?.receipts.first?.receiptID == receipt.receiptID)
+}

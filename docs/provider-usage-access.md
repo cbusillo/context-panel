@@ -866,6 +866,10 @@ percent of an account's main window, which is the general weekly window
   The publisher shares count-only launch evidence with the observations so
   companions and Mac displays use the same personal-use estimate and launch
   allocation as the agent reader. No launch commands or credential paths travel.
+  The reader includes other publishers' launch events, and pending launches are
+  acknowledged only by the saved-reading times of the retained account observation.
+  Local-only account IDs keep their existing reader contract; receipt IDs are
+  resolved into the presentation's account namespace before ranking.
   When no account qualifies, the dashboard shows the exclusion reasons or asks
   for a refresh of saved readings.
 - **Order and batches:** each launch goes by D'Hondt over the weights (need) in

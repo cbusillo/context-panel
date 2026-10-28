@@ -11,12 +11,14 @@ public struct LaunchReceipt: Codable, Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
     public let launchedAt: Date
+    public var receiptID: String?
 
-    public init(provider: Provider, accountID: String, launchedAt: Date) {
+    public init(provider: Provider, accountID: String, launchedAt: Date, receiptID: String? = nil) {
         schemaVersion = Self.currentSchemaVersion
         self.provider = provider
         self.accountID = accountID
         self.launchedAt = launchedAt
+        self.receiptID = receiptID
     }
 }
 
@@ -38,7 +40,8 @@ public enum LaunchReceiptStore {
             guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]))
                 .flatMap({ $0.isRegularFile == true ? $0.fileSize : nil }), size <= maximumFileBytes,
                   let data = try? Data(contentsOf: url),
-                  let receipt = try? decoder.decode(LaunchReceipt.self, from: data) else { return nil }
+                  var receipt = try? decoder.decode(LaunchReceipt.self, from: data) else { return nil }
+            receipt.receiptID = ConnectorRedactor.localAccountID(provider: receipt.provider, stableID: name)
             return isUsable(receipt, now: now) ? receipt : nil
         }
     }
@@ -71,7 +74,13 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         configuration: [LocalProviderAccountConfiguration], publisherID: String?,
         receipts: [LaunchReceipt], shared: Bool) -> Self {
         let readings = history + [stored]
-        let resolve = accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: shared)
+        let companionResolve = accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: true)
+        let resolve = shared ? companionResolve : accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: false)
+        let aliases = Dictionary(readings.flatMap { $0.snapshot.limits }.flatMap {
+            [(AccountDisplayMetadata.safeID($0.provider, $0.accountID), resolve($0)), (companionResolve($0), resolve($0))]
+        }, uniquingKeysWith: { _, current in current })
+        let receipts = receipts.map { LaunchReceipt(provider: $0.provider, accountID: aliases[$0.accountID] ?? $0.accountID,
+            launchedAt: $0.launchedAt, receiptID: $0.receiptID) }
         var accountTimes: [String: [Date]] = [:]
         for reading in readings {
             for id in Set(reading.snapshot.limits.map(resolve)) { accountTimes[id, default: []].append(reading.savedAt) }
@@ -101,7 +110,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
 
     func merging(_ other: Self, now: Date) -> Self {
         let grouped = { (values: [LaunchReceipt]) in
-            Dictionary(grouping: values) { "\($0.provider.rawValue):\($0.accountID):\($0.launchedAt.timeIntervalSince1970)" }
+            Dictionary(grouping: values) { $0.receiptID.map { "id:\($0)" }
+                ?? "legacy:\($0.provider.rawValue):\($0.accountID):\($0.launchedAt.timeIntervalSince1970)" }
         }
         let receipts = grouped(self.receipts).merging(grouped(other.receipts)) { $0.count >= $1.count ? $0 : $1 }
             .sorted { $0.key < $1.key }.flatMap(\.value)
@@ -114,13 +124,50 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
     }
 
     func reidentifyingAccounts(using aliases: [String: String]) -> Self {
-        Self(receipts: receipts.map { LaunchReceipt(provider: $0.provider, accountID: aliases[$0.accountID] ?? $0.accountID, launchedAt: $0.launchedAt) },
+        Self(receipts: receipts.map { LaunchReceipt(provider: $0.provider, accountID: aliases[$0.accountID] ?? $0.accountID,
+                launchedAt: $0.launchedAt, receiptID: $0.receiptID) },
             readingTimes: readingTimes,
             unstartedSince: Dictionary(unstartedSince.map { (aliases[$0.key] ?? $0.key, $0.value) }, uniquingKeysWith: min),
             accountReadingTimes: accountReadingTimes.map { times in
                 Dictionary(times.map { (aliases[$0.key] ?? $0.key, $0.value) },
                     uniquingKeysWith: { Array(Set($0 + $1).sorted().suffix(2)) })
             })
+    }
+
+    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, unstartedSince, accountReadingTimes }
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let groups = try container.decodeIfPresent([String: [String: [String: Date]]].self, forKey: .launches) {
+            receipts = try groups.sorted { $0.key < $1.key }.flatMap { provider, accounts -> [LaunchReceipt] in
+                guard let provider = Provider(rawValue: provider) else {
+                    throw DecodingError.dataCorruptedError(forKey: .launches, in: container, debugDescription: "Unknown launch provider")
+                }
+                return accounts.sorted { $0.key < $1.key }.flatMap { id, events in
+                    events.sorted { $0.key < $1.key }.map { LaunchReceipt(provider: provider, accountID: id,
+                        launchedAt: $0.value, receiptID: $0.key) }
+                }
+            }
+        } else { receipts = try container.decodeIfPresent([LaunchReceipt].self, forKey: .receipts) ?? [] }
+        readingTimes = try container.decodeIfPresent([Date].self, forKey: .readingTimes) ?? []
+        unstartedSince = try container.decodeIfPresent([String: Date].self, forKey: .unstartedSince) ?? [:]
+        accountReadingTimes = try container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        let ids = receipts.compactMap(\.receiptID)
+        if ids.count == receipts.count && Set(ids).count == ids.count {
+            var groups: [String: [String: [String: Date]]] = [:]
+            for receipt in receipts {
+                if let id = receipt.receiptID {
+                    groups[receipt.provider.rawValue, default: [:]][receipt.accountID, default: [:]][id] = receipt.launchedAt
+                }
+            }
+            try container.encode(groups, forKey: .launches)
+        } else { try container.encode(receipts, forKey: .receipts) }
+        if accountReadingTimes == nil { try container.encode(readingTimes, forKey: .readingTimes) }
+        try container.encode(unstartedSince, forKey: .unstartedSince)
+        try container.encodeIfPresent(accountReadingTimes, forKey: .accountReadingTimes)
     }
 }
 
