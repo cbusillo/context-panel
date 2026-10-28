@@ -379,10 +379,10 @@ class StoreReleaseStatusTests(unittest.TestCase):
                 value = record("VISION_OS")
                 mark_submitted(client, 1, value, hours=1)
                 items = [issue(1, value), issue(2, record("MAC_OS", version="2.0.11"))]
-                def fetch(url: str, public: str | None = public) -> str:
+                def fetch(url: str, public_version: str | None = public) -> str:
                     if "platform=mac" in url:
                         return page("MAC_OS", ["2.0.12"])
-                    return "unavailable" if public is None else page("VISION_OS", [public])
+                    return "unavailable" if public_version is None else page("VISION_OS", [public_version])
                 status.monitor(client, items, NOW, 48, lookup=lambda: "42", fetch=fetch)
                 self.assertEqual(items[0]["state"], "closed" if public in ("2.0.10", "2.0.10.0") else "open")
                 self.assertNotEqual(items[0].get("state_reason"), "not_planned")
@@ -441,10 +441,10 @@ class StoreReleaseStatusTests(unittest.TestCase):
                 target = f"issues/{PARENT}" if outcome == "parent" else f"issues/{items[0]['number']}"
                 api = client.api
                 def interrupt(path: str, body: dict | None = None, method: str = "POST",
-                              target: str = target, api: Any = api) -> dict:
-                    if path == target and method == "PATCH":
+                              failed_path: str = target, send: Any = api) -> dict:
+                    if path == failed_path and method == "PATCH":
                         raise status.StatusError("interrupted close")
-                    return api(path, body, method)
+                    return send(path, body, method)
                 with mock.patch.object(client, "api", side_effect=interrupt), self.assertRaises(status.StatusError):
                     status.monitor(client, [*items, newer, parent], NOW, 48, lookup=lambda: "42", fetch=store(versions))
                 before = list(client.comments[f"{target}/comments"])

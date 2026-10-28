@@ -400,7 +400,7 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
             client.api(f"issues/{issue['number']}/comments", {"body":
                 f"[Submitted for App Store review]({run_url}): {identity['platform']} {identity['version']} "
                 f"({identity['buildNumber']}). The App Store Release Status check now watches this build for this platform. "
-                "Keep this record open until the exact build is verified live.\n\n"
+                "Keep this record open until its exact build is verified live or a newer public version supersedes it.\n\n"
                 + marker(SUBMISSION, value)})
         return issue
     run_url = f"https://github.com/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}"
@@ -411,7 +411,7 @@ def record_submission(client: Any, issues: list[dict], env: dict[str, str], now:
             client.api(f"issues/{issue['number']}/comments", {"body":
                 f"[Build {identity['buildNumber']}]({run_url}) was submitted for {identity['platform']} "
                 f"{identity['version']} without a Ship record, so this record's build can no longer be proven "
-                "live from the public version. The release agent verifies and closes it.\n\n"
+                "live from the public version. It needs release-agent verification or a newer public version to supersede it.\n\n"
                 + marker(UNRECORDED, {**identity, "submittedAt": now.isoformat(), "runURL": run_url})})
     return None
 
