@@ -57,13 +57,10 @@ Start with [Validation Authority and Operator Route](docs/validation-authority.m
 Follow the [shared Tests rule](https://github.com/cbusillo/codex-skills/blob/main/instructions/global.md#tests).
 Use `qualityGate.test.local` in `.github/github.json` for focused Swift tests
 of changed behavior; run selected Python fixture modules directly as described
-in [test lanes](docs/test-lanes.md#commands). Run required lint, type checks and
-IDE inspection alongside them. The complete `qualityGate.test.ci` sequence runs
-only in CI and must pass on the current head before `ready` or merge.
+in [test lanes](docs/test-lanes.md#commands).
 
-For every safety, authorization, approval, destructive-helper or shared-CI
-change, trace the touched code and all callers to complete covering Swift
-classes and Python files, then run those modules under the shared rule.
+For safety areas, trace touched code and all callers; full test modules here
+mean the covering Swift test classes and Python files.
 Approval checkers map to `Tests/ScriptsTests/test_release_approvals.py`; CI gates
 map to `test_ci_change_scope.py`, `test_test_lanes.py` and commit-gate fixtures
 in `test_release_workflows.py` in that directory. The existing
