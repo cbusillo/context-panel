@@ -78,10 +78,12 @@ swift run SnapshotStoreProbe --codex-auth "/path/to/account-home/auth.json"
 swift run ContextPanelAccountSnapshot
 ```
 
-`SnapshotStoreProbe` writes and reloads the local app/widget JSON cache.
+`SnapshotStoreProbe` writes and reloads a snapshot in the app/widget cache format
+in a temporary directory by default (`--output` selects another directory).
 
-The canonical contracts, limitations, installed-app snapshot route, Google
+The canonical contracts, installed-app snapshot route, Google
 Antigravity connector setup, and current provider behavior are maintained in
 [Provider Usage Access](docs/provider-usage-access.md). The historical OpenAI
 visible-limit probe design and redaction boundaries are documented in
 [Local Limit Probe Design](docs/local-limit-probe.md).
+Shell probes do not prove [signed-runtime behavior](docs/validation-authority.md#validation).
