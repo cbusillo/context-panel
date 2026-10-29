@@ -1,5 +1,3 @@
-import Foundation
-
 public extension Provider {
     var accountDisplayName: String { self == .anthropic ? "Claude" : displayName }
 }
