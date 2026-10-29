@@ -343,7 +343,8 @@ widget UI. Do not clear WidgetKit/Chrono placement directories or restart
 `--reset-widget-placement` only when removing the widget from the UI is
 acceptable.
 
-- Check `git status --short --branch` before packaging or installing.
+- Record dirty state with `git status --short --branch` before editing,
+  packaging or installing.
   Do not package or install from a dirty multi-workstream tree unless Chris
   explicitly asks for a scratch dogfood build. If the tree already contains
   broad unrelated changes, pause and propose a cleanup/split plan first.

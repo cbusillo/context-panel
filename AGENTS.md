@@ -59,7 +59,7 @@ Use `qualityGate.test.local` in `.github/github.json` for focused Swift tests
 of changed behavior; run selected Python fixture modules directly as described
 in [test lanes](docs/test-lanes.md#commands).
 
-For safety areas, trace touched code and all callers; complete modules here
+For safety areas, trace touched code and all callers; full test modules here
 mean the covering Swift test classes and Python files.
 Approval checkers map to `Tests/ScriptsTests/test_release_approvals.py`; CI gates
 map to `test_ci_change_scope.py`, `test_test_lanes.py` and commit-gate fixtures
