@@ -369,7 +369,7 @@ Review` workflow separately after TestFlight validation.
 The `Release` workflow is started manually from GitHub Actions or called by
 `Ship`, always from protected `main`. It builds the native `ContextPanel` Xcode
 scheme, not the SwiftPM wrapper, so the artifact includes
-`ContextPanelWidgetExtension.appex`. Creating a tag does not trigger the
+`ContextPanelWidgetExtension.appex`. Merging a PR or creating a tag does not trigger the
 workflow; this keeps secret-bearing execution bound to the protected branch.
 
 Its dispatch inputs are declared in

@@ -68,7 +68,7 @@ of truth.
 
 ## Local Provider Probes
 
-The package retains development-only, non-secret-printing probes and the
+The package retains development-only probes that never print secrets and the
 read-only saved-account snapshot command:
 
 ```sh
