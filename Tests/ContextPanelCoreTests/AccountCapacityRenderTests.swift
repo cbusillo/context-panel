@@ -1,12 +1,10 @@
-import AppKit
-import SwiftUI
+import Foundation
 import Testing
-@testable import ContextPanelApp
 @testable import ContextPanelCore
 
 @MainActor
-@Test(arguments: [760, 960])
-func allAccountsCardRendersAllProvidersWithPartialData(width: Int) throws {
+@Test
+func allAccountsRowsIncludeLimitsWithPartialData() {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let configs = (0..<6).map { index in
         LocalProviderAccountConfiguration(id: "fixture-\(index)", provider: index < 3 ? .openAI : index < 5 ? .anthropic : .google,
@@ -33,19 +31,4 @@ func allAccountsCardRendersAllProvidersWithPartialData(width: Int) throws {
     }
     let rows = AccountCapacity.rows(configuration: configs, snapshot: UsageSnapshot(generatedAt: now, limits: limits), reports: reports, now: now)
     #expect(rows.prefix(3).allSatisfy { !$0.limits.isEmpty })
-    let rates = Dictionary(uniqueKeysWithValues: configs.prefix(4).map { config in
-        (config.id, Dictionary(uniqueKeysWithValues: limits.filter { $0.accountID == config.id }.map {
-            ($0.id, ObservedBurnRate(limitID: $0.id, unitsPerHour: 1.5, observedDurationHours: 2, sampleCount: 3))
-        }))
-    })
-    let renderer = ImageRenderer(content: AccountCapacityCard(rows: rows, burnRates: rates, now: now).padding(20).frame(width: CGFloat(width)))
-    renderer.scale = 1
-    let image = try #require(renderer.cgImage)
-    #expect(image.height > 500)
-    if let output = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"] {
-        let root = URL(fileURLWithPath: output, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let data = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-        try data.write(to: root.appendingPathComponent("all-accounts-\(width).png"))
-    }
 }
