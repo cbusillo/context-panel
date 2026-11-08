@@ -523,7 +523,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         case .blockedUntilReset:
             "limited"
         case .paidFallbackActive:
-            "using paid fallback"
+            alert.usesUsageCredits ? "using usage credits" : "using paid fallback"
         case .degraded:
             "availability uncertain"
         case .available, .pressure, .unknown, .signInExpired:

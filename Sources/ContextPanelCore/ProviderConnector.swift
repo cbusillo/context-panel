@@ -324,8 +324,9 @@ public struct ProviderConnectorRuntime: Sendable {
                         )
                     )
                 }
-                deduplicated[existingIndex] = merged.replacingResetCredits(
-                    with: ProviderResetCreditSummary.preferred(existing.resetCredits, report.resetCredits)
+                deduplicated[existingIndex] = merged.replacingCredits(
+                    reset: ProviderResetCreditSummary.preferred(existing.resetCredits, report.resetCredits),
+                    usage: merged.usageCredits ?? existing.usageCredits ?? report.usageCredits
                 )
             } else {
                 indexesByAccount[key] = deduplicated.count
@@ -391,8 +392,8 @@ private extension ProviderConnectorReport {
         )
     }
 
-    func replacingResetCredits(with replacement: ProviderResetCreditSummary?) -> ProviderConnectorReport {
-        guard resetCredits != replacement else { return self }
+    func replacingCredits(reset: ProviderResetCreditSummary?, usage: ProviderUsageCreditSummary?) -> ProviderConnectorReport {
+        guard resetCredits != reset || usageCredits != usage else { return self }
         return ProviderConnectorReport(
             provider: provider,
             accountID: accountID,
@@ -400,8 +401,8 @@ private extension ProviderConnectorReport {
             accountName: accountName,
             generatedAt: generatedAt,
             limits: limits,
-            resetCredits: replacement,
-            usageCredits: usageCredits,
+            resetCredits: reset,
+            usageCredits: usage,
             status: status,
             accessState: accessState,
             errorMessage: errorMessage,

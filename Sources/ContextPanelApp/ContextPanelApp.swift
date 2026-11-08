@@ -3309,18 +3309,19 @@ struct AccountDashboard: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = fixedPresentationDate ?? context.date
-            let overview = model.accountOverview(at: now)
+            let presentation = model.accountPresentation(at: now)
+            let overview = presentation.overview
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if let account = overview.accounts.first(where: { $0.id == accountID || model.rawAccountID(for: $0.id) == accountID }) {
                         AccountDashboardDetail(account: account, overview: overview, now: now)
+                        DisclosureGroup("Provider diagnostics, pace and history") {
+                            AccountDiagnosticsView(model: model, provider: provider, now: now,
+                                diagnostics: AccountOverview.Diagnostics(account: account,
+                                    snapshot: presentation.snapshot, reports: presentation.reports))
+                        }
                     } else {
                         Text("This account is no longer in the saved setup.").foregroundStyle(.secondary)
-                    }
-                    DisclosureGroup("Provider diagnostics, pace and history") {
-                        ProviderDashboard(model: model, snapshot: model.currentSnapshot, provider: provider,
-                            focusedAccountID: model.rawAccountID(for: accountID) ?? accountID,
-                            showsHorizon: false, accountOverview: overview).frame(minHeight: 600)
                     }
                 }.padding(24)
             }.background(CPTheme.background)
@@ -4138,18 +4139,11 @@ struct ProviderDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     let provider: Provider
-    var focusedAccountID: String? = nil
-    var showsHorizon = true
-    var accountOverview: AccountOverview? = nil
     var openLimit: ((String) -> Void)? = nil
     @State private var selectedLimit: MainLimitSummary?
 
     private var summaries: [MainLimitSummary] {
         snapshot.mainLimitSummaries.filter { $0.provider == provider }
-    }
-
-    private var additionalLimits: [UsageLimit] {
-        snapshot.additionalLimits.filter { $0.provider == provider }
     }
 
     var body: some View {
@@ -4165,99 +4159,34 @@ struct ProviderDashboard: View {
     }
 
     @ViewBuilder private func content(at now: Date) -> some View {
-        let overallStatus = providerStatusIncludingAccessAlerts(
-            provider: provider, baseStatuses: summaries.map(\.status), alerts: model.providerAccessAlerts)
-        let fullOverview = accountOverview ?? model.accountOverview(at: now)
-        ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 22) {
-                    if showsHorizon {
-                        let overview = fullOverview.filtered(to: provider)
-                        AccountDashboardPanel(
-                            overview: overview,
-                            now: now,
-                            accountDetails: { account in
-                                AnyView(AccountDashboardDetail(account: account, overview: overview, now: now,
-                                    showsHeader: false, showsHorizon: false))
-                            },
-                            openAccount: { account in
-                                model.navigate(to: .providerAccount(account.metadata.provider, account.id))
-                            },
-                            openDeadlines: { model.navigate(to: .deadlines) }
-                        )
-                        providerHistoryLinks
-                        ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
-                        if model.storeStatus != .healthy {
-                            TagLabel(model.storeStatus.previewStatusText.capitalized)
-                        }
-                    } else {
-                        HStack(spacing: 8) {
-                            StatusMark(status: overallStatus, size: 8)
-                                .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)
-                                .help("Overall provider status: " + overallStatus.accessibilityStatusText)
-                            Text(provider.accountDisplayName + " · \(summaries.count) main windows · \(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
-                                .font(.system(size: 12))
-                                .foregroundStyle(CPTheme.secondaryText)
-                            if let resets = ResetCreditSurfaceAdvisor.appSummary(
-                                provider: provider, reports: model.storedSnapshot?.reports ?? [],
-                                limits: summaries.flatMap(\.limits), now: now) {
-                                ResetCreditAvailabilityTag(summary: resets)
-                            }
-                            if model.storeStatus != .healthy {
-                                TagLabel(model.storeStatus.previewStatusText.capitalized)
-                            }
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                        ProviderAccessAlertsSection(
-                            alerts: model.providerAccessAlerts.filter { $0.provider == provider }
-                        )
-                        SectionHeader(title: "Window details", trailing: "\(summaries.count) windows")
-                        VStack(spacing: 10) {
-                            ForEach(summaries) { summary in
-                                Button {
-                                    if let openLimit { openLimit(summary.id) }
-                                    else { selectedLimit = summary }
-                                } label: {
-                                    MainLimitRow(
-                                        summary: summary,
-                                        status: providerStatusIncludingAccessAlerts(
-                                            provider: provider,
-                                            baseStatuses: [summary.status],
-                                            alerts: model.providerAccessAlerts
-                                        )
-                                    )
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityHint("Opens limit history and forecast")
-                            }
-                        }
-                        if provider == .openAI {
-                            OpenAIAccountLimitsSection(
-                                summaries: summaries,
-                                reports: model.storedSnapshot?.reports ?? [],
-                                now: now,
-                                adviceByAccountID: model.bankedAdviceByLocalAccountID(provider: .openAI, overview: fullOverview)
-                            )
-                        } else {
-                            ProviderAccountLimitsSection(summaries: summaries)
-                            BankedResetDeadlinesView(reports: (model.storedSnapshot?.reports ?? []).filter { $0.provider == provider })
-                        }
-                        if !additionalLimits.isEmpty {
-                            AdditionalLimitsSection(snapshot: snapshot, provider: provider)
-                        }
-                    }
+        let overview = model.accountOverview(at: now).filtered(to: provider)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 22) {
+                AccountDashboardPanel(
+                    overview: overview,
+                    now: now,
+                    accountDetails: { account in
+                        AnyView(AccountDashboardDetail(account: account, overview: overview, now: now,
+                            showsHeader: false, showsHorizon: false))
+                    },
+                    openAccount: { account in
+                        model.navigate(to: .providerAccount(account.metadata.provider, account.id))
+                    },
+                    openDeadlines: { model.navigate(to: .deadlines) }
+                )
+                providerHistoryLinks
+                ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
+                if model.storeStatus != .healthy {
+                    TagLabel(model.storeStatus.previewStatusText.capitalized)
                 }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .background(CPTheme.background)
-            .sheet(item: $selectedLimit) { summary in
-                MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
-                    .frame(minWidth: 700, minHeight: 600)
-            }
-            .onAppear { scrollToFocusedAccount(using: proxy) }
-            .onChange(of: focusedAccountID) { _, _ in scrollToFocusedAccount(using: proxy) }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(CPTheme.background)
+        .sheet(item: $selectedLimit) { summary in
+            MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
+                .frame(minWidth: 700, minHeight: 600)
         }
     }
 
@@ -4302,15 +4231,74 @@ struct ProviderDashboard: View {
         }
     }
 
-    private func scrollToFocusedAccount(using proxy: ScrollViewProxy) {
-        guard let focusedAccountID else { return }
-        let hasBankedResets = (model.storedSnapshot?.reports ?? []).contains {
-            $0.provider == provider && $0.accountID == focusedAccountID && ($0.resetCredits?.presented(at: Date()).availableCount ?? 0) > 0
-        }
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(hasBankedResets ? "reset-account:\(focusedAccountID)" : "openai-account:\(focusedAccountID)", anchor: .center)
+}
+
+/// One account's provider details on its account page: its windows, usage and banked resets (#1077).
+struct AccountDiagnosticsView: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let provider: Provider
+    let now: Date
+    let diagnostics: AccountOverview.Diagnostics
+    @State private var selectedLimit: MainLimitSummary?
+
+    private var summaries: [MainLimitSummary] {
+        diagnostics.snapshot.mainLimitSummaries.filter { $0.provider == provider }
+    }
+
+    private func status(_ base: [UsageStatus]) -> UsageStatus {
+        providerStatusIncludingAccessAlerts(provider: provider, baseStatuses: base, alerts: model.providerAccessAlerts)
+    }
+
+    var body: some View {
+        let overallStatus = status(summaries.map(\.status))
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(spacing: 8) {
+                StatusMark(status: overallStatus, size: 8)
+                    .accessibilityLabel(provider.accountDisplayName + " overall status, " + overallStatus.accessibilityStatusText)
+                    .help("Overall provider status: " + overallStatus.accessibilityStatusText)
+                Text(provider.accountDisplayName + " · \(summaries.count) main windows")
+                    .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.secondaryText)
+                if let resets = ResetCreditSurfaceAdvisor.appSummary(
+                    provider: provider, reports: diagnostics.reports,
+                    limits: summaries.flatMap(\.limits), now: now) {
+                    ResetCreditAvailabilityTag(summary: resets)
+                }
+                if model.storeStatus != .healthy {
+                    TagLabel(model.storeStatus.previewStatusText.capitalized)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
+            SectionHeader(title: "Window details", trailing: "\(summaries.count) windows")
+            VStack(spacing: 10) {
+                ForEach(summaries) { summary in
+                    Button { selectedLimit = summary } label: {
+                        MainLimitRow(summary: summary, status: status([summary.status]))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens limit history and forecast")
+                }
+            }
+            if provider == .openAI {
+                OpenAIAccountLimitsSection(summaries: summaries, reports: diagnostics.reports, now: now,
+                    adviceByAccountID: diagnostics.bankedAdvice)
+            } else {
+                ProviderAccountLimitsSection(summaries: summaries)
+                if !diagnostics.reports.isEmpty {
+                    BankedResetDeadlinesView(reports: diagnostics.reports, limits: summaries.flatMap(\.limits),
+                        presentationDate: now, adviceByAccountID: diagnostics.bankedAdvice)
+                }
+            }
+            if !diagnostics.snapshot.additionalLimits.isEmpty {
+                AdditionalLimitsSection(snapshot: diagnostics.snapshot, provider: provider)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .sheet(item: $selectedLimit) { summary in
+            MainLimitDetail(model: model, summary: summary, generatedAt: diagnostics.snapshot.generatedAt)
+                .frame(minWidth: 700, minHeight: 600)
         }
     }
 }
@@ -4367,18 +4355,10 @@ struct OpenAIAccountLimitsSection: View {
         )
     }
 
-    private var recommendation: AccountResetRecommendation? {
-        UsageSnapshot(generatedAt: Date(), limits: summaries.flatMap(\.limits))
-            .nextAccountToUse(provider: .openAI, window: .weekly)
-    }
-
     var body: some View {
         if !accounts.isEmpty {
             DetailCard(title: "OpenAI Accounts") {
                 VStack(alignment: .leading, spacing: 10) {
-                    if let recommendation {
-                        OpenAIRecommendedAccountRow(recommendation: recommendation)
-                    }
                     ForEach(accounts) { account in
                         OpenAIAccountLimitRow(
                             account: account,
@@ -4386,37 +4366,10 @@ struct OpenAIAccountLimitsSection: View {
                             now: now,
                             adviceByAccountID: adviceByAccountID
                         )
-                        .id("openai-account:\(account.accountID)")
                     }
                 }
             }
         }
-    }
-}
-
-private struct OpenAIRecommendedAccountRow: View {
-    let recommendation: AccountResetRecommendation
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            StatusMark(status: recommendation.limit.status, size: 8)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Use this account")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CPTheme.secondaryText)
-                Text(recommendation.accountName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(CPTheme.primaryText)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 12)
-            Text(recommendation.resetsAt.widgetRelativeText)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(CPTheme.primaryText)
-        }
-        .padding(10)
-        .background(CPTheme.surface2)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -4445,8 +4398,9 @@ private struct OpenAIAccountLimitRow: View {
                 StatusMark(status: account.status, size: 8)
             }
             HStack(spacing: 8) {
-                OpenAIAccountWindowPill(title: "Weekly", limit: account.limit(for: .weekly))
-                OpenAIAccountWindowPill(title: "5h", limit: account.limit(for: .fiveHour))
+                let missingText = account.limits.isEmpty ? "Unknown" : "Not reported by OpenAI"
+                OpenAIAccountWindowPill(title: "Weekly", limit: account.limit(for: .weekly), missingText: missingText)
+                OpenAIAccountWindowPill(title: "5h", limit: account.limit(for: .fiveHour), missingText: missingText)
             }
             if let resetCreditGuidance {
                 Divider()
@@ -4466,117 +4420,31 @@ private struct OpenAIAccountLimitRow: View {
     }
 }
 
-private struct OpenAIResetCreditRow: View {
-    let guidance: ProviderResetCreditGuidance
-    let now: Date
-
-    private var status: UsageStatus {
-        switch guidance.state {
-        case .considerUsingNow:
-            .limited
-        case .considerBefore:
-            .close
-        case .hold:
-            .healthy
-        case let .refresh(reason):
-            reason == .staleObservation ? .stale : .unknown
-        }
-    }
-
-    private var availabilityText: String {
-        switch guidance.state {
-        case .refresh(.staleObservation), .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
-            "\(guidance.countText) last observed"
-        case .hold, .considerUsingNow, .considerBefore, .refresh:
-            "\(guidance.countText) available"
-        }
-    }
-
-    private var expiryText: String {
-        guard let expiry = guidance.resetCredits.earliestKnownExpiry else { return "Expiry unknown" }
-        let prefix = guidance.resetCredits.coverage == .partial ? "Earliest known expiry" : "Earliest expiry"
-        return "\(prefix) \(expiry.formatted(date: .abbreviated, time: .shortened))"
-    }
-
-    private var freshnessText: String {
-        let age = SnapshotFreshness.compactAgeText(since: guidance.resetCredits.observedAt, now: now)
-        return switch guidance.state {
-        case .refresh(.staleObservation):
-            "\(age) · stale"
-        case .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
-            "\(age) · refresh"
-        case .hold, .considerUsingNow, .considerBefore, .refresh:
-            age
-        }
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: "arrow.counterclockwise.circle")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(CPTheme.statusColor(status))
-                .frame(width: 18, height: 18)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(AccountTerms.bankedResets)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(CPTheme.secondaryText)
-                    Spacer(minLength: 8)
-                    Text(availabilityText)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(CPTheme.primaryText)
-                        .lineLimit(1)
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(expiryText)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(CPTheme.tertiaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(freshnessText)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(CPTheme.tertiaryText)
-                        .lineLimit(1)
-                }
-                Text(guidance.recommendationTitle)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CPTheme.statusColor(status))
-                Text(guidance.recommendationDetail(now: now))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityText)
-    }
-
-    private var accessibilityText: String {
-        let observed = guidance.resetCredits.observedAt.formatted(date: .long, time: .shortened)
-        let expiry = guidance.resetCredits.earliestKnownExpiry
-            .map { "Earliest known expiry \($0.formatted(date: .long, time: .shortened))." }
-            ?? "Expiry unknown."
-        return "\(availabilityText) for \(guidance.accountName). \(expiry) Observed \(observed). \(guidance.recommendationTitle). \(guidance.recommendationDetail(now: now))"
-    }
-}
-
 private struct OpenAIAccountWindowPill: View {
     let title: String
     let limit: UsageLimit?
+    /// A window missing beside reported ones is one OpenAI does not report; with no readings it is unknown.
+    let missingText: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(CPTheme.secondaryText)
-            Text(limit?.previewUsageText ?? "unknown")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(CPTheme.primaryText)
-            UsagePressureBar(usedRatio: limit?.usageRatio, status: limit?.status ?? .unknown, height: 4)
-            Text(limit?.resetText ?? "unknown reset")
-                .font(.system(size: 10))
-                .foregroundStyle(CPTheme.tertiaryText)
-                .lineLimit(1)
+            if let limit {
+                Text(limit.previewUsageText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CPTheme.primaryText)
+                UsagePressureBar(usedRatio: limit.usageRatio, status: limit.status, height: 4)
+                Text(limit.resetText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .lineLimit(1)
+            } else {
+                Text(missingText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+            }
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4963,7 +4831,7 @@ private struct ProviderAccessAlertCard: View {
         case .blockedUntilReset:
             "exclamationmark.octagon.fill"
         case .paidFallbackActive:
-            "dollarsign.circle.fill"
+            alert.usesUsageCredits ? "ticket.fill" : "dollarsign.circle.fill"
         case .degraded:
             "questionmark.circle.fill"
         case .available, .pressure, .unknown, .signInExpired:
@@ -5997,22 +5865,21 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func accountOverview(at now: Date) -> AccountOverview {
+        accountPresentation(at: now).overview
+    }
+
+    /// The overview with the limits and reports it was built from, so all three share account IDs.
+    func accountPresentation(at now: Date) -> (overview: AccountOverview, snapshot: UsageSnapshot, reports: [StoredProviderReport]) {
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
         if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now,
             accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates, launchEvidence: launchEvidence) {
-            return shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
+            return (shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge), shared.usageSnapshot, shared.reports)
         }
-        return AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
+        let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,
             metadata: fixedPresentationDate == nil ? AccountDisplayMetadata.local(configuration: configuredAccounts, stored: stored, now: now) : fixtureDisplayMetadata, now: now,
             accountBurnRates: accountBurnRates, launchEvidence: launchEvidence ?? UseNextEvidence())
-    }
-
-    func bankedAdviceByLocalAccountID(provider: Provider, overview: AccountOverview) -> [String: AccountOverview.BankedAdvice] {
-        guard let stored = storedSnapshot else { return [:] }
-        return overview.bankedAdviceByLocalAccountID(provider: provider, stored: stored,
-            configuration: fixedPresentationDate == nil ? configuredAccounts : [],
-            publisherID: fixedPresentationDate == nil ? configuredPublisherID : nil)
+        return (overview, stored.snapshot.presented(at: now), stored.reports)
     }
 
     func savedWidgetPreviewSnapshot(now: Date = Date()) async -> WidgetSnapshot {

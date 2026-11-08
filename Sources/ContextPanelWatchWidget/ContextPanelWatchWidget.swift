@@ -718,7 +718,7 @@ private func watchProviderAccessSymbol(_ alert: ProviderAccessAlert) -> String {
     case .blockedUntilReset:
         "exclamationmark"
     case .paidFallbackActive:
-        "dollarsign"
+        alert.usesUsageCredits ? "ticket" : "dollarsign"
     case .degraded:
         "questionmark"
     case .available, .pressure, .unknown, .signInExpired:
@@ -745,7 +745,7 @@ private func watchProviderAccessCornerText(_ alert: ProviderAccessAlert) -> Stri
     case .blockedUntilReset:
         "Limited"
     case .paidFallbackActive:
-        "Paid"
+        alert.usesUsageCredits ? "Credits" : "Paid"
     case .degraded:
         "Unknown"
     case .available, .pressure, .unknown, .signInExpired:
