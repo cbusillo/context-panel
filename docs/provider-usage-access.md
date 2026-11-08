@@ -148,17 +148,10 @@ and expiry is cleared until a fresh read succeeds, so stale timing cannot be
 presented as current guidance. A fresh explicit zero replaces prior
 availability.
 
-Guidance is evaluated independently for each account and never feeds capacity,
-forecast, account-selection, or notification math. The current conservative
-rule treats a known weekly reset within one hour as imminent. With current,
-complete timing evidence, Context Panel recommends holding when weekly capacity
-is healthy, when only the five-hour window is pressured, or when the natural
-weekly reset is imminent or no later than the earliest known credit expiry. It
-may say `consider using now` for a weekly-limited account whose natural reset is
-more than one hour away, or `consider before <date>` for a weekly-close account
-when the earliest known expiry precedes its natural reset. Stale, failed,
-inconsistent, count-only, elapsed-expiry, or unknown weekly-reset evidence uses
-`refresh`, `stale`, or `unknown` language instead of timing advice.
+Advice on when to apply a banked reset follows the one rule under **Resets** in
+[Use next ranking and launch receipts](#use-next-ranking-and-launch-receipts).
+Stale, failed, inconsistent or count-only evidence gives no timing advice; the
+account shows its last observed count and asks for a refresh.
 
 The Mac app shows each account's positive observed count, earliest known expiry
 or `expiry unknown`, observation freshness, and advisory reason. Medium and
@@ -914,26 +907,57 @@ percent of an account's main window, which is the general weekly window
 - **Stale readings:** when every reading is stale, the list is published with
   `basedOnStaleReadings` and `readingsObservedAt`, `useNextAccountID` is null,
   and `launchOrder` is filled only while the readings are under 30 minutes old.
-- **Resets:** each account with banked resets has a `resetAssessment` with its
-  trigger (`outOfQuota`, `expiring` within 24 hours, or `notNeeded`), net value
-  and reasoning, which the account detail view shows. `resetPrompts` lists one
-  plain line per reset that is clearly worth applying, soonest expiry first.
-  `outOfQuota` requires every enabled, configured, connected account of that
-  provider to have a current, observed weekly reading at 0, including the use-last account
-  and accounts hidden from widgets. Unknown or stale readings cannot prove
-  exhaustion, including a failed provider read. Disconnected accounts cannot
-  launch and do not hold the prompt. When all are empty, one worthwhile reset is
-  prompted for that provider, soonest known expiry first; unknown expiries follow
-  known ones.
-  The independent 24-hour expiry prompt still applies while other accounts have
-  quota. The panel and agent reader use the same assessment.
-  An OpenAI reset is worth 100 × days left ÷ 7 − percent left, because it
-  restarts the weekly clock and moves later refills out; a Claude reset is
-  worth what the account can still spend before its fixed refill, which never
-  moves. Claude resets are full weekly refills; a grant that doesn't clear the
-  general weekly window (`seven_day`), such as one for a single model's window,
-  is counted in `unrecognizedKindCount` and never valued or prompted.
-  Context Panel never applies a reset.
+- **Resets** ([#1079](https://github.com/cbusillo/context-panel/issues/1079)):
+  one question drives the advice for each provider: will it run out before it
+  refills, at the pace it is actually going? `AccountOverview.paceForecast(provider:)`
+  answers it from each account's measured weekly burn over about the last day.
+  It gives `runsOutBeforeRefill` and `refillsUnused`, the points that refill
+  unused when work goes to whatever refills first. A heavy call needs a margin:
+  every point must be used even at 80% of the measured pace. Once heavy, the
+  call holds until one of the provider's accounts refills, or until pace clearly
+  drops (points would lapse even at 125% of it), so it does not flip between
+  refreshes. Each saved reading records the call (`heavyProviders`), and a
+  reading saved without one inherits the previous reading's call unless an
+  account refilled in between, so it survives relaunches and reaches companions
+  with the launch evidence. Any
+  connected account without a current weekly reading keeps the week slow, and
+  calling a slow week heavy is the costlier mistake.
+  - **Heavy week:** Use next drains one account at a time: the account whose
+    banked reset expires soonest, never the use-last account. When its 5-hour
+    limit holds it, the next such account takes the work. With no such account,
+    Use next spreads as usual. Usage credits still wait for plan quota, and the
+    use-last cushion comes last. When an account reaches 0%, Context Panel
+    advises applying its reset now, one account per provider at a time,
+    soonest expiry first.
+  - **Slow week:** Use next spreads as usual, and resets are held until close
+    to expiry. The expiring warning starts a day before the reset expires.
+  - **OpenAI 80% gate** ([#1074](https://github.com/cbusillo/context-panel/issues/1074)):
+    OpenAI applies a banked reset only while the account has less than 80% of
+    its weekly quota left. Source: the Director's observation on November 4,
+    2026, adopted as his decision on November 8, 2026; it changes only if
+    OpenAI's own page or an observed apply shows a different limit. At or above
+    80% the reset shows as not applicable yet, with the reason. For such an
+    account the expiring warning starts earlier by the time needed, at the
+    provider's pace, to get under 80% (at most a week earlier, and a week when
+    the pace is zero or unknown), and it says how much to use first.
+  - **Value:** an OpenAI reset starts a fresh 7-day week now. It is worth
+    100 × days to the natural refill ÷ 7 − percent left, so at 0% it is worth
+    applying while more than about a day of the week remains. A Claude reset
+    refills quota and keeps its end date. It is worth what the provider's measured pace
+    can still spend on that account before the end date (what one account can
+    spend when the pace is unknown), so it is advised
+    only when enough of the week remains to use the refill. Claude resets are
+    full weekly refills; a grant that doesn't clear the general weekly window
+    (`seven_day`) is counted in `unrecognizedKindCount` and never valued or
+    advised. Anthropic has issued one banked reset so far, so nothing more is
+    built for it.
+  - **Where it shows:** each account with banked resets has one
+    `resetAssessment` (trigger `outOfQuota`, `expiring` or `notNeeded`,
+    `notYetApplicable`, value and reasoning). The app, widgets, companions and
+    the agent snapshot's `resetPrompts` all read it. "Apply this reset now",
+    and the warning to use an account under the 80% gate before its reset
+    expires, also arrive once each as notifications through the limit
+    warnings, when those are on. Context Panel never applies a reset.
 - **Provider-wide refills:** `providerRefills` lists times in the loaded
   history when a provider's accounts refilled between the same two readings,
   however far apart, before their resets and with no banked reset spent. A

@@ -3135,7 +3135,7 @@ struct AccountsSidebar: View {
                     let accounts = overview.accounts.filter { $0.metadata.provider == provider }
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                     let providerTotal = totals.first(where: { $0.provider == provider })
-                    let providerResetCredits = ResetCreditSurfaceAdvisor.appSummary(provider: provider, reports: reports, limits: snapshot.limits, now: presentationDate)
+                    let providerResetCredits = overview.bankedResetHolders(provider: provider)
                     let spokenHeader = providerAccessibilityLabel(provider: provider, total: providerTotal, resetCredits: providerResetCredits)
                     if !accounts.isEmpty || shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
                         Button { selection = .provider(provider) } label: {
@@ -3198,7 +3198,7 @@ struct AccountsSidebar: View {
         }
     }
 
-    private func providerAccessibilityLabel(provider: Provider, total: AccountProviderTotal?, resetCredits: ProviderResetCreditSurfaceSummary?) -> String {
+    private func providerAccessibilityLabel(provider: Provider, total: AccountProviderTotal?, resetCredits: AccountOverview.BankedResetHolders?) -> String {
         var parts = [total?.accessibilityText(now: presentationDate) ?? provider.accountDisplayName + ", " + AccountTerms.unknown]
         if let resetCredits { parts.append(resetCreditAccessibilityText(resetCredits)) }
         return parts.joined(separator: ", ")
@@ -4275,9 +4275,7 @@ struct AccountDiagnosticsView: View {
                 Text(provider.accountDisplayName + " · \(summaries.count) main windows")
                     .font(.system(size: 12))
                     .foregroundStyle(CPTheme.secondaryText)
-                if let resets = ResetCreditSurfaceAdvisor.appSummary(
-                    provider: provider, reports: diagnostics.reports,
-                    limits: summaries.flatMap(\.limits), now: now) {
+                if let resets = diagnostics.bankedResetHolders {
                     ResetCreditAvailabilityTag(summary: resets)
                 }
                 if model.storeStatus != .healthy {
@@ -4303,7 +4301,7 @@ struct AccountDiagnosticsView: View {
             } else {
                 ProviderAccountLimitsSection(summaries: summaries)
                 if !diagnostics.reports.isEmpty {
-                    BankedResetDeadlinesView(reports: diagnostics.reports, limits: summaries.flatMap(\.limits),
+                    BankedResetDeadlinesView(reports: diagnostics.reports,
                         presentationDate: now, adviceByAccountID: diagnostics.bankedAdvice)
                 }
             }
@@ -4358,16 +4356,11 @@ struct OpenAIAccountLimitsSection: View {
         OpenAIAccountLimitSummary.accounts(from: summaries, reports: reports)
     }
 
-    private var guidanceByAccountID: [String: ProviderResetCreditGuidance] {
+    /// Each account's newest report that holds banked resets.
+    private var bankedReportByAccountID: [String: StoredProviderReport] {
         Dictionary(
-            ResetCreditGuidanceAdvisor.guidance(
-                reports: reports,
-                limits: summaries.flatMap(\.limits),
-                now: now
-            ).map { ($0.accountID, $0) },
-            uniquingKeysWith: { current, candidate in
-                candidate.resetCredits.observedAt > current.resetCredits.observedAt ? candidate : current
-            }
+            reports.filter { ($0.resetCredits?.presented(at: now).availableCount ?? 0) > 0 }.map { ($0.accountID, $0) },
+            uniquingKeysWith: { current, candidate in candidate.generatedAt > current.generatedAt ? candidate : current }
         )
     }
 
@@ -4378,7 +4371,7 @@ struct OpenAIAccountLimitsSection: View {
                     ForEach(accounts) { account in
                         OpenAIAccountLimitRow(
                             account: account,
-                            resetCreditGuidance: guidanceByAccountID[account.accountID],
+                            bankedReport: bankedReportByAccountID[account.accountID],
                             now: now,
                             adviceByAccountID: adviceByAccountID
                         )
@@ -4391,7 +4384,7 @@ struct OpenAIAccountLimitsSection: View {
 
 private struct OpenAIAccountLimitRow: View {
     let account: OpenAIAccountLimitSummary
-    let resetCreditGuidance: ProviderResetCreditGuidance?
+    let bankedReport: StoredProviderReport?
     let now: Date
     let adviceByAccountID: [String: AccountOverview.BankedAdvice]
 
@@ -4418,16 +4411,10 @@ private struct OpenAIAccountLimitRow: View {
                 OpenAIAccountWindowPill(title: "Weekly", limit: account.limit(for: .weekly), missingText: missingText)
                 OpenAIAccountWindowPill(title: "5h", limit: account.limit(for: .fiveHour), missingText: missingText)
             }
-            if let resetCreditGuidance {
+            if let bankedReport {
                 Divider()
                     .overlay(CPTheme.line)
-                BankedResetDeadlinesView(reports: [StoredProviderReport(
-                    provider: resetCreditGuidance.provider, accountID: resetCreditGuidance.accountID,
-                    configuredAccountID: resetCreditGuidance.configuredAccountID,
-                    accountName: resetCreditGuidance.accountName,
-                    generatedAt: resetCreditGuidance.resetCredits.observedAt,
-                    resetCredits: resetCreditGuidance.resetCredits, status: account.status, errorMessage: nil
-                )], limits: account.limits, presentationDate: now, adviceByAccountID: adviceByAccountID)
+                BankedResetDeadlinesView(reports: [bankedReport], presentationDate: now, adviceByAccountID: adviceByAccountID)
             }
         }
         .padding(10)
@@ -4624,12 +4611,8 @@ struct HeaderCard: View {
         ))
     }
 
-    private var resetCreditSummary: ProviderResetCreditSurfaceSummary? {
-        ResetCreditSurfaceAdvisor.appSummary(
-            reports: model.storedSnapshot?.reports ?? [],
-            limits: snapshot.limits,
-            now: Date()
-        )
+    private var resetCreditSummary: AccountOverview.BankedResetHolders? {
+        model.accountOverview(at: Date()).bankedResetHolders()
     }
 
     var body: some View {
@@ -5486,7 +5469,7 @@ final class ContextPanelAppModel: ObservableObject {
     private let refreshDiagnosticsStore = RefreshDiagnosticsStateStore(
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
-    private lazy var limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
+    private lazy var limitWarningNotificationService = AppLimitWarningNotificationService.appDefault(refreshService: refreshService)
     private let refreshAttentionPolicyCache = SnapshotStoreStalenessPolicyCache(
         initialPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.appMaximumAge),
         loadPolicy: {
@@ -6104,8 +6087,10 @@ private struct AppLimitWarningNotificationService {
     let webhookService: LimitWarningWebhookDeliveryService
     let notificationCenter: UNUserNotificationCenter
     let diagnosticsStore: RefreshDiagnosticsStateStore
+    /// Reads saved inputs for banked-reset advice (#1079); nil sends limit warnings only.
+    let refreshService: SnapshotRefreshService?
 
-    static func appDefault() -> AppLimitWarningNotificationService {
+    static func appDefault(refreshService: SnapshotRefreshService? = nil) -> AppLimitWarningNotificationService {
         AppLimitWarningNotificationService(
             settingsStore: LimitWarningSettingsStore(
                 settingsURL: ContextPanelLocations.limitWarningSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
@@ -6120,7 +6105,8 @@ private struct AppLimitWarningNotificationService {
             notificationCenter: .current(),
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
-            )
+            ),
+            refreshService: refreshService
         )
     }
 
@@ -6135,19 +6121,22 @@ private struct AppLimitWarningNotificationService {
             persistedSnapshot: loadPersistedSnapshot()
         )
         let presentationSnapshot = warningSnapshot.presented(at: outcome.savedAt)
-        prunePendingNotifications(for: presentationSnapshot)
+        let resetNotices = refreshService?.savedResetNotices(now: outcome.savedAt) ?? []
+        prunePendingNotifications(keeping: LimitWarningEvaluator.laneIDs(snapshot: presentationSnapshot, resetNotices: resetNotices))
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
             snapshot: presentationSnapshot,
-            now: outcome.savedAt
+            now: outcome.savedAt,
+            resetNotices: resetNotices
         )
         recordAlertEvaluation(at: outcome.savedAt, eventCount: result.events.count)
         var commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
             targetState: result.state,
             snapshot: presentationSnapshot,
-            settings: settings
+            settings: settings,
+            resetNotices: resetNotices
         )
         guard commitPlan.hasPendingChanges else { return }
         if commitPlan.hasPersistedStateChanges {
@@ -6299,11 +6288,11 @@ private struct AppLimitWarningNotificationService {
         }
     }
 
-    private func prunePendingNotifications(for snapshot: UsageSnapshot) {
+    private func prunePendingNotifications(keeping laneIDs: Set<String>) {
         do {
             var queue = pendingNotificationStore.load()
             let previousCount = queue.notifications.count
-            queue.removeNotifications(forMissing: Set(snapshot.mainLimitSummaries.map(\.id)))
+            queue.removeNotifications(forMissing: laneIDs)
             guard queue.notifications.count != previousCount else { return }
             try pendingNotificationStore.save(queue)
         } catch {
@@ -6525,7 +6514,7 @@ struct TagLabel: View {
 }
 
 private struct ResetCreditAvailabilityTag: View {
-    let summary: ProviderResetCreditSurfaceSummary
+    let summary: AccountOverview.BankedResetHolders
     @State private var isHovering = false
 
     private var tone: Color {
@@ -6568,18 +6557,18 @@ private struct ResetCreditAvailabilityTag: View {
     }
 }
 
-private func resetCreditTagText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
+private func resetCreditTagText(_ summary: AccountOverview.BankedResetHolders) -> String {
     let prefix = AccountTerms.bankedResets + (summary.isLastSeenOnly ? " " + AccountTerms.lastSeen : "")
     return "\(prefix) · \(summary.accountCountText)"
 }
 
-private func resetCreditHelpText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
+private func resetCreditHelpText(_ summary: AccountOverview.BankedResetHolders) -> String {
     summary.isLastSeenOnly
         ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.accountCountText)."
         : "\(AccountTerms.bankedResets) are available on \(summary.accountCountText)."
 }
 
-private func resetCreditAccessibilityText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
+private func resetCreditAccessibilityText(_ summary: AccountOverview.BankedResetHolders) -> String {
     summary.isLastSeenOnly
         ? "\(AccountTerms.bankedResets) were \(AccountTerms.lastSeen) on \(summary.providerAccountCountText)."
         : "\(AccountTerms.bankedResets) are available on \(summary.providerAccountCountText)."

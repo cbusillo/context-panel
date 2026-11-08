@@ -80,9 +80,9 @@ public struct AccountOverview: Equatable, Sendable {
         public let bankedState: AccountCapacityState
         public let observedAt: Date?
         public var providerPlan: String? = nil
-        public var bankedAdvice: BankedAdvice? = nil
-        /// When applying a banked reset is worth it (#791); the value and reasoning for the detail view.
+        /// The banked-reset advice (#1079); the value and reasoning for the detail view.
         public var resetAssessment: ResetAssessment? = nil
+        public var bankedAdvice: BankedAdvice? { resetAssessment.map { BankedAdvice(title: $0.title, detail: $0.detail) } }
         public var isCodexSignInExpired: Bool = false
         /// OpenAI says the plan quota is used up but usage credits keep the account working.
         public var spendsUsageCredits: Bool = false
@@ -130,11 +130,48 @@ public struct AccountOverview: Equatable, Sendable {
     /// The moment the readings were judged; Use next measures time left from here.
     public let rankedAt: Date
     public let launchEvidence: UseNextEvidence
-    private init(accounts: [Account], deadlines: [Deadline], rankedAt: Date, launchEvidence: UseNextEvidence) {
+    let paceForecasts: [Provider: ProviderPaceForecast]
+    private init(accounts: [Account], deadlines: [Deadline], rankedAt: Date, launchEvidence: UseNextEvidence,
+                 paceForecasts: [Provider: ProviderPaceForecast]) {
         self.accounts = accounts
         self.deadlines = deadlines
         self.rankedAt = rankedAt
         self.launchEvidence = launchEvidence
+        self.paceForecasts = paceForecasts
+    }
+
+    /// Will this provider run out before it refills at the measured pace, and how much refills unused (#1079)?
+    /// Judged over every account, including ones hidden from widgets; nil without a current weekly reading.
+    public func paceForecast(provider: Provider) -> ProviderPaceForecast? { paceForecasts[provider] }
+
+    /// Accounts holding banked resets, for a provider's tag.
+    public struct BankedResetHolders: Equatable, Sendable {
+        public let provider: Provider
+        public let accountCount: Int
+        public let includesMultipleProviders: Bool
+        /// No holder has a current count; the tag shows the last one seen.
+        public let isLastSeenOnly: Bool
+
+        public var accountCountText: String {
+            accountCount == 1 ? "1 account" : "\(accountCount) accounts"
+        }
+
+        public var providerAccountCountText: String {
+            if includesMultipleProviders { return accountCountText }
+            return accountCount == 1 ? "1 \(provider.displayName) account" : "\(accountCount) \(provider.displayName) accounts"
+        }
+    }
+
+    public func bankedResetHolders(provider: Provider? = nil) -> BankedResetHolders? {
+        Self.bankedResetHolders(accounts.filter { provider == nil || $0.metadata.provider == provider })
+    }
+
+    static func bankedResetHolders(_ accounts: [Account]) -> BankedResetHolders? {
+        let holders = accounts.filter { $0.metadata.isEnabled && ($0.bankedResets?.availableCount ?? 0) > 0 }
+        guard let first = holders.first else { return nil }
+        return BankedResetHolders(provider: first.metadata.provider, accountCount: holders.count,
+                                  includesMultipleProviders: Set(holders.map(\.metadata.provider)).count > 1,
+                                  isLastSeenOnly: !holders.contains { $0.bankedState == .available })
     }
 
     /// Present shared-provider advice under the local report IDs used by provider diagnostics.
@@ -145,6 +182,7 @@ public struct AccountOverview: Equatable, Sendable {
         public let reports: [StoredProviderReport]
         /// Keyed by report account ID, for `BankedResetDeadlinesView`.
         public let bankedAdvice: [String: BankedAdvice]
+        public let bankedResetHolders: BankedResetHolders?
 
         public init(account: Account, snapshot: UsageSnapshot, reports: [StoredProviderReport]) {
             func isOwned(_ provider: Provider, _ id: String) -> Bool {
@@ -157,13 +195,15 @@ public struct AccountOverview: Equatable, Sendable {
             bankedAdvice = account.bankedAdvice.map { advice in
                 Dictionary(owned.map { ($0.accountID, advice) }, uniquingKeysWith: { first, _ in first })
             } ?? [:]
+            bankedResetHolders = AccountOverview.bankedResetHolders([account])
         }
     }
 
     /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.
     public func filtered(to provider: Provider) -> AccountOverview {
         AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },
-                        deadlines: deadlines.filter { $0.provider == provider }, rankedAt: rankedAt, launchEvidence: launchEvidence)
+                        deadlines: deadlines.filter { $0.provider == provider }, rankedAt: rankedAt, launchEvidence: launchEvidence,
+                        paceForecasts: paceForecasts.filter { $0.key == provider })
     }
 
     public var closest: Account? {
@@ -192,10 +232,10 @@ public struct AccountOverview: Equatable, Sendable {
             return Account(metadata: account.metadata, state: known ? .available : .unknown,
                 windows: windows, bankedResets: account.bankedResets,
                 bankedState: account.bankedState, observedAt: account.observedAt,
-                providerPlan: account.providerPlan, bankedAdvice: account.bankedAdvice,
-                resetAssessment: account.resetAssessment)
+                providerPlan: account.providerPlan, resetAssessment: account.resetAssessment)
         }
-        return AccountOverview(accounts: replay, deadlines: deadlines, rankedAt: observed, launchEvidence: launchEvidence)
+        return AccountOverview(accounts: replay, deadlines: deadlines, rankedAt: observed, launchEvidence: launchEvidence,
+                               paceForecasts: paceForecasts)
     }
     public var nextDeadline: Deadline? { deadlines.first { $0.state == .available } }
 
@@ -288,17 +328,18 @@ public struct AccountOverview: Equatable, Sendable {
                                   bankedState: bankedState, observedAt: observed, providerPlan: plan)
             account.isCodexSignInExpired = entry.provider == .openAI && report?.accessState.kind == .signInExpired
             account.spendsUsageCredits = entry.provider == .openAI && report?.accessState.kind == .paidFallbackActive
-            account.bankedAdvice = report.flatMap { ResetCreditGuidanceAdvisor.guidance(report: $0, limits: limits, now: now, maximumAge: maximumAge) }
-                .map { BankedAdvice(title: $0.recommendationTitle, detail: $0.recommendationDetail(now: now)) }
             return account
         }
-        let assessments = ResetAssessment.assessments(for: allAccounts, now: now)
+        let heavyBefore = Set(launchEvidence.heavyProviders ?? [])
+        let forecasts = Dictionary(uniqueKeysWithValues: Provider.allCases.compactMap { provider in
+            ProviderPaceForecast.make(provider: provider, accounts: allAccounts, wasHeavy: heavyBefore.contains(provider), now: now)
+                .map { (provider, $0) }
+        })
+        paceForecasts = forecasts
+        let assessments = ResetAssessment.assessments(for: allAccounts, forecasts: forecasts, now: now)
         accounts = allAccounts.filter { !widgetsOnly || $0.metadata.showInWidgets }.map { row in
             var account = row
             account.resetAssessment = assessments[account.id]
-            if let assessment = account.resetAssessment {
-                account.bankedAdvice = BankedAdvice(title: assessment.title, detail: assessment.detail)
-            }
             return account
         }
         deadlines = accounts.flatMap { account -> [Deadline] in

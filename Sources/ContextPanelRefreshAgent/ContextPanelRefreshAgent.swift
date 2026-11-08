@@ -59,7 +59,7 @@ struct ContextPanelRefreshAgent {
                 notifyContextPanelWidgetSnapshotUpdated()
             }
         ))
-        let warningService = LimitWarningNotificationService.appDefault()
+        let warningService = LimitWarningNotificationService.appDefault(refreshService: runner.service)
         let diagnosticsStore = RefreshDiagnosticsStateStore(
             stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
         )
@@ -266,7 +266,7 @@ struct ContextPanelRefreshAgent {
                     configuration: configuration.document,
                     runner: runner
                 ) {
-                    await LimitWarningNotificationService.appDefault().notifyIfNeeded(decision: decision)
+                    await LimitWarningNotificationService.appDefault(refreshService: runner.service).notifyIfNeeded(decision: decision)
                 }
             }
         } catch {
@@ -476,8 +476,10 @@ private struct LimitWarningNotificationService {
     let pendingNotificationStore: LimitWarningPendingNotificationStore
     let webhookService: LimitWarningWebhookDeliveryService
     let diagnosticsStore: RefreshDiagnosticsStateStore
+    /// Reads saved inputs for banked-reset advice (#1079); nil sends limit warnings only.
+    let refreshService: SnapshotRefreshService?
 
-    static func appDefault() -> LimitWarningNotificationService {
+    static func appDefault(refreshService: SnapshotRefreshService? = nil) -> LimitWarningNotificationService {
         LimitWarningNotificationService(
             settingsStore: LimitWarningSettingsStore(
                 settingsURL: ContextPanelLocations.limitWarningSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
@@ -491,7 +493,8 @@ private struct LimitWarningNotificationService {
             webhookService: .appDefault(),
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
-            )
+            ),
+            refreshService: refreshService
         )
     }
 
@@ -506,19 +509,22 @@ private struct LimitWarningNotificationService {
             persistedSnapshot: loadPersistedSnapshot()
         )
         let presentationSnapshot = warningSnapshot.presented(at: outcome.savedAt)
-        prunePendingNotifications(for: presentationSnapshot)
+        let resetNotices = refreshService?.savedResetNotices(now: outcome.savedAt) ?? []
+        prunePendingNotifications(keeping: LimitWarningEvaluator.laneIDs(snapshot: presentationSnapshot, resetNotices: resetNotices))
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
             snapshot: presentationSnapshot,
-            now: outcome.savedAt
+            now: outcome.savedAt,
+            resetNotices: resetNotices
         )
         recordAlertEvaluation(at: outcome.savedAt, eventCount: result.events.count)
         let commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
             targetState: result.state,
             snapshot: presentationSnapshot,
-            settings: settings
+            settings: settings,
+            resetNotices: resetNotices
         )
         guard commitPlan.hasPendingChanges else {
             return
@@ -563,11 +569,11 @@ private struct LimitWarningNotificationService {
         }
     }
 
-    private func prunePendingNotifications(for snapshot: UsageSnapshot) {
+    private func prunePendingNotifications(keeping laneIDs: Set<String>) {
         do {
             var queue = pendingNotificationStore.load()
             let previousCount = queue.notifications.count
-            queue.removeNotifications(forMissing: Set(snapshot.mainLimitSummaries.map(\.id)))
+            queue.removeNotifications(forMissing: laneIDs)
             guard queue.notifications.count != previousCount else { return }
             try pendingNotificationStore.save(queue)
         } catch {

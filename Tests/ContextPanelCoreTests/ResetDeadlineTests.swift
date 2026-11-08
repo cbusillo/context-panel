@@ -17,18 +17,17 @@ import Testing
     }
 }
 
-@Test func nextResetDeadlineIncludesOtherProvidersWithoutOpenAIAdvice() throws {
+@Test func claudeBankedResetsCountOnTheTagAndRefreshTheGlanceAtTheirDeadlines() throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let deadlines = [now.addingTimeInterval(60), now.addingTimeInterval(120)]
     let summary = ProviderResetCreditSummary(availableCount: 2, observedAt: now, coverage: .complete, knownExpiries: deadlines)
     let report = StoredProviderReport(provider: .anthropic, accountID: "local", accountName: "Local Claude",
         generatedAt: now, resetCredits: summary, status: .healthy, errorMessage: nil)
-    let surface = try #require(ResetCreditSurfaceAdvisor.appSummary(reports: [report], limits: [], now: now))
-    #expect(surface.primaryActionableGuidance == nil)
-    #expect(surface.primaryDeadlineGuidance?.provider == .anthropic)
-    #expect(surface.primaryDeadlineGuidance?.resetCredits.earliestKnownExpiry == deadlines.first)
-    let transitions = ResetCreditSurfaceAdvisor.glanceTransitionDates(reports: [report], limits: [], now: now)
-    #expect(deadlines.allSatisfy(transitions.contains))
+    let holders = try #require(AccountOverview(snapshot: UsageSnapshot(generatedAt: now, limits: []), reports: [report], now: now)
+        .bankedResetHolders())
+    #expect(holders.provider == .anthropic && holders.accountCount == 1 && !holders.isLastSeenOnly)
+    let glance = WidgetSnapshot(state: .ready, generatedAt: now, limits: [], reports: [report], status: .healthy, message: "")
+    #expect(deadlines.allSatisfy(glance.resetCreditSurfaceTransitionDates(now: now).contains))
 }
 
 @Test func expiredResetOffersStopCountingExactlyAtTheirDeadlines() {

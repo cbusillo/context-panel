@@ -185,7 +185,7 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
     #expect(selected.accounts.first?.horizon(now: detailNow) == mixed.accounts.first { $0.metadata.provider == .google }?.horizon(now: detailNow))
 }
 
-@Test func horizonDetailsRetainQuotaReadingAndBankedAdvisorFields() throws {
+@Test func horizonDetailsRetainQuotaReadingAndBankedInventory() throws {
     let plan = "example-plan"
     let input = UsageLimit(provider: .openAI, accountID: "parity", accountName: "Original · " + plan,
         label: "Weekly", windowLabel: "Weekly", unit: .requests, used: 7, limit: nil,
@@ -210,9 +210,6 @@ func providerTotalDoesNotBorrowAnotherAccountsMissingWeeklyPercentage(healthyRep
     #expect(account.providerPlan == plan)
     #expect(account.bankedResets == credits.presented(at: detailNow))
     #expect(account.unknownExpiryCount == 1)
-    let advisor = try #require(ResetCreditGuidanceAdvisor.guidance(report: report, limits: [input], now: detailNow))
-    #expect(account.bankedAdvice?.title == advisor.recommendationTitle)
-    #expect(account.bankedAdvice?.detail == advisor.recommendationDetail(now: detailNow))
 }
 
 @MainActor

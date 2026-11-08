@@ -210,7 +210,10 @@ private func render(route: ValidationGalleryRoute, scenario: Bool, deadlines: Bo
         let report = StoredProviderReport(provider: .openAI, accountID: "synthetic", accountName: name,
             generatedAt: now, resetCredits: summary, status: .healthy, errorMessage: nil)
         if deadlines {
-            view = AnyView(BankedResetDeadlinesView(reports: [report], limits: [limit], presentationDate: now).padding(14))
+            let advice = AccountOverview(snapshot: UsageSnapshot(generatedAt: now, limits: [limit]), reports: [report], now: now)
+                .accounts.first?.bankedAdvice
+            view = AnyView(BankedResetDeadlinesView(reports: [report], presentationDate: now,
+                adviceByAccountID: advice.map { [report.accountID: $0] } ?? [:]).padding(14))
         } else {
             let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: [limit], reports: [report], status: .healthy, message: "")
             let links = ContextPanelWidgetLinks(overview: URL(string: "contextpanel://overview")!)
