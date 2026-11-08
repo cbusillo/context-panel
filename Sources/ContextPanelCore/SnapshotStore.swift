@@ -291,12 +291,16 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
         return "\(provider.rawValue):\(accountIdentity)"
     }
 
+    /// OpenAI's paid-fallback state means granted usage credits, not billed extra usage.
+    public var usesUsageCredits: Bool { accessState.kind == .paidFallbackActive && provider == .openAI }
+
     public var title: String {
         switch accessState.kind {
         case .blockedUntilReset:
             "\(provider.accessProductName) limited"
         case .paidFallbackActive:
-            "\(provider.accessProductName) using paid fallback"
+            usesUsageCredits ? "\(provider.accessProductName) using usage credits"
+                : "\(provider.accessProductName) using paid fallback"
         case .degraded:
             "\(provider.accessProductName) availability uncertain"
         case .pressure:
@@ -313,7 +317,8 @@ public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
         case .blockedUntilReset:
             "Usage credits unavailable"
         case .paidFallbackActive:
-            "Plan limit reached; usage credits available"
+            usesUsageCredits ? "Plan limit reached; usage credits keep it working"
+                : "Plan limit reached; usage credits available"
         case .degraded:
             "Provider access could not be confirmed"
         case .pressure:

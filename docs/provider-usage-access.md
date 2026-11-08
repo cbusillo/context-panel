@@ -104,8 +104,10 @@ reached type does not, and `limit_reached` is not used. The block is
 account-wide, so model-specific limits show Limited too. A blocked read with no
 windows at all has no limit to mark and stays Unknown. When a Codex window is
 fully used but Codex does not block usage because usage credits cover it, the
-account's access state is the paid-fallback state Claude uses ("Plan limit
-reached; usage credits available"), with the used-up window's reset. A failed
+account keeps the access state Claude uses for paid fallback, with the
+used-up window's reset. OpenAI usage credits are granted, not billed, so every
+surface says "using usage credits" for it, while Claude's billed extra usage
+keeps its paid wording. A failed
 read keeps the usage credits read with the limits it keeps, and duplicate
 reports of one account keep the credits either of them read.
 
