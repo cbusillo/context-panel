@@ -681,6 +681,11 @@ public struct SnapshotRefreshService: Sendable {
         )
     }
 
+    /// Banked-reset advice from saved inputs that asks the Director to act now (#1079).
+    public func savedResetNotices(now: Date) -> [ResetAssessment] {
+        savedWidgetPreviewSnapshot(now: now).resetNotices(now: now)
+    }
+
     public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
         let sources = promptCacheTelemetrySourceDirectories(now: now)
         if let promptCacheTelemetryMirror {

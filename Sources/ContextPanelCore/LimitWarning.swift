@@ -237,14 +237,18 @@ public struct LimitWarningEvent: Codable, Equatable, Identifiable, Sendable {
     public let limit: Int?
     public let resetsAt: Date?
     public let accountCount: Int
+    /// Set for banked-reset advice (#1079): the action line, with its reasoning as the body.
+    public var resetPrompt: String? = nil
+    public var resetDetail: String? = nil
 
     public var id: String { laneID }
 
     public var title: String {
-        "\(provider.displayName) \(window.displayName) is low"
+        resetPrompt ?? "\(provider.displayName) \(window.displayName) is low"
     }
 
     public var body: String {
+        if let resetDetail { return resetDetail }
         let percent = Int((capacityRatio * 100).rounded())
         let headroom = "\(percent)% left"
         let detail: String
@@ -446,7 +450,8 @@ public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
         targetState: LimitWarningState,
         snapshot: UsageSnapshot,
         settings: LimitWarningSettings,
-        prunesMissingLanes: Bool = true
+        prunesMissingLanes: Bool = true,
+        resetNotices: [ResetAssessment] = []
     ) {
         self.currentState = currentState
         self.targetState = targetState
@@ -454,7 +459,8 @@ public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
         pruneRecoveredRecords(
             using: snapshot,
             settings: settings,
-            prunesMissingLanes: prunesMissingLanes
+            prunesMissingLanes: prunesMissingLanes,
+            keeping: Set(resetNotices.map(LimitWarningEvaluator.laneID))
         )
     }
 
@@ -474,14 +480,15 @@ public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
     private mutating func pruneRecoveredRecords(
         using snapshot: UsageSnapshot,
         settings: LimitWarningSettings,
-        prunesMissingLanes: Bool
+        prunesMissingLanes: Bool,
+        keeping resetLaneIDs: Set<String>
     ) {
         guard settings.isEnabled else {
             persistedState = .empty
             return
         }
         let summariesByID = Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.map { ($0.id, $0) })
-        for record in persistedState.records {
+        for record in persistedState.records where !resetLaneIDs.contains(record.laneID) {
             guard let summary = summariesByID[record.laneID] else {
                 if prunesMissingLanes {
                     persistedState.removeRecord(for: record.laneID)
@@ -505,7 +512,8 @@ public enum LimitWarningEvaluator {
         settings: LimitWarningSettings,
         state: LimitWarningState,
         snapshot: UsageSnapshot,
-        now: Date
+        now: Date,
+        resetNotices: [ResetAssessment] = []
     ) -> (events: [LimitWarningEvent], state: LimitWarningState) {
         guard settings.isEnabled else {
             return ([], .empty)
@@ -513,7 +521,7 @@ public enum LimitWarningEvaluator {
 
         var nextState = state
         var events: [LimitWarningEvent] = []
-        let currentLaneIDs = Set(snapshot.mainLimitSummaries.map(\.id))
+        let currentLaneIDs = laneIDs(snapshot: snapshot, resetNotices: resetNotices)
         let staleLaneIDs = nextState.records
             .map(\.laneID)
             .filter { !currentLaneIDs.contains($0) }
@@ -559,7 +567,29 @@ public enum LimitWarningEvaluator {
             }
         }
 
+        // Banked-reset advice notifies once per reset; the record ends when the advice does.
+        for notice in resetNotices {
+            guard let line = notice.prompt ?? notice.useFirstPrompt else { continue }
+            let event = LimitWarningEvent(laneID: laneID(notice), provider: notice.provider, window: .weekly,
+                thresholdPercentRemaining: settings.thresholdPercentRemaining, capacityRatio: 0, remaining: nil, limit: nil,
+                resetsAt: notice.expiresAt, accountCount: 1, resetPrompt: line, resetDetail: notice.detail)
+            guard shouldNotify(existing: nextState.record(for: event.laneID), settings: settings,
+                               resetIdentity: event.resetIdentity) else { continue }
+            events.append(event)
+            nextState.upsert(LimitWarningRecord(laneID: event.laneID, lastThresholdPercentRemaining: settings.thresholdPercentRemaining,
+                lastNotifiedAt: now, lastCapacityRatio: 0, resetIdentity: event.resetIdentity))
+        }
+
         return (events.sorted { $0.capacityRatio < $1.capacityRatio }, nextState)
+    }
+
+    /// Every lane that can notify now: main limits and banked-reset advice.
+    public static func laneIDs(snapshot: UsageSnapshot, resetNotices: [ResetAssessment]) -> Set<String> {
+        Set(snapshot.mainLimitSummaries.map(\.id) + resetNotices.map(laneID))
+    }
+
+    static func laneID(_ notice: ResetAssessment) -> String {
+        "reset-\(notice.recommended ? "apply" : "use-first"):\(notice.accountID)"
     }
 
     public static func recoveryCapacityRatio(for settings: LimitWarningSettings) -> Double {

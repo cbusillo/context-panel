@@ -61,13 +61,16 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
     /// For an unstarted OpenAI account, the first reading in the current unstarted run.
     public var unstartedSince: [String: Date]
     public var accountReadingTimes: [String: [Date]]?
+    /// Providers whose saved readings ended in a heavy week (#1079), so the call stays sticky across refreshes.
+    public var heavyProviders: [Provider]?
 
     public init(receipts: [LaunchReceipt] = [], readingTimes: [Date] = [], unstartedSince: [String: Date] = [:],
-                accountReadingTimes: [String: [Date]]? = nil) {
+                accountReadingTimes: [String: [Date]]? = nil, heavyProviders: [Provider]? = nil) {
         self.receipts = receipts
         self.readingTimes = readingTimes
         self.unstartedSince = unstartedSince
         self.accountReadingTimes = accountReadingTimes
+        self.heavyProviders = heavyProviders
     }
 
     public static func make(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot],
@@ -97,7 +100,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         accountTimes = accountTimes.mapValues { Array(Set($0).sorted().suffix(2)) }
         return Self(receipts: receipts, readingTimes: Array(Set(readings.map(\.savedAt)).sorted().suffix(2)),
             unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve),
-            accountReadingTimes: accountTimes)
+            accountReadingTimes: accountTimes,
+            heavyProviders: ProviderPaceForecast.heavyProviders(readings: readings, configuration: configuration))
     }
 
     static func accountResolver(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration],
@@ -114,7 +118,7 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
     func retainingAccounts(_ ids: Set<String>) -> Self {
         Self(receipts: receipts.filter { ids.contains($0.accountID) }, readingTimes: readingTimes,
             unstartedSince: unstartedSince.filter { ids.contains($0.key) },
-            accountReadingTimes: accountReadingTimes?.filter { ids.contains($0.key) })
+            accountReadingTimes: accountReadingTimes?.filter { ids.contains($0.key) }, heavyProviders: heavyProviders)
     }
 
     func excludingAccounts(_ ids: Set<String>) -> Self {
@@ -135,9 +139,10 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             .filter { LaunchReceiptStore.isUsable($0, now: now) }
         let times = (accountReadingTimes ?? [:]).merging(other.accountReadingTimes ?? [:]) { Array(Set($0 + $1)).sorted() }
             .mapValues { Array($0.sorted().suffix(2)) }
+        let heavy = Set((heavyProviders ?? []) + (other.heavyProviders ?? [])).sorted { $0.rawValue < $1.rawValue }
         return Self(receipts: receipts, readingTimes: Array(Set(readingTimes + other.readingTimes).sorted().suffix(2)),
             unstartedSince: unstartedSince.merging(other.unstartedSince) { _, newer in newer },
-            accountReadingTimes: times.isEmpty ? nil : times)
+            accountReadingTimes: times.isEmpty ? nil : times, heavyProviders: heavy.isEmpty ? nil : heavy)
     }
 
     func reidentifyingAccounts(using aliases: [String: String]) -> Self {
@@ -148,10 +153,10 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             accountReadingTimes: accountReadingTimes.map { times in
                 Dictionary(times.map { (aliases[$0.key] ?? $0.key, $0.value) },
                     uniquingKeysWith: { Array(Set($0 + $1).sorted().suffix(2)) })
-            })
+            }, heavyProviders: heavyProviders)
     }
 
-    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, unstartedSince, accountReadingTimes }
+    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, unstartedSince, accountReadingTimes, heavyProviders }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let groups = try container.decodeIfPresent([String: [String: [String: Date]]].self, forKey: .launches) {
@@ -168,6 +173,7 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         readingTimes = try container.decodeIfPresent([Date].self, forKey: .readingTimes) ?? []
         unstartedSince = try container.decodeIfPresent([String: Date].self, forKey: .unstartedSince) ?? [:]
         accountReadingTimes = try container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes)
+        heavyProviders = try container.decodeIfPresent([Provider].self, forKey: .heavyProviders)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -185,12 +191,14 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         try container.encode(readingTimes, forKey: .readingTimes)
         try container.encode(unstartedSince, forKey: .unstartedSince)
         try container.encodeIfPresent(accountReadingTimes, forKey: .accountReadingTimes)
+        try container.encodeIfPresent(heavyProviders, forKey: .heavyProviders)
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
         let counts = { (receipts: [LaunchReceipt]) in Dictionary(grouping: receipts, by: { $0 }).mapValues { $0.count } }
         return counts(lhs.receipts) == counts(rhs.receipts) && lhs.readingTimes == rhs.readingTimes
             && lhs.unstartedSince == rhs.unstartedSince && lhs.accountReadingTimes == rhs.accountReadingTimes
+            && lhs.heavyProviders == rhs.heavyProviders
     }
 }
 
@@ -435,8 +443,22 @@ public extension AccountOverview {
         }
 
         let active = candidates.filter { $0.starter || $0.need > 0 }
+        // Heavy week (#1079): drain one account at a time, the soonest-expiring banked reset first, never the use-last
+        // account, so its reset can be applied at 0%. A held account spills to the next; without one, spread as usual.
+        let drain = staleOnly || paceForecast(provider: provider)?.runsOutBeforeRefill != true ? nil
+            : candidates.compactMap { candidate in
+                candidate.useLast ? nil : candidate.row.soonestBankedExpiry(after: now).map { (candidate, $0) }
+            }.min { ($0.1, $0.0.row.id) < ($1.1, $1.0.row.id) }?.0
         var entries: [UseNextRanking.Entry] = []
-        if active.isEmpty {
+        if let drain {
+            for candidate in candidates {
+                let drains = candidate.row.id == drain.row.id
+                entries.append(candidate.entry(tier: drains ? .needsUse : candidate.useLast ? .useLast : .onPace,
+                    weight: drains ? 1 : 0, pending: pending[candidate.row.id, default: 0],
+                    reason: drains ? "Heavy week: drains this account first so its banked reset, the soonest to expire, can be applied at 0%"
+                        : "Heavy week: waits while \(drain.row.metadata.label) is drained"))
+            }
+        } else if active.isEmpty {
             // Demand is at or above capacity: last longest first, use-last only after the rest.
             let others = (candidates + onCredits).filter { !$0.useLast }
             for candidate in candidates {

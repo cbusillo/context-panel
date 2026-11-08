@@ -113,18 +113,21 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
     ) -> [Date] {
         guard state == .ready, syncErrorMessage == nil else { return [] }
-        let inventoryTransitions = ResetCreditSurfaceAdvisor.glanceTransitionDates(
-            reports: reports,
-            limits: limits,
-            now: now,
-            maximumAge: maximumAge
-        )
-        let expiryPromptTransitions = reports.compactMap { $0.resetCredits?.presented(at: now).earliestKnownExpiry }
-            .map { $0.addingTimeInterval(-ResetAssessment.expiringWithin) }.filter { $0 > now }
-        let valueTransitions = accountOverview(now: now, maximumAge: maximumAge).accounts.compactMap { account in
-            account.resetAssessment?.nextValueTransitionDate(for: account, now: now)
+        let inventoryTransitions = reports.resetCreditTransitionDates(after: now)
+            + reports.compactMap { $0.resetCredits?.observedAt.addingTimeInterval(maximumAge + 1) }.filter { $0 > now }
+        let adviceTransitions = accountOverview(now: now, maximumAge: maximumAge).accounts.flatMap { account -> [Date] in
+            guard let assessment = account.resetAssessment else { return [] }
+            return [assessment.warnFrom, assessment.nextValueTransitionDate(for: account, now: now)].compactMap { $0 }.filter { $0 > now }
         }
-        return Array(Set(inventoryTransitions + expiryPromptTransitions + valueTransitions)).sorted()
+        return Array(Set(inventoryTransitions + adviceTransitions)).sorted()
+    }
+
+    /// Banked-reset advice that asks the Director to act now (#1079): apply a reset, or use an account below
+    /// OpenAI's gate before its reset expires. It reaches the Director through the limit-warning notifications.
+    public func resetNotices(now: Date) -> [ResetAssessment] {
+        guard state == .ready, syncErrorMessage == nil else { return [] }
+        return accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge).accounts.compactMap(\.resetAssessment)
+            .filter { $0.prompt != nil || $0.useFirstPrompt != nil }
     }
 
     public var aggregateCapacityRatio: Double {

@@ -572,7 +572,7 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     let expiring = try assessment(Fixture(name: "expiring", weeklyUsed: 30, resetHours: 5.7 * 24, bankedExpiryHours: [20, 200]))
     #expect(expiring.trigger == .expiring)
     #expect(abs((expiring.value ?? 0) - 11.4) < 0.2)
-    #expect(expiring.prompt != nil && expiring.eligibilityNote != nil)
+    #expect(expiring.prompt != nil && !expiring.notYetApplicable)
 
     let lapsing = try assessment(Fixture(name: "lapsing", weeklyUsed: 30, resetHours: 0.6 * 24, bankedExpiryHours: [20]))
     #expect(abs((lapsing.value ?? 0) + 61.4) < 0.2)
@@ -730,7 +730,7 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(json["ranking"] is [Any] && json["resetPrompts"] is [Any] && json["providerRefills"] is [Any])
 }
 
-// #794: an empty account alone is not a reason to apply a provider's reset.
+// #794, #1079: in a slow week an empty account alone is not a reason to apply its reset.
 @Test(arguments: [Provider.openAI, .anthropic])
 func resetWaitsForEveryProviderAccountIncludingUseLast(_ provider: Provider) throws {
     let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [200])
@@ -893,11 +893,9 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
             let report = fixture.report(now: rankNow)
             let account = try #require(panel.accounts.first { $0.id == fixture.id })
             let diagnostics = AccountOverview.Diagnostics(account: account, snapshot: stored.snapshot, reports: stored.reports)
-            let deadlines = BankedResetDeadlinesView(reports: [report], limits: fixture.limits(now: rankNow),
+            let deadlines = BankedResetDeadlinesView(reports: [report],
                 presentationDate: rankNow, adviceByAccountID: diagnostics.bankedAdvice)
-            let expected = account.bankedAdvice
-            #expect(deadlines.advice(for: report, now: rankNow)?.title == expected?.title)
-            #expect(deadlines.advice(for: report, now: rankNow)?.detail == expected?.detail)
+            #expect(deadlines.advice(for: report) == account.bankedAdvice)
         }
     }
 }
@@ -928,9 +926,9 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
         let report = try #require(diagnostics.reports.first)
         #expect(diagnostics.bankedAdvice[report.accountID] == selected.bankedAdvice)
         #expect(selected.bankedAdvice != nil)
-        let deadlines = BankedResetDeadlinesView(reports: diagnostics.reports, limits: diagnostics.snapshot.limits,
+        let deadlines = BankedResetDeadlinesView(reports: diagnostics.reports,
             presentationDate: rankNow, adviceByAccountID: diagnostics.bankedAdvice)
-        #expect(deadlines.advice(for: report, now: rankNow)?.title == selected.bankedAdvice?.title)
+        #expect(deadlines.advice(for: report) == selected.bankedAdvice)
         let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow,
             sharedDocument: remote)
         let prompts = panel.accounts.compactMap(\.resetAssessment).filter(\.recommended)
@@ -1091,4 +1089,162 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     // Apple's CKRecord limit excludes assets, but this payload is an inline bytes field.
     #expect(encoded.count < 1_000_000)
     print("Companion payload with \(receipts.count) launch receipts: \(encoded.count) bytes")
+}
+
+// #1079: one banked-reset rule driven by a heavy or slow week forecast.
+private func heavyWeek(burn: Double) -> [Fixture] {
+    [Fixture(name: "later", weeklyUsed: 50, burn: burn, bankedExpiryHours: [150]),
+     Fixture(name: "sooner", weeklyUsed: 40, burn: burn, bankedExpiryHours: [60]),
+     Fixture(name: "personal", weeklyUsed: 50, burn: burn, useLast: true, bankedExpiryHours: [30]),
+     Fixture(name: "plain", weeklyUsed: 50, burn: burn)]
+}
+
+@Test func heavyWeekDrainsOneAccountAndAdvisesApplyingItsResetAtZero() throws {
+    let fixtures = heavyWeek(burn: 2)
+    let (later, sooner, personal) = (fixtures[0], fixtures[1], fixtures[2])
+    #expect(overview(fixtures).paceForecast(provider: .openAI)?.runsOutBeforeRefill == true)
+    // The soonest-expiring banked reset outside the use-last account takes every launch.
+    let draining = ranking(fixtures)
+    #expect(draining.useNextAccountID == sooner.id)
+    #expect(Set(draining.launchOrder) == [sooner.id])
+    #expect(draining.entry(personal)?.weight == 0)
+
+    // Held by its 5-hour limit, it spills to the next banked reset.
+    var held = fixtures
+    held[1].fiveHourUsed = 100
+    #expect(ranking(held).useNextAccountID == later.id)
+
+    // At 0% its reset is the one to apply now, and the next account drains meanwhile.
+    var empty = fixtures
+    empty[1].weeklyUsed = 100
+    let advice = try #require(overview(empty).accounts.first { $0.id == sooner.id }?.resetAssessment)
+    #expect(advice.trigger == .outOfQuota && advice.recommended && advice.prompt != nil)
+    #expect(ranking(empty).useNextAccountID == later.id)
+    #expect(overview(empty).accounts.first { $0.id == later.id }?.resetAssessment?.recommended == false)
+}
+
+@Test func heavyWeekNeverDrainsTheUseLastAccountAndKeepsCreditsAfterPlanQuota() throws {
+    let personal = Fixture(name: "personal", weeklyUsed: 50, burn: 3, useLast: true, bankedExpiryHours: [30])
+    let plain = Fixture(name: "plain", weeklyUsed: 50, burn: 3)
+    let credits = Fixture(name: "credits", weeklyUsed: 100, resetHours: 50, onCredits: true)
+    #expect(overview([personal, plain, credits]).paceForecast(provider: .openAI)?.runsOutBeforeRefill == true)
+    // Only the use-last account holds a reset: nothing drains, so today's spreading answers.
+    let spread = ranking([personal, plain, credits])
+    #expect(spread.useNextAccountID == plain.id)
+    #expect(spread.entry(credits)?.tier == .usageCredits && spread.entry(credits)?.weight == 0)
+
+    let banked = Fixture(name: "banked", weeklyUsed: 50, burn: 3, bankedExpiryHours: [150])
+    let draining = ranking([personal, plain, credits, banked])
+    #expect(draining.useNextAccountID == banked.id)
+    #expect(draining.entry(credits)?.weight == 0 && draining.entry(personal)?.weight == 0)
+}
+
+@Test func slowWeekSpreadsAndHoldsResetsUntilCloseToExpiry() throws {
+    let fixtures = heavyWeek(burn: 0.1)
+    let sooner = fixtures[1]
+    #expect(overview(fixtures).paceForecast(provider: .openAI)?.runsOutBeforeRefill == false)
+    #expect(Set(ranking(fixtures).launchOrder).count > 1)
+
+    var empty = fixtures
+    empty[1].weeklyUsed = 100
+    let held = try #require(overview(empty).accounts.first { $0.id == sooner.id }?.resetAssessment)
+    #expect(held.trigger == .notNeeded && held.prompt == nil)
+
+    empty[1].bankedExpiryHours = [ResetAssessment.expiringWithin / hour - 1]
+    let expiring = try #require(overview(empty).accounts.first { $0.id == sooner.id }?.resetAssessment)
+    #expect(expiring.trigger == .expiring && expiring.recommended)
+}
+
+@Test func paceHoveringNearTheLineKeepsTheHeavyCallUntilItClearlyDrops() throws {
+    // Two accounts with 50 points each refill in 100 hours: a provider pace of 1 point an hour is the line.
+    func call(pace: Double, heavyBefore: Bool) -> Bool {
+        let fixtures = ["a", "b"].map { Fixture(name: $0, weeklyUsed: 50, burn: pace / 2) }
+        let evidence = UseNextEvidence(heavyProviders: heavyBefore ? [.openAI] : nil)
+        return AccountOverview(snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
+            reports: fixtures.map { $0.report(now: rankNow) }, now: rankNow,
+            accountBurnRates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: rankNow)) }),
+            launchEvidence: evidence).paceForecast(provider: .openAI)?.runsOutBeforeRefill == true
+    }
+    var heavy = false
+    var calls: [Bool] = []
+    for pace in [1.4, 0.95, 1.05, 0.9, 1.1, 0.85] {
+        heavy = call(pace: pace, heavyBefore: heavy)
+        calls.append(heavy)
+    }
+    #expect(calls.allSatisfy { $0 })
+    #expect(!call(pace: 0.7, heavyBefore: true))
+    // Without an earlier heavy call the same hovering pace stays slow.
+    #expect(!call(pace: 1.05, heavyBefore: false))
+}
+
+@Test func savedReadingsCarryTheHeavyCallAndARefillEndsIt() throws {
+    let start = rankNow.addingTimeInterval(-6 * hour)
+    let reset = rankNow.addingTimeInterval(24 * hour)
+    func reading(_ at: Date, used: Int) -> StoredUsageSnapshot {
+        StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: [UsageLimit(provider: .anthropic,
+            accountID: "a", configuredAccountID: "a", accountName: "a", label: "Claude Weekly", windowLabel: "Weekly",
+            modelLabel: "Claude", unit: .percent, used: used, limit: 100, resetsAt: reset, lastUpdatedAt: at, confidence: .observed)]),
+            reports: [StoredProviderReport(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a",
+                generatedAt: at, status: .healthy, errorMessage: nil)])
+    }
+    // About five points an hour against 35 points left and a day to the refill: clearly heavy.
+    let readings = (0...12).map { step in reading(start.addingTimeInterval(Double(step) * 0.5 * hour), used: 35 + step * 5 / 2) }
+    #expect(ProviderPaceForecast.heavyProviders(readings: readings, configuration: []) == [.anthropic])
+    // A refill (quota back, same end date) puts the week near the line: only an earlier heavy call would hold it.
+    let refill = reading(rankNow.addingTimeInterval(0.5 * hour), used: 0)
+    let refilled = readings + [refill]
+    #expect(ProviderPaceForecast.refilledProviders(from: readings[readings.count - 1], to: refill) == [.anthropic])
+    let nearTheLine = AccountOverview(snapshot: refill.snapshot, reports: refill.reports, now: refill.savedAt,
+        accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: refill.snapshot, history: refilled, now: refill.savedAt),
+        launchEvidence: UseNextEvidence(heavyProviders: [.anthropic]))
+    #expect(nearTheLine.paceForecast(provider: .anthropic)?.runsOutBeforeRefill == true)
+    #expect(ProviderPaceForecast.heavyProviders(readings: refilled, configuration: []).isEmpty)
+}
+
+@Test func openAIResetIsNotApplicableAtEightyPercentLeftAndWarnsEarlyEnough() throws {
+    // 85% left at one point an hour needs about 6 hours to get under 80%, so the warning starts 30 hours out.
+    let gated = Fixture(name: "gated", weeklyUsed: 15, burn: 1, bankedExpiryHours: [29])
+    let warning = try #require(overview([gated]).accounts.first?.resetAssessment)
+    #expect(warning.notYetApplicable && warning.trigger == .expiring)
+    #expect(!warning.recommended && warning.prompt == nil && warning.useFirstPrompt != nil)
+    var early = gated
+    early.bankedExpiryHours = [31]
+    let before = try #require(overview([early]).accounts.first?.resetAssessment)
+    #expect(before.notYetApplicable && before.trigger == .notNeeded)
+    var under = gated
+    under.weeklyUsed = 21
+    #expect(overview([under]).accounts.first?.resetAssessment?.notYetApplicable == false)
+    var claude = gated
+    claude.provider = .anthropic
+    #expect(overview([claude]).accounts.first?.resetAssessment?.notYetApplicable == false)
+}
+
+@Test func openAIResetStartsAFreshWeekWhileClaudeNeedsTimeToUseItsRefill() throws {
+    // Each account is empty, so its provider runs out; the reset's value differs by provider.
+    for provider in [Provider.openAI, .anthropic] {
+        let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, resetHours: 48, burn: 0.2, bankedExpiryHours: [100])
+        let advice = try #require(overview([empty]).accounts.first?.resetAssessment)
+        #expect(advice.trigger == .outOfQuota)
+        // OpenAI gains the two days its next refill moves earlier; Claude can use only what its pace spends by the same end date.
+        #expect(advice.recommended == (provider == .openAI))
+        var faster = empty
+        faster.burn = 1
+        #expect(overview([faster]).accounts.first?.resetAssessment?.recommended == true)
+    }
+}
+
+@Test func resetAdviceNotifiesOnceThroughLimitWarnings() throws {
+    let empty = Fixture(name: "empty", weeklyUsed: 100, bankedExpiryHours: [100])
+    let notice = try #require(overview([empty]).accounts.first?.resetAssessment)
+    let settings = LimitWarningSettings(isEnabled: true)
+    let snapshot = UsageSnapshot(generatedAt: rankNow, limits: [])
+    let first = LimitWarningEvaluator.evaluate(settings: settings, state: .empty, snapshot: snapshot, now: rankNow, resetNotices: [notice])
+    #expect(first.events.map(\.title) == [notice.prompt])
+    let again = LimitWarningEvaluator.evaluate(settings: settings, state: first.state, snapshot: snapshot, now: rankNow, resetNotices: [notice])
+    #expect(again.events.isEmpty)
+    let plan = LimitWarningNotificationCommitPlan(currentState: first.state, targetState: again.state, snapshot: snapshot,
+                                                  settings: settings, resetNotices: [notice])
+    #expect(plan.persistedState == first.state)
+    let ended = LimitWarningEvaluator.evaluate(settings: settings, state: first.state, snapshot: snapshot, now: rankNow)
+    #expect(ended.state.records.isEmpty)
 }
