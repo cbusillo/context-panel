@@ -63,8 +63,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let summary: String
         /// "1 of 3 runs out before reset", or the calm outlook.
         public let summaryOutlook: String
+        /// Quota that refilled unused and resets or credits that expired unused, last week and this week (#1080),
+        /// from the refresh pass kept with the current snapshot. Absent until that pass has run this week.
+        public let unusedCapacity: ProviderUnusedCapacity?
 
-        public init(total: AccountProviderTotal, now: Date) {
+        public init(total: AccountProviderTotal, now: Date, unusedCapacity: ProviderUnusedCapacity? = nil) {
             provider = total.provider
             name = total.provider.accountDisplayName
             accounts = AccountTerms.accountCount(total)
@@ -76,6 +79,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             let line = AccountTerms.providerSummary(total, now: now)
             summary = line.facts
             summaryOutlook = line.outlook
+            self.unusedCapacity = unusedCapacity
         }
     }
 
@@ -325,7 +329,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             } }
         configurationErrors = overview.configurationErrors
         providerRefills = ProviderRefillDetector.events(readings: readings, resolve: resolve)
-        providers = overview.providerTotals(now: now).map { ProviderDisplay(total: $0, now: now) }
+        let unused = stored.unusedCapacity.flatMap { $0.isSameWeek(as: now) ? $0.providers : nil } ?? []
+        providers = overview.providerTotals(now: now).map { total in
+            ProviderDisplay(total: total, now: now, unusedCapacity: unused.first { $0.provider == total.provider })
+        }
         headline = Headline(overview: overview, now: now)
         deadlines = overview.deadlines.map {
             Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,

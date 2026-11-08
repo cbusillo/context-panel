@@ -1218,18 +1218,37 @@ private func savedReading(_ at: Date, used: Int, heavy: [Provider]? = nil) -> St
     let snapshots = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))
     let service = SnapshotRefreshService(accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
         stores: SnapshotRefreshStores(primary: snapshots), connectorFactory: { _ in [] }, promptCacheTelemetryReader: { _ in [] })
-    func save(used: Int) async throws -> [Provider]? {
+    func save(used: Int, at: Date) async throws -> [Provider]? {
         let limit = UsageLimit(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a", label: "Claude Weekly",
             windowLabel: "Weekly", modelLabel: "Claude", unit: .percent, used: used, limit: 100,
-            resetsAt: rankNow.addingTimeInterval(24 * hour), lastUpdatedAt: rankNow, confidence: .observed)
-        _ = try await service.saveMergedAsync(refreshResult: ConnectorRefreshResult(generatedAt: rankNow, reports: [
+            resetsAt: rankNow.addingTimeInterval(24 * hour), lastUpdatedAt: at, confidence: .observed)
+        _ = try await service.saveMergedAsync(refreshResult: ConnectorRefreshResult(generatedAt: at, reports: [
             ProviderConnectorReport(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a",
-                                    generatedAt: rankNow, limits: [limit])]), savedAt: rankNow)
-        return snapshots.loadCurrent().snapshot?.heavyProviders
+                                    generatedAt: at, limits: [limit])]), savedAt: at)
+        let current = try #require(snapshots.loadCurrent().snapshot)
+        // Each save keeps the other derived field (#1080): the unused-capacity pass must not drop the call, nor the call it.
+        #expect(current.unusedCapacity != nil)
+        #expect(snapshots.loadHistory().last { $0.savedAt == at }?.heavyProviders == current.heavyProviders)
+        return current.heavyProviders
     }
     // An empty provider has run out: the saved reading says so. With quota left and no measured pace it does not.
-    #expect(try await save(used: 100) == [.anthropic])
-    #expect(try await save(used: 50) == [])
+    #expect(try await save(used: 100, at: rankNow) == [.anthropic])
+    #expect(try await save(used: 50, at: rankNow.addingTimeInterval(60)) == [])
+}
+
+@Test func storeSavePathsKeepTheHeavyCallAndUnusedCapacityApart() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = JSONSnapshotStore(rootDirectory: root)
+    var reading = savedReading(rankNow, used: 60, heavy: [.anthropic])
+    reading.unusedCapacity = StoredUnusedCapacity(computedAt: rankNow, providers: [])
+    try store.save(reading)
+    #expect(store.loadHistory().last?.heavyProviders == [.anthropic])
+    #expect(store.loadHistory().last?.unusedCapacity == nil)
+    let later = StoredUnusedCapacity(computedAt: rankNow.addingTimeInterval(60), providers: [])
+    try store.saveCurrent(unusedCapacity: later)
+    #expect(store.loadCurrent().snapshot?.heavyProviders == [.anthropic])
+    #expect(store.loadCurrent().snapshot?.unusedCapacity == later)
 }
 
 @Test func openAIResetIsNotApplicableAtEightyPercentLeftAndWarnsEarlyEnough() throws {
