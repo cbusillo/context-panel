@@ -392,3 +392,42 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
         stored: identifiedStored, history: [], now: agentNow)
     #expect(withIdentity.accounts.map(\.usageCredits) == [credits])
 }
+
+// #1085: the recent two-hour pace beside the conservative burn, so a check sees an account that stopped moving.
+@Test(arguments: [false, true])
+func agentSnapshotExportsTheRecentPaceBesideTheConservativeBurn(shared: Bool) throws {
+    let account = agentConfiguration("a")
+    let config = AccountConfigurationDocument(updatedAt: agentNow, accounts: [account])
+    func reading(minutesAgo: Int, used: Int) -> StoredUsageSnapshot {
+        let at = agentNow.addingTimeInterval(TimeInterval(-minutesAgo * 60))
+        return StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: [agentLimit(account.id, used: used, at: at)]),
+            reports: [StoredProviderReport(provider: .openAI, accountID: account.id, configuredAccountID: account.id,
+                accountName: "Ignored", generatedAt: at, status: .healthy, errorMessage: nil)])
+    }
+    // A batch used 3 points an hour from 6 hours ago until 2 hours ago (to 45%), then the account stopped.
+    // The conservative burn still averages 2 points an hour over 6 hours; the recent pace reads 0.
+    let busy = stride(from: 360, to: 120, by: -5).map { reading(minutesAgo: $0, used: 33 + (360 - $0) / 20) }
+    let idle = stride(from: 120, through: 0, by: -5).map { reading(minutesAgo: $0, used: 45) }
+    func window(_ history: [StoredUsageSnapshot]) throws -> AgentAccountSnapshot.Window {
+        let stored = try #require(history.last)
+        let document = shared ? CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: stored,
+            configuration: [account], publisherID: "fixture")) : nil
+        return try #require(AgentAccountSnapshot(configuration: config, stored: stored, history: history, now: agentNow,
+            sharedDocument: document).accounts.first?.windows.first)
+    }
+
+    let stopped = try window(busy + idle)
+    let burn = try #require(stopped.burn)
+    let recent = try #require(stopped.recentBurn)
+    #expect(abs(burn.unitsPerHour - 2) < 0.01)
+    #expect(recent.unitsPerHour == 0)
+    #expect(abs(recent.observedDurationHours - 2) < 0.01)
+    #expect(recent.sampleCount == 25)
+    let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(stopped)) as? [String: Any])
+    #expect((json["recentBurn"] as? [String: Any])?["unitsPerHour"] as? Double == 0)
+
+    // No readings in the last two hours: the conservative burn stands and the recent pace is unknown, not zero.
+    let asleep = try window(busy + [reading(minutesAgo: 0, used: 45)])
+    #expect(asleep.burn != nil)
+    #expect(asleep.recentBurn == nil)
+}

@@ -104,9 +104,14 @@ public enum AccountCapacityState: String, Codable, Sendable {
 }
 
 public enum AccountBurnRateEstimator {
+    /// The recent pace's window (#1085): at 5-minute readings it still has the estimator's 30 minutes and two intervals.
+    public static let recentWindow: TimeInterval = 2 * 3_600
+
     /// Filter both sides of the estimate. A busy sibling must never supply this account's pace.
+    /// `recentOnly` measures only that last stretch; with too few readings it falls back to a whole-window average,
+    /// which carries no samples and so is never exported as a measured pace.
     public static func observedBurnRates(
-        current: UsageSnapshot, history: [StoredUsageSnapshot], now: Date
+        current: UsageSnapshot, history: [StoredUsageSnapshot], now: Date, recentOnly: TimeInterval? = nil
     ) -> [String: [String: ObservedBurnRate]] {
         var result: [String: [String: ObservedBurnRate]] = [:]
         for limit in current.limits {
@@ -124,7 +129,9 @@ public enum AccountBurnRateEstimator {
             let rates = MainLimitBurnRateEstimator.observedBurnRates(
                 current: UsageSnapshot(generatedAt: current.generatedAt, limits: [limit]),
                 // Keep one observation’s pace stable between refreshes on all readers.
-                history: accountHistory, now: min(now, current.generatedAt)
+                history: accountHistory, now: min(now, current.generatedAt),
+                lookback: recentOnly ?? MainLimitBurnRateEstimator.historyLookback,
+                recentLookback: recentOnly ?? MainLimitBurnRateEstimator.recentLookback
             )
             if let rate = rates.values.first {
                 result[accountID, default: [:]][limit.id] = rate

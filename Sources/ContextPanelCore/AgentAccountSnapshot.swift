@@ -227,12 +227,15 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let naturalResetAt: Date?
         public let observedAt: Date?
         public let burn: Burn?
+        /// Pace over only the last two hours (#1085), for steering within a check; null with too little recent history.
+        /// `burn` stays the conservative maximum the panel's warnings use.
+        public let recentBurn: Burn?
         public let confidence: UsageConfidence
         public let presentationAssumption: UsagePresentationAssumption?
         public let isCurrent: Bool
 
         enum CodingKeys: String, CodingKey {
-            case id, label, period, remainingFraction, unit, used, limit, naturalResetAt, observedAt, burn, confidence, presentationAssumption, isCurrent
+            case id, label, period, remainingFraction, unit, used, limit, naturalResetAt, observedAt, burn, recentBurn, confidence, presentationAssumption, isCurrent
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -247,6 +250,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             try container.encode(naturalResetAt, forKey: .naturalResetAt)
             try container.encode(observedAt, forKey: .observedAt)
             try container.encode(burn, forKey: .burn)
+            try container.encode(recentBurn, forKey: .recentBurn)
             try container.encode(confidence, forKey: .confidence)
             try container.encode(presentationAssumption, forKey: .presentationAssumption)
             try container.encode(isCurrent, forKey: .isCurrent)
@@ -257,6 +261,14 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let unitsPerHour: Double
         public let observedDurationHours: Double
         public let sampleCount: Int
+
+        /// A measured pace; a whole-window average (no samples) is not exported.
+        init?(_ rate: ObservedBurnRate?) {
+            guard let rate, rate.sampleCount > 0 else { return nil }
+            unitsPerHour = rate.unitsPerHour
+            observedDurationHours = rate.observedDurationHours
+            sampleCount = rate.sampleCount
+        }
     }
 
     public struct BankedResets: Encodable, Sendable {
@@ -298,6 +310,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         let rates = AccountBurnRateEstimator.observedBurnRates(
             current: stored.snapshot, history: history, now: now
         )
+        let recentRates = AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now,
+                                                                     recentOnly: AccountBurnRateEstimator.recentWindow)
         let localEvidence = UseNextEvidence.make(stored: stored, history: history,
             configuration: configuration.accounts, publisherID: configuration.publisherID, receipts: receipts,
             shared: sharedDocument != nil || stored.reports.contains { $0.sharedAccountIdentity != nil })
@@ -350,6 +364,14 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 }
             }
             let usageCredits = Dictionary(creditKeys, uniquingKeysWith: { first, _ in first })
+            // The recent pace stays local too: match each published window to its local limit as shared burn does.
+            let recentKeys = stored.selectingSharedAccountObservations().snapshot.limits.compactMap { local -> (String, ObservedBurnRate)? in
+                guard let rate = recentRates[local.accountID]?[local.id] else { return nil }
+                let report = stored.reports.first { $0.provider == local.provider && $0.accountID == local.accountID }
+                return (AccountDisplayMetadata.safeID(local.provider, MacSharedAccountPresentation.accountKey(limit: local, report: report,
+                    configuration: configuration.accounts, publisherID: configuration.publisherID)) + "\n" + local.label, rate)
+            }
+            let recentBurns = Dictionary(recentKeys, uniquingKeysWith: { first, _ in first })
             accounts = overview.accounts.map { account in
                 let report = canonical.reports.first { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
                 let limits = canonical.limits.filter { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
@@ -366,8 +388,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                             period: window?.period, remainingFraction: window?.remainingFraction,
                             unit: limit.unit, used: limit.used, limit: limit.limit, naturalResetAt: limit.resetsAt,
                             observedAt: limit.lastUpdatedAt,
-                            burn: rate.flatMap { $0.sampleCount > 0 ? Burn(unitsPerHour: $0.unitsPerHour,
-                                observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) : nil },
+                            burn: Burn(rate),
+                            recentBurn: current ? Burn(recentBurns[account.id + "\n" + limit.label]) : nil,
                             confidence: limit.confidence, presentationAssumption: limit.presentationAssumption,
                             isCurrent: window?.isCurrent ?? false)
                     },
@@ -411,16 +433,15 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 windows: row.limits.map { limit in
                     let id = AccountDisplayMetadata.safeID(row.provider, limit.id)
                     let window = shared?.windows.first { $0.id == id }
-                    let estimate = current && window?.isCurrent == true ? rates[row.id]?[limit.id] : nil
-                    let burn = estimate.flatMap { $0.sampleCount > 0 ? $0 : nil }
+                    let measured = current && window?.isCurrent == true
                     return Window(
                         id: id,
                         label: ConnectorRedactor.safeErrorDescription(limit.label),
                         period: window?.period, remainingFraction: window?.remainingFraction,
                         unit: limit.unit, used: limit.used, limit: limit.limit,
                         naturalResetAt: limit.resetsAt, observedAt: limit.lastUpdatedAt,
-                        burn: burn.map { Burn(unitsPerHour: $0.unitsPerHour,
-                            observedDurationHours: $0.observedDurationHours, sampleCount: $0.sampleCount) },
+                        burn: measured ? Burn(rates[row.id]?[limit.id]) : nil,
+                        recentBurn: measured ? Burn(recentRates[row.id]?[limit.id]) : nil,
                         confidence: limit.confidence, presentationAssumption: limit.presentationAssumption,
                         isCurrent: window?.isCurrent ?? false
                     )
