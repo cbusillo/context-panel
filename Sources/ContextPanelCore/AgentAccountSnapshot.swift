@@ -63,8 +63,11 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         public let summary: String
         /// "1 of 3 runs out before reset", or the calm outlook.
         public let summaryOutlook: String
+        /// Quota that refilled unused and resets or credits that expired unused, last week and this week (#1080).
+        /// Absent when saved history was not read.
+        public let unusedCapacity: ProviderUnusedCapacity?
 
-        public init(total: AccountProviderTotal, now: Date) {
+        public init(total: AccountProviderTotal, now: Date, unusedCapacity: ProviderUnusedCapacity? = nil) {
             provider = total.provider
             name = total.provider.accountDisplayName
             accounts = AccountTerms.accountCount(total)
@@ -76,6 +79,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             let line = AccountTerms.providerSummary(total, now: now)
             summary = line.facts
             summaryOutlook = line.outlook
+            self.unusedCapacity = unusedCapacity
         }
     }
 
@@ -286,7 +290,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         history: [StoredUsageSnapshot],
         now: Date,
         sharedDocument: CompanionSyncDocument? = nil,
-        receipts: [LaunchReceipt] = []
+        receipts: [LaunchReceipt] = [],
+        weeklyHistory: [StoredUsageSnapshot]? = nil
     ) {
         readAt = now
         savedAt = stored.savedAt
@@ -308,7 +313,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                 accountBurnRates: rates, launchEvidence: localEvidence)
         let readings = history + [stored]
         // History rows resolve to the IDs this snapshot publishes, through the same key shared presentation uses.
-        let resolve = UseNextEvidence.accountResolver(readings: readings, configuration: configuration.accounts,
+        let resolve = UseNextEvidence.accountResolver(readings: (weeklyHistory ?? history) + [stored], configuration: configuration.accounts,
             publisherID: configuration.publisherID, shared: canonical != nil)
         ranking = Provider.allCases.filter { provider in overview.accounts.contains { $0.metadata.provider == provider } }
             .map { overview.useNextRanking(provider: $0) }
@@ -325,7 +330,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             } }
         configurationErrors = overview.configurationErrors
         providerRefills = ProviderRefillDetector.events(readings: readings, resolve: resolve)
-        providers = overview.providerTotals(now: now).map { ProviderDisplay(total: $0, now: now) }
+        let unused = weeklyHistory.map { UnusedCapacityHistory.summaries(readings: $0 + [stored], now: now, resolve: resolve) } ?? []
+        providers = overview.providerTotals(now: now).map { total in
+            ProviderDisplay(total: total, now: now, unusedCapacity: unused.first { $0.provider == total.provider })
+        }
         headline = Headline(overview: overview, now: now)
         deadlines = overview.deadlines.map {
             Deadline(id: $0.id, accountID: $0.accountID, provider: $0.provider, label: $0.label,
@@ -453,11 +461,14 @@ public extension AgentAccountSnapshot {
             guard configuration.schemaVersion == 1, stored.schemaVersion == 1 else {
                 throw AgentAccountSnapshotReadError.unsupportedSchema
             }
-            let history = JSONSnapshotStore(rootDirectory: snapshotDirectory).loadHistory(
-                query: SnapshotStoreQuery(since: min(now, stored.snapshot.generatedAt).addingTimeInterval(-24 * 3_600), limit: 2_000)
+            // One read covers last week's waste number; burn and Use next keep their last day.
+            let burnStart = min(now, stored.snapshot.generatedAt).addingTimeInterval(-24 * 3_600)
+            let weeklyHistory = JSONSnapshotStore(rootDirectory: snapshotDirectory).loadHistory(
+                query: SnapshotStoreQuery(since: min(burnStart, UnusedCapacityHistory.historyStart(now: now)))
             )
+            let history = Array(weeklyHistory.lazy.filter { $0.savedAt >= burnStart }.prefix(2_000))
             return Self(configuration: configuration, stored: stored, history: history, now: now, sharedDocument: shared,
-                        receipts: LaunchReceiptStore.load(rootDirectory: rootDirectory, now: now))
+                        receipts: LaunchReceiptStore.load(rootDirectory: rootDirectory, now: now), weeklyHistory: weeklyHistory)
         } catch let error as AgentAccountSnapshotReadError {
             throw error
         } catch {

@@ -140,6 +140,14 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         return Self(availableCount: remaining, observedAt: observedAt, coverage: coverage, knownExpiries: future,
                     unrecognizedKindCount: unrecognizedKindCount)
     }
+
+    /// From this reading to `new` at `now`: how many resets left by expiring, and whether any left another way (applied).
+    /// A count that rose, or fell only by resets whose expiry passed, spent nothing.
+    public func change(to new: Self, at now: Date) -> (expired: Int, spent: Bool) {
+        let carried = presented(at: now)
+        let expired = min(availableCount - carried.availableCount, max(0, availableCount - new.availableCount))
+        return (expired, new.availableCount < carried.availableCount)
+    }
 }
 
 public extension Collection where Element == StoredProviderReport {
@@ -157,11 +165,14 @@ public struct ProviderUsageCreditSummary: Codable, Equatable, Sendable {
     public let hasCredits: Bool
     public let unlimited: Bool
     public let balance: Double?
+    /// When the balance expires. No adapter reports one yet, so unused credits are never counted as expired (#1080).
+    public let expiresAt: Date?
 
-    public init(hasCredits: Bool, unlimited: Bool, balance: Double?) {
+    public init(hasCredits: Bool, unlimited: Bool, balance: Double?, expiresAt: Date? = nil) {
         self.hasCredits = hasCredits
         self.unlimited = unlimited
         self.balance = balance.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        self.expiresAt = expiresAt
     }
 }
 

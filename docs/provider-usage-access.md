@@ -792,6 +792,21 @@ weekly window's own `burn`, not changes in the headline. The headline label is n
 without a limiting window. These are additive schema 1 fields; older readers
 retain all existing fields, and consumers of older snapshots treat missing
 fields as unknown.
+Each `providers` entry has an additive schema 1 `unusedCapacity` object (#1080),
+read from saved history since the start of last calendar week in this Mac's
+calendar. `lastWeek` and `thisWeek` each give `start`, `end`,
+`quotaPointsRefilledUnused` (the weekly percent each account still had when its
+week refilled at its reset or in a provider-wide refill, summed across accounts;
+a banked reset applied early is not counted), `refills`,
+`bankedResetsExpiredUnused` (banked resets whose count dropped at their expiry,
+not by being applied), `usageCreditsExpiredUnused` and `readings` (zero means no
+saved readings, so the week is unknown, not clean). Usage credits count as expired
+only at an expiry a provider reports; none reports one today, so that field is
+absent and `usageCreditsLeft` gives the newest balance across the provider's
+accounts with no expiry claim. `lastWeekLine`, `thisWeekLine` and
+`usageCreditsLine` are the sentences the app's provider view shows, for example
+"Last week: OpenAI let 85 points refill unused; 1 banked reset expired unused."
+`unusedCapacity` is absent when saved history was not read.
 `answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
 account ID per provider: the first entry of that provider's `ranking` (see

@@ -46,7 +46,7 @@ public enum ProviderRefillDetector {
             // A banked reset that expired between the readings was not spent; one granted is not spent either.
             let spent = switch (oldBanked, newBanked) {
             case (nil, nil): false
-            case let (old?, new?): new.availableCount < old.presented(at: current.savedAt).availableCount
+            case let (old?, new?): old.change(to: new, at: current.savedAt).spent
             default: true
             }
             guard !spent, let newUsed = new.used, newUsed < oldUsed,
@@ -74,7 +74,7 @@ public enum ProviderRefillDetector {
         }
     }
 
-    private static func banked(provider: Provider, accountID: String, reading: StoredUsageSnapshot) -> ProviderResetCreditSummary? {
+    static func banked(provider: Provider, accountID: String, reading: StoredUsageSnapshot) -> ProviderResetCreditSummary? {
         reading.reports.first { $0.provider == provider && $0.accountID == accountID }?.resetCredits
     }
 

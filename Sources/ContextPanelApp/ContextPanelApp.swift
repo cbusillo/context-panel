@@ -4175,6 +4175,9 @@ struct ProviderDashboard: View {
                     openDeadlines: { model.navigate(to: .deadlines) }
                 )
                 providerHistoryLinks
+                if let unused = model.unusedCapacity.first(where: { $0.provider == provider }) {
+                    unusedCapacitySection(unused)
+                }
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
                 if model.storeStatus != .healthy {
                     TagLabel(model.storeStatus.previewStatusText.capitalized)
@@ -4184,9 +4187,22 @@ struct ProviderDashboard: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(CPTheme.background)
+        .task(id: Int(now.timeIntervalSinceReferenceDate / 1_800)) { model.refreshUnusedCapacity(now: now) }
         .sheet(item: $selectedLimit) { summary in
             MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
                 .frame(minWidth: 700, minHeight: 600)
+        }
+    }
+
+    private func unusedCapacitySection(_ unused: ProviderUnusedCapacity) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(title: "Unused capacity")
+            ForEach([unused.lastWeekLine, unused.thisWeekLine] + [unused.usageCreditsLine].compactMap { $0 }, id: \.self) { line in
+                Text(line)
+                    .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -5450,6 +5466,8 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
     @Published private(set) var accountBurnRates: [String: [String: ObservedBurnRate]] = [:]
     @Published private(set) var launchEvidence: UseNextEvidence?
+    @Published private(set) var unusedCapacity: [ProviderUnusedCapacity] = []
+    private var unusedCapacityReadAt: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
@@ -5854,6 +5872,21 @@ final class ContextPanelAppModel: ObservableObject {
                 self?.observedBurnRates = rates
                 self?.accountBurnRates = accountRates
             }
+        }
+    }
+
+    /// Last week's and this week's unused capacity from saved history (#1080), read at most every 30 minutes.
+    func refreshUnusedCapacity(now: Date = Date()) {
+        if let readAt = unusedCapacityReadAt, now.timeIntervalSince(readAt) < 30 * 60 { return }
+        unusedCapacityReadAt = now
+        let refreshService = refreshService
+        let configuration = configuredAccounts
+        let publisherID = configuredPublisherID
+        Task.detached(priority: .utility) { [weak self] in
+            let history = refreshService.loadHistory(query: SnapshotStoreQuery(since: UnusedCapacityHistory.historyStart(now: now)))
+            let summaries = UnusedCapacityHistory.summaries(readings: history, configuration: configuration,
+                                                            publisherID: publisherID, now: now)
+            await MainActor.run { self?.unusedCapacity = summaries }
         }
     }
 
