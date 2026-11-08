@@ -6,6 +6,8 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
     public let snapshot: UsageSnapshot
     public let reports: [StoredProviderReport]
     public let promptCacheObservations: [PromptCacheObservation]
+    /// The refresh pass's latest unused-capacity numbers (#1080). Only the current snapshot keeps them; history files omit them.
+    public var unusedCapacity: StoredUnusedCapacity?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -13,6 +15,7 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
         case snapshot
         case reports
         case promptCacheObservations
+        case unusedCapacity
     }
 
     public init(
@@ -48,6 +51,7 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
             [PromptCacheObservation].self,
             forKey: .promptCacheObservations
         ) ?? []
+        unusedCapacity = try container.decodeIfPresent(StoredUnusedCapacity.self, forKey: .unusedCapacity)
     }
 
     private static func normalizedReports(
@@ -812,8 +816,17 @@ public struct JSONSnapshotStore: Sendable {
         try ensureDirectories()
         let data = try Self.makeEncoder().encode(storedSnapshot)
         try data.write(to: currentSnapshotURL, options: [.atomic])
-        let historyURL = historyURL(for: storedSnapshot.savedAt)
-        try data.write(to: historyURL, options: [.atomic])
+        var reading = storedSnapshot
+        reading.unusedCapacity = nil
+        try (reading == storedSnapshot ? data : Self.makeEncoder().encode(reading))
+            .write(to: historyURL(for: storedSnapshot.savedAt), options: [.atomic])
+    }
+
+    /// Replaces only the current snapshot, for values derived from history that must not become a history reading.
+    public func saveCurrent(unusedCapacity: StoredUnusedCapacity) throws {
+        guard var current = loadCurrent().snapshot else { return }
+        current.unusedCapacity = unusedCapacity
+        try Self.makeEncoder().encode(current).write(to: currentSnapshotURL, options: [.atomic])
     }
 
     public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) throws {
@@ -994,14 +1007,17 @@ public struct JSONSnapshotStore: Sendable {
                 && !refreshResult.promptCacheObservations.contains { refreshed in refreshed.id == observation.id }
         } ?? []
 
-        try save(StoredUsageSnapshot(
+        var merged = StoredUsageSnapshot(
             savedAt: savedAt,
             snapshot: mergedSnapshot,
             reports: mergedReports,
             promptCacheObservations: (refreshResult.promptCacheObservations + preservedPromptCacheObservations)
                 .filter { savedAt.timeIntervalSince($0.observedAt) <= PromptCacheSummary.defaultMaximumAge }
                 .deduplicatedPromptCacheObservations()
-        ))
+        )
+        // Carried until the refresh pass recomputes it, so a save between passes doesn't drop it.
+        merged.unusedCapacity = current?.unusedCapacity
+        try save(merged)
     }
 
     private static func legacyGoogleDefaultAccountIDs(in snapshot: StoredUsageSnapshot?) -> Set<String> {

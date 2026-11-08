@@ -851,7 +851,7 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
-        let storedResult = stores.primary.loadCurrent()
+        let storedResult = refreshingUnusedCapacity(stores.primary.loadCurrent(), now: savedAt)
         if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
             // Local widget reads must not wait for companion network work.
@@ -891,6 +891,21 @@ public struct SnapshotRefreshService: Sendable {
         )
     }
 
+    /// The background unused-capacity pass (#1080): at most every 30 minutes, read history since last week and keep the
+    /// result with the current snapshot, so the agent snapshot and the app read it without scanning history.
+    private func refreshingUnusedCapacity(_ result: SnapshotStoreLoadResult, now: Date) -> SnapshotStoreLoadResult {
+        guard var stored = result.snapshot, stored.unusedCapacity?.isCurrent(at: now) != true else { return result }
+        let document = (try? Data(contentsOf: accountStore.configurationURL)).flatMap {
+            try? JSONDecoder.contextPanelISO8601.decode(AccountConfigurationDocument.self, from: $0)
+        }
+        let history = stores.primary.loadHistory(query: SnapshotStoreQuery(since: UnusedCapacityHistory.historyStart(now: now)))
+        let unused = StoredUnusedCapacity(computedAt: now, providers: UnusedCapacityHistory.summaries(
+            readings: history + [stored], configuration: document?.accounts ?? [], publisherID: document?.publisherID, now: now))
+        guard (try? stores.primary.saveCurrent(unusedCapacity: unused)) != nil else { return result }
+        stored.unusedCapacity = unused
+        return SnapshotStoreLoadResult(snapshot: stored, status: result.status, errorMessage: result.errorMessage)
+    }
+
     private func mirrorSnapshotToFallbackStores(_ storedSnapshot: StoredUsageSnapshot) {
         for mirror in stores.mirrors {
             try? mirror.save(storedSnapshot)
@@ -908,7 +923,7 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
-        let storedResult = stores.primary.loadCurrent()
+        let storedResult = refreshingUnusedCapacity(stores.primary.loadCurrent(), now: savedAt)
         if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
             if storedSnapshot != previousSnapshot { snapshotDidChange() }

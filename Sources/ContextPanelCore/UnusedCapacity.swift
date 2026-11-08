@@ -1,14 +1,18 @@
 import Foundation
 
-/// One calendar week of capacity that went unused, read from saved snapshot history (#1080). Nothing new is stored.
+/// One calendar week of capacity that went unused, read from saved snapshot history (#1080).
 public struct UnusedCapacityWeek: Codable, Equatable, Sendable {
     public let start: Date
     public let end: Date
-    /// Weekly quota still left when an account's week refilled, naturally or in a provider-wide refill,
-    /// in percent points summed across accounts. A banked reset applied early is not counted here.
-    public var quotaPointsRefilledUnused: Double = 0
-    /// Account refills seen, including those with nothing left.
-    public var refills = 0
+    /// Weekly quota still left when an account's week refilled at its normal reset, in percent points summed
+    /// across accounts. This is the burn the Supervisor acts on.
+    public var quotaPointsLeftAtReset: Double = 0
+    /// Account refills at a normal reset, including those with nothing left.
+    public var resetRefills = 0
+    /// Weekly quota still left when a provider-wide surprise refill landed early. Context, not a burn failure.
+    public var quotaPointsLeftAtSurpriseRefill: Double = 0
+    /// Provider-wide surprise refills seen; one refill reaches several accounts.
+    public var surpriseRefills = 0
     /// Banked resets whose count dropped at their expiry rather than by being applied.
     public var bankedResetsExpiredUnused = 0
     /// Usage credits that disappeared at a reported expiry. Null while no balance in the week has a known expiry.
@@ -22,12 +26,36 @@ public struct UnusedCapacityWeek: Codable, Equatable, Sendable {
     }
 }
 
+/// The newest unused-capacity pass, kept with the current saved snapshot so readers never scan history for it.
+public struct StoredUnusedCapacity: Codable, Equatable, Sendable {
+    /// The refresh pass recomputes after this long, or when a new week starts.
+    public static let maximumAge: TimeInterval = 30 * 60
+    public let computedAt: Date
+    public let providers: [ProviderUnusedCapacity]
+
+    public init(computedAt: Date, providers: [ProviderUnusedCapacity]) {
+        self.computedAt = computedAt
+        self.providers = providers
+    }
+
+    /// Still answers for `now`: computed recently enough and in the same week.
+    public func isCurrent(at now: Date, calendar: Calendar = .current) -> Bool {
+        let age = now.timeIntervalSince(computedAt)
+        return age >= 0 && age < Self.maximumAge && isSameWeek(as: now, calendar: calendar)
+    }
+
+    /// Safe to show at `now`: its "this week" is the week `now` falls in.
+    public func isSameWeek(as now: Date, calendar: Calendar = .current) -> Bool {
+        calendar.dateInterval(of: .weekOfYear, for: computedAt) == calendar.dateInterval(of: .weekOfYear, for: now)
+    }
+}
+
 /// A provider's unused capacity for last week and this week so far, in numbers and the words the app shows.
 public struct ProviderUnusedCapacity: Codable, Equatable, Sendable {
     public let provider: Provider
     public let lastWeek: UnusedCapacityWeek
     public let thisWeek: UnusedCapacityWeek
-    /// "Last week: OpenAI let 85 points refill unused; 1 banked reset expired unused."
+    /// "Last week: OpenAI let 60 points refill unused at its normal reset; a surprise refill came with 385 points still left."
     public let lastWeekLine: String
     public let thisWeekLine: String
     /// Usage credits left across the provider's accounts in the newest reading; null when none reports a balance.
@@ -84,7 +112,8 @@ public enum UnusedCapacityHistory {
                     resolve: ProviderRefillDetector.AccountResolver, into week: inout UnusedCapacityWeek) {
         week.readings += 1
         // Two logins on one account resolve to one ID and count once.
-        var left: [String: Double] = [:]
+        var atReset: [String: Double] = [:]
+        var atSurprise: [String: Double] = [:]
         let surprise = Set(ProviderRefillDetector.event(provider: provider, previous: previous, current: current,
                                                         resolve: resolve)?.accountIDs ?? [])
         let after = ProviderRefillDetector.mainLimits(provider: provider, reading: current)
@@ -93,12 +122,17 @@ public enum UnusedCapacityHistory {
                   let remaining = old.remainingCapacityRatio, let oldReset = old.resetsAt, let newReset = new.resetsAt,
                   newReset.timeIntervalSince(oldReset) >= ProviderRefillDetector.minimumResetJump else { continue }
             let id = resolve(new)
-            // A natural refill passed the old reset; a provider-wide one is the detector's. Anything else was a banked reset.
-            guard oldReset <= current.savedAt || surprise.contains(id) else { continue }
-            left[id] = max(left[id] ?? 0, remaining)
+            // A normal refill passed the old reset; a provider-wide one is the detector's. Anything else was a banked reset.
+            if oldReset <= current.savedAt {
+                atReset[id] = max(atReset[id] ?? 0, remaining)
+            } else if surprise.contains(id) {
+                atSurprise[id] = max(atSurprise[id] ?? 0, remaining)
+            }
         }
-        week.refills += left.count
-        week.quotaPointsRefilledUnused += left.values.reduce(0, +) * 100
+        week.resetRefills += atReset.count
+        week.quotaPointsLeftAtReset += atReset.values.reduce(0, +) * 100
+        week.surpriseRefills += atSurprise.isEmpty ? 0 : 1
+        week.quotaPointsLeftAtSurpriseRefill += atSurprise.values.reduce(0, +) * 100
 
         var expiredResets: [String: Int] = [:]
         var expiredCredits: [String: Double] = [:]
@@ -138,10 +172,17 @@ public enum UnusedCapacityHistory {
     static func line(_ lead: String, provider: Provider, week: UnusedCapacityWeek) -> String {
         let name = provider.accountDisplayName
         guard week.readings > 0 else { return "\(lead): no saved readings for \(name)." }
-        let points = AccountNumbers.percent(week.quotaPointsRefilledUnused / 100)
-        var parts = [week.quotaPointsRefilledUnused > 0
-            ? "\(name) let \(points) \(points == "1" ? "point" : "points") refill unused"
-            : "\(name) let nothing refill unused"]
+        func points(_ value: Double) -> String {
+            guard value > 0 else { return "nothing" }
+            let number = AccountNumbers.percent(value / 100)
+            return number + (number == "1" ? " point" : " points")
+        }
+        var parts = ["\(name) let \(points(week.quotaPointsLeftAtReset)) refill unused at its normal reset"]
+        if week.surpriseRefills > 0 {
+            let refills = week.surpriseRefills == 1 ? "a surprise refill" : "\(week.surpriseRefills) surprise refills"
+            let left = week.quotaPointsLeftAtSurpriseRefill > 0 ? points(week.quotaPointsLeftAtSurpriseRefill) + " still left" : "nothing left"
+            parts.append("\(refills) came with \(left)")
+        }
         if week.bankedResetsExpiredUnused > 0 {
             parts.append(AccountTerms.bankedResetCount(week.bankedResetsExpiredUnused) + " expired unused")
         }
