@@ -136,18 +136,26 @@ public struct AccountOverview: Equatable, Sendable {
     }
 
     /// Present shared-provider advice under the local report IDs used by provider diagnostics.
-    public func bankedAdviceByLocalAccountID(provider: Provider, stored: StoredUsageSnapshot,
-        configuration: [LocalProviderAccountConfiguration], publisherID: String?) -> [String: BankedAdvice] {
-        Dictionary(stored.reports.filter { $0.provider == provider }.compactMap { report in
-            let rawID = AccountDisplayMetadata.safeID(provider, report.accountID)
-            let sharedKey = stored.snapshot.limits.first { $0.provider == provider && $0.accountID == report.accountID }
-                .map { MacSharedAccountPresentation.accountKey(limit: $0, report: report,
-                    configuration: configuration, publisherID: publisherID) } ?? report.sharedAccountIdentity?.accountID
-            let sharedID = sharedKey.map { AccountDisplayMetadata.safeID(provider, $0) }
-            let account = accounts.first { $0.metadata.provider == provider && $0.id == sharedID }
-                ?? accounts.first { $0.metadata.provider == provider && $0.id == rawID }
-            return account?.bankedAdvice.map { (report.accountID, $0) }
-        }, uniquingKeysWith: { first, _ in first })
+    /// One account's limits and reports, from the presentation that built this overview.
+    /// Both join on the account's own ID, so usage and banked resets land in one row (#1077).
+    public struct Diagnostics: Equatable, Sendable {
+        public let snapshot: UsageSnapshot
+        public let reports: [StoredProviderReport]
+        /// Keyed by report account ID, for `BankedResetDeadlinesView`.
+        public let bankedAdvice: [String: BankedAdvice]
+
+        public init(account: Account, snapshot: UsageSnapshot, reports: [StoredProviderReport]) {
+            func isOwned(_ provider: Provider, _ id: String) -> Bool {
+                provider == account.metadata.provider && AccountDisplayMetadata.safeID(provider, id) == account.id
+            }
+            self.snapshot = UsageSnapshot(generatedAt: snapshot.generatedAt,
+                limits: snapshot.limits.filter { isOwned($0.provider, $0.accountID) })
+            let owned = reports.filter { isOwned($0.provider, $0.accountID) }
+            self.reports = owned
+            bankedAdvice = account.bankedAdvice.map { advice in
+                Dictionary(owned.map { ($0.accountID, advice) }, uniquingKeysWith: { first, _ in first })
+            } ?? [:]
+        }
     }
 
     /// A provider page uses the same observations, forecasts and expiry ordering as All Accounts.

@@ -316,6 +316,43 @@ import ContextPanelTVSupport
     })
 }
 
+/// #1077: the shared presentation renames accounts, so usage and banked resets must come from it together.
+@Test func accountPageDiagnosticsShowOneRowForTheSelectedAccount() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let names = ["first", "second"]
+    let configuration = AccountConfigurationDocument(updatedAt: now, accounts: names.map {
+        LocalProviderAccountConfiguration(id: $0, provider: .openAI, connectorKind: .codexRateLimits,
+            displayName: $0, authPath: "/not/read/\($0)")
+    }, publisherID: "test-publisher")
+    let stored = StoredUsageSnapshot(savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: names.map {
+            UsageLimit(provider: .openAI, accountID: $0, configuredAccountID: $0, accountName: $0,
+                label: "Codex Weekly", windowLabel: "Weekly", modelLabel: "Codex", unit: .percent, used: 40, limit: 100,
+                resetsAt: now.addingTimeInterval(86_400), lastUpdatedAt: now, confidence: .observed)
+        }),
+        reports: names.map {
+            StoredProviderReport(provider: .openAI, accountID: $0, configuredAccountID: $0, accountName: $0, generatedAt: now,
+                resetCredits: ProviderResetCreditSummary(availableCount: 1, observedAt: now, coverage: .complete,
+                    knownExpiries: [now.addingTimeInterval(2 * 86_400)]),
+                status: .healthy, errorMessage: nil)
+        })
+    let remote = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [])), publishedAt: now)
+    let shared = MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
+        publisherID: configuration.publisherID, remote: remote, accountIntentDocument: configuration, now: now)
+    let overview = shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge)
+    let selected = try #require(overview.accounts.first { $0.metadata.label == "first" })
+
+    let diagnostics = AccountOverview.Diagnostics(account: selected, snapshot: shared.usageSnapshot, reports: shared.reports)
+    let rows = OpenAIAccountLimitSummary.accounts(from: diagnostics.snapshot.mainLimitSummaries, reports: diagnostics.reports)
+
+    let row = try #require(rows.first)
+    #expect(rows.count == 1)
+    #expect(row.limit(for: .weekly) != nil)
+    #expect(diagnostics.reports.map(\.accountID) == [row.accountID])
+    #expect(diagnostics.reports.first?.resetCredits?.availableCount == 1)
+}
+
 @Test func openAIAccountPresentationKeepsResetCreditFailureVisibleAndFailed() throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let failureReport = StoredProviderReport(
