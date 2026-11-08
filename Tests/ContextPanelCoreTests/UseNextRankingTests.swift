@@ -781,13 +781,13 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
         let stored = StoredUsageSnapshot(savedAt: rankNow,
             snapshot: UsageSnapshot(generatedAt: rankNow, limits: fixtures.flatMap { $0.limits(now: rankNow) }),
             reports: fixtures.map { $0.report(now: rankNow) })
-        let adviceByAccountID = panel.bankedAdviceByLocalAccountID(provider: provider, stored: stored,
-            configuration: [], publisherID: nil)
         for fixture in fixtures {
             let report = fixture.report(now: rankNow)
+            let account = try #require(panel.accounts.first { $0.id == fixture.id })
+            let diagnostics = AccountOverview.Diagnostics(account: account, snapshot: stored.snapshot, reports: stored.reports)
             let deadlines = BankedResetDeadlinesView(reports: [report], limits: fixture.limits(now: rankNow),
-                presentationDate: rankNow, adviceByAccountID: adviceByAccountID)
-            let expected = panel.accounts.first { $0.id == fixture.id }?.bankedAdvice
+                presentationDate: rankNow, adviceByAccountID: diagnostics.bankedAdvice)
+            let expected = account.bankedAdvice
             #expect(deadlines.advice(for: report, now: rankNow)?.title == expected?.title)
             #expect(deadlines.advice(for: report, now: rankNow)?.detail == expected?.detail)
         }
@@ -816,13 +816,13 @@ func knownResetExpiryPrecedesUnknownExpiry(_ provider: Provider) {
         let panel = shared.accountOverview(now: rankNow, maximumAge: SnapshotFreshness.appMaximumAge)
         let selected = try #require(panel.accounts.first { $0.metadata.label == empty.name })
         #expect(selected.id != empty.id) // This fixture exercises the companion identity mapping.
-        let advice = panel.bankedAdviceByLocalAccountID(provider: provider, stored: stored, configuration: configuration.accounts,
-            publisherID: configuration.publisherID)
-        #expect(advice[empty.name] == selected.bankedAdvice)
-        #expect(advice[empty.name] != nil)
-        let deadlines = BankedResetDeadlinesView(reports: [empty.report(now: rankNow)], limits: empty.limits(now: rankNow),
-            presentationDate: rankNow, adviceByAccountID: advice)
-        #expect(deadlines.advice(for: empty.report(now: rankNow), now: rankNow)?.title == selected.bankedAdvice?.title)
+        let diagnostics = AccountOverview.Diagnostics(account: selected, snapshot: shared.usageSnapshot, reports: shared.reports)
+        let report = try #require(diagnostics.reports.first)
+        #expect(diagnostics.bankedAdvice[report.accountID] == selected.bankedAdvice)
+        #expect(selected.bankedAdvice != nil)
+        let deadlines = BankedResetDeadlinesView(reports: diagnostics.reports, limits: diagnostics.snapshot.limits,
+            presentationDate: rankNow, adviceByAccountID: diagnostics.bankedAdvice)
+        #expect(deadlines.advice(for: report, now: rankNow)?.title == selected.bankedAdvice?.title)
         let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow,
             sharedDocument: remote)
         let prompts = panel.accounts.compactMap(\.resetAssessment).filter(\.recommended)
