@@ -76,6 +76,15 @@ public struct CodexRateLimitSnapshot: Equatable, Identifiable, Sendable {
     public var displayName: String {
         limitName ?? (id == "codex" ? "Codex" : id)
     }
+
+    /// A used-up plan window that Codex still lets the account work past, because usage credits cover it.
+    /// Nil whenever Codex says usage is blocked, so a blocked account is never credit-backed.
+    public var creditBackedAccess: ProviderAccessState? {
+        let saturated = [primary, secondary].compactMap { $0 }.filter { $0.usedPercent >= 100 }
+        guard !saturated.isEmpty, !usageBlocked, let credits, credits.hasCredits || credits.unlimited else { return nil }
+        let resets = saturated.compactMap(\.resetsAt)
+        return ProviderAccessState(kind: .paidFallbackActive, resetsAt: resets.count == saturated.count ? resets.max() : nil)
+    }
 }
 
 public struct CodexModelAvailability: Equatable, Sendable {
@@ -476,6 +485,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 usageCredits: snapshots.first?.credits.map {
                     ProviderUsageCreditSummary(hasCredits: $0.hasCredits, unlimited: $0.unlimited, balance: $0.balance.flatMap(Double.init))
                 },
+                accessState: snapshots.first?.creditBackedAccess ?? .unknown,
                 legacyAccountID: legacyLocalAccountID,
                 sharedAccountIdentity: identity,
                 accountIdentityStatus: identityResolver == nil ? .resolutionNotEnabled : (material == nil ? .providerIdentityUnavailable : .waitingForSharedKey)

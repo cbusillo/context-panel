@@ -102,7 +102,12 @@ Codex client: a recognized `rate_limit_reached_type` (for example
 `rate_limit.allowed` false without usable credits blocks usage. An unknown
 reached type does not, and `limit_reached` is not used. The block is
 account-wide, so model-specific limits show Limited too. A blocked read with no
-windows at all has no limit to mark and stays Unknown.
+windows at all has no limit to mark and stays Unknown. When a Codex window is
+fully used but Codex does not block usage because usage credits cover it, the
+account's access state is the paid-fallback state Claude uses ("Plan limit
+reached; usage credits available"), with the used-up window's reset. A failed
+read keeps the usage credits read with the limits it keeps, and duplicate
+reports of one account keep the credits either of them read.
 
 ## OpenAI Reset Credits
 
@@ -850,10 +855,16 @@ percent of an account's main window, which is the general weekly window
 - **Exclusions,** each listed with its reason and, when known, `until`: not
   current, main window at 0, and the 5-hour gate (fewer than 5 points left in
   the 5-hour window, or its 5-hour burn would use the rest before it resets).
+  An OpenAI account whose used-up window Codex lets it work past on usage
+  credits is not excluded; it ranks in the usage-credits tier.
 - **Tier 1:** unstarted OpenAI clocks (one starter launch each), then accounts
   with positive need. **Tier 2:** the use-last account above its cushion.
   **Tier 3:** when no account has positive need, the account that lasts longest
   first, and use-last only after the rest, while it is above its cushion.
+  **Tier 4 (`usageCredits`):** accounts working on usage credits take launches
+  only when no plan-quota account does, split evenly, and before the use-last
+  cushion; a use-last account on credits waits for the others' credits
+  ([#1078](https://github.com/cbusillo/context-panel/issues/1078)).
 - **Use last:** at most one per provider. Marking a second moves the mark and
   the panel says so; two in saved setup report `multipleUseLast:<provider>` in
   `configurationErrors`, and ranking then ignores use-last for that provider.
@@ -902,8 +913,12 @@ percent of an account's main window, which is the general weekly window
   is counted in `unrecognizedKindCount` and never valued or prompted.
   Context Panel never applies a reset.
 - **Provider-wide refills:** `providerRefills` lists times in the loaded
-  history when two or more of a provider's accounts refilled between the same
-  two readings, before their resets and with no banked reset spent. Burn
+  history when a provider's accounts refilled between the same two readings,
+  however far apart, before their resets and with no banked reset spent. A
+  refill can show only on accounts that had used quota: two or more refilled,
+  or the only used account refilled while the others were unused and its banked
+  count is known. A banked count that rose, or fell only by resets that expired
+  between the readings, is not a spent reset. Burn
   already treats a moved reset time as a new window, so a refill never counts
   as use.
 

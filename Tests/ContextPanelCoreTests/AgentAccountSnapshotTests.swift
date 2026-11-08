@@ -362,3 +362,33 @@ func agentSnapshotDoesNotOfferBurnForOldOrFutureObservations(offset: TimeInterva
     #expect(a.runOut != nil)
     #expect(export.answers.closestAccountID == overview.closest?.id)
 }
+
+@Test func agentSnapshotExportsUsageCreditsForSharedRowsWithAndWithoutAccountIdentity() throws {
+    let credits = ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: 100)
+    // Without an account identity, shared presentation still publishes the row; its credits come with it.
+    let plain = agentConfiguration("plain")
+    let plainStored = StoredUsageSnapshot(savedAt: agentNow,
+        snapshot: UsageSnapshot(generatedAt: agentNow, limits: [agentLimit(plain.id, used: 20, at: agentNow)]),
+        reports: [StoredProviderReport(provider: .openAI, accountID: plain.id, configuredAccountID: plain.id,
+            accountName: "Ignored", generatedAt: agentNow, usageCredits: credits, status: .healthy, errorMessage: nil)])
+    let document = CompanionSyncDocument(snapshot: CompanionSnapshot(storedSnapshot: plainStored,
+        configuration: [plain], publisherID: "fixture"))
+    let shared = AgentAccountSnapshot(configuration: AccountConfigurationDocument(updatedAt: agentNow, accounts: [plain]),
+        stored: plainStored, history: [], now: agentNow, sharedDocument: document)
+    #expect(shared.accounts.map(\.usageCredits) == [credits])
+
+    let key = ProviderAccountIdentityKey.generate()
+    let material = try #require(ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID, identifier: "account-a"))
+    let identity = key.identity(for: material)
+    let identified = agentConfiguration("identified")
+    let identifiedStored = StoredUsageSnapshot(savedAt: agentNow,
+        snapshot: UsageSnapshot(generatedAt: agentNow, limits: [UsageLimit(provider: .openAI, accountID: identity.accountID,
+            configuredAccountID: identified.id, accountName: "Ignored", label: "Weekly", windowLabel: "Weekly", unit: .percent,
+            used: 30, limit: 100, resetsAt: agentNow.addingTimeInterval(86_400), lastUpdatedAt: agentNow)]),
+        reports: [StoredProviderReport(provider: .openAI, accountID: identity.accountID, configuredAccountID: identified.id,
+            accountName: "Ignored", generatedAt: agentNow, usageCredits: credits, status: .healthy, errorMessage: nil,
+            sharedAccountIdentity: identity)])
+    let withIdentity = AgentAccountSnapshot(configuration: AccountConfigurationDocument(updatedAt: agentNow, accounts: [identified]),
+        stored: identifiedStored, history: [], now: agentNow)
+    #expect(withIdentity.accounts.map(\.usageCredits) == [credits])
+}

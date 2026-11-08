@@ -40,6 +40,45 @@ import Testing
     #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["account-a", "account-b"])
 }
 
+@Test func duplicateReportsKeepUsageCreditsFromEitherSource() async {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let credits = ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: 60_000)
+    let limit = UsageLimit(provider: .openAI, accountID: "openai-a", accountName: "A", label: "Codex Weekly",
+                           windowLabel: "Weekly", unit: .percent, used: 40, limit: 100, lastUpdatedAt: now)
+    let withLimits = ProviderConnectorReport(provider: .openAI, accountID: "openai-a", accountName: "A",
+                                             generatedAt: now, limits: [limit])
+    let withCredits = ProviderConnectorReport(provider: .openAI, accountID: "openai-a", accountName: "A",
+                                              generatedAt: now, limits: [], usageCredits: credits, status: .failure)
+    for order in [[withLimits, withCredits], [withCredits, withLimits]] {
+        let result = await ProviderConnectorRuntime(connectors: order.map { StubConnector(provider: .openAI, report: $0) })
+            .refreshAll(now: now)
+        #expect(result.reports.count == 1)
+        #expect(result.reports.first?.usageCredits == credits)
+    }
+}
+
+@Test func codexAccountPastItsPlanQuotaIsCreditBackedOnlyWhenCodexAllowsIt() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func access(allowed: Bool, hasCredits: Bool, reached: String = "") async throws -> ProviderAccessState {
+        let usage = Data("""
+        {"plan_type":"pro","rate_limit":{"allowed":\(allowed),"limit_reached":true,
+          "primary_window":{"used_percent":30,"limit_window_seconds":18000,"reset_at":1800003600},
+          "secondary_window":{"used_percent":100,"limit_window_seconds":604800,"reset_at":1800200000}},
+         "credits":{"has_credits":\(hasCredits),"unlimited":false,"balance":"60000"}\(reached)}
+        """.utf8)
+        let connector = CodexRateLimitConnector(
+            accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+            httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)]),
+            fileLoader: { _ in Data(#"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.utf8) })
+        return try #require(await connector.refresh(now: now).reports.first).accessState
+    }
+    #expect(try await access(allowed: false, hasCredits: true)
+        == ProviderAccessState(kind: .paidFallbackActive, resetsAt: Date(timeIntervalSince1970: 1_800_200_000)))
+    #expect(try await access(allowed: false, hasCredits: false).kind != .paidFallbackActive)
+    #expect(try await access(allowed: false, hasCredits: true,
+        reached: #","rate_limit_reached_type":{"type":"workspace_member_usage_limit_reached"}"#).kind != .paidFallbackActive)
+}
+
 @Test func codexResetCreditsUseOnlySiblingGETDetailsEndpoint() async throws {
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 4, applicable: 2)),

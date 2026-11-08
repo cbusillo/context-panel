@@ -218,6 +218,24 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         )
     }
 
+    func withUsageCredits(_ replacementUsageCredits: ProviderUsageCreditSummary?) -> StoredProviderReport {
+        StoredProviderReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            resetCredits: resetCredits,
+            usageCredits: replacementUsageCredits,
+            status: status,
+            accessState: accessState,
+            errorMessage: errorMessage,
+            legacyAccountID: legacyAccountID,
+            sharedAccountIdentity: sharedAccountIdentity,
+            accountIdentityStatus: accountIdentityStatus
+        )
+    }
+
     func withResetCredits(_ replacementResetCredits: ProviderResetCreditSummary?) -> StoredProviderReport {
         StoredProviderReport(
             provider: provider,
@@ -946,16 +964,17 @@ public struct JSONSnapshotStore: Sendable {
                     status: storedReport.status, accessState: storedReport.accessState, errorMessage: storedReport.errorMessage,
                     legacyAccountID: storedReport.legacyAccountID ?? prior.legacyAccountID, sharedAccountIdentity: prior.sharedAccountIdentity)
             }
-            let previousResetCredits = current?.reports.lazy
-                .filter { $0.provider == report.provider && $0.accountID == report.accountID }
-                .compactMap(\.resetCredits)
-                .reduce(nil as ProviderResetCreditSummary?, ProviderResetCreditSummary.preferred)
-            guard report.resetCredits == nil,
-                  let previousResetCredits
-            else {
-                return storedReport
+            let previous = current?.reports.filter { $0.provider == report.provider && $0.accountID == report.accountID } ?? []
+            if report.resetCredits == nil, let previousResetCredits = previous.compactMap(\.resetCredits)
+                .reduce(nil as ProviderResetCreditSummary?, ProviderResetCreditSummary.preferred) {
+                storedReport = storedReport.withResetCredits(previousResetCredits.presented(at: savedAt))
             }
-            return storedReport.withResetCredits(previousResetCredits.presented(at: savedAt))
+            // A failed read keeps its last limits, so it keeps the usage credits read with them.
+            if report.status == .failure, report.limits.isEmpty, report.usageCredits == nil,
+               let previousUsageCredits = previous.lazy.compactMap(\.usageCredits).first {
+                storedReport = storedReport.withUsageCredits(previousUsageCredits)
+            }
+            return storedReport
         }
         let existingReportKeys = Set((preservedReports + refreshedReports).map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) })
         let failureLimitKeys = Set(preservedFailureLimits.map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) })
