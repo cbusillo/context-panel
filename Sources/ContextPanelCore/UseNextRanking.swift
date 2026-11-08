@@ -139,10 +139,10 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             .filter { LaunchReceiptStore.isUsable($0, now: now) }
         let times = (accountReadingTimes ?? [:]).merging(other.accountReadingTimes ?? [:]) { Array(Set($0 + $1)).sorted() }
             .mapValues { Array($0.sorted().suffix(2)) }
-        let heavy = Set((heavyProviders ?? []) + (other.heavyProviders ?? [])).sorted { $0.rawValue < $1.rawValue }
         return Self(receipts: receipts, readingTimes: Array(Set(readingTimes + other.readingTimes).sorted().suffix(2)),
             unstartedSince: unstartedSince.merging(other.unstartedSince) { _, newer in newer },
-            accountReadingTimes: times.isEmpty ? nil : times, heavyProviders: heavy.isEmpty ? nil : heavy)
+            // The newer call wins: an older heavy call must not outlive the refill that ended it.
+            accountReadingTimes: times.isEmpty ? nil : times, heavyProviders: other.heavyProviders ?? heavyProviders)
     }
 
     func reidentifyingAccounts(using aliases: [String: String]) -> Self {

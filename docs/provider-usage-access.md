@@ -916,12 +916,14 @@ percent of an account's main window, which is the general weekly window
     OpenAI's own page or an observed apply shows a different limit. At or above
     80% the reset shows as not applicable yet, with the reason. For such an
     account the expiring warning starts earlier by the time needed, at the
-    provider's pace, to get under 80%, and it says how much to use first.
+    provider's pace, to get under 80% (at most a week earlier, and a week when
+    the pace is zero or unknown), and it says how much to use first.
   - **Value:** an OpenAI reset starts a fresh 7-day week now. It is worth
     100 × days to the natural refill ÷ 7 − percent left, so at 0% it is worth
     applying while more than about a day of the week remains. A Claude reset
-    refills quota and keeps its end date. It is worth what the provider's pace
-    can still spend on that account before the end date, so it is advised
+    refills quota and keeps its end date. It is worth what the provider's measured pace
+    can still spend on that account before the end date (what one account can
+    spend when the pace is unknown), so it is advised
     only when enough of the week remains to use the refill. Claude resets are
     full weekly refills; a grant that doesn't clear the general weekly window
     (`seven_day`) is counted in `unrecognizedKindCount` and never valued or

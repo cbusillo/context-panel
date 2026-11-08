@@ -1217,6 +1217,23 @@ private func heavyWeek(burn: Double) -> [Fixture] {
     var claude = gated
     claude.provider = .anthropic
     #expect(overview([claude]).accounts.first?.resetAssessment?.notYetApplicable == false)
+    // At a tenth of a point an hour, 90% left needs about 110 hours, so a reset 120 hours out already warns.
+    let slow = Fixture(name: "slow", weeklyUsed: 10, resetHours: 160, burn: 0.1, bankedExpiryHours: [120])
+    #expect(overview([slow]).accounts.first?.resetAssessment?.trigger == .expiring)
+}
+
+@Test func claudeRefillIsValuedAtAMeasuredIdlePace() throws {
+    let idle = Fixture(name: "idle", provider: .anthropic, weeklyUsed: 80, resetHours: 48, burn: 0, bankedExpiryHours: [20])
+    #expect(overview([idle]).accounts.first?.resetAssessment?.recommended == false)
+    var unmeasured = idle
+    unmeasured.burn = nil
+    #expect(overview([unmeasured]).accounts.first?.resetAssessment?.recommended == true)
+}
+
+@Test func newerLaunchEvidenceEndsAnOlderHeavyCall() {
+    let older = UseNextEvidence(heavyProviders: [.openAI])
+    #expect(older.merging(UseNextEvidence(heavyProviders: []), now: rankNow).heavyProviders == [])
+    #expect(older.merging(UseNextEvidence(), now: rankNow).heavyProviders == [.openAI])
 }
 
 @Test func openAIResetStartsAFreshWeekWhileClaudeNeedsTimeToUseItsRefill() throws {

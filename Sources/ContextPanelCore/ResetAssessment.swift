@@ -12,12 +12,15 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
     public let refillsUnused: Double
     /// The provider's measured pace, in points per hour.
     public let pacePerHour: Double
+    /// At least one account's pace was measured; otherwise the pace is unknown and counts as zero.
+    public let paceMeasured: Bool
 
     /// A heavy call needs every point used even at this share of the measured pace.
     static let heavyPaceShare = 0.8
     /// A heavy call ends only when points would lapse even at this multiple of the measured pace.
     static let slowPaceMultiple = 1.25
     static let usedUpPoints = 0.5
+    static let recentReplay: TimeInterval = 2 * 3_600
 
     /// Nil when the provider has no account with a current weekly reading.
     /// Any connected account without one leaves the week slow: it may hold quota nobody can see.
@@ -28,6 +31,7 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         var complete = true
         var lanes: [(remaining: Double, hours: Double)] = []
         var pace = 0.0
+        var measured = false
         for account in members {
             guard [.available, .closeToLimit, .limited].contains(account.state), let main = account.mainWindow, main.isCurrent,
                   let fraction = main.remainingFraction else { complete = false; continue }
@@ -37,12 +41,13 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
             guard let hours else { complete = false; continue }
             lanes.append((fraction * 100, hours))
             pace += main.burnPoints ?? 0
+            measured = measured || main.burnPoints != nil
         }
         guard !lanes.isEmpty else { return nil }
         let runsOut = { (share: Double) in unused(lanes, pace: pace * share) < usedUpPoints }
         return Self(provider: provider,
                     runsOutBeforeRefill: complete && (runsOut(heavyPaceShare) || wasHeavy && runsOut(slowPaceMultiple)),
-                    refillsUnused: unused(lanes, pace: pace), pacePerHour: pace)
+                    refillsUnused: unused(lanes, pace: pace), pacePerHour: pace, paceMeasured: measured)
     }
 
     /// The least that can lapse: the whole pace goes to the account that refills first, then the next.
@@ -57,17 +62,18 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         return unused
     }
 
-    /// Replays the sticky call over saved readings, one per hour, ending at the newest (#1079).
-    /// A refill of any of the provider's accounts ends a heavy call; the next reading judges afresh.
+    /// Replays the sticky call over saved readings, ending at the newest (#1079): every reading of the last two hours,
+    /// so a call made at one refresh holds at the next, and the first reading of each clock hour before that, so the
+    /// same readings replay on every refresh. A refill of any of the provider's accounts ends a heavy call; the next
+    /// reading judges afresh. Memory reaches back as far as the saved readings, about a day.
     static func heavyProviders(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration]) -> [Provider] {
         let ordered = readings.sorted { $0.savedAt < $1.savedAt }
         guard let newest = ordered.last else { return [] }
-        var samples: [StoredUsageSnapshot] = []
-        for reading in ordered.dropLast() where samples.last.map({ reading.savedAt.timeIntervalSince($0.savedAt) >= 3_600 }) ?? true
-            && newest.savedAt.timeIntervalSince(reading.savedAt) >= 3_600 {
-            samples.append(reading)
+        var hours = Set<Int>()
+        let samples = ordered.filter { reading in
+            newest.savedAt.timeIntervalSince(reading.savedAt) <= recentReplay
+                || hours.insert(Int(reading.savedAt.timeIntervalSince1970 / 3_600)).inserted
         }
-        samples.append(newest)
         var heavy = Set<Provider>()
         var previous: StoredUsageSnapshot?
         for sample in samples {
@@ -167,8 +173,8 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     static let claudeDefaultRate = 3.8
     /// Director decision on #1074 (Nov 8, 2026): OpenAI won't apply a reset at or above this much weekly quota left.
     static let openAIApplicableBelow: Double = 80
-    /// The slowest pace the early warning plans for, in points per hour.
-    static let slowestWarningPace: Double = 1
+    /// The expiring warning never starts more than this long before the time it needs, even at no pace.
+    static let longestUseFirstLead: TimeInterval = 7 * 24 * 3_600
 
     public static func assessments(for accounts: [AccountOverview.Account], forecasts: [Provider: ProviderPaceForecast],
                                    now: Date) -> [String: Self] {
@@ -205,12 +211,12 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let unrecognized = provider == .anthropic && banked.unrecognizedKindCount > 0
         let gated = provider == .openAI && left >= Self.openAIApplicableBelow
         let toUseFirst = gated ? left - Self.openAIApplicableBelow + 1 : 0
-        let lead = Self.expiringWithin + toUseFirst / max(pace, Self.slowestWarningPace) * 3_600
+        let lead = Self.expiringWithin + (pace > 0 ? min(Self.longestUseFirstLead, toUseFirst / pace * 3_600) : toUseFirst > 0 ? Self.longestUseFirstLead : 0)
         let warnFrom = soonest.map { $0.addingTimeInterval(-lead) }
         let trigger: Trigger = heavy && left <= 0 ? .outOfQuota : warnFrom.map { now >= $0 } == true ? .expiring : .notNeeded
-        let claudeSpendRate = provider == .anthropic
-            ? pace > 0 ? min(pace, Self.claudeRate(main: main, gate: account.fiveHourGate)) : Self.claudeRate(main: main, gate: account.fiveHourGate)
-            : nil
+        // Claude's refill is valued at the measured pace, capped by what one account can spend; an unmeasured pace uses the cap.
+        let claudeCap = Self.claudeRate(main: main, gate: account.fiveHourGate)
+        let claudeSpendRate = provider == .anthropic ? forecast?.paceMeasured == true ? min(pace, claudeCap) : claudeCap : nil
 
         let value: Double?
         let reasoning: String
