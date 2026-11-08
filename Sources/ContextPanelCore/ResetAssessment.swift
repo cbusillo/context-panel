@@ -71,12 +71,21 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         return carried.filter { !refilled.contains($0) }
     }
 
-    /// A weekly window that moved its reset later or gave back used quota: a natural reset or an applied banked reset.
+    /// A general weekly window (the one the forecast reads) that moved its reset later or gave back used quota:
+    /// a natural reset or an applied banked reset. A 5-hour or model-only refill is not one.
     static func refilledProviders(from previous: StoredUsageSnapshot, to current: StoredUsageSnapshot) -> Set<Provider> {
-        let before = Dictionary(previous.snapshot.limits.filter(\.isAccountCapacityLimit).map { ("\($0.provider.rawValue):\($0.accountID):\($0.id)", $0) },
-                                uniquingKeysWith: { first, _ in first })
-        return Set(current.snapshot.limits.filter(\.isAccountCapacityLimit).compactMap { limit in
-            guard let old = before["\(limit.provider.rawValue):\(limit.accountID):\(limit.id)"] else { return nil }
+        func mains(_ reading: StoredUsageSnapshot) -> [String: UsageLimit] {
+            let byAccount = Dictionary(grouping: reading.snapshot.limits.filter(\.isAccountCapacityLimit)) { "\($0.provider.rawValue):\($0.accountID)" }
+            return byAccount.compactMapValues { limits in
+                limits.first.flatMap { first in
+                    UseNextRanking.main(of: limits, provider: first.provider, period: { MainLimitWindow.infer(from: $0) },
+                                        model: \.modelLabel, remaining: { $0.usageRatio.map { 1 - $0 } })
+                }
+            }
+        }
+        let before = mains(previous)
+        return Set(mains(current).compactMap { key, limit in
+            guard let old = before[key] else { return nil }
             var refilled = false
             if let oldReset = old.resetsAt, let newReset = limit.resetsAt {
                 refilled = newReset.timeIntervalSince(oldReset) >= ProviderRefillDetector.minimumResetJump

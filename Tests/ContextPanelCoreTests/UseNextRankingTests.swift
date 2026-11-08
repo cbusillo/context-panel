@@ -1195,6 +1195,18 @@ private func savedReading(_ at: Date, used: Int, heavy: [Provider]? = nil) -> St
     #expect(ProviderPaceForecast.heavyBefore(stored: savedReading(rankNow, used: 65, heavy: []), history: [previous]) == [])
     // Quota given back (a refill that keeps the end date) ends the carried call.
     #expect(ProviderPaceForecast.heavyBefore(stored: savedReading(rankNow, used: 0), history: [previous]) == [])
+    // A 5-hour window refilling does not end it.
+    func withFiveHour(_ reading: StoredUsageSnapshot, used: Int) -> StoredUsageSnapshot {
+        var copy = StoredUsageSnapshot(savedAt: reading.savedAt, snapshot: UsageSnapshot(generatedAt: reading.savedAt,
+            limits: reading.snapshot.limits + [UsageLimit(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a",
+                label: "Claude 5-hour", windowLabel: "5-hour", modelLabel: "Claude", unit: .percent, used: used, limit: 100,
+                resetsAt: reading.savedAt.addingTimeInterval(2 * hour), lastUpdatedAt: reading.savedAt, confidence: .observed)]),
+            reports: reading.reports)
+        copy.heavyProviders = reading.heavyProviders
+        return copy
+    }
+    #expect(ProviderPaceForecast.heavyBefore(stored: withFiveHour(savedReading(rankNow, used: 65), used: 0),
+                                             history: [withFiveHour(previous, used: 90)]) == [.anthropic])
     let evidence = UseNextEvidence.make(stored: savedReading(rankNow, used: 65), history: [previous], configuration: [],
                                         publisherID: nil, receipts: [], shared: false)
     #expect(evidence.heavyProviders == [.anthropic])
