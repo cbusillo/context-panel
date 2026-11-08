@@ -896,8 +896,10 @@ percent of an account's main window, which is the general weekly window
   every point must be used even at 80% of the measured pace. Once heavy, the
   call holds until one of the provider's accounts refills, or until pace clearly
   drops (points would lapse even at 125% of it), so it does not flip between
-  refreshes. The call is replayed over the saved readings of the last day, so
-  it survives relaunches and reaches companions with the launch evidence. Any
+  refreshes. Each saved reading records the call (`heavyProviders`), and a
+  reading saved without one inherits the previous reading's call unless an
+  account refilled in between, so it survives relaunches and reaches companions
+  with the launch evidence. Any
   connected account without a current weekly reading keeps the week slow, and
   calling a slow week heavy is the costlier mistake.
   - **Heavy week:** Use next drains one account at a time: the account whose

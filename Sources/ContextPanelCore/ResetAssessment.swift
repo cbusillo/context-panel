@@ -20,7 +20,6 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
     /// A heavy call ends only when points would lapse even at this multiple of the measured pace.
     static let slowPaceMultiple = 1.25
     static let usedUpPoints = 0.5
-    static let recentReplay: TimeInterval = 2 * 3_600
 
     /// Nil when the provider has no account with a current weekly reading.
     /// Any connected account without one leaves the week slow: it may hold quota nobody can see.
@@ -62,31 +61,14 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         return unused
     }
 
-    /// Replays the sticky call over saved readings, ending at the newest (#1079): every reading of the last two hours,
-    /// so a call made at one refresh holds at the next, and the first reading of each clock hour before that, so the
-    /// same readings replay on every refresh. A refill of any of the provider's accounts ends a heavy call; the next
-    /// reading judges afresh. Memory reaches back as far as the saved readings, about a day.
-    static func heavyProviders(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration]) -> [Provider] {
-        let ordered = readings.sorted { $0.savedAt < $1.savedAt }
-        guard let newest = ordered.last else { return [] }
-        var hours = Set<Int>()
-        let samples = ordered.filter { reading in
-            newest.savedAt.timeIntervalSince(reading.savedAt) <= recentReplay
-                || hours.insert(Int(reading.savedAt.timeIntervalSince1970 / 3_600)).inserted
-        }
-        var heavy = Set<Provider>()
-        var previous: StoredUsageSnapshot?
-        for sample in samples {
-            if let previous { heavy.subtract(refilledProviders(from: previous, to: sample)) }
-            let overview = AccountOverview(snapshot: sample.snapshot, reports: sample.reports,
-                metadata: configuration.isEmpty ? nil : AccountDisplayMetadata.local(configuration: configuration, stored: sample, now: sample.savedAt),
-                now: sample.savedAt,
-                accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: sample.snapshot, history: ordered, now: sample.savedAt),
-                launchEvidence: UseNextEvidence(heavyProviders: heavy.sorted { $0.rawValue < $1.rawValue }))
-            heavy = Set(Provider.allCases.filter { overview.paceForecast(provider: $0)?.runsOutBeforeRefill == true })
-            previous = sample
-        }
-        return heavy.sorted { $0.rawValue < $1.rawValue }
+    /// The heavy call carried into the newest reading (#1079): the call saved with it, or else the previous
+    /// reading's call, ended for any provider whose accounts refilled in between.
+    static func heavyBefore(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot]) -> [Provider] {
+        if let saved = stored.heavyProviders { return saved }
+        guard let previous = history.filter({ $0.savedAt < stored.savedAt }).max(by: { $0.savedAt < $1.savedAt }),
+              let carried = previous.heavyProviders else { return [] }
+        let refilled = refilledProviders(from: previous, to: stored)
+        return carried.filter { !refilled.contains($0) }
     }
 
     /// A weekly window that moved its reset later or gave back used quota: a natural reset or an applied banked reset.

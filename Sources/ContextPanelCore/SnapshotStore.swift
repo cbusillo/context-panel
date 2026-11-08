@@ -6,6 +6,8 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
     public let snapshot: UsageSnapshot
     public let reports: [StoredProviderReport]
     public let promptCacheObservations: [PromptCacheObservation]
+    /// Providers in a heavy week when this reading was saved (#1079): the sticky call carried to the next reading.
+    public var heavyProviders: [Provider]?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -13,6 +15,7 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
         case snapshot
         case reports
         case promptCacheObservations
+        case heavyProviders
     }
 
     public init(
@@ -48,6 +51,7 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
             [PromptCacheObservation].self,
             forKey: .promptCacheObservations
         ) ?? []
+        heavyProviders = try container.decodeIfPresent([Provider].self, forKey: .heavyProviders)
     }
 
     private static func normalizedReports(

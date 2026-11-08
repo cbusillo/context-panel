@@ -61,7 +61,7 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
     /// For an unstarted OpenAI account, the first reading in the current unstarted run.
     public var unstartedSince: [String: Date]
     public var accountReadingTimes: [String: [Date]]?
-    /// Providers whose saved readings ended in a heavy week (#1079), so the call stays sticky across refreshes.
+    /// Providers whose saved readings carry a heavy week (#1079), so the call stays sticky across refreshes.
     public var heavyProviders: [Provider]?
 
     public init(receipts: [LaunchReceipt] = [], readingTimes: [Date] = [], unstartedSince: [String: Date] = [:],
@@ -101,7 +101,7 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         return Self(receipts: receipts, readingTimes: Array(Set(readings.map(\.savedAt)).sorted().suffix(2)),
             unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve),
             accountReadingTimes: accountTimes,
-            heavyProviders: ProviderPaceForecast.heavyProviders(readings: readings, configuration: configuration))
+            heavyProviders: ProviderPaceForecast.heavyBefore(stored: stored, history: history))
     }
 
     static func accountResolver(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration],

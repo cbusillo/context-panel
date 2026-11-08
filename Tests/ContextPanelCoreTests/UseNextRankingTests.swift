@@ -1177,28 +1177,47 @@ private func heavyWeek(burn: Double) -> [Fixture] {
     #expect(!call(pace: 1.05, heavyBefore: false))
 }
 
-@Test func savedReadingsCarryTheHeavyCallAndARefillEndsIt() throws {
-    let start = rankNow.addingTimeInterval(-6 * hour)
-    let reset = rankNow.addingTimeInterval(24 * hour)
-    func reading(_ at: Date, used: Int) -> StoredUsageSnapshot {
-        StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: [UsageLimit(provider: .anthropic,
-            accountID: "a", configuredAccountID: "a", accountName: "a", label: "Claude Weekly", windowLabel: "Weekly",
-            modelLabel: "Claude", unit: .percent, used: used, limit: 100, resetsAt: reset, lastUpdatedAt: at, confidence: .observed)]),
-            reports: [StoredProviderReport(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a",
-                generatedAt: at, status: .healthy, errorMessage: nil)])
+private func savedReading(_ at: Date, used: Int, heavy: [Provider]? = nil) -> StoredUsageSnapshot {
+    var reading = StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: [UsageLimit(provider: .anthropic,
+        accountID: "a", configuredAccountID: "a", accountName: "a", label: "Claude Weekly", windowLabel: "Weekly",
+        modelLabel: "Claude", unit: .percent, used: used, limit: 100, resetsAt: rankNow.addingTimeInterval(24 * hour),
+        lastUpdatedAt: at, confidence: .observed)]),
+        reports: [StoredProviderReport(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a",
+            generatedAt: at, status: .healthy, errorMessage: nil)])
+    reading.heavyProviders = heavy
+    return reading
+}
+
+@Test func savedReadingsCarryTheHeavyCallUntilARefill() {
+    let previous = savedReading(rankNow.addingTimeInterval(-hour), used: 60, heavy: [.anthropic])
+    // A newer reading without its own call inherits the previous one; one saved with a call keeps its own.
+    #expect(ProviderPaceForecast.heavyBefore(stored: savedReading(rankNow, used: 65), history: [previous]) == [.anthropic])
+    #expect(ProviderPaceForecast.heavyBefore(stored: savedReading(rankNow, used: 65, heavy: []), history: [previous]) == [])
+    // Quota given back (a refill that keeps the end date) ends the carried call.
+    #expect(ProviderPaceForecast.heavyBefore(stored: savedReading(rankNow, used: 0), history: [previous]) == [])
+    let evidence = UseNextEvidence.make(stored: savedReading(rankNow, used: 65), history: [previous], configuration: [],
+                                        publisherID: nil, receipts: [], shared: false)
+    #expect(evidence.heavyProviders == [.anthropic])
+}
+
+@Test func savingAReadingStampsTheHeavyCallForTheNextReader() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let snapshots = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))
+    let service = SnapshotRefreshService(accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        stores: SnapshotRefreshStores(primary: snapshots), connectorFactory: { _ in [] }, promptCacheTelemetryReader: { _ in [] })
+    func save(used: Int) async throws -> [Provider]? {
+        let limit = UsageLimit(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a", label: "Claude Weekly",
+            windowLabel: "Weekly", modelLabel: "Claude", unit: .percent, used: used, limit: 100,
+            resetsAt: rankNow.addingTimeInterval(24 * hour), lastUpdatedAt: rankNow, confidence: .observed)
+        _ = try await service.saveMergedAsync(refreshResult: ConnectorRefreshResult(generatedAt: rankNow, reports: [
+            ProviderConnectorReport(provider: .anthropic, accountID: "a", configuredAccountID: "a", accountName: "a",
+                                    generatedAt: rankNow, limits: [limit])]), savedAt: rankNow)
+        return snapshots.loadCurrent().snapshot?.heavyProviders
     }
-    // About five points an hour against 35 points left and a day to the refill: clearly heavy.
-    let readings = (0...12).map { step in reading(start.addingTimeInterval(Double(step) * 0.5 * hour), used: 35 + step * 5 / 2) }
-    #expect(ProviderPaceForecast.heavyProviders(readings: readings, configuration: []) == [.anthropic])
-    // A refill (quota back, same end date) puts the week near the line: only an earlier heavy call would hold it.
-    let refill = reading(rankNow.addingTimeInterval(0.5 * hour), used: 0)
-    let refilled = readings + [refill]
-    #expect(ProviderPaceForecast.refilledProviders(from: readings[readings.count - 1], to: refill) == [.anthropic])
-    let nearTheLine = AccountOverview(snapshot: refill.snapshot, reports: refill.reports, now: refill.savedAt,
-        accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: refill.snapshot, history: refilled, now: refill.savedAt),
-        launchEvidence: UseNextEvidence(heavyProviders: [.anthropic]))
-    #expect(nearTheLine.paceForecast(provider: .anthropic)?.runsOutBeforeRefill == true)
-    #expect(ProviderPaceForecast.heavyProviders(readings: refilled, configuration: []).isEmpty)
+    // An empty provider has run out: the saved reading says so. With quota left and no measured pace it does not.
+    #expect(try await save(used: 100) == [.anthropic])
+    #expect(try await save(used: 50) == [])
 }
 
 @Test func openAIResetIsNotApplicableAtEightyPercentLeftAndWarnsEarlyEnough() throws {
