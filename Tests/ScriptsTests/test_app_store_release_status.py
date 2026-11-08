@@ -265,6 +265,22 @@ class StoreReleaseStatusTests(unittest.TestCase):
         self.assertIsNone(results[0]["publicVersion"])
         self.assertEqual(len(client.writes), 1)
 
+    def test_closed_record_seen_live_ignores_a_later_unreadable_page(self) -> None:
+        def fail() -> str:
+            raise OSError("unavailable")
+
+        for seen_live, expected_writes in ((True, 0), (False, 1)):
+            with self.subTest(seen_live=seen_live):
+                client = FakeGitHub()
+                items = [issue(1, record(), "closed")]
+                if seen_live:
+                    status.monitor(client, items, NOW, 48, lookup=lambda: "42",
+                                   fetch=lambda _: page("MAC_OS", ["2.0.10"]))
+                    client.writes.clear()
+                results = status.monitor(client, items, NOW, 48, lookup=fail)
+                self.assertEqual(len(client.writes), expected_writes)
+                self.assertEqual(results[0]["alert"], not seen_live)
+
     def test_legacy_mac_baseline_uses_sealed_release_without_inventing_companion_uploads(self) -> None:
         client = FakeGitHub()
         value = record()

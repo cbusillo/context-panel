@@ -529,11 +529,16 @@ def monitor(client: Any, issues: list[dict], now: datetime, lag_hours: int,
             observations.append({"platform": platform, "status": "unknown", "publicVersion": None, "alert": True})
     for platform, (issue, record, submitted) in sorted(latest.items()):
         version = versions[platform]
-        result = evaluate(record, version, now, lag_hours, since=submitted and submitted["submittedAt"])
-        observation = {"platform": platform, "version": record["version"], "buildNumber": record["buildNumber"], **result}
         previous = [read_marker(OBSERVATION, comment.get("body") or "")
                     for comment in client.pages(f"issues/{issue['number']}/comments")]
         previous = [item for item in previous if item is not None]
+        # A closed record already seen live is finished: a later unreadable page is not news.
+        if (issue.get("state") == "closed" and previous and previous[-1]["status"] == "public version current"
+                and (version is None or version_guard.compare_versions(version, record["version"]) >= 0)):
+            observations.append(previous[-1])
+            continue
+        result = evaluate(record, version, now, lag_hours, since=submitted["submittedAt"] if submitted else None)
+        observation = {"platform": platform, "version": record["version"], "buildNumber": record["buildNumber"], **result}
         if not previous or previous[-1] != observation:
             prefix = "Alert" if result["alert"] else "Observation"
             body = (f"{prefix}: {platform} — {result['status']}.\n\n"

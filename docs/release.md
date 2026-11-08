@@ -87,7 +87,9 @@ in review or rejected without querying or changing App Store Connect. An
 unreadable or changed public page alerts as **unknown**, immediately. Identical
 observations produce no duplicate comments; a later recovery is recorded.
 Records closed as completed still participate, so premature closeout cannot
-hide drift; records closed as not planned are excluded from alert targets.
+hide drift, until the check has seen their version live; after that a later
+unreadable page posts nothing. Records closed as not planned are excluded from
+alert targets.
 No store credentials or store writes are used. The public page parser verifies
 the requested app/platform; it never substitutes another platform's version.
 Public listings do not expose the exact build number, so public version
