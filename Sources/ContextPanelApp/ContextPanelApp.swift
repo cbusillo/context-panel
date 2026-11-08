@@ -4175,6 +4175,10 @@ struct ProviderDashboard: View {
                     openDeadlines: { model.navigate(to: .deadlines) }
                 )
                 providerHistoryLinks
+                if let stored = model.storedSnapshot?.unusedCapacity, stored.isSameWeek(as: now),
+                   let unused = stored.providers.first(where: { $0.provider == provider }) {
+                    unusedCapacitySection(unused)
+                }
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
                 if model.storeStatus != .healthy {
                     TagLabel(model.storeStatus.previewStatusText.capitalized)
@@ -4187,6 +4191,18 @@ struct ProviderDashboard: View {
         .sheet(item: $selectedLimit) { summary in
             MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
                 .frame(minWidth: 700, minHeight: 600)
+        }
+    }
+
+    private func unusedCapacitySection(_ unused: ProviderUnusedCapacity) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(title: "Unused capacity")
+            ForEach([unused.lastWeekLine, unused.thisWeekLine] + [unused.usageCreditsLine].compactMap { $0 }, id: \.self) { line in
+                Text(line)
+                    .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
