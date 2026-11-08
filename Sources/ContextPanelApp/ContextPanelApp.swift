@@ -4175,10 +4175,13 @@ struct ProviderDashboard: View {
                     openDeadlines: { model.navigate(to: .deadlines) }
                 )
                 providerHistoryLinks
-                if let stored = model.storedSnapshot?.unusedCapacity, stored.isSameWeek(as: now),
-                   let unused = stored.providers.first(where: { $0.provider == provider }) {
-                    unusedCapacitySection(unused)
-                }
+                unusedCapacitySection(
+                    atPace: overview.paceForecast(provider: provider).flatMap { forecast in
+                        model.storedSnapshot.map { ProviderUnusedAtPace(forecast: forecast, stored: $0) }
+                    },
+                    weekly: model.storedSnapshot?.unusedCapacity.flatMap { stored in
+                        stored.isSameWeek(as: now) ? stored.providers.first { $0.provider == provider } : nil
+                    })
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts.filter { $0.provider == provider })
                 if model.storeStatus != .healthy {
                     TagLabel(model.storeStatus.previewStatusText.capitalized)
@@ -4194,16 +4197,18 @@ struct ProviderDashboard: View {
         }
     }
 
-    private func unusedCapacitySection(_ unused: ProviderUnusedCapacity) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    @ViewBuilder
+    private func unusedCapacitySection(atPace: ProviderUnusedAtPace?, weekly: ProviderUnusedCapacity?) -> some View {
+        let lines = [atPace?.line, atPace?.usageCreditsLine, weekly?.lastWeekLine, weekly?.thisWeekLine].compactMap { $0 }
+        if !lines.isEmpty { VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: "Unused capacity")
-            ForEach([unused.lastWeekLine, unused.thisWeekLine] + [unused.usageCreditsLine].compactMap { $0 }, id: \.self) { line in
+            ForEach(lines, id: \.self) { line in
                 Text(line)
                     .font(.system(size: 12))
                     .foregroundStyle(CPTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
+        } }
     }
 
     private var providerHistoryLinks: some View {

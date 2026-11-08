@@ -58,10 +58,66 @@ public struct ProviderUnusedCapacity: Codable, Equatable, Sendable {
     /// "Last week: OpenAI let 60 points refill unused at its normal reset; a surprise refill came with 385 points still left."
     public let lastWeekLine: String
     public let thisWeekLine: String
-    /// Usage credits left across the provider's accounts in the newest reading; null when none reports a balance.
+}
+
+/// What will refill unused at the current pace (#1080), worded from the one pace forecast (#1079),
+/// with the provider's usage credits beside it. Aimed at the Supervisor: unused points mean add work.
+public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
+    /// The forecast's heavy call: every point is used before it refills.
+    public let runsOutBeforeRefill: Bool
+    /// The forecast's points that refill unused at the measured pace, summed over the provider's accounts.
+    public let refillsUnusedPoints: Double
+    public let pacePerHour: Double
+    /// False while no account's pace is measured; the points then assume nothing more runs.
+    public let paceMeasured: Bool
+    /// Usage credits left across the provider's accounts in the current reading; null when none reports a balance.
+    /// No expiry is claimed.
     public let usageCreditsLeft: Double?
-    /// "OpenAI has 179,750 usage credits left." It makes no claim about when they expire.
+    /// Accounts holding credits whose weekly quota is at 0%. Credits are spent only there.
+    public let accountsSpendingUsageCredits: Int
+    /// "OpenAI: about 140 points will refill unused at this pace. Add work."
+    public let line: String
+    /// "OpenAI has 179,745 usage credits left. They are not being spent: …"
     public let usageCreditsLine: String?
+
+    /// Fewer points than this round to nothing at risk.
+    static let nothingPoints = 0.5
+
+    public init(forecast: ProviderPaceForecast, stored: StoredUsageSnapshot,
+                resolve: ProviderRefillDetector.AccountResolver = ProviderRefillDetector.localAccountID) {
+        let provider = forecast.provider
+        let name = provider.accountDisplayName
+        runsOutBeforeRefill = forecast.runsOutBeforeRefill
+        refillsUnusedPoints = forecast.refillsUnused
+        pacePerHour = forecast.pacePerHour
+        paceMeasured = forecast.paceMeasured
+        let points = Int(forecast.refillsUnused.rounded())
+        let amount = "about \(points) " + (points == 1 ? "point" : "points")
+        line = if forecast.runsOutBeforeRefill {
+            "\(name): every point gets used before it refills at this pace."
+        } else if forecast.refillsUnused < Self.nothingPoints {
+            "\(name): nothing will refill unused at this pace."
+        } else if !forecast.paceMeasured {
+            "\(name): pace isn't measured yet; \(amount) will refill unused if nothing more runs. Add work."
+        } else {
+            "\(name): \(amount) will refill unused at this pace. Add work."
+        }
+        let credits = UnusedCapacityHistory.creditsLeft(provider: provider, reading: stored, resolve: resolve)
+        let weekly = ProviderRefillDetector.mainLimits(provider: provider, reading: stored)
+        let spending = Set(stored.reports.compactMap { report -> String? in
+            guard report.provider == provider, (report.usageCredits?.balance ?? 0) > 0,
+                  let left = weekly[report.accountID]?.remainingCapacityRatio, left < 0.005 else { return nil }
+            return UnusedCapacityHistory.reportID(report, in: stored, resolve: resolve)
+        }).count
+        usageCreditsLeft = credits
+        accountsSpendingUsageCredits = spending
+        usageCreditsLine = credits.map { credits in
+            let left = "\(name) has \(Int(credits.rounded()).formatted()) usage credits left"
+            return spending == 0
+                ? left + ". They are not being spent: credits are used only once an account's weekly quota reaches 0%."
+                : left + ", being spent on \(spending) " + (spending == 1 ? "account" : "accounts") + " at 0% of its weekly quota."
+        }
+    }
 }
 
 public enum UnusedCapacityHistory {
@@ -85,12 +141,9 @@ public enum UnusedCapacityHistory {
                 guard let index = weeks.firstIndex(where: { $0.start <= current.savedAt && current.savedAt < $0.end }) else { continue }
                 add(provider: provider, previous: previous, current: current, resolve: resolve, into: &weeks[index])
             }
-            let credits = ordered.last.map { creditsLeft(provider: provider, reading: $0, resolve: resolve) } ?? nil
             return ProviderUnusedCapacity(provider: provider, lastWeek: weeks[0], thisWeek: weeks[1],
                 lastWeekLine: line("Last week", provider: provider, week: weeks[0]),
-                thisWeekLine: line("This week so far", provider: provider, week: weeks[1]),
-                usageCreditsLeft: credits,
-                usageCreditsLine: credits.map { "\(provider.accountDisplayName) has \(Int($0.rounded()).formatted()) usage credits left." })
+                thisWeekLine: line("This week so far", provider: provider, week: weeks[1]))
         }
     }
 
