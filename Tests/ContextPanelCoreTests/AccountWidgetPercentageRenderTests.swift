@@ -70,7 +70,7 @@ private func verifyAccountWidgetPercentages(size: String, dark: Bool, saved: Boo
     host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     host.layoutSubtreeIfNeeded()
     let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil,
-        pixelsWide: Int(dimensions.width * 2), pixelsHigh: Int(dimensions.height * 2),
+        pixelsWide: Int(dimensions.width * 3), pixelsHigh: Int(dimensions.height * 3),
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
     bitmap.size = dimensions
