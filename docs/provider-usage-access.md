@@ -799,12 +799,24 @@ missed reset; a banked reset applied early counts in neither),
 not by being applied), `usageCreditsExpiredUnused` and `readings` (zero means no
 saved readings, so the week is unknown, not clean). Usage credits count as expired
 only at an expiry a provider reports; none reports one today, so that field is
-absent and `usageCreditsLeft` gives the newest balance across the provider's
-accounts with no expiry claim. `lastWeekLine`, `thisWeekLine` and
-`usageCreditsLine` are the sentences the app's provider view shows, for example
-"Last week: OpenAI let 60 points refill unused at its normal reset; a surprise
-refill came with 385 points still left." `unusedCapacity` is absent until the
-refresh pass has run in the current week.
+absent. `lastWeekLine` and `thisWeekLine` are the sentences the app's provider
+view shows, for example "Last week: OpenAI let 60 points refill unused at its
+normal reset; a surprise refill came with 385 points still left."
+`unusedCapacity` is absent until the refresh pass has run in the current week.
+Each `providers` entry also has an additive schema 1 `unusedAtPace` object: what
+will refill unused at the current pace, worded from the provider's pace forecast
+(the same one the reset rule uses), from the current reading with no extra
+history read. It has `runsOutBeforeRefill` (every point is used before it
+refills), `refillsUnusedPoints` (percent points of one account's weekly window,
+summed over the provider's accounts, that refill unused at the measured pace),
+`pacePerHour`, `paceMeasured` (false means no account's pace is measured and the
+points assume nothing more runs), `usageCreditsLeft` (the current balance across
+the provider's accounts, null when none reports one; no expiry is claimed),
+`accountsSpendingUsageCredits` (accounts holding credits whose weekly quota is at
+0%, the only place credits are spent) and the sentences `line` and
+`usageCreditsLine`, for example "OpenAI: about 140 points will refill unused at
+this pace. Add work." When nothing is at risk, `line` says so. `unusedAtPace` is
+absent when the provider has no current weekly reading to forecast from.
 `answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
 account ID per provider: the first entry of that provider's `ranking` (see

@@ -66,8 +66,12 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         /// Quota that refilled unused and resets or credits that expired unused, last week and this week (#1080),
         /// from the refresh pass kept with the current snapshot. Absent until that pass has run this week.
         public let unusedCapacity: ProviderUnusedCapacity?
+        /// What will refill unused at the current pace, from the provider's pace forecast, with usage credits left.
+        /// Absent when the provider has no current weekly reading to forecast from.
+        public let unusedAtPace: ProviderUnusedAtPace?
 
-        public init(total: AccountProviderTotal, now: Date, unusedCapacity: ProviderUnusedCapacity? = nil) {
+        public init(total: AccountProviderTotal, now: Date, unusedCapacity: ProviderUnusedCapacity? = nil,
+                    unusedAtPace: ProviderUnusedAtPace? = nil) {
             provider = total.provider
             name = total.provider.accountDisplayName
             accounts = AccountTerms.accountCount(total)
@@ -80,6 +84,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
             summary = line.facts
             summaryOutlook = line.outlook
             self.unusedCapacity = unusedCapacity
+            self.unusedAtPace = unusedAtPace
         }
     }
 
@@ -331,7 +336,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         providerRefills = ProviderRefillDetector.events(readings: readings, resolve: resolve)
         let unused = stored.unusedCapacity.flatMap { $0.isSameWeek(as: now) ? $0.providers : nil } ?? []
         providers = overview.providerTotals(now: now).map { total in
-            ProviderDisplay(total: total, now: now, unusedCapacity: unused.first { $0.provider == total.provider })
+            ProviderDisplay(total: total, now: now, unusedCapacity: unused.first { $0.provider == total.provider },
+                unusedAtPace: overview.paceForecast(provider: total.provider).map {
+                    ProviderUnusedAtPace(forecast: $0, stored: stored, resolve: resolve)
+                })
         }
         headline = Headline(overview: overview, now: now)
         deadlines = overview.deadlines.map {

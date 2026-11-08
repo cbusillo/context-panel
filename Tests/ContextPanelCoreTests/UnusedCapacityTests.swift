@@ -118,15 +118,14 @@ private func banked(_ count: Int, expiries: [Date], at: Date) -> ProviderResetCr
         ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: balance, expiresAt: expiresAt)
     }
 
-    // Spending with no known expiry: nothing expired, and the balance left is reported with no expiry claim.
-    let (spent, summary) = try lastWeek([
+    // Spending with no known expiry: nothing expired.
+    let (spent, _) = try lastWeek([
         wasteReading(before, ["x": WasteAccount(used: 100, reset: reset, credits: credits(60_000)),
                               "y": WasteAccount(used: 10, reset: reset, credits: credits(50_000))]),
         wasteReading(after, ["x": WasteAccount(used: 100, reset: reset, credits: credits(57_000)),
                              "y": WasteAccount(used: 10, reset: reset, credits: credits(50_000))]),
     ])
     #expect(spent.usageCreditsExpiredUnused == nil)
-    #expect(summary.usageCreditsLeft == 107_000)
 
     // With a known expiry, spending before it still wastes nothing; the balance gone at the expiry does.
     let (spentBeforeExpiry, _) = try lastWeek([
@@ -182,4 +181,88 @@ private func banked(_ count: Int, expiries: [Date], at: Date) -> ProviderResetCr
     #expect(read.providers.first { $0.provider == .openAI }?.unusedCapacity?.lastWeek.quotaPointsLeftAtReset == 25)
     let nextWeek = try AgentAccountSnapshot.read(rootDirectory: root, now: later.addingTimeInterval(8 * day))
     #expect(nextWeek.providers.allSatisfy { $0.unusedCapacity == nil })
+}
+
+// Part 2: what will refill unused at the current pace, worded from the one pace forecast.
+
+private func paceOverview(burn: Double?, used: [String: Int], credits: [String: Double] = [:],
+                          observed: Date = wasteNow) -> (AccountOverview, StoredUsageSnapshot) {
+    let names = used.keys.sorted()
+    let limits = names.map { name in
+        UsageLimit(provider: .openAI, accountID: name, configuredAccountID: name, accountName: name, label: "Codex Weekly",
+                   windowLabel: "Weekly", modelLabel: "Codex", unit: .percent, used: used[name]!, limit: 100,
+                   resetsAt: wasteNow.addingTimeInterval(100 * 3_600), lastUpdatedAt: observed, confidence: .observed)
+    }
+    let reports = names.map { name in
+        StoredProviderReport(provider: .openAI, accountID: name, configuredAccountID: name, accountName: name,
+            generatedAt: observed, usageCredits: credits[name].map { ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: $0) },
+            status: .healthy, errorMessage: nil)
+    }
+    let stored = StoredUsageSnapshot(savedAt: observed, snapshot: UsageSnapshot(generatedAt: observed, limits: limits), reports: reports)
+    let rates = Dictionary(uniqueKeysWithValues: zip(names, limits).map { name, limit in
+        (name, burn.map { [limit.id: ObservedBurnRate(limitID: limit.id, unitsPerHour: $0, observedDurationHours: 6, sampleCount: 20)] } ?? [:])
+    })
+    let overview = AccountOverview(snapshot: stored.snapshot, reports: reports,
+        metadata: names.map { AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(.openAI, $0), configurationID: $0,
+                                                     provider: .openAI, label: $0) },
+        now: wasteNow, accountBurnRates: rates)
+    return (overview, stored)
+}
+
+private func atPace(burn: Double?, used: [String: Int], credits: [String: Double] = [:]) throws -> ProviderUnusedAtPace {
+    let (overview, stored) = paceOverview(burn: burn, used: used, credits: credits)
+    return ProviderUnusedAtPace(forecast: try #require(overview.paceForecast(provider: .openAI)), stored: stored)
+}
+
+@Test func unusedAtPaceTellsTheSupervisorWhatWillRefillUnused() throws {
+    // Heavy pace: 4 points an hour over 100 hours uses all 100 points left, so nothing is at risk.
+    let heavy = try atPace(burn: 2, used: ["x": 50, "y": 50])
+    #expect(heavy.runsOutBeforeRefill)
+    #expect(heavy.refillsUnusedPoints < 0.5)
+    #expect(heavy.line == "OpenAI: every point gets used before it refills at this pace.")
+
+    // Slow pace: 0.2 points an hour uses 20 of 100, so the forecast's 80 points refill unused.
+    let (overview, stored) = paceOverview(burn: 0.1, used: ["x": 50, "y": 50])
+    let forecast = try #require(overview.paceForecast(provider: .openAI))
+    let slow = ProviderUnusedAtPace(forecast: forecast, stored: stored)
+    #expect(!slow.runsOutBeforeRefill)
+    #expect(slow.refillsUnusedPoints == forecast.refillsUnused)
+    #expect(abs(slow.refillsUnusedPoints - 80) < 0.001)
+    #expect(slow.line == "OpenAI: about 80 points will refill unused at this pace. Add work.")
+
+    // No measured pace: the points assume nothing more runs, and the line says the pace is unknown.
+    let unmeasured = try atPace(burn: nil, used: ["x": 50, "y": 50])
+    #expect(!unmeasured.paceMeasured)
+    #expect(unmeasured.line == "OpenAI: pace isn't measured yet; about 100 points will refill unused if nothing more runs. Add work.")
+}
+
+@Test func unusedAtPaceSaysCreditsAreSpentOnlyAtZeroPercent() throws {
+    let idle = try atPace(burn: 0.1, used: ["x": 50, "y": 60], credits: ["x": 60_000, "y": 50_000])
+    #expect(idle.usageCreditsLeft == 110_000)
+    #expect(idle.accountsSpendingUsageCredits == 0)
+    #expect(idle.usageCreditsLine == "OpenAI has 110,000 usage credits left. They are not being spent: "
+        + "credits are used only once an account's weekly quota reaches 0%.")
+
+    let spending = try atPace(burn: 0.1, used: ["x": 100, "y": 60], credits: ["x": 57_000, "y": 50_000])
+    #expect(spending.accountsSpendingUsageCredits == 1)
+    #expect(spending.usageCreditsLine == "OpenAI has 107,000 usage credits left, being spent on 1 account at 0% of its weekly quota.")
+
+    #expect(try atPace(burn: 0.1, used: ["x": 50]).usageCreditsLine == nil)
+}
+
+@Test func agentSnapshotCarriesUnusedAtPaceOnlyWithAForecast() throws {
+    let configuration = AccountConfigurationDocument(updatedAt: wasteNow, accounts: [LocalProviderAccountConfiguration(
+        id: "x", provider: .openAI, connectorKind: .codexRateLimits, displayName: "x", authPath: "/not/read/x")])
+    let (_, current) = paceOverview(burn: nil, used: ["x": 40])
+    let snapshot = AgentAccountSnapshot(configuration: configuration, stored: current, history: [], now: wasteNow)
+    let provider = try #require(snapshot.providers.first { $0.provider == .openAI })
+    #expect(provider.unusedAtPace?.refillsUnusedPoints == 60)
+    let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(provider)) as? [String: Any])
+    #expect((json["unusedAtPace"] as? [String: Any])?["line"] is String)
+
+    // A reading too old to be current gives no forecast, so the field is omitted.
+    let (_, old) = paceOverview(burn: nil, used: ["x": 40], observed: wasteNow.addingTimeInterval(-3 * day))
+    let stale = AgentAccountSnapshot(configuration: configuration, stored: old, history: [], now: wasteNow)
+    #expect(stale.providers.contains { $0.provider == .openAI })
+    #expect(stale.providers.allSatisfy { $0.unusedAtPace == nil })
 }
