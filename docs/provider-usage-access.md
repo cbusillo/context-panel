@@ -781,7 +781,15 @@ but exports no live `burn`; an absent `isCurrent` in an older snapshot is unknow
 Read that flag together with the account's state: a current measurement does not
 make a paused or unavailable account usable.
 For weekly pacing and banked-reset burn summaries, read the
-weekly window's own `burn`, not changes in the headline. The headline label is null
+weekly window's own `burn`, not changes in the headline. `burn` is the
+conservative pace: the higher of the last day's and the last six hours'
+estimates, which the panel's warnings and Use next read. Each window also has an
+additive schema 1 `recentBurn` with the same fields (`unitsPerHour`,
+`observedDurationHours`, `sampleCount`) over only the last two hours, so a check
+every 30 minutes sees an account that stopped or sped up (#1085). It needs the
+same 30 minutes of observation and two usable intervals as `burn`, which
+5-minute readings meet within two hours; it is null with fewer recent readings,
+and like `burn` it is never a whole-window average. The headline label is null
 without a limiting window. These are additive schema 1 fields; older readers
 retain all existing fields, and consumers of older snapshots treat missing
 fields as unknown.
