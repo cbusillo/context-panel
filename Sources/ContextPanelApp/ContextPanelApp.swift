@@ -4831,7 +4831,7 @@ private struct ProviderAccessAlertCard: View {
         case .blockedUntilReset:
             "exclamationmark.octagon.fill"
         case .paidFallbackActive:
-            "dollarsign.circle.fill"
+            alert.usesUsageCredits ? "ticket.fill" : "dollarsign.circle.fill"
         case .degraded:
             "questionmark.circle.fill"
         case .available, .pressure, .unknown, .signInExpired:

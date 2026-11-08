@@ -781,6 +781,21 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
     #expect(widget.status == .limited)
 }
 
+// #1078: OpenAI usage credits were granted, not paid for; Claude's extra usage is billed.
+@Test func usageCreditAccessIsNotWordedAsPaid() {
+    func alert(_ provider: Provider) -> ProviderAccessAlert {
+        ProviderAccessAlert(provider: provider, accountID: "a", configuredAccountID: nil, accountName: "A",
+                            generatedAt: Date(timeIntervalSince1970: 0), accessState: ProviderAccessState(kind: .paidFallbackActive))
+    }
+    let credits = alert(.openAI)
+    let billed = alert(.anthropic)
+    #expect(credits.usesUsageCredits && !billed.usesUsageCredits)
+    #expect(!credits.title.localizedCaseInsensitiveContains("paid"))
+    #expect(!credits.detail.localizedCaseInsensitiveContains("paid"))
+    #expect(billed.title.localizedCaseInsensitiveContains("paid"))
+    #expect(credits.status == billed.status)
+}
+
 @Test func widgetSnapshotDoesNotPresentStaleProviderAccessAsCurrent() {
     let generatedAt = Date(timeIntervalSince1970: 1_000)
     let stored = StoredUsageSnapshot(

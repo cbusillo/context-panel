@@ -32,6 +32,8 @@ private struct Fixture {
     var observedAgo: TimeInterval = 0
     /// Readings arrive only when the provider is used, as with AGY's callback.
     var eventDriven = false
+    /// OpenAI says usage credits keep the account working past its used-up plan quota.
+    var onCredits = false
 
     var family: String { provider == .openAI ? "Codex" : provider == .anthropic ? "Claude" : "Gemini" }
     var id: String { AccountDisplayMetadata.safeID(provider, name) }
@@ -63,7 +65,8 @@ private struct Fixture {
             knownExpiries: bankedExpiryHours.map { now.addingTimeInterval($0 * hour) }, unrecognizedKindCount: unrecognizedResets)
         return StoredProviderReport(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
                                     generatedAt: observed, resetCredits: banked, status: signInExpired ? .failure : .healthy,
-                                    accessState: signInExpired ? ProviderAccessState(kind: .signInExpired) : .unknown, errorMessage: nil)
+                                    accessState: signInExpired ? ProviderAccessState(kind: .signInExpired)
+                                        : onCredits ? ProviderAccessState(kind: .paidFallbackActive) : .unknown, errorMessage: nil)
     }
 
     func rates(now: Date) -> [String: ObservedBurnRate] {
@@ -393,6 +396,44 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
     #expect(aged.launchOrder.isEmpty)
 }
 
+// #1078: plan quota that would refill unused first, then accounts spending usage credits, then the use-last cushion.
+@Test func usageCreditsKeepAnEmptyAccountUsableAfterLapsingQuotaAndBeforeTheCushion() throws {
+    let lapsing = Fixture(name: "lapsing", weeklyUsed: 30, resetHours: 20, burn: 0.1)
+    let credits = Fixture(name: "credits", weeklyUsed: 100, resetHours: 50, onCredits: true)
+    let cushion = Fixture(name: "cushion", weeklyUsed: 96, resetHours: 50, burn: 0.1, useLast: true)
+
+    let withQuota = ranking([credits, cushion, lapsing])
+    #expect(withQuota.useNextAccountID == lapsing.id)
+    #expect(withQuota.entry(credits)?.tier == .usageCredits)
+    #expect(withQuota.entry(credits)?.weight == 0)
+    #expect(!withQuota.excluded.contains { $0.accountID == credits.id })
+
+    let onlyCredits = ranking([credits, cushion])
+    #expect(onlyCredits.useNextAccountID == credits.id)
+    #expect(Set(onlyCredits.launchOrder) == [credits.id])
+
+    // An on-pace account is still plan quota, so credits wait for it too.
+    let onPace = Fixture(name: "onPace", weeklyUsed: 80, resetHours: 50, burn: 1)
+    #expect(ranking([credits, onPace]).useNextAccountID == onPace.id)
+
+    // An account Codex blocks, or without credits, stays excluded.
+    var blocked = credits
+    blocked.onCredits = false
+    #expect(ranking([blocked]).useNextAccountID == nil)
+    #expect(ranking([blocked]).excluded.map(\.accountID) == [blocked.id])
+
+    // The 5-hour gate no longer holds an account credits keep working.
+    let gated = Fixture(name: "gated", weeklyUsed: 50, resetHours: 50, fiveHourUsed: 100, onCredits: true)
+    #expect(ranking([gated]).useNextAccountID == gated.id)
+
+    // The use-last account's own credits wait for the other accounts' credits.
+    var lastOnCredits = cushion
+    lastOnCredits.weeklyUsed = 100
+    lastOnCredits.onCredits = true
+    #expect(ranking([lastOnCredits, credits]).useNextAccountID == credits.id)
+    #expect(ranking([lastOnCredits]).useNextAccountID == lastOnCredits.id)
+}
+
 // 11. Provider-wide refill: recorded and excluded from burn.
 @Test func providerWideRefillIsDetectedAndNeverCountsAsBurn() throws {
     func reading(_ at: Date, used: [Int], reset: Date, banked: Int = 2) -> StoredUsageSnapshot {
@@ -445,6 +486,73 @@ private let claudeInfo = Fixture(name: "claude-info", provider: .anthropic, week
                                                              minimumObservation: 0, minimumUsableIntervals: 1)
     let weekly = try #require(rates.values.first)
     #expect(weekly.unitsPerHour < 20)
+}
+
+// #1078: a refill shows only on accounts that had used quota, whatever state the others are in.
+@Test func providerRefillIsDetectedAcrossAsymmetricAccountStates() {
+    struct State { var used: Int; var reset: Date; var banked: ProviderResetCreditSummary? }
+    func reading(_ at: Date, _ accounts: [String: State]) -> StoredUsageSnapshot {
+        let names = accounts.keys.sorted()
+        let limits = names.map { name in
+            UsageLimit(provider: .openAI, accountID: name, configuredAccountID: name, accountName: name, label: "Codex Weekly",
+                       windowLabel: "Weekly", modelLabel: "Codex", unit: .percent, used: accounts[name]!.used, limit: 100,
+                       resetsAt: accounts[name]!.reset, lastUpdatedAt: at, confidence: .observed)
+        }
+        let reports = names.map { StoredProviderReport(provider: .openAI, accountID: $0, configuredAccountID: $0, accountName: $0,
+            generatedAt: at, resetCredits: accounts[$0]!.banked, status: .healthy, errorMessage: nil) }
+        return StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: limits), reports: reports)
+    }
+    func banked(_ count: Int, expiries: [Date] = [], at: Date) -> ProviderResetCreditSummary {
+        ProviderResetCreditSummary(availableCount: count, observedAt: at, coverage: expiries.isEmpty ? .countOnly : .complete,
+                                   knownExpiries: expiries)
+    }
+    let before = rankNow.addingTimeInterval(-hour)
+    let oldReset = rankNow.addingTimeInterval(72 * hour)
+    let newReset = rankNow.addingTimeInterval(167 * hour)
+    let unstartedBefore = State(used: 0, reset: before.addingTimeInterval(168 * hour), banked: banked(1, at: before))
+    let unstartedAfter = State(used: 0, reset: rankNow.addingTimeInterval(168 * hour), banked: banked(1, at: rankNow))
+    func ids(_ events: [ProviderRefillEvent]) -> [[String]] { events.map(\.accountIDs) }
+    let x = AccountDisplayMetadata.safeID(.openAI, "x")
+    let y = AccountDisplayMetadata.safeID(.openAI, "y")
+
+    // One account used, one never started: the used one alone shows the refill. Also when it was at 0%.
+    for used in [40, 100] {
+        let events = ProviderRefillDetector.events(readings: [
+            reading(before, ["x": State(used: used, reset: oldReset, banked: banked(2, at: before)), "y": unstartedBefore]),
+            reading(rankNow, ["x": State(used: 0, reset: newReset, banked: banked(2, at: rankNow)), "y": unstartedAfter]),
+        ])
+        #expect(ids(events) == [[x]])
+    }
+
+    // A lone jump while another used account carries on, or with no banked count to rule out a spent reset, is not one.
+    #expect(ProviderRefillDetector.events(readings: [
+        reading(before, ["x": State(used: 40, reset: oldReset, banked: banked(2, at: before)),
+                         "y": State(used: 20, reset: oldReset, banked: banked(2, at: before))]),
+        reading(rankNow, ["x": State(used: 0, reset: newReset, banked: banked(2, at: rankNow)),
+                          "y": State(used: 21, reset: oldReset, banked: banked(2, at: rankNow))]),
+    ]).isEmpty)
+    #expect(ProviderRefillDetector.events(readings: [
+        reading(before, ["x": State(used: 40, reset: oldReset, banked: nil), "y": State(used: 0, reset: oldReset, banked: nil)]),
+        reading(rankNow, ["x": State(used: 0, reset: newReset, banked: nil), "y": State(used: 0, reset: oldReset, banked: nil)]),
+    ]).isEmpty)
+
+    // Readings hours apart still place the refill between them.
+    let overnight = rankNow.addingTimeInterval(-8 * hour)
+    #expect(ids(ProviderRefillDetector.events(readings: [
+        reading(overnight, ["x": State(used: 40, reset: oldReset, banked: banked(2, at: overnight)),
+                            "y": State(used: 60, reset: oldReset, banked: banked(2, at: overnight))]),
+        reading(rankNow, ["x": State(used: 0, reset: newReset, banked: banked(2, at: rankNow)),
+                          "y": State(used: 0, reset: newReset, banked: banked(2, at: rankNow))]),
+    ])) == [[x, y].sorted()])
+
+    // A banked reset granted, or one that expired between the readings, is not a spent reset.
+    let expiry = rankNow.addingTimeInterval(-0.5 * hour)
+    #expect(ids(ProviderRefillDetector.events(readings: [
+        reading(before, ["x": State(used: 40, reset: oldReset, banked: banked(1, at: before)),
+                         "y": State(used: 60, reset: oldReset, banked: banked(2, expiries: [expiry, newReset], at: before))]),
+        reading(rankNow, ["x": State(used: 0, reset: newReset, banked: banked(2, at: rankNow)),
+                          "y": State(used: 0, reset: newReset, banked: banked(1, expiries: [newReset], at: rankNow))]),
+    ])) == [[x, y].sorted()])
 }
 
 // 12–15. OpenAI reset prompts: one plain line only when clearly worth it; value and reasoning in the detail view.

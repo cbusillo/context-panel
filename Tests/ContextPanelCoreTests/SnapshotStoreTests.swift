@@ -1384,6 +1384,32 @@ import Testing
     #expect((resetCredits.observedAt, resetCredits.coverage, resetCredits.earliestKnownExpiry) == (first, .complete, Date(timeIntervalSince1970: 500)))
 }
 
+@Test func jsonSnapshotStoreKeepsUsageCreditsThroughAFailedRefresh() throws {
+    let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let credits = ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: 60_000)
+    let limit = UsageLimit(provider: .openAI, accountID: "openai-a", accountName: "A", label: "Codex Weekly",
+                           windowLabel: "Weekly", unit: .percent, used: 100, limit: 100, lastUpdatedAt: first)
+    try store.save(StoredUsageSnapshot(savedAt: first, refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+        ProviderConnectorReport(provider: .openAI, accountID: "openai-a", accountName: "A", generatedAt: first,
+                                limits: [limit], usageCredits: credits),
+    ])))
+
+    try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+        ProviderConnectorReport(provider: .openAI, accountID: "openai-a", accountName: "A", generatedAt: second,
+                                limits: [], status: .failure),
+    ]), savedAt: second)
+    let failed = try #require(store.loadCurrent().snapshot?.reports.first)
+    #expect((failed.status, failed.usageCredits) == (.failure, credits))
+
+    // A successful read that reports no credits is believed.
+    try store.saveMerged(refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+        ProviderConnectorReport(provider: .openAI, accountID: "openai-a", accountName: "A", generatedAt: second, limits: [limit]),
+    ]), savedAt: second)
+    #expect(try store.loadCurrent().snapshot?.reports.first?.usageCredits == nil)
+}
+
 @Test func jsonSnapshotStoreDoesNotCrossMergeSiblingResetCreditsUnderSharedConfiguration() throws {
     let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let first = Date(timeIntervalSince1970: 100)

@@ -332,6 +332,17 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                      expiresAt: $0.expiresAt, observedAt: $0.observedAt, state: $0.state)
         }
         if let canonical {
+            // Usage credits stay local: find each published row's local report through the key shared presentation uses.
+            let creditKeys = stored.snapshot.limits.compactMap { limit -> (String, ProviderUsageCreditSummary)? in
+                let report = stored.reports.first { $0.provider == limit.provider && $0.accountID == limit.accountID }
+                return report?.usageCredits.map { (AccountDisplayMetadata.safeID(limit.provider, MacSharedAccountPresentation.accountKey(
+                    limit: limit, report: report, configuration: configuration.accounts, publisherID: configuration.publisherID)), $0) }
+            } + stored.reports.compactMap { report in
+                report.sharedAccountIdentity.flatMap { identity in
+                    report.usageCredits.map { (AccountDisplayMetadata.safeID(report.provider, identity.accountID), $0) }
+                }
+            }
+            let usageCredits = Dictionary(creditKeys, uniquingKeysWith: { first, _ in first })
             accounts = overview.accounts.map { account in
                 let report = canonical.reports.first { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
                 let limits = canonical.limits.filter { AccountDisplayMetadata.safeID($0.provider, $0.accountID) == account.id && $0.provider == account.metadata.provider }
@@ -353,7 +364,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                             confidence: limit.confidence, presentationAssumption: limit.presentationAssumption,
                             isCurrent: window?.isCurrent ?? false)
                     },
-                    usageCredits: stored.reports.first { report?.sharedAccountIdentity != nil && $0.sharedAccountIdentity?.accountID == report?.sharedAccountIdentity?.accountID && $0.provider == account.metadata.provider }?.usageCredits,
+                    usageCredits: usageCredits[account.id],
                     bankedResets: BankedResets(state: account.bankedState, summary: account.bankedResets),
                     display: Display(account: account, isNext: nextIDs.contains(account.id), now: now),
                     sharedAccountIdentity: report?.sharedAccountIdentity,

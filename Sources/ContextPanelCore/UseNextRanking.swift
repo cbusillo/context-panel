@@ -202,6 +202,9 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         case useLast = 2
         /// On pace or ahead; used only when no account has positive need.
         case onPace = 3
+        /// Plan quota used up, but OpenAI says usage credits keep it working: used only after plan quota
+        /// that would lapse, and before the use-last account's cushion.
+        case usageCredits = 4
     }
 
     public struct Entry: Encodable, Equatable, Sendable {
@@ -354,6 +357,7 @@ public extension AccountOverview {
 
         var excluded: [UseNextRanking.Exclusion] = []
         var candidates: [Candidate] = []
+        var onCredits: [Candidate] = []
         for row in rows {
             let exclude = { (reason: String, until: Date?) in
                 excluded.append(.init(accountID: row.id, label: row.metadata.label, reason: reason, until: until))
@@ -371,22 +375,36 @@ public extension AccountOverview {
             } == true
             let assumedFull = main.assumption != nil || assumesCodexReset
             let remaining = assumesCodexReset ? 100 : fraction * 100
-            guard remaining > 0 else { exclude("Out of quota until its reset", main.naturalResetAt); continue }
+            let useLast = row.metadata.useLast && !multipleUseLast
+            let ownBurn = main.isCurrent ? main.burnPoints : nil
+            // OpenAI keeps an account past its used-up plan quota while usage credits cover it.
+            let spendCredits = { (resetAt: Date?) in
+                onCredits.append(Candidate(row: row, remaining: remaining, burn: ownBurn ?? averageBurn,
+                    burnEstimated: ownBurn == nil, hours: 0, deadline: resetAt ?? main.naturalResetAt ?? now,
+                    unstarted: false, starter: false, useLast: useLast, reserve: nil, need: 0, notes: []))
+            }
+            guard remaining > 0 else {
+                if row.spendsUsageCredits { spendCredits(main.naturalResetAt) } else {
+                    exclude("Out of quota until its reset", main.naturalResetAt)
+                }
+                continue
+            }
             if let gate = row.fiveHourGate, gate.isCurrent || (gate.naturalResetAt ?? .distantPast) > now,
                let gateFraction = gate.remainingFraction {
                 let gateLeft = gateFraction * 100
                 let hoursToGateReset = gate.naturalResetAt.map { max(0, $0.timeIntervalSince(now) / 3_600) }
                 let projected = gate.isCurrent ? (gate.burnPoints ?? 0) * (hoursToGateReset ?? 0) : 0
                 if gateLeft < UseNextRanking.fiveHourGatePoints || projected > 0 && projected >= gateLeft {
-                    exclude("5-hour limit nearly used; free again at its 5-hour reset", gate.naturalResetAt); continue
+                    if row.spendsUsageCredits { spendCredits(gate.naturalResetAt) } else {
+                        exclude("5-hour limit nearly used; free again at its 5-hour reset", gate.naturalResetAt)
+                    }
+                    continue
                 }
             }
             let unstarted = !assumesCodexReset && provider == .openAI && row.isUnstarted(main)
             let fresh = assumedFull ? now.addingTimeInterval(UseNextRanking.windowHours(main.period) * 3_600) : nil
             guard let deadline = unstarted ? now : fresh ?? main.naturalResetAt else { exclude("Reset time unknown", nil); continue }
-            let ownBurn = main.isCurrent ? main.burnPoints : nil
             let burn = ownBurn ?? averageBurn
-            let useLast = row.metadata.useLast && !multipleUseLast
             // An unstarted clock starts with the first launch, so its share is judged over a full week.
             let hours = unstarted ? UseNextRanking.weekHours : max(UseNextRanking.minimumHours, deadline.timeIntervalSince(now) / 3_600)
             var reserve: Double?
@@ -420,7 +438,7 @@ public extension AccountOverview {
         var entries: [UseNextRanking.Entry] = []
         if active.isEmpty {
             // Demand is at or above capacity: last longest first, use-last only after the rest.
-            let others = candidates.filter { !$0.useLast }
+            let others = (candidates + onCredits).filter { !$0.useLast }
             for candidate in candidates {
                 let hoursLeft = candidate.burn > 0 ? candidate.remaining / candidate.burn : candidate.hours
                 if candidate.useLast, let reserve = candidate.reserve, candidate.remaining <= reserve {
@@ -456,6 +474,14 @@ public extension AccountOverview {
                 entries.append(candidate.entry(tier: tier, weight: isActive ? max(0, candidate.need) : 0,
                                                pending: pending[candidate.row.id, default: 0], reason: reason))
             }
+        }
+        // Usage credits wait for plan quota that would lapse; the use-last account's credits wait for the others.
+        let planTakesLaunches = entries.contains { $0.weight > 0 || $0.starter }
+        let othersOnCredits = onCredits.contains { !$0.useLast }
+        for candidate in onCredits {
+            let weight: Double = planTakesLaunches || candidate.useLast && othersOnCredits ? 0 : 1
+            entries.append(candidate.entry(tier: .usageCredits, weight: weight, pending: pending[candidate.row.id, default: 0],
+                reason: "Plan quota used up; usage credits keep it working, after quota that would go unused"))
         }
         entries = Self.ordered(entries, counts: pending)
 
@@ -503,7 +529,9 @@ extension AccountOverview {
         func priority(_ entry: UseNextRanking.Entry) -> (Int, Double, Int, Double) {
             let given = counts[entry.accountID, default: 0]
             if entry.starter && given == 0 { return (0, 0, entry.tier.rawValue, 0) }
-            guard entry.weight > 0 else { return (2, -entry.remaining, entry.tier.rawValue, 0) }
+            guard entry.weight > 0 else {
+                return (entry.tier == .usageCredits ? 3 : 2, -entry.remaining, entry.tier.rawValue, 0)
+            }
             return (1, -entry.weight / Double(1 + max(0, given - (entry.starter ? 1 : 0))), entry.tier.rawValue, -entry.weight)
         }
         return entries.enumerated().sorted { lhs, rhs in

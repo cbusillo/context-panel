@@ -1,6 +1,7 @@
 import Foundation
 
-/// A provider refilled several accounts at once, ahead of their resets and without spending a banked reset (#791).
+/// A provider refilled its accounts at once, ahead of their resets and without spending a banked reset (#791).
+/// Only accounts that had used quota can show it; an unused account has nothing to refill.
 /// Burn already treats a moved reset time as a new window, so a refill never counts as use.
 public struct ProviderRefillEvent: Codable, Equatable, Sendable {
     public let provider: Provider
@@ -10,8 +11,6 @@ public struct ProviderRefillEvent: Codable, Equatable, Sendable {
 }
 
 public enum ProviderRefillDetector {
-    /// Readings further apart than this can't place a refill.
-    static let maximumGap: TimeInterval = 2 * 3_600
     /// The new reset must move later by at least this much.
     static let minimumResetJump: TimeInterval = 3_600
 
@@ -23,8 +22,7 @@ public enum ProviderRefillDetector {
     public static func events(readings: [StoredUsageSnapshot], resolve: AccountResolver = localAccountID) -> [ProviderRefillEvent] {
         let ordered = readings.sorted { $0.savedAt < $1.savedAt }
         return zip(ordered, ordered.dropFirst()).flatMap { previous, current -> [ProviderRefillEvent] in
-            guard current.savedAt.timeIntervalSince(previous.savedAt) <= maximumGap else { return [] }
-            return Provider.allCases.compactMap { provider in
+            Provider.allCases.compactMap { provider in
                 event(provider: provider, previous: previous, current: current, resolve: resolve)
             }
         }
@@ -34,20 +32,37 @@ public enum ProviderRefillDetector {
                       resolve: AccountResolver) -> ProviderRefillEvent? {
         let before = mainLimits(provider: provider, reading: previous)
         let after = mainLimits(provider: provider, reading: current)
-        var refilled: [String] = []
+        var refilled = Set<String>()
+        var notRefilled = Set<String>()
+        var present = Set<String>()
+        var countsKnown = true
         for (accountID, old) in before {
+            guard let new = after[accountID] else { continue }
+            present.insert(resolve(new))
             // An unstarted window has nothing to refill; a natural reset or spent banked reset is not this event.
-            guard let new = after[accountID], let oldUsed = old.used, oldUsed > 0 else { continue }
-            guard let newUsed = new.used, newUsed < oldUsed,
+            guard let oldUsed = old.used, oldUsed > 0 else { continue }
+            let oldBanked = banked(provider: provider, accountID: accountID, reading: previous)
+            let newBanked = banked(provider: provider, accountID: accountID, reading: current)
+            // A banked reset that expired between the readings was not spent; one granted is not spent either.
+            let spent = switch (oldBanked, newBanked) {
+            case (nil, nil): false
+            case let (old?, new?): new.availableCount < old.presented(at: current.savedAt).availableCount
+            default: true
+            }
+            guard !spent, let newUsed = new.used, newUsed < oldUsed,
                   let oldReset = old.resetsAt, let newReset = new.resetsAt,
-                  oldReset > current.savedAt, newReset.timeIntervalSince(oldReset) >= minimumResetJump,
-                  bankedCount(provider: provider, accountID: accountID, reading: previous)
-                    == bankedCount(provider: provider, accountID: accountID, reading: current) else { continue }
-            refilled.append(resolve(new))
+                  oldReset > current.savedAt, newReset.timeIntervalSince(oldReset) >= minimumResetJump else {
+                notRefilled.insert(resolve(new)); continue
+            }
+            refilled.insert(resolve(new))
+            countsKnown = countsKnown && oldBanked != nil
         }
         // Two logins on one account resolve to one published ID and count once.
-        let accounts = Set(refilled).sorted()
-        guard accounts.count >= 2 else { return nil }
+        let accounts = refilled.sorted()
+        // One refilled account is enough when every other account had nothing to refill, and its banked
+        // count shows no reset was spent on it.
+        let lone = accounts.count == 1 && present.count >= 2 && notRefilled.subtracting(refilled).isEmpty && countsKnown
+        guard accounts.count >= 2 || lone else { return nil }
         return ProviderRefillEvent(provider: provider, detectedAt: current.savedAt, previousReadingAt: previous.savedAt,
                                    accountIDs: accounts)
     }
@@ -59,8 +74,8 @@ public enum ProviderRefillDetector {
         }
     }
 
-    private static func bankedCount(provider: Provider, accountID: String, reading: StoredUsageSnapshot) -> Int? {
-        reading.reports.first { $0.provider == provider && $0.accountID == accountID }?.resetCredits?.availableCount
+    private static func banked(provider: Provider, accountID: String, reading: StoredUsageSnapshot) -> ProviderResetCreditSummary? {
+        reading.reports.first { $0.provider == provider && $0.accountID == accountID }?.resetCredits
     }
 
     /// For each unstarted OpenAI account, the first reading of its current unstarted run, newest readings first.
