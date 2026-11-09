@@ -16,7 +16,6 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import struct
-import subprocess
 import zlib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -248,27 +247,3 @@ def reference_path(cell: Cell) -> str:
     return f"{DEFAULT_REFERENCE_ROOT.relative_to(REPO_ROOT).as_posix()}/{cell.relative_path}"
 
 
-def images_match(reference: bytes, candidate: bytes) -> bool:
-    """True when two PNGs are the same size and differ only within the tolerance."""
-    changed = changed_pixel_count(decode_png(reference), decode_png(candidate))
-    return changed is not None and changed <= MAX_CHANGED_PIXELS
-
-
-def committed_reference(repository: Path, commit: str, cell: Cell) -> bytes | None:
-    """The reference image committed at `commit`, read from Git rather than a working tree."""
-    object_name = f"{commit}:{reference_path(cell)}"
-    exists = subprocess.run(
-        ["git", "-C", str(repository), "cat-file", "-e", object_name],
-        capture_output=True,
-        check=False,
-    )
-    if exists.returncode != 0:
-        return None
-    blob = subprocess.run(
-        ["git", "-C", str(repository), "cat-file", "blob", object_name],
-        capture_output=True,
-        check=False,
-    )
-    if blob.returncode != 0:
-        raise ReferenceImageError(f"{reference_path(cell)} at {commit} is unreadable")
-    return blob.stdout

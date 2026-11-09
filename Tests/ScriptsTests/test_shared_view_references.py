@@ -192,5 +192,83 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
 
 
+class CaptureConfigTests(unittest.TestCase):
+    """capture-config picks the pinned simulator or stops; references hold only for it."""
+
+    PINS = {
+        "ios": ("com.apple.CoreSimulator.SimRuntime.iOS-26-0", "com.apple.CoreSimulator.SimDeviceType.iPhone-16"),
+        "ipados": ("com.apple.CoreSimulator.SimRuntime.iOS-26-0", "com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3"),
+        "visionos": ("com.apple.CoreSimulator.SimRuntime.xrOS-26-0", "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro"),
+        "watchos": ("com.apple.CoreSimulator.SimRuntime.watchOS-26-0", "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm"),
+        "tvos": ("com.apple.CoreSimulator.SimRuntime.tvOS-26-0", "com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K"),
+    }
+    PRODUCT_FAMILIES = {
+        "ios": ("iOS", "iPhone"),
+        "ipados": ("iOS", "iPad"),
+        "visionos": ("xrOS", "Apple Vision"),
+        "watchos": ("watchOS", "Apple Watch"),
+        "tvos": ("tvOS", "Apple TV"),
+    }
+    BUNDLES = {
+        "ios": "/tmp/i.app",
+        "ipados": "/tmp/i.app",
+        "visionos": "/tmp/v.app",
+        "watchos": "/tmp/w.app",
+        "tvos": "/tmp/t.app",
+    }
+
+    def pins(self):
+        capture = sys.modules["context_panel_shared_view_capture"]
+        return capture.SimulatorPins(
+            "/Applications/Xcode.app",
+            {name: capture.SimulatorPin(runtime, device, {}) for name, (runtime, device) in self.PINS.items()},
+        )
+
+    def catalog(self, *, without=None):
+        runtimes = {}
+        device_types = []
+        for name, (runtime, device) in self.PINS.items():
+            platform, family = self.PRODUCT_FAMILIES[name]
+            entry = runtimes.setdefault(
+                runtime,
+                {"identifier": runtime, "platform": platform, "isAvailable": True, "supportedDeviceTypes": []},
+            )
+            if device != without:
+                entry["supportedDeviceTypes"].append({"identifier": device})
+            device_types.append({"identifier": device, "productFamily": family})
+        # A newer runtime and another device are present but must not be chosen.
+        runtimes["newer"] = {
+            "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+            "platform": "iOS",
+            "isAvailable": True,
+            "supportedDeviceTypes": [{"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17"}],
+        }
+        device_types.append({"identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17", "productFamily": "iPhone"})
+        return {"runtimes": list(runtimes.values()), "devicetypes": device_types}
+
+    def test_capture_config_uses_the_pinned_runtime_and_device_type(self) -> None:
+        config = cli.capture_config(
+            self.catalog(), self.BUNDLES, "/tmp/ios.xctestrun", "/tmp/visionos.xctestrun", pins=self.pins()
+        )
+        self.assertEqual(
+            {name: (config["profiles"][name]["runtimeIdentifier"], config["profiles"][name]["deviceTypeIdentifier"])
+             for name in self.PINS},
+            self.PINS,
+        )
+        self.assertNotIn("uiTestRun", config["profiles"]["tvos"])
+        self.assertEqual("/tmp/ios.xctestrun", config["profiles"]["ipados"]["uiTestRun"])
+        self.assertEqual("/tmp/visionos.xctestrun", config["profiles"]["visionos"]["uiTestRun"])
+
+    def test_capture_config_fails_when_the_runner_lacks_a_pinned_simulator(self) -> None:
+        with self.assertRaisesRegex(references.ReferenceImageError, "pinned ipados simulator"):
+            cli.capture_config(
+                self.catalog(without=self.PINS["ipados"][1]),
+                self.BUNDLES,
+                "/tmp/ios.xctestrun",
+                "/tmp/visionos.xctestrun",
+                pins=self.pins(),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

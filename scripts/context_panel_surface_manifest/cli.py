@@ -12,7 +12,6 @@ from .artifact import collect_archive_evidence
 from .core import (
     DEFAULT_POLICY_PATH,
     SurfacePolicyError,
-    compare_manifests,
     embedded_manifest,
     generate_manifest,
     load_json_object,
@@ -59,7 +58,7 @@ def write_json(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate and compare Context Panel per-surface build fingerprints."
+        description="Generate Context Panel per-surface build fingerprints."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -92,28 +91,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--kind", choices=("render", "runtime", "combined"), default="combined"
     )
 
-    compare_parser = subparsers.add_parser(
-        "compare", help="Derive required and carry-forward evidence between manifests."
-    )
-    compare_parser.add_argument("--previous", type=Path, required=True)
-    compare_parser.add_argument("--current", type=Path, required=True)
-    compare_parser.add_argument(
-        "--previous-expected-build-manifest", type=Path, action="append"
-    )
-    compare_parser.add_argument(
-        "--current-expected-build-manifest", type=Path, action="append"
-    )
-    compare_parser.add_argument("--train", choices=("beta", "rc", "release"), required=True)
-    compare_parser.add_argument("--output", type=Path)
-    compare_parser.add_argument("--release-record", type=Path)
-
-    template_parser = subparsers.add_parser(
-        "evidence-template", help="Emit the required signed-artifact evidence shape."
-    )
-    template_parser.add_argument("--manifest", type=Path, required=True)
-    template_parser.add_argument("--layout")
-    template_parser.add_argument("--output", type=Path)
-
     seal_parser = subparsers.add_parser(
         "seal", help="Bind complete signed-artifact evidence to a source manifest."
     )
@@ -143,58 +120,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     collect_parser.add_argument("--output", type=Path)
     return parser
-
-
-def evidence_template(
-    manifest: dict[str, Any], layout_name: str | None = None
-) -> dict[str, Any]:
-    source = manifest.get("source")
-    if not isinstance(source, dict):
-        raise SurfacePolicyError("source manifest identity is missing")
-    surfaces = manifest_surface_map(manifest, "source")
-    layout_artifacts: set[str] | None = None
-    if layout_name is not None:
-        archive_layouts = manifest.get("archiveLayouts")
-        layout = archive_layouts.get(layout_name) if isinstance(archive_layouts, dict) else None
-        if not isinstance(layout, dict) or not layout:
-            raise SurfacePolicyError(f"unknown archive layout: {layout_name}")
-        layout_artifacts = {str(artifact_id) for artifact_id in layout}
-    artifacts: dict[str, dict[str, Any]] = {}
-    for surface in surfaces.values():
-        artifact_id = str(surface.get("artifactId") or "")
-        if layout_artifacts is not None and artifact_id not in layout_artifacts:
-            continue
-        artifact: dict[str, Any] = {
-            "artifactId": artifact_id,
-            "bundleIdentifier": surface.get("bundleIdentifier"),
-            "marketingVersion": source.get("marketingVersion"),
-            "buildNumber": source.get("buildNumber"),
-            "sourceCommit": source.get("commit"),
-            "configuration": source.get("configuration"),
-            "xcodeBuild": source.get("xcodeBuild"),
-            "treeState": source.get("treeState"),
-            "codeSignatureValid": None,
-            "executableSha256": None,
-            "executableUUIDs": [],
-            "entitlementsSha256": None,
-            "profileSha256": None,
-            "bundleContractSha256": None,
-            "signingClass": None,
-            "signingContractSha256": None,
-            "entitlementContractSha256": None,
-            "profileCapabilitySha256": None,
-            "architectures": [],
-        }
-        previous = artifacts.get(artifact_id)
-        if previous is not None and previous != artifact:
-            raise SurfacePolicyError(f"source manifest artifact contract drifted: {artifact_id}")
-        artifacts[artifact_id] = artifact
-    return {
-        "schemaVersion": 2,
-        "sourceManifestId": manifest.get("manifestId"),
-        "layout": layout_name,
-        "artifacts": [artifacts[artifact_id] for artifact_id in sorted(artifacts)],
-    }
 
 
 def profile_bindings(values: list[str]) -> dict[str, Path]:
@@ -254,47 +179,6 @@ def run(arguments: argparse.Namespace) -> None:
         if surface is None:
             raise SurfacePolicyError(f"unknown surface: {arguments.surface}")
         print(surface["fingerprints"][arguments.kind])
-        return
-    if arguments.command == "compare":
-        previous = load_json_object(arguments.previous, "previous surface manifest")
-        current = load_json_object(arguments.current, "current surface manifest")
-        previous_expected_paths = getattr(arguments, "previous_expected_build_manifest", None)
-        current_expected_paths = getattr(arguments, "current_expected_build_manifest", None)
-        previous_expected = (
-            [
-                load_json_object(path, "previous expected signed build manifest")
-                for path in previous_expected_paths
-            ]
-            if previous_expected_paths is not None
-            else None
-        )
-        current_expected = (
-            [
-                load_json_object(path, "current expected signed build manifest")
-                for path in current_expected_paths
-            ]
-            if current_expected_paths is not None
-            else None
-        )
-        write_json(
-            compare_manifests(
-                previous,
-                current,
-                arguments.train,
-                previous_expected,
-                current_expected,
-                release_record=(
-                    load_json_object(arguments.release_record, "platform release record")
-                    if getattr(arguments, "release_record", None) is not None else None
-                ),
-            ),
-            arguments.output,
-            sort_keys=False,
-        )
-        return
-    if arguments.command == "evidence-template":
-        manifest = load_json_object(arguments.manifest, "surface manifest")
-        write_json(evidence_template(manifest, arguments.layout), arguments.output)
         return
     if arguments.command == "seal":
         manifest = load_json_object(arguments.manifest, "surface manifest")

@@ -1,7 +1,6 @@
 from .core import (
     DEFAULT_POLICY_PATH,
     SurfacePolicyError,
-    compare_manifests,
     embedded_manifest,
     generate_manifest,
     resolve_policy,
@@ -13,7 +12,6 @@ from .artifact import collect_archive_evidence
 __all__ = [
     "DEFAULT_POLICY_PATH",
     "SurfacePolicyError",
-    "compare_manifests",
     "embedded_manifest",
     "collect_archive_evidence",
     "generate_manifest",
