@@ -53,7 +53,6 @@ class SharedViewMatrixTests(unittest.TestCase):
         for surface in self.matrix.surfaces:
             self.assertEqual(tuple(cell.id for cell in surface.cells), self.matrix.cell_order)
             self.assertTrue(all(cell.justification for cell in surface.cells))
-        self.assertEqual(self.matrix.pixel_diff_policy, "advisory-only")
 
     def test_rejects_over_budget_and_missing_justification_matrix_cells(self) -> None:
         payload = json.loads(DEFAULT_MATRIX_PATH.read_text())

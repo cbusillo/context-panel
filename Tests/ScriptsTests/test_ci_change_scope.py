@@ -381,6 +381,10 @@ class ReferenceStatementTests(unittest.TestCase):
             self.body(self.NEW, self.STATEMENT),
             self.body(self.OLD, self.NEW),
             self.body(self.OLD, self.NEW, "Looks fine."),
+            self.body(
+                '<img width="300" alt="old" src="https://github.com/user-attachments/assets/old-cell-image">',
+                '<img width="300" alt="new" src="https://github.com/user-attachments/assets/new-cell-image">',
+            ),
         ):
             with self.subTest(body=body):
                 self.assertIsNotNone(module.reference_statement_problem(body))

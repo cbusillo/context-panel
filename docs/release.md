@@ -1167,9 +1167,11 @@ what proves it.
 - the release commit, from Ship's release record for that platform, version
   and build, has a passing `shared-view-simulator-references` CI job from a
   push or manual run of CI; and
-- the build has been on TestFlight for 24 hours since that upload, and the
-  TestFlight crash watcher filed no crash report for that exact platform and
-  build in those 24 hours.
+- the build has been on TestFlight for 24 hours, counted from when Ship (or a
+  Ship retry) reported its TestFlight distribution as successful on that
+  record, and the TestFlight crash watcher filed no crash report for that exact
+  platform and build in those 24 hours. A build distributed to TestFlight
+  outside Ship never starts the day; use the override.
 
 Chris can skip the wait, or submit despite a crash report, with
 `-f skip_soak_reason="<why>"`. The run log and summary record the reason. The

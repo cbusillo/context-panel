@@ -132,7 +132,7 @@ def classify(paths: list[str] | None) -> Scope:
 
 
 REFERENCE_STATEMENT_HEADING = re.compile(r"^##\s+Reference images\s*$", re.IGNORECASE | re.MULTILINE)
-IMAGE = re.compile(r"!\[[^]]*]\([^)\s]+\)|<img\s[^>]*src=", re.IGNORECASE)
+IMAGE = re.compile(r"!\[[^]]*]\([^)\s]+\)|<img\s[^>]*>", re.IGNORECASE)
 
 
 def reference_statement_problem(body: str | None) -> str | None:

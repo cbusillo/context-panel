@@ -38,6 +38,7 @@ SOAK = timedelta(hours=24)
 # Wording the crash watcher writes for each submission it files.
 CRASH_SUBMISSION = re.compile(r"TestFlight crash submission, (?P<platform>[A-Z_]+), build (?P<build>\S+?)\.\s")
 SUBMITTED_AT = re.compile(r"Submitted: (?P<at>\S+?)\.\s")
+WATCHER_BUILD_MARKER = "<!-- testflight-build:"
 MAX_PAGES = 50
 
 FetchJSON = Callable[[str], Any]
@@ -86,15 +87,35 @@ def _pages(path: str, fetch_json: FetchJSON) -> list[dict[str, Any]]:
     raise SubmissionGateError(f"GitHub listing for {path} is longer than {MAX_PAGES} pages")
 
 
-def ship_records(issues: list[dict[str, Any]], platform: str, version: str, build: str) -> list[dict[str, Any]]:
-    """Ship's release records for this exact platform, version and build."""
+def ship_records(
+    issues: list[dict[str, Any]], platform: str, version: str, build: str
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Ship's release record issues for this exact platform, version and build."""
     identity = {"platform": platform, "version": version, "buildNumber": build}
     records = []
     for issue in issues:
         record = release_status.read_marker(release_status.RECORD, issue.get("body") or "")
         if record is not None and all(record.get(key) == value for key, value in identity.items()):
-            records.append(record)
+            records.append((issue, record))
     return records
+
+
+def on_testflight_since(
+    issue: dict[str, Any], record: dict[str, Any], repository: str, fetch_json: FetchJSON
+) -> datetime | None:
+    """When Ship first reported this record's TestFlight distribution as successful.
+
+    Ship's own run reports it in the record; a retry run reports it in a channel
+    comment, which then starts the day.
+    """
+    if record.get("testflight") == "success":
+        return release_status.timestamp(record["uploadedAt"])
+    comments = _pages(f"repos/{repository}/issues/{issue['number']}/comments", fetch_json)
+    for comment in sorted(comments, key=lambda item: str(item.get("created_at") or "")):
+        channels = release_status.read_marker(release_status.CHANNELS, comment.get("body") or "")
+        if channels is not None and channels.get("testflight") == "success" and comment.get("created_at"):
+            return release_status.timestamp(comment["created_at"])
+    return None
 
 
 def passing_run_url(commit: str, repository: str, fetch_json: FetchJSON) -> str | None:
@@ -139,11 +160,15 @@ def crash_times(
     repository: str,
     fetch_json: FetchJSON,
 ) -> list[datetime | None]:
-    """When each crash submission the watcher filed for this build arrived; `None` if unreadable."""
+    """When each crash submission the watcher filed for this build arrived; `None` if unreadable.
+
+    Watcher issues are found by the build marker the watcher writes in every issue
+    body, or by its title, so a retitled issue still counts.
+    """
     title = f"TestFlight feedback: {platform} build {build}"
     found: list[datetime | None] = []
     for issue in issues:
-        if issue.get("title") != title:
+        if issue.get("title") != title and WATCHER_BUILD_MARKER not in (issue.get("body") or ""):
             continue
         texts = [issue.get("body") or ""]
         texts += [comment.get("body") or "" for comment in
@@ -178,9 +203,10 @@ def check(
             f"no Ship release record for {platform} {version} ({build}); the gate needs the record's "
             "source commit and upload time, which Ship writes when it uploads a build"
         )
-    commits = sorted({str(record.get("sourceCommit")) for record in records})
-    uploads: list[datetime] = [release_status.timestamp(record["uploadedAt"]) for record in records]
-    uploaded = min(uploads)
+    commits = sorted({str(record.get("sourceCommit")) for _, record in records})
+    uploads: list[datetime] = [release_status.timestamp(record["uploadedAt"]) for _, record in records]
+    available = [since for issue, record in records
+                 if (since := on_testflight_since(issue, record, repository, fetch_json)) is not None]
 
     blockers: list[str] = []
     runs: list[tuple[str, str]] = []
@@ -192,11 +218,19 @@ def check(
             runs.append((commit, url))
 
     soak_blockers: list[str] = []
-    soak_ends = uploaded + SOAK
-    if now < soak_ends:
+    if available:
+        start = min(available)
+        soak_ends = start + SOAK
+        if now < soak_ends:
+            soak_blockers.append(
+                f"the build has been on TestFlight since {start.isoformat()}; its first day ends at "
+                f"{soak_ends.isoformat()}"
+            )
+    else:
+        soak_ends = min(uploads) + SOAK
         soak_blockers.append(
-            f"the build has been on TestFlight since {uploaded.isoformat()}; its first day ends at "
-            f"{soak_ends.isoformat()}"
+            "Ship never reported this build's TestFlight distribution as successful, so its day "
+            "on TestFlight has not started"
         )
     crashes = crash_times(issues, platform, build, repository, fetch_json)
     first_day = [at for at in crashes if at is None or at < soak_ends]

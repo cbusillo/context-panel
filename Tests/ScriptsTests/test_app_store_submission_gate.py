@@ -18,11 +18,12 @@ UPLOADED = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
 AFTER_A_DAY = UPLOADED + timedelta(hours=25)
 
 
-def ship_record_issue(number, *, commit=COMMIT, platform=PLATFORM, build=BUILD, uploaded=UPLOADED):
+def ship_record_issue(number, *, commit=COMMIT, platform=PLATFORM, build=BUILD, uploaded=UPLOADED,
+                      testflight="success"):
     """A release record shaped the way `app-store-release-status.py record-ship` writes it."""
     record = {
         "platform": platform, "version": VERSION, "buildNumber": build, "sourceCommit": commit,
-        "uploadedAt": uploaded.isoformat(), "github": "published", "testflight": "success",
+        "uploadedAt": uploaded.isoformat(), "github": "published", "testflight": testflight,
         "appStore": "App Store submission pending", "runURL": "https://example.invalid/run",
     }
     body = gate.release_status.record_body(REPOSITORY, record)
@@ -50,7 +51,9 @@ class FakeGitHub:
 
     def add_issue(self, issue, comments=()):
         self.issues.append(issue)
-        self.comments[issue["number"]] = [{"body": body} for body in comments]
+        self.comments[issue["number"]] = [
+            comment if isinstance(comment, dict) else {"body": comment} for comment in comments
+        ]
 
     def add_crash_issue(self, number, *texts, platform=PLATFORM, build=BUILD):
         self.add_issue(
@@ -187,6 +190,35 @@ class TestFlightDayTests(unittest.TestCase):
         readiness = check(github, now=UPLOADED + timedelta(hours=30))
         self.assertEqual(readiness.blockers, ())
         self.assertEqual(len(readiness.notes), 1)
+
+    def test_a_build_ship_never_put_on_testflight_waits(self):
+        for testflight in ("failure", "not selected"):
+            with self.subTest(testflight=testflight):
+                github = FakeGitHub()
+                github.add_issue(ship_record_issue(1, testflight=testflight))
+                github.add_run(COMMIT)
+                (blocker,) = check(github, now=UPLOADED + timedelta(days=3)).blockers
+                self.assertIn("has not started", blocker)
+                self.assertEqual(check(github, override="Chris installed it").blockers, ())
+
+    def test_a_retried_testflight_distribution_starts_the_day_when_it_succeeds(self):
+        retried = UPLOADED + timedelta(hours=5)
+        comment = {
+            "created_at": retried.isoformat(),
+            "body": gate.release_status.marker(
+                gate.release_status.CHANNELS, {"github": "published", "testflight": "success", "upload": "success"}
+            ),
+        }
+        github = FakeGitHub()
+        github.add_issue(ship_record_issue(1, testflight="failure"), [comment])
+        github.add_run(COMMIT)
+        self.assertEqual(len(check(github, now=UPLOADED + timedelta(hours=26)).blockers), 1)
+        self.assertEqual(check(github, now=retried + timedelta(hours=25)).blockers, ())
+
+    def test_a_retitled_watcher_issue_still_blocks(self):
+        github = ready_github()
+        github.add_issue({"number": 5, "title": "Watch app crashes on launch", "body": crash_text("2026-11-09T18:30:00Z")})
+        self.assertEqual(len(check(github).blockers), 1)
 
     def test_the_override_skips_the_wait_and_a_crash_and_records_what_it_skipped(self):
         github = ready_github()
