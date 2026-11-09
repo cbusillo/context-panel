@@ -172,7 +172,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "import ContextPanelCloudKitSync",
             "ContextPanelLocations",
             "ProviderCredentialStore",
-            "RuntimeReceiptRecorder",
             "WidgetCenter.shared",
         ):
             self.assertNotIn(forbidden, source)
@@ -216,7 +215,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "ContextPanelWatchWidgetProvider",
             "WatchWidgetLoadQueue",
             "CompanionCloudKitSyncStoreFactory",
-            "RuntimeReceiptRecorder",
             "@main",
             "ContextPanelWatchWidgetBundle",
         ):
@@ -228,7 +226,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "WatchCompanionLoader(",
             "WatchCompanionCache(",
             "CompanionCloudKitSyncStoreFactory",
-            "RuntimeReceiptRecorder",
             "WidgetCenter.shared",
         ):
             self.assertNotIn(forbidden, watch_gallery)
@@ -255,8 +252,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "TVSystemSurfaceCoordinator",
             "TVTopShelfDocumentStore",
             "TVTopShelfSharedLocations",
-            "RuntimeReceiptRecorder",
-            "RuntimeReceiptRelayCoordinator",
             "topShelfContentDidChange",
             "TVLocalCacheLocations",
         ):
@@ -280,7 +275,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "ContextPanelTVTopShelfProvider",
             "TVTopShelfDocumentStore",
             "TVTopShelfSharedLocations",
-            "RuntimeReceiptRecorder",
             "setImageURL",
             "write(to:",
         ):

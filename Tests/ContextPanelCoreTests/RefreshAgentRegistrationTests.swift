@@ -884,9 +884,7 @@ func refreshAgentDiagnosticAppearsInTheAppAndClearsAfterRecovery(kind: RefreshAg
         stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root)),
         promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] }
     )
-    let model = ContextPanelAppModel(
-        refreshService: service, runtimeReceiptRecorder: .disabled(), enablesRuntimeReceiptRelay: false
-    )
+    let model = ContextPanelAppModel(refreshService: service)
     let diagnostic = RefreshAgentRegistrationDiagnostic(kind: kind)
     model.updateBackgroundRefreshDiagnostic(diagnostic)
     #expect(model.errorMessage == diagnostic.userFacingMessage)

@@ -256,63 +256,6 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "refresh-diagnostics-state.json")
     }
 
-    public static func runtimeValidationDirectory(appGroupID: String? = nil) -> URL {
-        if let appGroupID,
-           let directoryURL = sharedRuntimeValidationDirectory(appGroupID: appGroupID) {
-            return directoryURL
-        }
-
-        return applicationSupportDirectory()
-            .appending(path: "Validation", directoryHint: .isDirectory)
-    }
-
-    public static func sharedRuntimeValidationDirectory(appGroupID: String) -> URL? {
-        guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
-            return nil
-        }
-        #if os(tvOS)
-        return containerURL
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Caches", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "Validation", directoryHint: .isDirectory)
-        #else
-        return containerURL
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "Validation", directoryHint: .isDirectory)
-        #endif
-    }
-
-    public static func runtimeValidationSessionURL(appGroupID: String? = nil) -> URL {
-        runtimeValidationDirectory(appGroupID: appGroupID)
-            .appending(path: "runtime-session.json")
-    }
-
-    public static func archivedRuntimeValidationSessionURL(appGroupID: String? = nil) -> URL {
-        runtimeValidationDirectory(appGroupID: appGroupID)
-            .appending(path: "runtime-session-last.json")
-    }
-
-    public static func runtimeValidationSessionsDirectory(appGroupID: String? = nil) -> URL {
-        runtimeValidationDirectory(appGroupID: appGroupID)
-            .appending(path: "Runtime Sessions", directoryHint: .isDirectory)
-    }
-
-    public static func runtimeReceiptDirectory(appGroupID: String? = nil) -> URL {
-        runtimeValidationDirectory(appGroupID: appGroupID)
-            .appending(path: "Runtime Receipts", directoryHint: .isDirectory)
-    }
-
-    public static func runtimeReceiptInboxDirectory(appGroupID: String? = nil) -> URL {
-        runtimeValidationDirectory(appGroupID: appGroupID)
-            .appending(path: "Remote Runtime Receipts", directoryHint: .isDirectory)
-    }
-
-    public static func runtimeReceiptRelayStateURL(appGroupID: String? = nil) -> URL {
-        runtimeValidationDirectory(appGroupID: appGroupID)
-            .appending(path: "runtime-receipt-relay-state.json")
-    }
-
     public static func resetExpiryRefreshStateURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL

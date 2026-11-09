@@ -688,7 +688,7 @@ private func presentationTestTemporaryDirectory() throws -> URL {
         accountConfigurationURL: accounts.configurationURL)
     let service = SnapshotRefreshService(accountStore: accounts, stores: SnapshotRefreshStores(primary: snapshots),
         companionSyncPublisher: publisher, promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
-    let model = ContextPanelAppModel(refreshService: service, runtimeReceiptRecorder: .disabled(), enablesRuntimeReceiptRelay: false)
+    let model = ContextPanelAppModel(refreshService: service)
     model.loadSnapshot(reloadWidgetTimelines: false)
     let labels = { (date: Date) in model.accountOverview(at: date).accounts.map(\.metadata.label) }
     #expect(labels(now) == ["Before"])

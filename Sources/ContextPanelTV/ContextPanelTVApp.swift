@@ -40,7 +40,7 @@ struct ContextPanelTVApp: App {
                 }
                 .preferredColorScheme(.dark)
             case .normal, .invalid:
-                TVRootView(runtimeReceiptRelayProvider: appDelegate.runtimeReceiptRelayProvider)
+                TVRootView()
             }
             #endif
         }
@@ -58,10 +58,8 @@ private struct TVRootView: View {
     @State private var pendingProviderRawValue: String?
     @State private var showsAbout = false
 
-    init(runtimeReceiptRelayProvider: TVRuntimeReceiptRelayProvider) {
-        _model = State(
-            initialValue: TVSyncModel(runtimeReceiptRelayProvider: runtimeReceiptRelayProvider)
-        )
+    init() {
+        _model = State(initialValue: TVSyncModel())
         #if DEBUG
         if TVPreviewFixtures.opensValidationGallery {
             _navigationPath = State(initialValue: [tvValidationGalleryNavigationValue])
@@ -92,13 +90,6 @@ private struct TVRootView: View {
             version: model.displayVersion,
             cloudKitUserScope: model.cloudKitUserScope,
             mode: presentationMode
-        )
-    }
-
-    private var runtimeReceiptPresentation: TVRuntimeReceiptPresentation {
-        TVRuntimeReceiptPresentation(
-            publication: systemSurfacePublication,
-            hasVisibleError: visibleNoticeMessage != nil
         )
     }
 
@@ -159,14 +150,10 @@ private struct TVRootView: View {
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
                     model.reload()
-                    model.recordRuntimeReceipt(runtimeReceiptPresentation)
                 }
             }
             .onChange(of: systemSurfacePublication, initial: true) { _, publication in
                 model.publishSystemSurfaces(publication)
-            }
-            .onChange(of: runtimeReceiptPresentation) { _, presentation in
-                model.recordRuntimeReceipt(presentation)
             }
             .onReceive(NotificationCenter.default.publisher(
                 for: .contextPanelTVBackgroundSyncDidUpdateCache
@@ -522,11 +509,6 @@ private struct TVSystemSurfacePublication: Equatable, Sendable {
     let mode: TVPresentationMode
 }
 
-private struct TVRuntimeReceiptPresentation: Equatable, Sendable {
-    let publication: TVSystemSurfacePublication
-    let hasVisibleError: Bool
-}
-
 @MainActor
 @Observable
 private final class TVSyncModel {
@@ -534,9 +516,6 @@ private final class TVSyncModel {
     private let cacheStore: CompanionSyncStore
     private let receiptStore: TVSyncReceiptStore
     private let scopeStateStore: CompanionCloudKitUserScopeStateStore
-    private let injectedRuntimeReceiptRecorder: RuntimeReceiptRecorder?
-    private var runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
-    private let runtimeReceiptRelayProvider: TVRuntimeReceiptRelayProvider
     private let usesPreviewFixture: Bool
     private let forcesRemoteFailure: Bool
     private var reloadTask: Task<Void, Never>?
@@ -560,16 +539,8 @@ private final class TVSyncModel {
         displayResult.document.map { TVCompanionSyncVersion(document: $0) }
     }
 
-    init(
-        now: Date = Date(),
-        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
-        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil,
-        runtimeReceiptRelayProvider: TVRuntimeReceiptRelayProvider? = nil
-    ) {
+    init(now: Date = Date()) {
         remoteStore = CompanionCloudKitSyncStoreFactory.make()
-        injectedRuntimeReceiptRecorder = runtimeReceiptRecorder
-        self.runtimeReceiptRelay = runtimeReceiptRelay
-        self.runtimeReceiptRelayProvider = runtimeReceiptRelayProvider ?? TVRuntimeReceiptRelayProvider()
         let localCacheLocations = TVLocalCacheLocations.live()
         cacheStore = CompanionSyncStore(
             documentURL: localCacheLocations.companionDocumentURL,
@@ -630,23 +601,20 @@ private final class TVSyncModel {
 
         let startedAt = Date()
         let startingVersion = displayVersion
-        let runtimeReceiptRelay = resolvedRuntimeReceiptRelay()
         isLoading = true
         syncNoticeMessage = nil
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
         let shouldForceRemoteFailure = forcesRemoteFailure
 
-        reloadTask = Task { [weak self, remoteStore, cacheStore, receiptStore, runtimeReceiptRelay] in
+        reloadTask = Task { [weak self, remoteStore, cacheStore, receiptStore] in
             guard let self else { return }
             defer {
                 isLoading = false
                 reloadTask = nil
             }
 
-            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: startedAt)
             let initialScopeResolution = await remoteStore.currentUserScopeResolution()
             guard case let .resolved(userScope) = initialScopeResolution else {
-                _ = await sessionRelayResult
                 if initialScopeResolution == .unavailable {
                     await self.invalidateIdentity(
                         message: "CloudKit account identity is unavailable."
@@ -662,7 +630,6 @@ private final class TVSyncModel {
                 return
             }
             guard await self.activateScope(userScope, now: startedAt) else {
-                _ = await sessionRelayResult
                 await self.invalidateIdentity(
                     message: "Context Panel could not update its CloudKit account scope."
                 )
@@ -689,7 +656,6 @@ private final class TVSyncModel {
                 ? Self.forcedRemoteFailureLoadResult(userScope: userScope)
                 : await remoteStore.load(now: startedAt)
             guard !Task.isCancelled else { return }
-            _ = await sessionRelayResult
             let finalScopeResolution = await remoteStore.currentUserScopeResolution()
             guard finalScopeResolution == .resolved(userScope),
                   Self.remoteLoadMatchesScope(remoteLoad, expectedScope: userScope)
@@ -909,58 +875,6 @@ private final class TVSyncModel {
         }
     }
 
-    func recordRuntimeReceipt(
-        _ presentation: TVRuntimeReceiptPresentation,
-        presentationDate: Date = Date()
-    ) {
-        let publication = presentation.publication
-        let runtimeReceiptRelay = resolvedRuntimeReceiptRelay()
-        let evidence = CompanionRuntimeReceiptEvidence(
-            result: publication.result,
-            snapshot: publication.snapshot,
-            displayPreferences: publication.preferences,
-            appearanceSettings: nil,
-            presentationSurface: .app,
-            presentationMode: .appOverview,
-            tvPresentationMode: publication.mode.runtimeTVPresentationMode,
-            additionalVisibleError: presentation.hasVisibleError,
-            presentationDate: presentationDate
-        )
-        let recordReceipt: @Sendable () -> RuntimeReceiptRecordResult = { [injectedRuntimeReceiptRecorder] in
-            let runtimeReceiptRecorder = injectedRuntimeReceiptRecorder ?? .appGroupRequired(
-                surface: .tvOSApp,
-                appGroupID: ContextPanelLocations.companionAppGroupID
-            )
-            return runtimeReceiptRecorder.record(
-                trigger: .appSnapshotLoad,
-                presentationMode: .appOverview,
-                selectedSource: evidence.selectedSource,
-                presentationDigest: evidence.presentationDigest,
-                stateBranch: evidence.stateBranch,
-                outcome: evidence.outcome,
-                observedAt: presentationDate
-            )
-        }
-        let initialResult = recordReceipt()
-        Task { [runtimeReceiptRelay] in
-            guard let runtimeReceiptRelay else { return }
-            _ = await runtimeReceiptRelay.completeReceiptRelay(
-                after: initialResult,
-                observedAt: presentationDate,
-                retry: recordReceipt
-            )
-        }
-    }
-
-    private func resolvedRuntimeReceiptRelay() -> RuntimeReceiptRelayCoordinator? {
-        if let runtimeReceiptRelay {
-            return runtimeReceiptRelay
-        }
-        let resolved = runtimeReceiptRelayProvider.resolve()
-        runtimeReceiptRelay = resolved
-        return resolved
-    }
-
     private static let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(
         maximumAge: SnapshotFreshness.companionProviderMaximumAge
     )
@@ -1046,19 +960,6 @@ private final class TVSyncModel {
                 cloudKitUserScope: userScope
             )
         )
-    }
-}
-
-private extension TVPresentationMode {
-    var runtimeTVPresentationMode: RuntimeTVPresentationMode {
-        switch self {
-        case .fullDetail:
-            .fullDetail
-        case .projectOnly:
-            .projectOnly
-        case .countsOnly:
-            .countsOnly
-        }
     }
 }
 

@@ -211,8 +211,6 @@ struct WatchUsageContent: View {
 private final class WatchSyncModel {
     private let cache: WatchCompanionCache
     private let companionLoader: WatchCompanionLoader
-    private let runtimeReceiptRecorder: RuntimeReceiptRecorder
-    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private var reloadTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
 
@@ -225,26 +223,11 @@ private final class WatchSyncModel {
     private(set) var lastSyncErrorMessage: String?
     private(set) var isLoading = false
 
-    init(
-        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
-        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
-    ) {
+    init() {
         let cache = WatchCompanionCache()
         self.cache = cache
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
-        self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
-            surface: .watchOSApp,
-            appGroupID: ContextPanelLocations.watchAppGroupID
-        )
-        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appGroupReceiver(
-            remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
-            expectedManifestID: RuntimeBuildIdentityLoader.load(
-                surface: .watchOSApp
-            )?.build.manifestID,
-            eligibleSurfaces: [.watchOSApp, .watchOSComplication],
-            appGroupID: ContextPanelLocations.watchAppGroupID
-        )
         companionLoader = WatchCompanionLoader(
             cache: cache,
             resolveUserScopeResolution: { await remoteStore.currentUserScopeResolution() },
@@ -264,7 +247,7 @@ private final class WatchSyncModel {
         displayResult = CompanionSyncLoadResult(document: displayResult.document, status: .loading)
         lastSyncErrorMessage = nil
 
-        reloadTask = Task { [weak self, companionLoader, runtimeReceiptRelay] in
+        reloadTask = Task { [weak self, companionLoader] in
             defer {
                 if let self {
                     isLoading = false
@@ -274,11 +257,9 @@ private final class WatchSyncModel {
                     }
                 }
             }
-            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: now)
             let loaded = await companionLoader.load(now: now)
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            _ = await sessionRelayResult
             result = loaded.result
             displayResult = loaded.result
             lastSyncErrorMessage = loaded.result.errorMessage
@@ -288,20 +269,10 @@ private final class WatchSyncModel {
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             )
             snapshot = loadedSnapshot
-            let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
+            displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
                 localOverride: loaded.displayPreferences,
                 synced: loaded.result.document?.widgetDisplayPreferences
             )
-            displayPreferences = effectiveDisplayPreferences
-            recordRuntimeReceipt(
-                loaded: loaded,
-                snapshot: loadedSnapshot,
-                displayPreferences: effectiveDisplayPreferences,
-                presentationDate: now
-            )
-            Task { [runtimeReceiptRelay] in
-                _ = await runtimeReceiptRelay?.relayReceipts(now: Date())
-            }
             if WatchComplicationTimelineReloadPolicy.shouldReload(after: loaded) {
                 WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
             }
@@ -317,34 +288,6 @@ private final class WatchSyncModel {
         lastSyncErrorMessage = nil
         WidgetCenter.shared.reloadAllTimelines()
         reload()
-    }
-
-    private func recordRuntimeReceipt(
-        loaded: WatchCompanionCacheLoadResult,
-        snapshot: WidgetSnapshot,
-        displayPreferences: WidgetDisplayPreferences,
-        presentationDate: Date
-    ) {
-        let evidence = CompanionRuntimeReceiptEvidence(
-            result: loaded.result,
-            snapshot: snapshot,
-            displayPreferences: displayPreferences,
-            appearanceSettings: nil,
-            presentationSurface: .app,
-            presentationMode: .watchApp,
-            presentationDate: presentationDate
-        )
-        let exceededDeadlineWithoutSavedData = loaded.disposition == .deadlineExceeded
-            && loaded.result.document == nil
-        runtimeReceiptRecorder.record(
-            trigger: .appSnapshotLoad,
-            presentationMode: .watchApp,
-            selectedSource: evidence.selectedSource,
-            presentationDigest: evidence.presentationDigest,
-            stateBranch: exceededDeadlineWithoutSavedData ? .unknown : evidence.stateBranch,
-            outcome: exceededDeadlineWithoutSavedData ? .degraded : evidence.outcome,
-            observedAt: presentationDate
-        )
     }
 }
 

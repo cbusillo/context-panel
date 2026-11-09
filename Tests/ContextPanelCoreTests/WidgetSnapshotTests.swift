@@ -35,7 +35,6 @@ func timelineProviderLoadsRecentForecastHistoryOnceForAllEntries(useMirror: Bool
         containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "mirror-forecast.json")),
         accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
         bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json")),
-        runtimeReceiptRecorder: .disabled(),
         historyLoader: { store, query in
             let history = store.loadHistory(query: query)
             reads.append((store.rootDirectory, query, history))

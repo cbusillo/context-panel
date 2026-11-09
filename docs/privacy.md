@@ -46,19 +46,6 @@ bound to the iCloud user. Raw provider account IDs and provider OAuth
 credentials stay on the Mac. See
 [the implementation contract](shared-account-identity.md).
 
-During an explicit expiring signed-validation session, Context Panel may sync
-privacy-safe runtime receipts through the user's private CloudKit database.
-These receipts contain app/extension build fingerprints, loaded executable
-UUIDs, random session and process identifiers, process-local sequence, closed
-surface/state categories, timestamps, and a digest of sanitized presentation
-state. They do not contain account names or IDs, credentials, provider payloads,
-raw errors, device identifiers, filesystem paths, or App Store Connect object
-IDs. Each receipt becomes eligible for deletion no later than seven days after
-observation. Local cleanup removes it after that deadline; its private CloudKit
-copy is removed by the next successful macOS host cleanup after the deadline.
-Receipts are uploaded only by existing entitled host apps and use no CloudKit
-subscription.
-
 Apple TV presentation privacy is device-local. Full Detail may show safe account
 display labels; Hide Account Names and Percentages Only suppress them. The Top
 Shelf document strips account names in every presentation mode.

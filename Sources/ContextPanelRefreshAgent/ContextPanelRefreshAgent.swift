@@ -18,7 +18,6 @@ struct ContextPanelRefreshAgent {
                 "--webhook-credentials-present",
                 "--bookmark-access-summary",
                 GoogleAntigravityUsageBridge.ingestArgument,
-                "--sync-runtime-receipts",
             ].contains($0)
         }
         if !recognizedUtilityArguments.isEmpty {
@@ -40,8 +39,6 @@ struct ContextPanelRefreshAgent {
             case GoogleAntigravityUsageBridge.ingestArgument:
                 await ingestAntigravityUsage()
                 Foundation.exit(0)
-            case "--sync-runtime-receipts":
-                await syncRuntimeReceipts()
             default:
                 Foundation.exit(64)
             }
@@ -66,13 +63,6 @@ struct ContextPanelRefreshAgent {
         let settingsStore = BackgroundRefreshSettingsStore(
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         )
-        let runtimeReceiptRecorder = RuntimeReceiptRecorder.appDefault(surface: .macOSRefreshAgent)
-        let runtimeReceiptRelay = RuntimeReceiptRelayCoordinator.appDefaultPublisher(
-            remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
-        )
-        let runtimeSnapshotStore = JSONSnapshotStore(
-            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
-        )
         let agentBundleVersion = Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String
         if arguments.contains("--refresh-once") {
             let startedAt = Date()
@@ -83,30 +73,13 @@ struct ContextPanelRefreshAgent {
                 agentBundleVersion: agentBundleVersion
             )
             do {
-                let evidence = try await runner.refreshWithEvidence()
-                let decision = evidence.decision
+                let decision = try await runner.refresh()
                 recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
-                recordRuntimeReceipt(
-                    runtimeReceiptRecorder,
-                    snapshotStore: runtimeSnapshotStore,
-                    trigger: .refreshOnce,
-                    evidence: evidence,
-                    observedAt: Date()
-                )
-                _ = await runtimeReceiptRelay.synchronize()
                 if decision.wasRefreshed {
                     await warningService.notifyIfNeeded(decision: decision)
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
-                recordRuntimeReceipt(
-                    runtimeReceiptRecorder,
-                    snapshotStore: runtimeSnapshotStore,
-                    trigger: .refreshOnce,
-                    evidence: nil,
-                    observedAt: Date()
-                )
-                _ = await runtimeReceiptRelay.synchronize()
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
             Foundation.exit(0)
@@ -126,30 +99,13 @@ struct ContextPanelRefreshAgent {
             )
 
             do {
-                let evidence = try await runner.refreshIfNeededWithEvidence()
-                let decision = evidence.decision
+                let decision = try await runner.refreshIfNeeded()
                 recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
-                recordRuntimeReceipt(
-                    runtimeReceiptRecorder,
-                    snapshotStore: runtimeSnapshotStore,
-                    trigger: .backgroundRefresh,
-                    evidence: evidence,
-                    observedAt: Date()
-                )
-                _ = await runtimeReceiptRelay.synchronize()
                 if decision.wasRefreshed {
                     await warningService.notifyIfNeeded(decision: decision)
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
-                recordRuntimeReceipt(
-                    runtimeReceiptRecorder,
-                    snapshotStore: runtimeSnapshotStore,
-                    trigger: .backgroundRefresh,
-                    evidence: nil,
-                    observedAt: Date()
-                )
-                _ = await runtimeReceiptRelay.synchronize()
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
 
@@ -168,29 +124,6 @@ struct ContextPanelRefreshAgent {
                 return
             }
         }
-    }
-
-    private static func syncRuntimeReceipts() async -> Never {
-        let relay = RuntimeReceiptRelayCoordinator.appDefaultPublisher(
-            remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
-        )
-        let summary = await relay.synchronize()
-        let payload: [String: Any] = [
-            "healthy": summary.isHealthy,
-            "sessionAction": summary.sessionAction.rawValue,
-            "uploadedReceiptCount": summary.uploadedReceiptCount,
-            "downloadedReceiptCount": summary.downloadedReceiptCount,
-            "deletedRemoteReceiptCount": summary.deletedRemoteReceiptCount,
-            "messages": summary.messages,
-        ]
-        if let data = try? JSONSerialization.data(
-            withJSONObject: payload,
-            options: [.prettyPrinted, .sortedKeys]
-        ) {
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
-        }
-        Foundation.exit(summary.isHealthy ? 0 : 2)
     }
 
     private static func printBookmarkAccessSummary() {
@@ -416,58 +349,6 @@ struct ContextPanelRefreshAgent {
         }
     }
 
-    private static func recordRuntimeReceipt(
-        _ recorder: RuntimeReceiptRecorder,
-        snapshotStore: JSONSnapshotStore,
-        trigger: RuntimeReceiptTrigger,
-        evidence: SnapshotRefreshRunEvidence?,
-        observedAt: Date
-    ) {
-        let fallback = evidence == nil ? snapshotStore.loadCurrent() : nil
-        let selectedSnapshot = evidence?.selectedSnapshot ?? fallback?.snapshot
-        let selectedStatus = evidence?.status ?? fallback?.status ?? .unknown
-        let selectedSource: RuntimeReceiptSelectedSource
-        let stateBranch: RuntimeReceiptStateBranch
-        let outcome: RuntimeReceiptOutcome
-
-        switch evidence?.decision {
-        case let .refreshed(refreshOutcome):
-            selectedSource = refreshOutcome.didSaveSnapshot
-                ? .refreshedSnapshot
-                : (selectedSnapshot == nil ? .none : .appGroupSnapshot)
-            stateBranch = .refreshed
-            outcome = refreshOutcome.didSaveSnapshot ? .success : .degraded
-        case .skippedFresh:
-            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
-            stateBranch = .skippedFresh
-            outcome = .success
-        case .skippedAlreadyRunning:
-            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
-            stateBranch = .skippedAlreadyRunning
-            outcome = .degraded
-        case .skippedNoReports:
-            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
-            stateBranch = .skippedNoReports
-            outcome = .degraded
-        case nil:
-            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
-            stateBranch = .failure
-            outcome = .failure
-        }
-
-        recorder.record(
-            trigger: trigger,
-            presentationMode: .refreshAgent,
-            selectedSource: selectedSource,
-            presentationDigest: RuntimePresentationDigest.storedSnapshot(
-                selectedSnapshot,
-                status: selectedStatus
-            ),
-            stateBranch: stateBranch,
-            outcome: outcome,
-            observedAt: observedAt
-        )
-    }
 }
 
 private struct LimitWarningNotificationService {

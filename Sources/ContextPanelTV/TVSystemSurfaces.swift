@@ -128,43 +128,12 @@ actor TVSystemSurfaceCoordinator {
 }
 
 @MainActor
-final class TVRuntimeReceiptRelayProvider {
-    private let makeRuntimeReceiptRelay: () -> RuntimeReceiptRelayCoordinator?
-    private var runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
-
-    init(
-        makeRuntimeReceiptRelay: @escaping () -> RuntimeReceiptRelayCoordinator? = {
-            RuntimeReceiptRelayCoordinator.appGroupReceiver(
-                remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
-                expectedManifestID: RuntimeBuildIdentityLoader.load(surface: .tvOSApp)?.build.manifestID,
-                eligibleSurfaces: [.tvOSApp, .tvOSTopShelf],
-                appGroupID: ContextPanelLocations.companionAppGroupID
-            )
-        }
-    ) {
-        self.makeRuntimeReceiptRelay = makeRuntimeReceiptRelay
-    }
-
-    func resolve() -> RuntimeReceiptRelayCoordinator? {
-        if let runtimeReceiptRelay {
-            return runtimeReceiptRelay
-        }
-        guard let resolved = makeRuntimeReceiptRelay() else {
-            return nil
-        }
-        runtimeReceiptRelay = resolved
-        return resolved
-    }
-}
-
-@MainActor
 final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
-    // A validation launch shows synthetic samples only; it must not open CloudKit,
-    // register for notifications, or relay receipts.
+    // A validation launch shows synthetic samples only; it must not open CloudKit
+    // or register for notifications.
     private let isValidationLaunch =
         TVValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments) != .normal
     private lazy var remoteStore = CompanionCloudKitSyncStoreFactory.make()
-    let runtimeReceiptRelayProvider = TVRuntimeReceiptRelayProvider()
     private let notificationCenter = UNUserNotificationCenter.current()
     private var subscriptionRegistrationTask: Task<Void, Never>?
     private var accountChangeObserver: NSObjectProtocol?
@@ -196,7 +165,6 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         #endif
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
-        synchronizeRuntimeReceipts()
     }
 
     func application(
@@ -230,8 +198,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             completionHandler(.noData)
             return
         }
-        let runtimeReceiptRelay = runtimeReceiptRelayProvider.resolve()
-        Task { [remoteStore, runtimeReceiptRelay] in
+        Task { [remoteStore] in
             let currentUserRecordName = try? await CKContainer(
                 identifier: ContextPanelLocations.iCloudContainerID
             ).userRecordID().recordName
@@ -246,9 +213,6 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             }
             let result = await TVBackgroundSyncCoordinator(remoteStore: remoteStore).refresh()
             completionHandler(result)
-            Task { [runtimeReceiptRelay] in
-                _ = await runtimeReceiptRelay?.synchronize()
-            }
         }
     }
 
@@ -329,13 +293,6 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             object: nil
         )
         registerCloudKitSubscription()
-    }
-
-    private func synchronizeRuntimeReceipts() {
-        let runtimeReceiptRelay = runtimeReceiptRelayProvider.resolve()
-        Task { [runtimeReceiptRelay] in
-            _ = await runtimeReceiptRelay?.synchronize()
-        }
     }
 
     private func clearRetiredProviderBadge() {

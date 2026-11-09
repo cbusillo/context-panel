@@ -26,50 +26,10 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
             let content = try TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)
                 .content(document: document, now: now)
             guard !Task.isCancelled else { return nil }
-            recordRuntimeReceipt(
-                document: document,
-                loadedDocument: storedDocument != nil,
-                contentReturned: true,
-                observedAt: now
-            )
             return content
         } catch {
-            guard !Task.isCancelled else { return nil }
-            recordRuntimeReceipt(
-                document: document,
-                loadedDocument: storedDocument != nil,
-                contentReturned: false,
-                observedAt: now
-            )
             return nil
         }
-    }
-
-    private func recordRuntimeReceipt(
-        document: TVTopShelfDocument,
-        loadedDocument: Bool,
-        contentReturned: Bool,
-        observedAt: Date
-    ) {
-        let runtimeReceiptRecorder = RuntimeReceiptRecorder.appGroupRequired(
-            surface: .tvOSTopShelf,
-            appGroupID: ContextPanelLocations.companionAppGroupID
-        )
-        let evidence = TVTopShelfRuntimeReceiptEvidence(
-            document: document,
-            loadedDocument: loadedDocument,
-            contentReturned: contentReturned,
-            now: observedAt
-        )
-        runtimeReceiptRecorder.record(
-            trigger: .topShelfContentLoad,
-            presentationMode: .topShelf,
-            selectedSource: evidence.selectedSource,
-            presentationDigest: evidence.presentationDigest,
-            stateBranch: evidence.stateBranch,
-            outcome: evidence.outcome,
-            observedAt: observedAt
-        )
     }
 
     private static func missingDocument(now: Date) -> TVTopShelfDocument {
