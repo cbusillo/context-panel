@@ -13,42 +13,24 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from context_panel_comparison_schema import ComparisonSchemaError, validate_current_comparison
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
-from context_panel_release_gate import (
-    ReleaseEvidenceError,
-    load_historical_policy_archive,
-    load_json_object,
-    release_evidence_report_blockers,
-)
-from context_panel_validation import (
-    RuntimeEvidenceError,
-    Target,
-)
-from context_panel_release_gate.core import release_comparison_identities
-from shared_view_reference_gate import (
-    ReferenceRunError,
-    github_fetch_json,
-    repository_from_environment,
-    require_reference_runs,
-)
+import app_store_submission_gate as submission_gate
 
-# Reads CI runs from GitHub; tests replace it.
-fetch_ci_json = github_fetch_json
+# Reads GitHub issues and CI runs; tests replace it.
+fetch_github_json = submission_gate.github_fetch_json
 
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
 DEFAULT_BUNDLE_ID = "com.shinycomputers.contextpanel"
 DEFAULT_COPYRIGHT = "2026 Shiny Computers Leasing LLC"
 DEFAULT_RELEASE_TYPE = "AFTER_APPROVAL"
-DEFAULT_RELEASE_EVIDENCE_POLICY = "Config/ContextPanelReleaseEvidencePolicy.json"
-DEFAULT_SURFACE_EVIDENCE_POLICY = "Config/ContextPanelSurfacePolicy.json"
 LOCKED_VERSION_STATES = {
     "WAITING_FOR_REVIEW",
     "IN_REVIEW",
@@ -91,23 +73,6 @@ DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS = 5
 DEFAULT_REVIEW_LIMIT_OWNER_WAIT_TIMEOUT_SECONDS = 20
 TVOS_DEMO_NOTES_HEADING = "Physical Apple TV demo (reviewer-accessible, no login required):"
-REQUIRED_RUNTIME_SURFACES_BY_PLATFORM = {
-    "MAC_OS": frozenset({"macos.app", "macos.refresh-agent", "macos.widget"}),
-    "IOS": frozenset(
-        {
-            "ios.app",
-            "ios.widget",
-            "ipados.app",
-            "ipados.widget",
-            "watchos.app",
-            "watchos.complication",
-        }
-    ),
-    "VISION_OS": frozenset({"visionos.app", "visionos.widget"}),
-    "TV_OS": frozenset({"tvos.app", "tvos.top-shelf"}),
-}
-
-
 class AppStoreConnectError(RuntimeError):
     def __init__(self, message: str, status: int | None = None, payload: dict[str, Any] | None = None):
         super().__init__(message)
@@ -1620,337 +1585,42 @@ def print_tvos_review_notes_dry_run_action(args: argparse.Namespace) -> None:
     print("Dry run: would clear copied prior-version TV_OS review notes")
 
 
-def validation_report_required(args: argparse.Namespace) -> bool:
-    if getattr(args, "validate_report_only", False):
-        return True
-    if getattr(args, "dry_run", False) or getattr(args, "cancel_review_only", False):
-        return False
-    return not getattr(args, "prepare_only", False) or bool(
-        getattr(args, "build_number", None)
-    )
+def build_attached_live(args: argparse.Namespace) -> bool:
+    """True when this run attaches a build to a live App Store version."""
+    return bool(getattr(args, "build_number", None)) and not args.dry_run and not args.cancel_review_only
 
 
-def validation_report_blockers(
-    payload: object,
-    *,
-    version: str,
-    build_number: str,
-    platform: str,
-    comparison_runtime_surfaces: frozenset[str] | None = None,
-) -> list[str]:
-    """Check the exact-build report for the platform's runtime surfaces that need proof.
-
-    The release comparison decides which surfaces changed and need fresh runtime
-    proof. Without a comparison, every runtime surface of the platform is required.
-    """
-    if not isinstance(payload, dict):
-        return ["the validation report root must be a JSON object"]
-    required_surfaces = REQUIRED_RUNTIME_SURFACES_BY_PLATFORM[platform]
-    if comparison_runtime_surfaces is not None:
-        required_surfaces = required_surfaces & comparison_runtime_surfaces
-
-    blockers: list[str] = []
-    if payload.get("schemaVersion") != 1:
-        blockers.append("schemaVersion must be 1")
-
-    target = payload.get("target")
-    if not isinstance(target, dict):
-        blockers.append("target is missing or malformed")
-    else:
-        if target.get("version") != version:
-            blockers.append(f"target version must be {version}")
-        if target.get("buildNumber") != build_number:
-            blockers.append(f"target build number must be {build_number}")
-
-    summary = payload.get("summary")
-    if not isinstance(summary, dict):
-        blockers.append("summary is missing or malformed")
-    else:
-        if summary.get("state") != "complete_for_slice":
-            blockers.append("summary state must be complete_for_slice")
-        if summary.get("exitCode") != 0:
-            blockers.append("summary exit code must be 0")
-
-    obtained = payload.get("obtainedEvidenceClasses")
-    runtime_receipts: dict[str, Any] = {}
-    if not isinstance(obtained, dict):
-        blockers.append("obtainedEvidenceClasses is missing or malformed")
-    else:
-        if obtained.get("appStoreConnect") != "available":
-            blockers.append("App Store Connect evidence must be available")
-        if obtained.get("canonicalMacProductionRuntime") != "proven":
-            blockers.append("the canonical Mac Production runtime must be proven")
-        raw_runtime_receipts = obtained.get("exactBuildRuntimeReceipts")
-        if not isinstance(raw_runtime_receipts, dict):
-            blockers.append("exact-build runtime receipt evidence is missing or malformed")
-        else:
-            runtime_receipts = raw_runtime_receipts
-            proven = runtime_receipts.get("proven")
-            required = runtime_receipts.get("required")
-            if runtime_receipts.get("state") != "proven":
-                blockers.append("exact-build runtime receipt state must be proven")
-            if not isinstance(required, int) or isinstance(required, bool) or required < 0:
-                blockers.append("exact-build runtime receipt count is missing or malformed")
-            if proven != required:
-                blockers.append("every requested runtime surface must be proven")
-            if (
-                isinstance(required, int)
-                and required > 0
-                and runtime_receipts.get("runtimeSessionResult") != "healthy"
-            ):
-                blockers.append("the runtime receipt session result must be healthy")
-            diagnostics = runtime_receipts.get("diagnostics")
-            if not isinstance(diagnostics, list) or diagnostics:
-                blockers.append("runtime receipt diagnostics must be empty")
-
-        watch_runtime_required = any(
-            surface.startswith("watchos.") for surface in required_surfaces
-        )
-        if watch_runtime_required and obtained.get("watchRestartAttestation") != "recorded":
-            blockers.append("the physical Watch restart attestation must be recorded")
-
-    session = payload.get("session")
-    requested_surfaces: set[str] = set()
-    if not isinstance(session, dict):
-        blockers.append("session is missing or malformed")
-    else:
-        raw_requested_surfaces = session.get("requestedSurfaces")
-        if not isinstance(raw_requested_surfaces, list) or not all(
-            isinstance(item, str) for item in raw_requested_surfaces
-        ):
-            blockers.append("session requested surfaces are missing or malformed")
-        else:
-            requested_surfaces = set(raw_requested_surfaces)
-            if len(requested_surfaces) != len(raw_requested_surfaces):
-                blockers.append("session requested surfaces contain duplicates")
-
-    runtime_surfaces = payload.get("runtimeSurfaces")
-    proven_surfaces: set[str] = set()
-    if not isinstance(runtime_surfaces, list):
-        blockers.append("runtimeSurfaces is missing or malformed")
-    else:
-        observed_surfaces: list[str] = []
-        for item in runtime_surfaces:
-            if not isinstance(item, dict) or not isinstance(item.get("surface"), str):
-                blockers.append("a runtime surface entry is malformed")
-                continue
-            surface = item["surface"]
-            observed_surfaces.append(surface)
-            if item.get("state") == "proven":
-                proven_surfaces.add(surface)
-            else:
-                blockers.append(f"runtime surface {surface} is not proven")
-        if len(set(observed_surfaces)) != len(observed_surfaces):
-            blockers.append("runtime surfaces contain duplicates")
-        if requested_surfaces and set(observed_surfaces) != requested_surfaces:
-            blockers.append("runtime surfaces do not match the requested session surfaces")
-        if runtime_receipts.get("required") != len(observed_surfaces):
-            blockers.append("runtime surface count does not match the receipt summary")
-
-    missing_surfaces = sorted(required_surfaces - requested_surfaces)
-    if missing_surfaces:
-        blockers.append(
-            f"{platform} validation is missing required surfaces: {', '.join(missing_surfaces)}"
-        )
-    unproven_required_surfaces = sorted(required_surfaces - proven_surfaces)
-    if unproven_required_surfaces:
-        blockers.append(
-            f"{platform} required surfaces are not proven: "
-            + ", ".join(unproven_required_surfaces)
-        )
-
-    operator_flow = payload.get("operatorFlow")
-    if not isinstance(operator_flow, dict):
-        blockers.append("operatorFlow is missing or malformed")
-    else:
-        if operator_flow.get("state") != "complete":
-            blockers.append("operator flow state must be complete")
-        if operator_flow.get("readyActionCount") != 0:
-            blockers.append("operator flow must have no ready actions")
-        if operator_flow.get("deferredActionCount") != 0:
-            blockers.append("operator flow must have no deferred actions")
-        active_deferrals = operator_flow.get("activeDeferrals")
-        if not isinstance(active_deferrals, list) or active_deferrals:
-            blockers.append("operator flow must have no active deferrals")
-        runtime_diagnostics = operator_flow.get("runtimeDiagnostics")
-        if not isinstance(runtime_diagnostics, list) or runtime_diagnostics:
-            blockers.append("operator flow runtime diagnostics must be empty")
-
-    report_blockers = payload.get("blockers")
-    if not isinstance(report_blockers, list) or report_blockers:
-        blockers.append("the validation report must have no blockers")
-
-    return blockers
-
-
-def comparison_runtime_scope(args: argparse.Namespace) -> frozenset[str] | None:
-    comparison_value = getattr(args, "release_evidence_comparison", None)
-    if not comparison_value:
-        return None
+def require_submission_gate(args: argparse.Namespace, *, enforce: bool) -> None:
+    """Check the reference job and the TestFlight day; refuse when enforced and not ready."""
+    override = (getattr(args, "skip_soak_reason", None) or "").strip()
     try:
-        comparison = load_json_object(Path(comparison_value), "surface comparison")
-        validate_current_comparison(comparison)
-    except (ComparisonSchemaError, ReleaseEvidenceError) as error:
-        raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error
-    return frozenset(comparison["requiredSurfaces"]["actual-runtime"])
-
-
-def validate_validation_report(args: argparse.Namespace) -> None:
-    report_path = Path(args.validation_report)
-    try:
-        payload = json.loads(report_path.read_text())
-    except OSError as error:
-        raise AppStoreConnectError(
-            f"validation report is unavailable: {report_path}"
-        ) from error
-    except json.JSONDecodeError as error:
-        raise AppStoreConnectError("validation report is not valid JSON") from error
-
-    blockers = validation_report_blockers(
-        payload,
-        version=args.version,
-        build_number=args.build_number,
-        platform=args.platform,
-        comparison_runtime_surfaces=comparison_runtime_scope(args),
-    )
-    if blockers:
-        details = "\n".join(f"- {blocker}" for blocker in blockers)
-        raise AppStoreConnectError(f"validation report rejected:\n{details}")
-    print(
-        f"Accepted exact-build validation report for {args.platform} "
-        f"{args.version} ({args.build_number})"
-    )
-    print("This gate proves required runtime evidence; visual approval and carry-forward remain separate.")
-
-
-def validate_release_evidence_report(args: argparse.Namespace) -> None:
-    release_report_value = getattr(args, "release_evidence_report", None)
-    validation_report_value = getattr(args, "validation_report", None)
-    comparison_value = getattr(args, "release_evidence_comparison", None)
-    manifest_values = getattr(args, "release_evidence_expected_build_manifests", None)
-    policy_value = getattr(args, "release_evidence_policy", None)
-    surface_policy_value = getattr(args, "release_evidence_surface_policy", None)
-    historical_policy_archive_values = getattr(
-        args,
-        "release_evidence_historical_policy_archives",
-        None,
-    )
-    if (
-        not release_report_value
-        or not validation_report_value
-        or not comparison_value
-        or not manifest_values
-        or not policy_value
-        or not surface_policy_value
-    ):
-        raise AppStoreConnectError(
-            "release evidence requires its report, exact validation report, comparison, "
-            "expected-build manifests, and configured policy"
+        readiness = submission_gate.check(
+            args.platform,
+            args.version,
+            args.build_number,
+            now=datetime.now(timezone.utc),
+            repository=submission_gate.repository_from_environment(),
+            fetch_json=fetch_github_json,
+            override_reason=override,
         )
-    report_path = Path(release_report_value)
-    try:
-        payload = json.loads(report_path.read_text())
-    except OSError as error:
-        raise AppStoreConnectError(
-            f"release evidence report is unavailable: {report_path}"
-        ) from error
-    except json.JSONDecodeError as error:
-        raise AppStoreConnectError("release evidence report is not valid JSON") from error
-    validation_report_path = Path(validation_report_value)
-    try:
-        validation_payload = json.loads(validation_report_path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise AppStoreConnectError(
-            "exact validation report is unavailable for release evidence binding"
-        ) from error
-    try:
-        comparison = load_json_object(Path(comparison_value), "surface comparison")
-        validate_current_comparison(comparison)
-        policy = load_json_object(Path(policy_value), "release evidence policy")
-        surface_policy = load_json_object(
-            Path(surface_policy_value),
-            "surface evidence policy",
-        )
-        historical_policy_archive = load_historical_policy_archive(
-            tuple(Path(value) for value in (historical_policy_archive_values or ()))
-        )
-        expected_build_manifests = tuple(
-            load_json_object(Path(value), "expected signed build manifest")
-            for value in manifest_values
-        )
-        identities = release_comparison_identities(
-            list(expected_build_manifests),
-            Target(args.version, args.build_number),
-            comparison,
-        )
-        previous_ledger = (
-            load_json_object(
-                Path(args.release_evidence_previous_ledger),
-                "previous release evidence ledger",
-            )
-            if getattr(args, "release_evidence_previous_ledger", None)
-            else None
-        )
-        selected_rc_ledger = (
-            load_json_object(
-                Path(args.release_evidence_selected_rc_ledger),
-                "selected RC release evidence ledger",
-            )
-            if getattr(args, "release_evidence_selected_rc_ledger", None)
-            else None
-        )
-        host_os_evidence = (
-            load_json_object(
-                Path(args.release_evidence_host_os_evidence),
-                "host OS evidence",
-            )
-            if getattr(args, "release_evidence_host_os_evidence", None)
-            else None
-        )
-    except (ComparisonSchemaError, ReleaseEvidenceError, RuntimeEvidenceError) as error:
-        raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error
-    blockers = release_evidence_report_blockers(
-        payload,
-        version=args.version,
-        build_number=args.build_number,
-        train=getattr(args, "validation_train"),
-        enforce=getattr(args, "release_evidence_mode", "enforce") == "enforce",
-        validation_report=validation_payload,
-        comparison=comparison,
-        identities=identities,
-        expected_build_manifests=expected_build_manifests,
-        policy=policy,
-        surface_policy=surface_policy,
-        previous_ledger=previous_ledger,
-        selected_rc_ledger=selected_rc_ledger,
-        host_os_evidence=host_os_evidence,
-        historical_policy_archive=historical_policy_archive,
-    )
-    if blockers:
-        details = "\n".join(f"- {blocker}" for blocker in blockers)
-        raise AppStoreConnectError(f"release evidence report rejected:\n{details}")
-    print(
-        f"Accepted {getattr(args, 'release_evidence_mode', 'enforce')} release evidence report for "
-        f"{getattr(args, 'validation_train')} {args.version} ({args.build_number})"
-    )
-
-
-def require_shared_view_reference_runs(args: argparse.Namespace) -> None:
-    """Refuse unless each submitted source commit passed the simulator reference job."""
-    try:
-        manifests = [
-            load_json_object(Path(value), "expected signed build manifest")
-            for value in args.release_evidence_expected_build_manifests or ()
-        ]
-        found = require_reference_runs(
-            manifests,
-            repository=repository_from_environment(),
-            fetch_json=fetch_ci_json,
-        )
-    except (ReferenceRunError, ReleaseEvidenceError) as error:
-        raise AppStoreConnectError(f"shared-view reference images are not proven: {error}") from error
-    for commit, url in found:
+    except (submission_gate.SubmissionGateError, KeyError, ValueError) as error:
+        if enforce:
+            raise AppStoreConnectError(f"submission gate unknown: {error}") from error
+        print(f"Dry run: submission gate unknown: {error}")
+        return
+    for commit, url in readiness.reference_runs:
         print(f"Simulator reference images passed for source {commit}: {url}")
+    for note in readiness.notes:
+        print(f"Note: {note}")
+    for waived in readiness.waived:
+        print(f"Override recorded ({override}): skipped {waived}")
+    if not readiness.blockers:
+        print(f"Submission gate passed for {args.platform} {args.version} ({args.build_number})")
+        return
+    details = "\n".join(f"- {blocker}" for blocker in readiness.blockers)
+    if enforce:
+        raise AppStoreConnectError(f"build is not ready for App Review:\n{details}")
+    print(f"Dry run: a live submission would be refused now:\n{details}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -2005,80 +1675,13 @@ def parse_args() -> argparse.Namespace:
         help="Validate metadata, build, blocked-version recovery, and target version path without making App Store Connect changes",
     )
     parser.add_argument(
-        "--validation-report",
-        help="Machine-readable JSON from context-panel-validation.py final-report --json",
-    )
-    parser.add_argument(
-        "--validation-train",
-        choices=("beta", "rc", "release"),
-        help="Release-evidence policy tier for --release-evidence-report",
-    )
-    parser.add_argument(
-        "--release-evidence-report",
-        help="Machine-readable JSON from context-panel-release-gate.py",
-    )
-    parser.add_argument(
-        "--release-evidence-mode",
-        choices=("shadow", "enforce"),
-        default="enforce",
-    )
-    parser.add_argument("--release-evidence-comparison")
-    parser.add_argument(
-        "--release-evidence-expected-build-manifest",
-        dest="release_evidence_expected_build_manifests",
-        action="append",
-    )
-    parser.add_argument(
-        "--release-evidence-policy",
-        default=DEFAULT_RELEASE_EVIDENCE_POLICY,
-    )
-    parser.add_argument(
-        "--release-evidence-surface-policy",
-        default=DEFAULT_SURFACE_EVIDENCE_POLICY,
-    )
-    parser.add_argument("--release-evidence-previous-ledger")
-    parser.add_argument("--release-evidence-selected-rc-ledger")
-    parser.add_argument("--release-evidence-host-os-evidence")
-    parser.add_argument(
-        "--release-evidence-historical-policy-archive",
-        dest="release_evidence_historical_policy_archives",
-        action="append",
-        help="Optional directory or archive JSON containing digest-verified historical policy preimages.",
-    )
-    parser.add_argument(
-        "--validate-report-only",
-        action="store_true",
-        help="Validate exact-build evidence and exit without using App Store Connect credentials",
+        "--skip-soak-reason",
+        help="Chris's reason to submit before the TestFlight day ends or despite a first-day crash; recorded in the run",
     )
     return parser.parse_args()
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    release_evidence_mode = getattr(args, "release_evidence_mode", "enforce")
-    validation_train = getattr(args, "validation_train", None)
-    if release_evidence_mode not in {"shadow", "enforce"}:
-        raise AppStoreConnectError("--release-evidence-mode must be shadow or enforce")
-    if validation_train is not None and validation_train not in {"beta", "rc", "release"}:
-        raise AppStoreConnectError("--validation-train must be beta, rc, or release")
-    if getattr(args, "validate_report_only", False):
-        if args.dry_run or args.cancel_review_only or args.prepare_only:
-            raise AppStoreConnectError(
-                "--validate-report-only is mutually exclusive with --dry-run, "
-                "--cancel-review-only, and --prepare-only"
-            )
-        if not args.build_number:
-            raise AppStoreConnectError("--validate-report-only requires --build-number")
-        if not getattr(args, "validation_report", None):
-            raise AppStoreConnectError("--validate-report-only requires --validation-report")
-        if (
-            getattr(args, "release_evidence_mode", "enforce") == "enforce"
-            and not getattr(args, "release_evidence_report", None)
-        ):
-            raise AppStoreConnectError(
-                "--validate-report-only with enforced release evidence requires "
-                "--release-evidence-report"
-            )
-        return
     if args.prepare_only:
         if args.cancel_review_only:
             raise AppStoreConnectError("--prepare-only and --cancel-review-only are mutually exclusive")
@@ -2099,44 +1702,6 @@ def validate_args(args: argparse.Namespace) -> None:
             raise AppStoreConnectError("--tvos-demo-video-url must be a valid HTTPS URL")
     elif getattr(args, "tvos_demo_video_url", None):
         raise AppStoreConnectError("--tvos-demo-video-url is only valid with --platform TV_OS")
-    if validation_report_required(args) and not getattr(args, "validation_report", None):
-        raise AppStoreConnectError(
-            "--validation-report is required before attaching or submitting a build"
-        )
-    if validation_report_required(args) and validation_train != "release":
-        raise AppStoreConnectError(
-            "live build attachment or submission requires --validation-train release"
-        )
-    release_evidence_report = getattr(args, "release_evidence_report", None)
-    if release_evidence_report and not validation_train:
-        raise AppStoreConnectError(
-            "--release-evidence-report requires --validation-train"
-        )
-    if release_evidence_report and not getattr(args, "validation_report", None):
-        raise AppStoreConnectError(
-            "--release-evidence-report requires --validation-report"
-        )
-    if release_evidence_report and (
-        not getattr(args, "release_evidence_comparison", None)
-        or not getattr(args, "release_evidence_expected_build_manifests", None)
-    ):
-        raise AppStoreConnectError(
-            "--release-evidence-report requires --release-evidence-comparison and "
-            "--release-evidence-expected-build-manifest"
-        )
-    if (
-        release_evidence_report
-        and validation_train == "release"
-        and not getattr(args, "release_evidence_selected_rc_ledger", None)
-    ):
-        raise AppStoreConnectError(
-            "release-train evidence requires --release-evidence-selected-rc-ledger"
-        )
-    if validation_report_required(args):
-        if not release_evidence_report:
-            raise AppStoreConnectError(
-                "--release-evidence-report is required for live shadow or enforce validation"
-            )
 
 
 def main() -> int:
@@ -2144,15 +1709,8 @@ def main() -> int:
     temporary_key_path: Path | None = None
     try:
         validate_args(args)
-        if validation_report_required(args):
-            validate_validation_report(args)
-        if getattr(args, "release_evidence_report", None):
-            validate_release_evidence_report(args)
-            if validation_report_required(args):
-                require_shared_view_reference_runs(args)
-        if args.validate_report_only:
-            print("Validation report preflight succeeded; no App Store Connect request was made")
-            return 0
+        if args.build_number and not args.cancel_review_only:
+            require_submission_gate(args, enforce=build_attached_live(args))
         if not args.api_key_id or not args.api_issuer_id:
             raise AppStoreConnectError("APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID are required")
         key_path, temporary_key_path = expanded_key_path(args)

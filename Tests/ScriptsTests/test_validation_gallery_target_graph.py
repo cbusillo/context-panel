@@ -1,4 +1,3 @@
-import ast
 from pathlib import Path
 import re
 import subprocess
@@ -10,12 +9,11 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from context_panel_validation.shared_view_evidence import (
+from context_panel_shared_view_matrix import (
     COMPANION_GALLERY_PRESENTATIONS,
     FIXTURE_IDS,
     GALLERY_APPEARANCES,
     GALLERY_FAMILIES,
-    GALLERY_PRESENTATIONS,
     MAC_GALLERY_PRESENTATIONS,
     TV_GALLERY_SURFACES,
     TV_PRESENTATIONS,
@@ -40,8 +38,6 @@ TV_RUNWAY_PRESENTATION_SOURCE = (
 TV_TOP_SHELF_SOURCE = (
     REPO_ROOT / "Sources" / "ContextPanelTVTopShelf" / "ContextPanelTVTopShelfProvider.swift"
 )
-SHARED_VIEW_EVIDENCE_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "shared_view_evidence.py"
-VALIDATION_CLI_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "cli.py"
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
@@ -65,10 +61,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             self.swift_enum_raw_values(route_source, "ValidationGalleryAppearance"),
         )
         self.assertEqual(
-            GALLERY_PRESENTATIONS,
-            self.swift_enum_raw_values(route_source, "ValidationGalleryPresentation"),
-        )
-        self.assertEqual(
             MAC_GALLERY_PRESENTATIONS,
             self.swift_array_case_values(MAC_APP_SOURCE.read_text(), "supportedPresentations"),
         )
@@ -79,8 +71,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
                 "supportedPresentations",
             ),
         )
-        self.assertLessEqual(set(MAC_GALLERY_PRESENTATIONS), set(GALLERY_PRESENTATIONS))
-        self.assertLessEqual(set(COMPANION_GALLERY_PRESENTATIONS), set(GALLERY_PRESENTATIONS))
         self.assertEqual(
             WATCH_COMPLICATION_FAMILIES,
             self.swift_enum_raw_values(
@@ -96,49 +86,6 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             TV_PRESENTATIONS,
             self.swift_enum_raw_values(tv_presentation_source, "TVPresentationMode"),
         )
-
-    def test_shared_view_planner_has_no_live_storage_or_publication_paths(self):
-        # Retain the existing privacy/security scans under the AGENTS.md exception.
-        # Import order and view-call spelling are not privacy boundaries.
-        planner = SHARED_VIEW_EVIDENCE_SOURCE.read_text()
-        cli = VALIDATION_CLI_SOURCE.read_text()
-        plan_start = cli.index("def run_plan_shared_view_evidence")
-        plan_end = cli.index("\ndef emit_session_state", plan_start)
-        plan_function = cli[plan_start:plan_end]
-
-        import_roots = set()
-        for node in ast.walk(ast.parse(planner)):
-            if isinstance(node, ast.Import):
-                import_roots.update(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                import_roots.add("context_panel_validation" if node.level else (node.module or "").split(".")[0])
-        self.assertFalse(
-            import_roots & {
-                "context_panel_validation", "ctypes", "subprocess", "multiprocessing", "pty",
-                "socket", "ssl", "urllib", "urllib3", "http", "httpx", "requests",
-            },
-            "shared-view planner must not import live operator or network/process dependencies",
-        )
-
-        for forbidden in (
-            "CloudKit",
-            "WidgetKit",
-            "Keychain",
-            "ProviderCredential",
-            "AppGroup",
-            "Snapshot",
-            "Subscription",
-            "Timeline",
-            "RuntimeReceipt",
-            "ContextPanelLocations",
-            "current-snapshot",
-            "publish",
-        ):
-            self.assertNotIn(forbidden, planner)
-            self.assertNotIn(forbidden, plan_function)
-        for forbidden in ("SessionStateStore", "RuntimeEvidenceStore"):
-            self.assertNotIn(forbidden, planner)
-            self.assertNotIn(forbidden, plan_function)
 
     def run_gallery_isolation_check(
         self,

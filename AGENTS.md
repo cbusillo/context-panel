@@ -50,7 +50,15 @@ standing product rules.
 
 ## Validation
 
-Start with [Validation Authority and Operator Route](docs/validation-authority.md).
+Start with [Validation](docs/validation-authority.md). An App Store release is
+the TestFlight build plus CI reference images; nothing is collected at release.
+
+A pull request that changes a `Tests/SharedViewReferences/*.png` image must show
+the old and new image side by side in a `## Reference images` section of its
+body, with the author's statement of what the screen should show and that the
+new image does. Look at every new image before writing it. CI fails the pull
+request without that section
+([reference images](docs/validation-authority.md#a-pull-request-that-changes-a-reference-image)).
 
 ## Test Rules
 
@@ -65,9 +73,8 @@ Approval checkers map to `Tests/ScriptsTests/test_release_approvals.py`; CI gate
 map to `test_ci_change_scope.py`, `test_test_lanes.py` and commit-gate fixtures
 in `test_release_workflows.py` in that directory. The existing
 `qualityGate.validate` commands locate additional account, runtime, signing,
-release-evidence and cleanup coverage; their filtered examples are starting
-points, not a replacement for the complete affected classes/files. Preserve
-protected evidence requirements under [validation authority](docs/validation-authority.md).
+submission-gate and cleanup coverage; their filtered examples are starting
+points, not a replacement for the complete affected classes/files.
 
 Repository exception: the existing negative privacy and security text scans
 retained by #695 remain until a linter or executable replacement covers them.

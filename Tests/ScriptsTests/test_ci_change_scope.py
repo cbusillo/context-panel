@@ -107,8 +107,7 @@ class ClassifyTests(unittest.TestCase):
                 "docs/release.md",
                 "AGENTS.md",
                 "Tests/ScriptsTests/test_shared_view_capture.py",
-                "Tests/ScriptsTests/fixtures/runtime-preflight/app-entitlements.plist",
-                "scripts/context_panel_validation/shared_view_capture.py",
+                "scripts/context_panel_shared_view_capture.py",
                 "scripts/publish-github-release.py",
                 "Config/ContextPanelTestLanes.json",
             ]
@@ -147,10 +146,7 @@ class ClassifyTests(unittest.TestCase):
                 self.assertTrue(module.classify([path]).product)
 
     def test_everything_the_reference_jobs_run_runs_the_reference_jobs(self):
-        for entry_point in (
-            "scripts/context-panel-shared-view-references.py",
-            "scripts/context-panel-shared-view-capture-workflow.py",
-        ):
+        for entry_point in ("scripts/context-panel-shared-view-references.py",):
             for path in [entry_point, *imported_scripts(entry_point)]:
                 with self.subTest(entry_point=entry_point, path=path):
                     self.assertTrue(module.classify([path]).references)
@@ -244,7 +240,7 @@ class DecideTests(unittest.TestCase):
             "Tests/SharedViewReferences/visionos.app/cell.png",
             "Tests/SharedViewReferences/README.md",
             "scripts/context-panel-shared-view-references.py",
-            "scripts/context_panel_validation/shared_view_capture.py",
+            "scripts/context_panel_shared_view_capture.py",
         ):
             with self.subTest(path=path):
                 scope = self.push_to_main({path: f"{path}\n"})
@@ -359,6 +355,52 @@ class MainTests(unittest.TestCase):
             self.run_main(module.Scope(True, "app", references=True)),
             ["product=true", "references=true", "simulator_references=true"],
         )
+
+
+
+class ReferenceStatementTests(unittest.TestCase):
+    """A pull request that changes a reference image must say what the screen shows."""
+
+    OLD = "![old](https://github.com/o/r/blob/base/Tests/SharedViewReferences/ios.app/baseline.png?raw=1)"
+    NEW = "![new](https://github.com/o/r/blob/head/Tests/SharedViewReferences/ios.app/baseline.png?raw=1)"
+    STATEMENT = "The overview should show two accounts with the weekly ring nearly full, and the new image does."
+
+    @staticmethod
+    def body(*section):
+        return "## Why\n\nA layout fix.\n\n## Reference images\n\n" + "\n\n".join(section) + "\n\n## Verification\n\nTests.\n"
+
+    def test_old_and_new_images_with_a_statement_pass(self):
+        self.assertIsNone(module.reference_statement_problem(self.body(self.OLD, self.NEW, self.STATEMENT)))
+        html = '<img src="https://example.invalid/old.png"> <img src="https://example.invalid/new.png">'
+        self.assertIsNone(module.reference_statement_problem(self.body(html, self.STATEMENT)))
+
+    def test_a_missing_section_images_or_statement_fails(self):
+        for body in (
+            None,
+            "## Why\n\nA layout fix.\n",
+            self.body(self.NEW, self.STATEMENT),
+            self.body(self.OLD, self.NEW),
+            self.body(self.OLD, self.NEW, "Looks fine."),
+        ):
+            with self.subTest(body=body):
+                self.assertIsNotNone(module.reference_statement_problem(body))
+
+    @staticmethod
+    def run_pull_request(body):
+        scope = module.Scope(True, "app", references=True, merge_path=True, reference_images=True)
+        with (
+            mock.patch.object(module, "decide", return_value=scope),
+            mock.patch.object(module, "pull_request_body", return_value=body) as read_body,
+            mock.patch.dict(os.environ, {"GITHUB_OUTPUT": os.devnull}),
+            mock.patch("builtins.print"),
+        ):
+            code = module.main(["--event", "pull_request", "--pr-number", "7", "--repository", "o/r"])
+        read_body.assert_called_once_with("o/r", "7")
+        return code
+
+    def test_the_scope_job_fails_a_reference_image_pull_request_without_the_statement(self):
+        self.assertEqual(self.run_pull_request("## Why\n\nA layout fix.\n"), 1)
+        self.assertEqual(self.run_pull_request(self.body(self.OLD, self.NEW, self.STATEMENT)), 0)
 
 
 if __name__ == "__main__":

@@ -3,15 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any
 
-from context_panel_comparison_schema import ComparisonSchemaError, validate_current_comparison
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MATRIX_PATH = REPO_ROOT / "Config" / "ContextPanelSharedViewMatrix.json"
 DEFAULT_SURFACE_POLICY_PATH = REPO_ROOT / "Config" / "ContextPanelSurfacePolicy.json"
 
@@ -33,14 +30,6 @@ FIXTURE_IDS = (
 )
 GALLERY_FAMILIES = ("systemSmall", "systemMedium", "systemLarge")
 GALLERY_APPEARANCES = ("adaptive", "light", "dark")
-GALLERY_PRESENTATIONS = (
-    "overview",
-    "detail",
-    "reconnect",
-    "diagnostics",
-    "settings",
-    "widget",
-)
 MAC_GALLERY_PRESENTATIONS = ("overview", "detail", "reconnect", "diagnostics", "widget")
 COMPANION_GALLERY_PRESENTATIONS = ("overview", "settings", "diagnostics", "widget")
 NO_SELECTOR = "not-applicable"
@@ -79,19 +68,6 @@ TV_GALLERY_SURFACES = ("runway", "provider", "topShelf")
 TV_PRESENTATIONS = ("fullDetail", "projectOnly", "countsOnly")
 ACCESSIBILITY_CONTEXTS = ("default",)
 VISUAL_MAXIMUM_REQUIREMENT_COUNT = 128
-VISUAL_REQUIREMENTS_KIND = "context-panel-visual-review-requirements"
-VISUAL_REQUIREMENT_KEYS = {
-    "id",
-    "evidenceClass",
-    "surface",
-    "fixtureContractID",
-    "presentation",
-    "appearance",
-    "accessibility",
-    "hostOS",
-    "presentationFamily",
-    "placementHost",
-}
 
 _CELL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _JUSTIFICATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'()/+-]{0,159}$")
@@ -293,9 +269,6 @@ class SharedViewMatrix:
             ],
         }
 
-    def digest(self) -> str:
-        return canonical_json_hash("context-panel-shared-view-matrix/v1", self.to_dict())
-
 
 def load_surface_policy(path: Path = DEFAULT_SURFACE_POLICY_PATH) -> tuple[SurfacePolicySurface, ...]:
     payload = _load_json_object(path, "surface policy")
@@ -403,246 +376,7 @@ def load_shared_view_matrix(
     return validate_shared_view_matrix(matrix, surface_policy or load_surface_policy())
 
 
-def fixture_contract_id(
-    matrix: SharedViewMatrix,
-    surface: SurfacePolicySurface,
-    cell: SharedViewCell,
-) -> str:
-    return canonical_json_hash(
-        matrix.fixture_contract_domain,
-        {
-            "matrixSchemaVersion": matrix.schema_version,
-            "matrixDigest": matrix.digest(),
-            "surface": surface.id,
-            "platform": surface.platform,
-            "device": surface.device_class,
-            "evidenceCapabilities": list(surface.evidence_capabilities),
-            "cell": cell.to_contract_dict(),
-        },
-    )
-
-
 def shared_view_requirement_id(surface_id: str, cell_id: str) -> str:
     return f"shared-view.{surface_id.replace('.', '-')}.{cell_id}"
 
 
-def plan_shared_view_evidence(
-    comparison: object,
-    matrix: SharedViewMatrix,
-    surface_policy: tuple[SurfacePolicySurface, ...],
-) -> dict[str, object]:
-    try:
-        validated_comparison = validate_current_comparison(comparison)
-    except ComparisonSchemaError as error:
-        raise SharedViewEvidenceError("surface comparison is invalid or stale") from error
-    validate_shared_view_matrix(matrix, surface_policy)
-    policy_by_id = {surface.id: surface for surface in surface_policy}
-    shared_surface_ids = {surface.id for surface in surface_policy if "shared-view" in surface.evidence_capabilities}
-    fresh_shared_surfaces: set[str] = set()
-    for surface in validated_comparison["surfaces"]:
-        surface_id = surface["surfaceId"]
-        if "shared-view" in surface["freshEvidence"]:
-            if surface_id not in shared_surface_ids:
-                raise SharedViewEvidenceError("surface comparison claims shared-view for an uncovered surface")
-            fresh_shared_surfaces.add(surface_id)
-    requirements: list[dict[str, object]] = []
-    for matrix_surface in matrix.surfaces:
-        if matrix_surface.id not in fresh_shared_surfaces:
-            continue
-        policy_surface = policy_by_id[matrix_surface.id]
-        for cell in matrix_surface.cells:
-            requirements.append(
-                {
-                    "id": shared_view_requirement_id(policy_surface.id, cell.id),
-                    "evidenceClass": "shared-view",
-                    "surface": policy_surface.id,
-                    "fixtureContractID": fixture_contract_id(matrix, policy_surface, cell),
-                    "presentation": cell.presentation,
-                    "appearance": cell.appearance,
-                    "accessibility": cell.accessibility,
-                    "hostOS": None,
-                    "presentationFamily": None,
-                    "placementHost": None,
-                }
-            )
-    if len(requirements) > VISUAL_MAXIMUM_REQUIREMENT_COUNT:
-        raise SharedViewEvidenceError("shared-view requirements exceed the visual review budget")
-    return {
-        "schemaVersion": 1,
-        "kind": VISUAL_REQUIREMENTS_KIND,
-        "currentManifestID": validated_comparison["currentManifestId"],
-        "requirements": requirements,
-    }
-
-
-def _requirements_payload(
-    payload: object,
-    *,
-    label: str,
-) -> dict[str, object]:
-    if (
-        not isinstance(payload, dict)
-        or set(payload) != {"schemaVersion", "kind", "currentManifestID", "requirements"}
-        or type(payload.get("schemaVersion")) is not int
-        or payload["schemaVersion"] != 1
-        or payload.get("kind") != VISUAL_REQUIREMENTS_KIND
-        or not isinstance(payload.get("currentManifestID"), str)
-        or not isinstance(payload.get("requirements"), list)
-        or len(payload["requirements"]) > VISUAL_MAXIMUM_REQUIREMENT_COUNT
-    ):
-        raise SharedViewEvidenceError(f"{label} is invalid")
-    requirement_ids: list[str] = []
-    for requirement in payload["requirements"]:
-        evidence_class = requirement.get("evidenceClass") if isinstance(requirement, dict) else None
-        if (
-            not isinstance(requirement, dict)
-            or set(requirement) != VISUAL_REQUIREMENT_KEYS
-            or not isinstance(requirement.get("id"), str)
-            or len(requirement["id"]) > 128
-            or _REQUIREMENT_ID_PATTERN.fullmatch(requirement["id"]) is None
-            or evidence_class not in {"shared-view", "os-composited-placement"}
-            or not isinstance(requirement.get("surface"), str)
-        ):
-            raise SharedViewEvidenceError(f"{label} requirement is invalid")
-        if evidence_class == "shared-view" and (
-            not isinstance(requirement.get("fixtureContractID"), str)
-            or _SHA256_PATTERN.fullmatch(requirement["fixtureContractID"]) is None
-            or not isinstance(requirement.get("presentation"), str)
-            or not isinstance(requirement.get("appearance"), str)
-            or not isinstance(requirement.get("accessibility"), str)
-            or requirement.get("hostOS") is not None
-            or requirement.get("presentationFamily") is not None
-            or requirement.get("placementHost") is not None
-        ):
-            raise SharedViewEvidenceError(f"{label} shared-view requirement is invalid")
-        if evidence_class == "os-composited-placement" and (
-            requirement.get("fixtureContractID") is not None
-            or requirement.get("presentation") is not None
-            or not isinstance(requirement.get("appearance"), str)
-            or not isinstance(requirement.get("accessibility"), str)
-            or not isinstance(requirement.get("hostOS"), str)
-            or not isinstance(requirement.get("presentationFamily"), str)
-            or not isinstance(requirement.get("placementHost"), str)
-        ):
-            raise SharedViewEvidenceError(f"{label} placement requirement is invalid")
-        requirement_ids.append(requirement["id"])
-    if len(requirement_ids) != len(set(requirement_ids)):
-        raise SharedViewEvidenceError(f"{label} requirement identifier is duplicated")
-    return payload
-
-
-def project_shared_view_requirements(
-    authoritative_payload: object,
-    planned_payload: object,
-) -> dict[str, object]:
-    authoritative = _requirements_payload(
-        authoritative_payload,
-        label="authoritative visual review requirements",
-    )
-    planned = _requirements_payload(
-        planned_payload,
-        label="planned shared-view requirements",
-    )
-    if authoritative["currentManifestID"] != planned["currentManifestID"]:
-        raise SharedViewEvidenceError(
-            "authoritative visual review requirements do not match the current manifest"
-        )
-    authoritative_shared = {
-        requirement["id"]: requirement
-        for requirement in authoritative["requirements"]
-        if requirement["evidenceClass"] == "shared-view"
-    }
-    planned_shared = [
-        requirement
-        for requirement in planned["requirements"]
-        if requirement["evidenceClass"] == "shared-view"
-    ]
-    planned_by_id = {requirement["id"]: requirement for requirement in planned_shared}
-    if set(authoritative_shared) != set(planned_by_id) or any(
-        authoritative_shared[requirement_id] != planned_requirement
-        for requirement_id, planned_requirement in planned_by_id.items()
-    ):
-        raise SharedViewEvidenceError(
-            "authoritative shared-view requirements do not match the canonical plan"
-        )
-    return {
-        "schemaVersion": 1,
-        "kind": VISUAL_REQUIREMENTS_KIND,
-        "currentManifestID": planned["currentManifestID"],
-        "requirements": [
-            authoritative_shared[requirement["id"]]
-            for requirement in planned_shared
-        ],
-    }
-
-
-def merge_shared_view_requirements(
-    base_payload: object,
-    planned_payload: object,
-) -> dict[str, object]:
-    base = _requirements_payload(base_payload, label="base visual review requirements")
-    planned = _requirements_payload(
-        planned_payload,
-        label="planned shared-view requirements",
-    )
-    if base["currentManifestID"] != planned["currentManifestID"]:
-        raise SharedViewEvidenceError(
-            "base visual review requirements do not match the current manifest"
-        )
-    base_shared = [
-        requirement
-        for requirement in base["requirements"]
-        if requirement["evidenceClass"] == "shared-view"
-    ]
-    if base_shared:
-        project_shared_view_requirements(base, planned)
-        return {
-            "schemaVersion": 1,
-            "kind": VISUAL_REQUIREMENTS_KIND,
-            "currentManifestID": planned["currentManifestID"],
-            "requirements": list(base["requirements"]),
-        }
-    non_shared = list(base["requirements"])
-    planned_shared = list(planned["requirements"])
-    existing_ids = {requirement["id"] for requirement in non_shared}
-    if any(requirement["id"] in existing_ids for requirement in planned_shared):
-        raise SharedViewEvidenceError(
-            "base visual review requirements conflict with planned shared-view identifiers"
-        )
-    combined = [*non_shared, *planned_shared]
-    if len(combined) > VISUAL_MAXIMUM_REQUIREMENT_COUNT:
-        raise SharedViewEvidenceError("visual review requirements exceed the review budget")
-    return {
-        "schemaVersion": 1,
-        "kind": VISUAL_REQUIREMENTS_KIND,
-        "currentManifestID": planned["currentManifestID"],
-        "requirements": combined,
-    }
-
-
-def write_requirements_payload(path: Path, payload: dict[str, object]) -> None:
-    if path.is_symlink() or path.parent.is_symlink():
-        raise SharedViewEvidenceError("shared-view requirements output path is invalid")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary_path = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w") as stream:
-            json.dump(payload, stream, indent=2, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary_path, 0o644)
-        os.replace(temporary_path, path)
-        try:
-            directory_descriptor = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
-        except OSError:
-            pass
-    except OSError as error:
-        raise SharedViewEvidenceError("shared-view requirements output is unavailable") from error
-    finally:
-        temporary_path.unlink(missing_ok=True)

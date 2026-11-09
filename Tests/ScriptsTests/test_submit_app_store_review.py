@@ -1,7 +1,5 @@
 import importlib.util
 import io
-import json
-import tempfile
 import time
 import unittest
 import urllib.error
@@ -9,6 +7,7 @@ import sys
 from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,6 +19,8 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Unable to load {MODULE_PATH}")
 submit_app_store_review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(submit_app_store_review)
+
+from Tests.ScriptsTests import test_app_store_submission_gate as gate_tests  # noqa: E402
 
 
 def assert_review_submission_submit_body(test_case, patch_body):
@@ -88,566 +89,70 @@ def build_payload(builds):
     return {"data": data, "included": included}
 
 
-def exact_build_validation_report(platform="MAC_OS"):
-    required_surfaces = sorted(
-        submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM[platform]
-    )
-    return {
-        "schemaVersion": 1,
-        "target": {"version": "1.0.39", "buildNumber": "202608050001"},
-        "summary": {
-            "state": "complete_for_slice",
-            "stage": "exact-build runtime proven",
-            "headline": "fixture",
-            "exitCode": 0,
-        },
-        "session": {
-            "lifecycle": "active",
-            "revision": 2,
-            "requestedSurfaces": required_surfaces,
-        },
-        "requiredEvidenceClasses": [],
-        "obtainedEvidenceClasses": {
-            "appStoreConnect": "available",
-            "canonicalMacProductionRuntime": "proven",
-            "exactBuildRuntimeReceipts": {
-                "state": "proven",
-                "proven": len(required_surfaces),
-                "required": len(required_surfaces),
-                "runtimeSessionResult": "healthy",
-                "diagnostics": [],
-            },
-            "watchRestartAttestation": "recorded" if platform == "IOS" else "not-required",
-            "visualApproval": "not-evaluated-by-coordinator",
-        },
-        "runtimeSurfaces": [
-            {
-                "surface": surface,
-                "state": "proven",
-                "reason": "exact-build-runtime-receipt",
-            }
-            for surface in required_surfaces
-        ],
-        "operatorFlow": {
-            "schemaVersion": 1,
-            "state": "complete",
-            "readyActionCount": 0,
-            "deferredActionCount": 0,
-            "groups": [],
-            "notificationDecisions": [],
-            "deferrals": [],
-            "activeDeferrals": [],
-            "residualRisks": [],
-            "runtimeDiagnostics": [],
-        },
-        "blockers": [],
-        "residualRisks": ["review-pending"],
-        "limitations": ["Visual approval is not evaluated by this coordinator slice."],
-    }
+class SubmissionGateWiringTests(unittest.TestCase):
+    """main() runs the submission gate before App Store Connect credentials are used."""
 
-
-class ValidationReportGateTests(unittest.TestCase):
-    def live_args(self, **overrides):
+    @staticmethod
+    def args(**overrides):
         values = {
-            "validate_report_only": False,
-            "dry_run": False,
-            "cancel_review_only": False,
-            "prepare_only": False,
-            "remove_active_review_version": None,
-            "build_number": "202608050001",
-            "whats_new": "Validation update",
-            "platform": "MAC_OS",
-            "tvos_demo_video_url": None,
-            "validation_report": "final-report.json",
-            "validation_train": "release",
-            "release_evidence_mode": "shadow",
-            "release_evidence_report": "release-evidence.json",
-            "release_evidence_comparison": "comparison.json",
-            "release_evidence_expected_build_manifests": ["expected.json"],
-            "release_evidence_policy": "Config/ContextPanelReleaseEvidencePolicy.json",
-            "release_evidence_surface_policy": "Config/ContextPanelSurfacePolicy.json",
-            "release_evidence_previous_ledger": None,
-            "release_evidence_selected_rc_ledger": "selected-rc.json",
-            "release_evidence_host_os_evidence": None,
-            "release_evidence_historical_policy_archives": None,
+            "dry_run": False, "cancel_review_only": False, "prepare_only": False,
+            "remove_active_review_version": None, "build_number": gate_tests.BUILD,
+            "version": gate_tests.VERSION, "whats_new": "Fixes", "platform": gate_tests.PLATFORM,
+            "tvos_demo_video_url": None, "skip_soak_reason": None,
+            "api_key_id": None, "api_issuer_id": None,
         }
         values.update(overrides)
         return SimpleNamespace(**values)
 
-    def test_accepts_exact_runtime_evidence_for_every_app_store_platform(self):
-        for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
-            with self.subTest(platform=platform):
-                blockers = submit_app_store_review.validation_report_blockers(
-                    exact_build_validation_report(platform),
-                    version="1.0.39",
-                    build_number="202608050001",
-                    platform=platform,
-                )
-
-                self.assertEqual(blockers, [])
-
-    def test_rejects_target_mismatch_and_unproven_runtime_surface(self):
-        report = exact_build_validation_report("TV_OS")
-        report["runtimeSurfaces"][0]["state"] = "waiting"
-
-        blockers = submit_app_store_review.validation_report_blockers(
-            report,
-            version="1.0.40",
-            build_number="202608050002",
-            platform="TV_OS",
-        )
-
-        self.assertIn("target version must be 1.0.40", blockers)
-        self.assertIn("target build number must be 202608050002", blockers)
-        self.assertTrue(any("is not proven" in blocker for blocker in blockers))
-
-    def test_rejects_report_for_another_platform(self):
-        blockers = submit_app_store_review.validation_report_blockers(
-            exact_build_validation_report("MAC_OS"),
-            version="1.0.39",
-            build_number="202608050001",
-            platform="IOS",
-        )
-
-        self.assertTrue(any("IOS validation is missing required surfaces" in item for item in blockers))
-        self.assertIn("the physical Watch restart attestation must be recorded", blockers)
-
     @staticmethod
-    def scoped_report(platform: str, surfaces: set[str]) -> dict:
-        report = exact_build_validation_report(platform)
-        report["session"]["requestedSurfaces"] = sorted(surfaces)
-        report["runtimeSurfaces"] = [
-            {"surface": surface, "state": "proven", "reason": "exact-build-runtime-receipt"}
-            for surface in sorted(surfaces)
-        ]
-        receipts = report["obtainedEvidenceClasses"]["exactBuildRuntimeReceipts"]
-        receipts["proven"] = receipts["required"] = len(surfaces)
-        if not surfaces:
-            receipts["runtimeSessionResult"] = None
-        if not any(surface.startswith("watchos.") for surface in surfaces):
-            report["obtainedEvidenceClasses"]["watchRestartAttestation"] = "not-required"
-        return report
+    def run_main(args, github, now):
+        class FixedClock(submit_app_store_review.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now if tz is None else now.astimezone(tz)
 
-    def test_comparison_limits_runtime_proof_to_changed_surfaces(self) -> None:
-        changed = frozenset({"ios.app", "ipados.app", "macos.app"})
-        blockers = submit_app_store_review.validation_report_blockers(
-            self.scoped_report("IOS", {"ios.app", "ipados.app", "macos.app"}),
-            version="1.0.39",
-            build_number="202608050001",
-            platform="IOS",
-            comparison_runtime_surfaces=changed,
-        )
+        with (
+            patch.object(submit_app_store_review, "parse_args", return_value=args),
+            patch.object(submit_app_store_review, "fetch_github_json", github),
+            patch.object(submit_app_store_review, "datetime", FixedClock),
+            patch.dict("os.environ", {"GITHUB_REPOSITORY": gate_tests.REPOSITORY}),
+            redirect_stdout(io.StringIO()) as output,
+            redirect_stderr(io.StringIO()) as errors,
+        ):
+            exit_code = submit_app_store_review.main()
+        return exit_code, output.getvalue(), errors.getvalue()
 
-        self.assertEqual(blockers, [])
-
-    def test_comparison_scope_still_requires_every_changed_platform_surface(self) -> None:
-        blockers = submit_app_store_review.validation_report_blockers(
-            self.scoped_report("IOS", {"ios.app"}),
-            version="1.0.39",
-            build_number="202608050001",
-            platform="IOS",
-            comparison_runtime_surfaces=frozenset({"ios.app", "watchos.app"}),
-        )
-
-        self.assertTrue(any("missing required surfaces: watchos.app" in item for item in blockers))
-        self.assertIn("the physical Watch restart attestation must be recorded", blockers)
-
-    def test_platform_with_no_runtime_change_needs_no_runtime_session(self) -> None:
-        blockers = submit_app_store_review.validation_report_blockers(
-            self.scoped_report("TV_OS", set()),
-            version="1.0.39",
-            build_number="202608050001",
-            platform="TV_OS",
-            comparison_runtime_surfaces=frozenset(),
-        )
-
-        self.assertEqual(blockers, [])
-
-    def test_validation_report_reads_runtime_scope_from_the_release_comparison(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            report_path = Path(directory) / "report.json"
-            report_path.write_text(json.dumps(self.scoped_report("TV_OS", {"tvos.app"})))
-            comparison_path = Path(directory) / "comparison.json"
-            comparison_path.write_text(
-                json.dumps({"requiredSurfaces": {"actual-runtime": ["tvos.app"]}})
-            )
-            args = SimpleNamespace(
-                validation_report=str(report_path),
-                release_evidence_comparison=str(comparison_path),
-                version="1.0.39",
-                build_number="202608050001",
-                platform="TV_OS",
-            )
-            with patch.object(submit_app_store_review, "validate_current_comparison"):
-                submit_app_store_review.validate_validation_report(args)
-                args.release_evidence_comparison = None
-                with self.assertRaisesRegex(
-                    submit_app_store_review.AppStoreConnectError,
-                    "missing required surfaces: tvos.top-shelf",
-                ):
-                    submit_app_store_review.validate_validation_report(args)
-
-    def test_rejects_active_deferrals_even_when_runtime_receipts_are_proven(self):
-        report = exact_build_validation_report("MAC_OS")
-        report["operatorFlow"]["state"] = "deferred"
-        report["operatorFlow"]["deferredActionCount"] = 1
-        report["operatorFlow"]["activeDeferrals"] = [{"actionId": "macos.review"}]
-
-        blockers = submit_app_store_review.validation_report_blockers(
-            report,
-            version="1.0.39",
-            build_number="202608050001",
-            platform="MAC_OS",
-        )
-
-        self.assertIn("operator flow state must be complete", blockers)
-        self.assertIn("operator flow must have no deferred actions", blockers)
-        self.assertIn("operator flow must have no active deferrals", blockers)
-
-    def test_live_build_mutations_require_a_report_but_safe_operations_do_not(self):
-        report_preflight = SimpleNamespace(
-            validate_report_only=True,
-            dry_run=False,
-            cancel_review_only=False,
-            prepare_only=False,
-            build_number="202608050001",
-        )
-        live_submit = SimpleNamespace(
-            validate_report_only=False,
-            dry_run=False,
-            cancel_review_only=False,
-            prepare_only=False,
-            build_number="202608050001",
-        )
-        live_prepare = SimpleNamespace(
-            validate_report_only=False,
-            dry_run=False,
-            cancel_review_only=False,
-            prepare_only=True,
-            build_number="202608050001",
-        )
-        safe_operations = (
-            SimpleNamespace(
-                validate_report_only=False,
-                dry_run=True,
-                cancel_review_only=False,
-                prepare_only=False,
-                build_number="202608050001",
-            ),
-            SimpleNamespace(
-                validate_report_only=False,
-                dry_run=False,
-                cancel_review_only=True,
-                prepare_only=False,
-                build_number=None,
-            ),
-            SimpleNamespace(
-                validate_report_only=False,
-                dry_run=False,
-                cancel_review_only=False,
-                prepare_only=True,
-                build_number=None,
-            ),
-        )
-
-        self.assertTrue(submit_app_store_review.validation_report_required(report_preflight))
-        self.assertTrue(submit_app_store_review.validation_report_required(live_submit))
-        self.assertTrue(submit_app_store_review.validation_report_required(live_prepare))
-        for operation in safe_operations:
-            self.assertFalse(submit_app_store_review.validation_report_required(operation))
-
-    def test_validate_validation_report_fails_before_app_store_connect_use(self):
-        report = exact_build_validation_report("MAC_OS")
-        report["operatorFlow"]["activeDeferrals"] = [{"actionId": "macos.review"}]
-        with tempfile.TemporaryDirectory() as directory:
-            report_path = Path(directory) / "report.json"
-            report_path.write_text(json.dumps(report))
-            args = SimpleNamespace(
-                validation_report=str(report_path),
-                version="1.0.39",
-                build_number="202608050001",
-                platform="MAC_OS",
-            )
-
-            with self.assertRaisesRegex(
-                submit_app_store_review.AppStoreConnectError,
-                "operator flow must have no active deferrals",
-            ):
-                submit_app_store_review.validate_validation_report(args)
-
-    def test_validate_report_only_exits_before_credentials_or_app_store_connect(self):
-        report = exact_build_validation_report("MAC_OS")
-        with tempfile.TemporaryDirectory() as directory:
-            report_path = Path(directory) / "report.json"
-            report_path.write_text(json.dumps(report))
-            args = SimpleNamespace(
-                validate_report_only=True,
-                validation_report=str(report_path),
-                version="1.0.39",
-                build_number="202608050001",
-                platform="MAC_OS",
-                dry_run=False,
-                cancel_review_only=False,
-                prepare_only=False,
-                release_evidence_mode="shadow",
-            )
-
-            with (
-                patch.object(submit_app_store_review, "parse_args", return_value=args),
-                redirect_stdout(io.StringIO()) as output,
-            ):
-                exit_code = submit_app_store_review.main()
-
-        self.assertEqual(exit_code, 0)
-        self.assertIn("no App Store Connect request was made", output.getvalue())
-
-    @staticmethod
-    def run_main_with_reference_runs(args, runs):
-        """Run main() with evidence checks stubbed and CI runs served from `runs`."""
-        source = "c" * 40
-
-        def fetch(path):
-            if "/actions/workflows/" in path:
-                return {"workflow_runs": [run for run, _ in runs if run["head_sha"] in path]}
-            run_id = int(path.split("/actions/runs/")[1].split("/")[0])
-            return {"jobs": next(jobs for run, jobs in runs if run["id"] == run_id)}
-
-        with tempfile.TemporaryDirectory() as directory:
-            manifest_path = Path(directory) / "expected.json"
-            manifest_path.write_text(json.dumps({"artifacts": [{"sourceCommit": source}]}))
-            args.release_evidence_expected_build_manifests = [str(manifest_path)]
-            args.api_key_id = None
-            args.api_issuer_id = None
-            with (
-                patch.object(submit_app_store_review, "parse_args", return_value=args),
-                patch.object(submit_app_store_review, "validate_validation_report"),
-                patch.object(submit_app_store_review, "validate_release_evidence_report"),
-                patch.object(submit_app_store_review, "fetch_ci_json", fetch),
-                patch.dict("os.environ", {"GITHUB_REPOSITORY": "owner/repo"}),
-                redirect_stdout(io.StringIO()) as output,
-                redirect_stderr(io.StringIO()) as errors,
-            ):
-                exit_code = submit_app_store_review.main()
-        return source, exit_code, output.getvalue(), errors.getvalue()
-
-    @staticmethod
-    def reference_run(commit, conclusion):
-        run = {
-            "id": 7,
-            "head_sha": commit,
-            "event": "push",
-            "path": ".github/workflows/ci.yml",
-            "head_repository": {"full_name": "owner/repo"},
-        }
-        return run, [{"name": "shared-view-simulator-references", "conclusion": conclusion, "html_url": "run-url"}]
-
-    def test_live_submission_refuses_without_a_passing_reference_run_before_credentials(self):
-        for runs in ([], [self.reference_run("c" * 40, "skipped")], [self.reference_run("d" * 40, "success")]):
-            with self.subTest(runs=runs):
-                source, exit_code, _, errors = self.run_main_with_reference_runs(self.live_args(), runs)
-                self.assertEqual(exit_code, 1)
-                self.assertIn("shared-view reference images are not proven", errors)
-                self.assertIn(f"git push origin {source}:refs/heads/reference-check/", errors)
-                self.assertNotIn("APP_STORE_CONNECT_KEY_ID", errors)
-
-    def test_live_submission_continues_past_a_passing_reference_run(self):
-        _, exit_code, output, errors = self.run_main_with_reference_runs(
-            self.live_args(), [self.reference_run("c" * 40, "success")]
+    def test_a_live_submission_that_is_not_ready_stops_before_credentials(self):
+        exit_code, _, errors = self.run_main(
+            self.args(), gate_tests.ready_github(), gate_tests.UPLOADED + timedelta(hours=3)
         )
         self.assertEqual(exit_code, 1)
-        self.assertIn("Simulator reference images passed", output)
+        self.assertIn("not ready for App Review", errors)
+        self.assertNotIn("APP_STORE_CONNECT_KEY_ID", errors)
+
+    def test_a_ready_build_continues_to_app_store_connect(self):
+        exit_code, output, errors = self.run_main(self.args(), gate_tests.ready_github(), gate_tests.AFTER_A_DAY)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Submission gate passed", output)
         self.assertIn("APP_STORE_CONNECT_KEY_ID", errors)
 
-    def test_preflight_checks_the_same_reference_run(self):
-        args = self.live_args(validate_report_only=True, release_evidence_mode="enforce")
-        _, refused, _, errors = self.run_main_with_reference_runs(args, [])
-        self.assertEqual(refused, 1)
-        self.assertIn("shared-view reference images are not proven", errors)
-
-        args = self.live_args(validate_report_only=True, release_evidence_mode="enforce")
-        _, accepted, output, _ = self.run_main_with_reference_runs(args, [self.reference_run("c" * 40, "success")])
-        self.assertEqual(accepted, 0)
-        self.assertIn("no App Store Connect request was made", output)
-
-    def test_live_shadow_and_enforce_require_release_evidence_report(self):
-        for mode in ("shadow", "enforce"):
-            with self.subTest(mode=mode):
-                args = self.live_args(
-                    release_evidence_mode=mode,
-                    release_evidence_report=None,
-                )
-                with self.assertRaisesRegex(
-                    submit_app_store_review.AppStoreConnectError,
-                    "required for live shadow or enforce",
-                ):
-                    submit_app_store_review.validate_args(args)
-
-    def test_release_evidence_report_requires_exact_validation_report(self):
-        args = self.live_args(dry_run=True, validation_report=None)
-        with self.assertRaisesRegex(
-            submit_app_store_review.AppStoreConnectError,
-            "requires --validation-report",
-        ):
-            submit_app_store_review.validate_args(args)
-
-    def test_release_evidence_report_requires_authoritative_binding_inputs(self):
-        args = self.live_args(
-            dry_run=True,
-            release_evidence_comparison=None,
-            release_evidence_expected_build_manifests=None,
+    def test_the_override_is_recorded_and_the_submission_continues(self):
+        exit_code, output, errors = self.run_main(
+            self.args(skip_soak_reason="Chris used it all day"),
+            gate_tests.ready_github(),
+            gate_tests.UPLOADED + timedelta(hours=3),
         )
-        with self.assertRaisesRegex(
-            submit_app_store_review.AppStoreConnectError,
-            "requires --release-evidence-comparison",
-        ):
-            submit_app_store_review.validate_args(args)
+        self.assertIn("Override recorded (Chris used it all day)", output)
+        self.assertIn("APP_STORE_CONNECT_KEY_ID", errors)
+        self.assertEqual(exit_code, 1)
 
-    def test_live_shadow_argument_contract_is_accepted(self):
-        submit_app_store_review.validate_args(self.live_args())
-
-    def test_release_evidence_accepts_historical_policy_archive_input(self):
-        with patch.object(
-            sys,
-            "argv",
-            [
-                "submit-app-store-review.py",
-                "--version",
-                "1.0.54",
-                "--build-number",
-                "202608100001",
-                "--validation-report",
-                "final-report.json",
-                "--validation-train",
-                "release",
-                "--release-evidence-report",
-                "release-evidence.json",
-                "--release-evidence-comparison",
-                "comparison.json",
-                "--release-evidence-expected-build-manifest",
-                "expected.json",
-                "--release-evidence-selected-rc-ledger",
-                "selected-rc.json",
-                "--release-evidence-historical-policy-archive",
-                "Config/ContextPanelHistoricalPolicyArchive.json",
-                "--validate-report-only",
-            ],
-        ):
-            parsed = submit_app_store_review.parse_args()
-
-        self.assertEqual(
-            parsed.release_evidence_historical_policy_archives,
-            ["Config/ContextPanelHistoricalPolicyArchive.json"],
+    def test_a_dry_run_reports_the_gate_without_stopping(self):
+        exit_code, output, errors = self.run_main(
+            self.args(dry_run=True), gate_tests.ready_github(), gate_tests.UPLOADED + timedelta(hours=3)
         )
-
-    def test_live_submission_requires_release_evidence_train(self):
-        for train in (None, "beta", "rc"):
-            with self.subTest(train=train):
-                args = self.live_args(validation_train=train)
-                with self.assertRaisesRegex(
-                    submit_app_store_review.AppStoreConnectError,
-                    "requires --validation-train release",
-                ):
-                    submit_app_store_review.validate_args(args)
-
-    def test_invalid_release_evidence_mode_casing_fails_in_parser(self):
-        with patch.object(
-            sys,
-            "argv",
-            [
-                "submit-app-store-review.py",
-                "--version",
-                "1.0.54",
-                "--release-evidence-mode",
-                "SHADOW",
-            ],
-        ):
-            with self.assertRaises(SystemExit):
-                submit_app_store_review.parse_args()
-
-    def test_release_evidence_mode_defaults_to_enforce(self):
-        with patch.object(
-            sys,
-            "argv",
-            [
-                "submit-app-store-review.py",
-                "--version",
-                "1.0.54",
-            ],
-        ):
-            self.assertEqual(
-                submit_app_store_review.parse_args().release_evidence_mode,
-                "enforce",
-            )
-
-    def test_validate_report_only_without_mode_requires_enforced_evidence(self):
-        args = SimpleNamespace(
-            validate_report_only=True,
-            validation_report="final-report.json",
-            release_evidence_report=None,
-            version="1.0.54",
-            build_number="202608100001",
-            platform="MAC_OS",
-            dry_run=False,
-            cancel_review_only=False,
-            prepare_only=False,
-        )
-        with self.assertRaisesRegex(
-            submit_app_store_review.AppStoreConnectError,
-            "requires --release-evidence-report",
-        ):
-            submit_app_store_review.validate_args(args)
-
-    def test_invalid_release_evidence_mode_fails_before_cancel_only_return(self):
-        args = self.live_args(
-            release_evidence_mode="SHADOW",
-            cancel_review_only=True,
-            remove_active_review_version="1.0.53",
-            build_number=None,
-            whats_new=None,
-        )
-        with self.assertRaisesRegex(
-            submit_app_store_review.AppStoreConnectError,
-            "must be shadow or enforce",
-        ):
-            submit_app_store_review.validate_args(args)
-
-    def test_release_evidence_validation_without_validation_report_fails_cleanly(self):
-        args = self.live_args(validation_report=None)
-        with self.assertRaisesRegex(
-            submit_app_store_review.AppStoreConnectError,
-            "release evidence requires its report, exact validation report",
-        ):
-            submit_app_store_review.validate_release_evidence_report(args)
-
-    def test_release_evidence_preflight_rejects_legacy_comparison_before_consuming_it(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            release_report = root / "release-evidence.json"
-            validation_report = root / "validation.json"
-            comparison = root / "comparison.json"
-            policy = root / "policy.json"
-            surface_policy = root / "surface-policy.json"
-            for path, payload in (
-                (release_report, {}),
-                (validation_report, {}),
-                (comparison, {"schemaVersion": 1}),
-                (policy, {}),
-                (surface_policy, {}),
-            ):
-                path.write_text(json.dumps(payload))
-            args = self.live_args(
-                release_evidence_report=str(release_report),
-                validation_report=str(validation_report),
-                release_evidence_comparison=str(comparison),
-                release_evidence_policy=str(policy),
-                release_evidence_surface_policy=str(surface_policy),
-                release_evidence_expected_build_manifests=[str(root / "missing.json")],
-            )
-            with self.assertRaisesRegex(
-                submit_app_store_review.AppStoreConnectError,
-                "release evidence binding is invalid",
-            ):
-                submit_app_store_review.validate_release_evidence_report(args)
+        self.assertIn("a live submission would be refused now", output)
+        self.assertIn("APP_STORE_CONNECT_KEY_ID", errors)
+        self.assertEqual(exit_code, 1)
 
 
 class FakeASCClient:
@@ -846,8 +351,8 @@ class PlatformArgumentTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 2)
         return error_output.getvalue()
 
-    def test_platform_accepts_every_platform_with_runtime_requirements(self):
-        for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
+    def test_platform_accepts_every_app_store_platform(self):
+        for platform in ("MAC_OS", "IOS", "TV_OS", "VISION_OS"):
             with self.subTest(platform=platform):
                 self.assertEqual(self.parse("--platform", platform).platform, platform)
 
@@ -864,7 +369,7 @@ class PlatformArgumentTests(unittest.TestCase):
 
     def test_copy_from_platform_defaults_to_none_and_accepts_supported_platforms(self):
         self.assertIsNone(self.parse().copy_from_platform)
-        for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
+        for platform in ("MAC_OS", "IOS", "TV_OS", "VISION_OS"):
             with self.subTest(platform=platform):
                 self.assertEqual(
                     self.parse("--copy-from-platform", platform).copy_from_platform,
