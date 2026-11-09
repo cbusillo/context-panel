@@ -664,3 +664,40 @@ private func presentationTestTemporaryDirectory() throws -> URL {
     #expect(lane.accessibilityResetText?.contains(full) == true)
     #expect(lane.metrics.allSatisfy { $0.accessibilityResetText?.contains(full) == true })
 }
+
+/// Fails if the one-second account views rebuild the shared presentation from disk on every tick (#1098).
+@MainActor
+@Test func accountPresentationReusesSavedFilesUntilTheModelChangesOrAMinutePasses() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date()
+    let accounts = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    func saveAccount(named name: String) throws {
+        try accounts.save(AccountConfigurationDocument(updatedAt: now, accounts: [LocalProviderAccountConfiguration(
+            id: "work", provider: .anthropic, connectorKind: .claudeOAuthUsage, displayName: name)]))
+    }
+    try saveAccount(named: "Before")
+    let snapshots = JSONSnapshotStore(rootDirectory: root.appending(path: "Snapshots"))
+    try snapshots.save(StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: [UsageLimit(
+        provider: .anthropic, accountID: "work", configuredAccountID: "work", accountName: "work", label: "Weekly",
+        windowLabel: "Weekly", unit: .percent, used: 40, limit: 100, lastUpdatedAt: now)])))
+    let publisher = CompanionSyncPublisher(
+        stores: CompanionSyncStoreSet(stores: [CompanionSyncStore(documentURL: root.appending(path: "sync.json"))]),
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget.json")),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        accountConfigurationURL: accounts.configurationURL)
+    let service = SnapshotRefreshService(accountStore: accounts, stores: SnapshotRefreshStores(primary: snapshots),
+        companionSyncPublisher: publisher, promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
+    let model = ContextPanelAppModel(refreshService: service, runtimeReceiptRecorder: .disabled(), enablesRuntimeReceiptRelay: false)
+    model.loadSnapshot(reloadWidgetTimelines: false)
+    let labels = { (date: Date) in model.accountOverview(at: date).accounts.map(\.metadata.label) }
+    #expect(labels(now) == ["Before"])
+
+    try saveAccount(named: "After")
+    #expect(labels(now.addingTimeInterval(1)) == ["Before"])
+    #expect(labels(now.addingTimeInterval(61)) == ["After"])
+
+    try saveAccount(named: "Reloaded")
+    model.loadSnapshot(reloadWidgetTimelines: false)
+    #expect(labels(now.addingTimeInterval(62)) == ["Reloaded"])
+}

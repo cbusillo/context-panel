@@ -45,30 +45,24 @@ public enum ContextPanelDateFormatting {
     }
 
     public static func string(from date: Date) -> String {
-        internetDateFormatter().string(from: date)
+        internetDateFormatter.string(from: date)
     }
 
     public static func date(from value: String) -> Date? {
-        internetDateFormatterWithFractionalSeconds().date(from: value)
-            ?? internetDateFormatter().date(from: value)
-            ?? dateOnlyFormatter().date(from: value)
+        internetDateFormatterWithFractionalSeconds.date(from: value)
+            ?? internetDateFormatter.date(from: value)
+            ?? dateOnlyFormatter.date(from: value)
     }
 
-    private static func internetDateFormatter() -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }
+    // ISO8601DateFormatter is documented thread safe and these are never mutated after creation.
+    // Building one per saved date dominated decoding (#1098).
+    nonisolated(unsafe) private static let internetDateFormatter = formatter([.withInternetDateTime])
+    nonisolated(unsafe) private static let internetDateFormatterWithFractionalSeconds = formatter([.withInternetDateTime, .withFractionalSeconds])
+    nonisolated(unsafe) private static let dateOnlyFormatter = formatter([.withFullDate])
 
-    private static func internetDateFormatterWithFractionalSeconds() -> ISO8601DateFormatter {
+    private static func formatter(_ options: ISO8601DateFormatter.Options) -> ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }
-
-    private static func dateOnlyFormatter() -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withFullDate]
+        formatter.formatOptions = options
         return formatter
     }
 }
