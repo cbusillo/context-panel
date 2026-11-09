@@ -9,15 +9,6 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
-@MainActor
-private func companionRuntimeDeviceClass() -> RuntimeCompanionDeviceClass {
-    #if os(visionOS)
-    .vision
-    #else
-    UIDevice.current.userInterfaceIdiom == .pad ? .pad : .phone
-    #endif
-}
-
 private func reloadContextPanelCompanionWidgetTimeline() {
     WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelCompanionWidgetIdentity.kind)
 }
@@ -791,8 +782,6 @@ private final class CompanionSyncModel {
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
     #endif
     private let presentationPreferencesRemoteStore: CompanionPresentationRemoteStore?
-    private let runtimeReceiptRecorder: RuntimeReceiptRecorder
-    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var snapshot = WidgetSnapshot.fromCompanionSync(
@@ -813,40 +802,18 @@ private final class CompanionSyncModel {
     private var lastSyncedPresentationPreferences: WidgetDisplayPreferences?
     private var desiredPresentationPreferences: WidgetDisplayPreferences?
 
-    init(
-        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
-        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
-    ) {
+    init() {
         #if CONTEXT_PANEL_SCREENSHOTS
         refreshSettingsStore = nil
         appearanceSettingsStore = nil
         displayPreferencesStore = nil
         presentationPreferencesRemoteStore = nil
-        self.runtimeReceiptRecorder = .disabled()
-        self.runtimeReceiptRelay = nil
         refreshSettings = .defaultSettings
         appearanceSettings = .defaultSettings
         snapshot = ScreenshotFixture.snapshot
         result = ScreenshotFixture.result
         hasLoadedDisplayPreferences = true
         #else
-        let deviceClass = companionRuntimeDeviceClass()
-        let appSurface = RuntimeSurface.companionApp(for: deviceClass)
-        self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
-            surface: appSurface,
-            appGroupID: ContextPanelLocations.companionAppGroupID
-        )
-        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appGroupReceiver(
-            remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
-            expectedManifestID: RuntimeBuildIdentityLoader.load(
-                surface: appSurface
-            )?.build.manifestID,
-            eligibleSurfaces: [
-                appSurface,
-                .companionWidget(for: deviceClass),
-            ],
-            appGroupID: ContextPanelLocations.companionAppGroupID
-        )
         #if os(iOS)
         presentationPreferencesRemoteStore = UIDevice.current.userInterfaceIdiom == .phone
             ? CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
@@ -899,8 +866,7 @@ private final class CompanionSyncModel {
         let remoteStore = remoteStore
         let presentationPreferencesRemoteStore = presentationPreferencesRemoteStore
         let displayPreferencesStore = displayPreferencesStore
-        let runtimeReceiptRelay = runtimeReceiptRelay
-        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, displayPreferencesStore, runtimeReceiptRelay] in
+        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, displayPreferencesStore] in
             defer {
                 if let self {
                     reloadTask = nil
@@ -908,9 +874,6 @@ private final class CompanionSyncModel {
                         reload()
                     }
                 }
-            }
-            async let sessionRelayResult = CompanionAsyncDeadline.value(timeout: .seconds(5)) {
-                await runtimeReceiptRelay?.synchronizeSession(now: now)
             }
             let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
             async let loadedResult = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
@@ -921,7 +884,6 @@ private final class CompanionSyncModel {
             let presentationLoad = boundedPresentationLoad ?? nil
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            _ = await sessionRelayResult
             let presentationDocument: CompanionPresentationDocument?
             if let document = presentationLoad?.document,
                let usageScope = loaded.document?.cloudKitUserScope,
@@ -944,15 +906,6 @@ private final class CompanionSyncModel {
             snapshot = loadedSignature.snapshot
             displayPreferences = loadedSignature.displayPreferences
             hasLoadedDisplayPreferences = true
-            recordRuntimeReceipt(
-                result: loaded,
-                snapshot: loadedSignature.snapshot,
-                displayPreferences: loadedSignature.displayPreferences,
-                presentationDate: now
-            )
-            Task { [runtimeReceiptRelay] in
-                _ = await runtimeReceiptRelay?.relayReceipts(now: Date())
-            }
             if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
                 lastSyncedPresentationPreferences = presentationPreferences
             }
@@ -978,40 +931,6 @@ private final class CompanionSyncModel {
         lastWidgetRenderSignature = nil
         reloadWidgetTimelineIfNeeded(force: true)
         reload()
-    }
-
-    private func recordRuntimeReceipt(
-        result: CompanionSyncLoadResult,
-        snapshot: WidgetSnapshot,
-        displayPreferences: WidgetDisplayPreferences,
-        presentationDate: Date
-    ) {
-        let evidence = CompanionRuntimeReceiptEvidence(
-            result: result,
-            snapshot: snapshot,
-            displayPreferences: displayPreferences,
-            appearanceSettings: runtimeAppearanceSettings,
-            presentationSurface: .app,
-            presentationMode: .appOverview,
-            presentationDate: presentationDate
-        )
-        runtimeReceiptRecorder.record(
-            trigger: .appSnapshotLoad,
-            presentationMode: .appOverview,
-            selectedSource: evidence.selectedSource,
-            presentationDigest: evidence.presentationDigest,
-            stateBranch: evidence.stateBranch,
-            outcome: evidence.outcome,
-            observedAt: presentationDate
-        )
-    }
-
-    private var runtimeAppearanceSettings: CompanionAppearanceSettings? {
-        #if os(visionOS)
-        appearanceSettings
-        #else
-        nil
-        #endif
     }
 
     private func reloadWidgetTimelineIfNeeded(force: Bool, now: Date = Date()) {
@@ -1086,12 +1005,6 @@ private final class CompanionSyncModel {
             try displayPreferencesStore.save(updated)
             displayPreferences = updated
             displayPreferencesErrorMessage = nil
-            recordRuntimeReceipt(
-                result: result,
-                snapshot: snapshot,
-                displayPreferences: updated,
-                presentationDate: Date()
-            )
             reloadContextPanelCompanionWidgetTimeline()
             syncDisplayPreferencesToWatch(updated)
         } catch {
@@ -1165,12 +1078,6 @@ private final class CompanionSyncModel {
             try appearanceSettingsStore.save(updated)
             appearanceSettings = updated
             appearanceErrorMessage = nil
-            recordRuntimeReceipt(
-                result: result,
-                snapshot: snapshot,
-                displayPreferences: displayPreferences,
-                presentationDate: Date()
-            )
             reloadContextPanelCompanionWidgetTimeline()
         } catch {
             appearanceErrorMessage = "Appearance settings could not be saved."

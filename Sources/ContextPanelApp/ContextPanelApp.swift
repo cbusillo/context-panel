@@ -5533,8 +5533,6 @@ final class ContextPanelAppModel: ObservableObject {
             SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
         }
     )
-    private let runtimeReceiptRecorder: RuntimeReceiptRecorder
-    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let fixedPresentationDate: Date?
     private var fixtureDisplayMetadata: [AccountDisplayMetadata]?
     private var sharedPresentationDocument: (document: CompanionSyncDocument?, builtAt: Date)?
@@ -5768,9 +5766,6 @@ final class ContextPanelAppModel: ObservableObject {
 
     init(
         refreshService: SnapshotRefreshService? = nil,
-        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSApp),
-        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil,
-        enablesRuntimeReceiptRelay: Bool = true,
         fixedPresentationDate: Date? = nil
     ) {
         let resolvedRefreshService = refreshService ?? .appDefault(
@@ -5779,13 +5774,7 @@ final class ContextPanelAppModel: ObservableObject {
         )
         self.refreshService = resolvedRefreshService
         refreshRunner = SnapshotRefreshRunner(service: resolvedRefreshService)
-        self.runtimeReceiptRecorder = runtimeReceiptRecorder
         self.fixedPresentationDate = fixedPresentationDate
-        self.runtimeReceiptRelay = enablesRuntimeReceiptRelay
-            ? runtimeReceiptRelay ?? .appDefaultPublisher(
-                remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
-            )
-            : nil
         // Every published change (snapshot, rates, settings, accounts) can change the shared document.
         sharedPresentationInvalidation = objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.sharedPresentationDocument = nil }
@@ -5811,8 +5800,7 @@ final class ContextPanelAppModel: ObservableObject {
             accountStore: AccountConfigurationStore(configurationURL: validationDirectory.appending(path: "accounts.json")),
             stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: validationDirectory)),
             promptCacheTelemetryMirror: { _, _ in }, promptCacheTelemetryReader: { _ in [] })
-        let model = ContextPanelAppModel(refreshService: refreshService, runtimeReceiptRecorder: .disabled(),
-            enablesRuntimeReceiptRelay: false, fixedPresentationDate: now)
+        let model = ContextPanelAppModel(refreshService: refreshService, fixedPresentationDate: now)
         model.storedSnapshot = stored
         model.launchEvidence = snapshot.launchEvidence
         model.storeStatus = snapshot.status
@@ -5852,52 +5840,8 @@ final class ContextPanelAppModel: ObservableObject {
         }
         historyCount = refreshService.historyCount()
         refreshObservedBurnRates()
-        recordRuntimeReceipt(result)
         if reloadWidgetTimelines {
             reloadContextPanelWidgetTimeline()
-        }
-    }
-
-    private func recordRuntimeReceipt(_ result: SnapshotStoreLoadResult) {
-        let stateBranch: RuntimeReceiptStateBranch
-        if result.snapshot == nil {
-            stateBranch = result.status == .failure ? .failure : .setupNeeded
-        } else {
-            stateBranch = switch result.status {
-            case .failure:
-                .failure
-            case .stale:
-                .stale
-            case .healthy, .close, .limited:
-                .ready
-            case .loading, .unknown:
-                .unknown
-            }
-        }
-        let outcome: RuntimeReceiptOutcome = switch stateBranch {
-        case .ready:
-            .success
-        case .failure:
-            .failure
-        case .setupNeeded, .stale, .unknown, .refreshed, .skippedFresh,
-             .skippedAlreadyRunning, .skippedNoReports:
-            .degraded
-        }
-        runtimeReceiptRecorder.record(
-            trigger: .appSnapshotLoad,
-            presentationMode: .appOverview,
-            selectedSource: result.snapshot == nil ? .none : .appGroupSnapshot,
-            presentationDigest: RuntimePresentationDigest.storedSnapshot(
-                result.snapshot,
-                status: result.status,
-                accountMetadata: result.snapshot.map { AccountDisplayMetadata.local(configuration: configuredAccounts, stored: $0, now: Date()) }
-            ),
-            stateBranch: stateBranch,
-            outcome: outcome
-        )
-        guard let runtimeReceiptRelay else { return }
-        Task {
-            _ = await runtimeReceiptRelay.synchronize()
         }
     }
 

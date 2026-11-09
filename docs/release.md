@@ -517,9 +517,9 @@ the executable hashes/UUIDs, signed-entitlement hashes, provisioning-profile
 hashes, and per-surface fingerprints. The input mapping and CLI are documented in
 [Build Fingerprints](build-fingerprints.md).
 
-The apps and extensions still contain dormant runtime receipt writers and two
-CloudKit runtime record types from the retired release proof round. Nothing
-reads them at release; removing the writers is a separate product change.
+The apps no longer write the two CloudKit runtime record types from the
+retired release proof round. Production cannot drop deployed record types, so
+the checked-in CloudKit schema still lists them; leave them there.
 
 The fingerprint contract hashes normalized target slices from `project.yml`,
 not generated `ContextPanel.xcodeproj` output. XcodeGen formatting or object-ID
@@ -817,9 +817,8 @@ environment for `iCloud.com.shinycomputers.contextpanel`. Private database
 records still depend on the container's Production schema, so a production-
 entitled Mac build cannot rely on runtime schema creation.
 
-Before companion TestFlight distribution, App Store Review, or signed runtime
-receipt relay, validate that Production contains the companion snapshot and
-runtime-evidence contracts in `CloudKit/companion-sync.schema.ckdb`.
+Before companion TestFlight distribution or App Store Review, validate that
+Production contains the contracts in `CloudKit/companion-sync.schema.ckdb`.
 
 Run the offline repo contract check before packaging:
 
@@ -829,13 +828,12 @@ scripts/validate-cloudkit-companion-schema.sh
 
 The checked-in `CloudKit/companion-sync.schema.ckdb` file is the exact additive
 schema candidate. It preserves the existing companion and `Users` definitions,
-adds the two runtime record types, includes the required range index, and omits
-public-database grants for runtime evidence. Do not reconstruct the candidate by
+keeps the two retired runtime record types that Production already has,
+includes their range index, and omits public-database grants for them. Do not reconstruct the candidate by
 hand in CloudKit Console.
 
 Every build also checks the app against that contract without credentials:
-Swift tests build the companion snapshot and runtime records the app writes
-and compare each record's type, name, fields and value types with
+Swift tests build the companion snapshot records the app writes and compare each record's type, name, fields and value types with
 `CloudKit/companion-sync.schema.json`, and the routine Python tests run the
 offline check above.
 
@@ -873,9 +871,8 @@ generated from CloudKit Console settings, are scoped to the developer team and
 user, default to a one-year lifetime, and can be revoked from CloudKit Dashboard
 settings. `cktool` can then save the token securely in the Mac Keychain.
 
-The schema gate does not promote a new `CKSubscription` definition. Runtime
-session and receipt record types intentionally have no subscription, so uploads,
-deletions, and extraction cannot wake the companion snapshot loop. Context
+The schema gate does not promote a new `CKSubscription` definition. The retired
+runtime session and receipt record types have no subscription. Context
 Panel's Production companion contract continues to use subscription ID
 `companion-sync-updates` with a query for the fixed legacy `current` wake record.
 The versioned `current-v2` record remains authoritative, while clients reload and
@@ -966,13 +963,11 @@ xcrun cktool import-schema \
   --file CloudKit/companion-sync.schema.ckdb
 ```
 
-Re-export Development, run the live Development gate, and canary session
-publish/load/clear, receipt lookup, and expired-receipt pruning before using
+Re-export Development and run the live Development gate before using
 CloudKit Console's **Deploy Schema Changes** action. Do not import directly into
 Production and never use `cktool reset-schema`; reset deletes Development data.
 After deployment, re-export Production and require the live Production gate to
-pass before re-running Mac publish, receipt relay, and companion TestFlight
-validation.
+pass before re-running Mac publish and companion TestFlight validation.
 
 A missing runtime record type is `unknown` evidence, not permission to fall back
 to the companion snapshot record. If Production already contains an incompatible

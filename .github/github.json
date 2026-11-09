@@ -85,7 +85,6 @@
       "sharedViewReferenceTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_shared_view_references.py && swift test --filter SharedViewRendererToolTests",
       "appStoreSubmissionGate": "scripts/submit-app-store-review.py (live submission refuses unless the Ship record's source commit has a passing shared-view-simulator-references job and the build has been on TestFlight 24 hours with no crash report for it, unless skip_soak_reason; dry run reports only; scripts/app_store_submission_gate.py; tests: uv run --no-project python -m unittest Tests/ScriptsTests/test_app_store_submission_gate.py Tests/ScriptsTests/test_submit_app_store_review.py; docs/release.md#app-store-review-submission)",
       "validationGalleryTests": "swift test --filter 'ValidationGallery|ValidationFixtures|validationGallery|validationFixture' && uv run --no-project python -m unittest Tests/ScriptsTests/test_validation_gallery_target_graph.py",
-      "runtimeReceiptTests": "swift test --filter 'ContextPanelCoreTests.runtime|ContextPanelCoreTests.snapshotRefreshEvidence' (dormant Swift receipt writers until they are removed)",
       "surfaceFingerprintContract": "scripts/context-panel-surface-manifest.py validate",
       "surfaceFingerprintTests": "uv run --no-project python -m unittest Tests/ScriptsTests/test_surface_manifest.py",
       "codexClientCompatibility": "swift test --filter \"(?i)(codex|accountConfiguration|promptCache|defaultAccount|legacyConfiguration|retired|settingsAccounts)\"",

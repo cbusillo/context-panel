@@ -10,18 +10,18 @@ Context Panel is split into these native boundaries:
   storage roots.
 - `ContextPanelValidationFixtures`: Foundation-only synthetic fixture contract
   for signed validation galleries. It has no product-model, storage, CloudKit,
-  credential, runtime-receipt, WidgetKit, app, or extension dependency.
+  credential, WidgetKit, app, or extension dependency.
 - `ContextPanelValidationGalleryUI`: read-only host-app presentation that adapts
   validation fixtures into normalized models and invokes production SwiftUI
   entry points. It is not linked into extensions and cannot publish fixture
-  state, reload timelines, or record runtime receipts.
+  state or reload timelines.
 - `ContextPanelSettingsUI`: portable, value-driven SwiftUI controls for
   companion-safe presentation settings. It depends only on `ContextPanelCore`
   and emits user intent through closures; app-group storage, widget reloads,
   sync, permissions, credentials, and provider administration stay in the host
   app models.
-- `ContextPanelCloudKitSync`: the CloudKit stores for the companion document,
-  runtime receipts, and shared account identity.
+- `ContextPanelCloudKitSync`: the CloudKit stores for the companion document
+  and shared account identity.
 - `ContextPanelCompanionSupport`, `ContextPanelWatchSupport`, and
   `ContextPanelTVSupport`: shared presentation and support code for the
   iPhone/iPad/Vision Pro companion, Apple Watch, and Apple TV targets.
@@ -333,25 +333,6 @@ come from a fresh Mac publish to CloudKit or the existing local app-group mirror
 CloudKit transport clients retain their `CKContainer` for the full client
 lifetime so asynchronous record operations cannot outlive the underlying
 CloudKit client.
-
-Signed-validation runtime evidence uses a separate private CloudKit boundary.
-`RuntimeValidationSession/runtime-validation-session-current-v1` carries the
-bounded manifest-bound session as a compare-and-swap `active` or `cleared`
-document, and the App Group keeps a per-session journal through each receipt
-retention horizon,
-and each `RuntimeReceipt` record uses the deterministic
-`runtime-receipt-<receipt-hash>` name plus the existing redacted receipt
-payload. These record types do not share `CompanionSyncDocument` names or
-subscriptions.
-Extensions remain local-only receipt writers; the macOS app/refresh agent,
-companion app, Watch app, and tvOS app mirror sessions and drain the App Group
-queue they share with their extensions. Upload acknowledgement, retry deadlines,
-session refresh, cleanup cadence, and retained-session extraction cursor are
-stored in a bounded local sidecar, while downloaded envelopes live in a separate
-inbox that is never considered for upload. Per-process streams are ordered by
-sequence first, assigned a monotonic effective server/observation time, and then
-merged with stable ties. This preserves process order across offline delivery
-without treating device clocks as causal truth.
 
 The watchOS app and complication each read the same sanitized Production
 CloudKit records directly. Both processes also use the same Watch-device App

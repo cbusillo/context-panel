@@ -30,19 +30,19 @@ composes on a real device.
 `ContextPanelValidationFixtures` is a Foundation-only target. It contains fixed
 synthetic identifiers, labels, percentages, reset offsets, and prompt-cache
 counts. It does not depend on `ContextPanelCore`, CloudKit, WidgetKit, app or
-extension targets, stores, credentials, runtime receipts, App Group locations,
-or publication APIs.
+extension targets, stores, credentials, App Group locations, or publication
+APIs.
 
 `ContextPanelValidationGalleryUI` adapts the synthetic contract into normalized
 presentation models and renders them through production UI. It is linked only
 into signed host apps. Widget extensions do not link either validation target.
 Gallery content uses inert links and preserves normal scrolling and accessibility
 inside render tiles. It cannot write snapshots, publish companion documents,
-register subscriptions, record runtime receipts, or reload production timelines.
+register subscriptions, or reload production timelines.
 
 Opening a gallery does not suspend the signed host app's ordinary lifecycle.
-The host may still load its live model, maintain its existing subscription, emit
-its normal app runtime receipt, or refresh an existing production timeline under
+The host may still load its live model, maintain its existing subscription, or
+refresh an existing production timeline under
 the same policies used outside the gallery. Those operations never consume
 fixture values and do not count as gallery evidence. The isolation guarantee is
 that no fixture-derived path can cause those effects; it is not a zero-I/O app
@@ -62,7 +62,7 @@ lookalike screens. The Mac host covers overview, account/limit detail,
 reconnect, diagnostics, and widget presentations. The iPhone, iPad, and Vision
 Pro host covers overview, settings, diagnostics, and widget presentations.
 Production actions are disabled while a gallery preview is visible, and the
-Mac fixture model uses inert refresh and runtime-receipt dependencies.
+Mac fixture model uses an inert refresh dependency.
 
 The Mac reconnect preview reuses the production reconnect layout while omitting
 credential-backed account action rows. The diagnostics preview composes the
@@ -136,9 +136,9 @@ xcrun devicectl device process launch \
 ```
 
 The gallery route never instantiates the live loader, cache, CloudKit stores,
-runtime-receipt relay, or timeline reload path. In the shared Watch widget
+or timeline reload path. In the shared Watch widget
 source, an extension-only compilation boundary keeps the live timeline provider,
-runtime-receipt recorder, widget registration, and WidgetBundle entry point out
+widget registration, and WidgetBundle entry point out
 of the Watch app target. The normal Watch root retains its live sync behavior
 outside the gallery. A persistent `Sample data` boundary stays above interactive
 gallery screens; fixed Watch app captures use the production app frame with
@@ -157,7 +157,7 @@ presentation date and a local `@State` presentation-mode picker.
 Top Shelf previews call the shipping renderer's in-memory image path with the
 same `TVTopShelfDocument` model used by the extension. The app compilation path
 does not include the extension-only provider, App Group document/image cache,
-runtime-receipt recorder, `setImageURL` calls, or
+`setImageURL` calls, or
 `topShelfContentDidChange()` publication. A persistent `Sample data · Read
 only` banner remains above interactive previews; fixed capture launches omit it.
 
