@@ -61,12 +61,11 @@ class ReferenceFailureIssueTests(unittest.TestCase):
         self.assertNotIn("ios.app/baseline", body)
         self.assertIn("https://example.test/run/1", body)
 
-    def test_the_new_issue_is_a_plan_with_a_clear_wait_record(self):
+    def test_the_new_issue_has_a_clear_wait_record(self):
         self.write_report([{"surface": "ipados.app", "cell": "stress", "state": "changed", "changedPixels": 1}])
         gh = FakeGh()
         self.report("failure", gh)
         [create] = gh.writes()
-        self.assertEqual([create[i + 1] for i, value in enumerate(create) if value == "--label"], ["plan", "plan:active"])
         body = create[create.index("--body") + 1]
         marker = body.split("<!-- github-plan:wait ", 1)[1].split(" -->", 1)[0]
         self.assertEqual(json.loads(marker)["state"], "clear")

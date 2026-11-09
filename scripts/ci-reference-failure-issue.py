@@ -76,7 +76,7 @@ def report(status: str, *, sha: str, run_url: str, report_path: Path, gh: RunGh 
     if number is not None:
         gh(["issue", "comment", number, "--body", failure])
         return f"commented on #{number}"
-    gh(["issue", "create", "--title", TITLE, "--label", "plan", "--label", "plan:active", "--body", issue_body(failure)])
+    gh(["issue", "create", "--title", TITLE, "--body", issue_body(failure)])
     return "opened an issue"
 
 
