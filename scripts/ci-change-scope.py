@@ -12,9 +12,11 @@ The base depends on the event:
 The simulator reference job takes about an hour, so it stays off the pull
 request and merge-train path: it runs on pushes to the default branch and on
 manual runs, which are also the only runs App Store submission accepts
-(scripts/shared_view_reference_gate.py). One exception: a pull request that
+(scripts/app_store_submission_gate.py). One exception: a pull request that
 changes a committed reference image changes how a cell looks, so it also runs
-the simulator job and must re-record every surface before it merges.
+the simulator job and must re-record every surface before it merges. Its body
+must also carry a `## Reference images` section: the old and new images and the
+author's statement of what the screen should show and that the new image does.
 
 The decision fails open: an unknown path, an empty diff, or a Git error runs
 everything. CodeQL is deliberately not gated here. The ruleset on main requires
@@ -26,10 +28,13 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, replace
+import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
+import urllib.request
 
 PRODUCT_IRRELEVANT_PREFIXES = (
     "docs/",
@@ -46,7 +51,6 @@ PRODUCT_RELEVANT_PYTHON = (
     "scripts/ci-change-scope.py",
     "scripts/context-panel-surface-manifest.py",
     "scripts/context-panel-test-lanes.py",
-    "scripts/context_panel_comparison_schema.py",
     "scripts/context_panel_expected_build.py",
     "scripts/context_panel_surface_manifest/",
 )
@@ -57,10 +61,10 @@ PRODUCT_RELEVANT_PYTHON = (
 REFERENCE_INPUTS = (
     "Config/ContextPanelSharedViewSimulators.json",
     "Tests/SharedViewReferences/",
-    "scripts/context-panel-shared-view-capture-workflow.py",
     "scripts/context-panel-shared-view-references.py",
+    "scripts/context_panel_shared_view_capture.py",
+    "scripts/context_panel_shared_view_matrix.py",
     "scripts/context_panel_shared_view_references.py",
-    "scripts/context_panel_validation/",
 )
 REFERENCE_IMAGES_PREFIX = "Tests/SharedViewReferences/"
 TRAIN_BRANCH_PREFIX = "launchplane/train/"
@@ -125,6 +129,41 @@ def classify(paths: list[str] | None) -> Scope:
         reason = f"{reference_path} is a reference image job input"
         return Scope(False, reason, references=True, reference_images=reference_images)
     return Scope(False, "every changed path is documentation or validation tooling", references=False)
+
+
+REFERENCE_STATEMENT_HEADING = re.compile(r"^##\s+Reference images\s*$", re.IGNORECASE | re.MULTILINE)
+IMAGE = re.compile(r"!\[[^]]*]\([^)\s]+\)|<img\s[^>]*>", re.IGNORECASE)
+
+
+def reference_statement_problem(body: str | None) -> str | None:
+    """Why a pull request body that changes a reference image is not enough, or `None`.
+
+    The `## Reference images` section must show at least the old and the new image
+    and say, in the author's words, what the screen should show and that it does.
+    """
+    match = REFERENCE_STATEMENT_HEADING.search(body or "")
+    if match is None:
+        return "the pull request body has no '## Reference images' section"
+    section = re.split(r"^#{1,2}\s", (body or "")[match.end():], maxsplit=1, flags=re.MULTILINE)[0]
+    if len(IMAGE.findall(section)) < 2:
+        return "the '## Reference images' section must show the old and the new image"
+    statement = IMAGE.sub("", section)
+    if len(re.findall(r"[A-Za-z]{2,}", statement)) < 8:
+        return "the '## Reference images' section must say what the screen should show and that the new image does"
+    return None
+
+
+def pull_request_body(repository: str, number: str) -> str:
+    """The current body, so editing it and re-running the job is enough."""
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repository}/pulls/{number}",
+        headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+    )
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response).get("body") or ""
 
 
 def select_base(event: str, ref: str, *, pr_base: str, before: str, default_branch: str) -> str | None:
@@ -193,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--before", default="", help="previous tip of a pushed branch")
     parser.add_argument("--default-branch", default="main")
     parser.add_argument("--head", default="HEAD", help="head commit (default: HEAD)")
+    parser.add_argument("--pr-number", default="", help="pull request number, to check its reference image statement")
+    parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     args = parser.parse_args(argv)
 
     scope = decide(
@@ -216,6 +257,15 @@ def main(argv: list[str] | None = None) -> int:
             output.write("\n".join(lines) + "\n")
     else:
         print("\n".join(lines))
+    if scope.reference_images and args.event == "pull_request" and args.pr_number:
+        problem = reference_statement_problem(pull_request_body(args.repository, args.pr_number))
+        if problem is not None:
+            print(
+                f"::error::This pull request changes a reference image, so {problem}. "
+                "See docs/validation-authority.md#reference-images, edit the body, then re-run this job.",
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 

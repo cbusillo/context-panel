@@ -5,7 +5,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import plistlib
 import re
 import selectors
 import shlex
@@ -1937,7 +1936,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertEqual(guard_calls, [])
                 self.assertEqual(output, "")
 
-    def test_app_store_review_dry_run_receives_credentials_without_evidence_preparation(self) -> None:
+    def test_app_store_review_dry_run_receives_credentials(self) -> None:
         import yaml
 
         from Tests.ScriptsTests.test_submit_app_store_review import MODULE_PATH
@@ -1951,15 +1950,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "version": "9.8.7", "platform": "MAC_OS", "build_number": "42",
             "whats_new": "Fixture release", "dry_run": "true",
             "cancel_review_only": "false", "prepare_only": "false",
-            "validation_train": "release", "release_evidence_mode": "enforce",
         }
         secrets = {
             "APP_STORE_CONNECT_KEY_ID": "fixture-key-id",
             "APP_STORE_CONNECT_ISSUER_ID": "fixture-issuer-id",
             "APP_STORE_CONNECT_API_KEY_P8_BASE64": base64.b64encode(b"fixture-p8").decode(),
         }
-        # Resolve this step's bindings, without inheriting an operator environment
-        # or running the optional evidence-preparation step.
+        # Resolve this step's bindings without inheriting an operator environment.
         environment = {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"}
         bindings = {**workflow.get("env", {}), **job.get("env", {}), **step.get("env", {})}
         for name, value in bindings.items():
@@ -1988,8 +1985,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 finally:
                     if cleanup:
                         cleanup.unlink()
-                if not args.dry_run or args.validation_report or args.release_evidence_report:
-                    raise SystemExit('expected metadata-only dry run')
+                if not args.dry_run or args.skip_soak_reason:
+                    raise SystemExit('expected a plain dry run')
             """))
             python_path = root / ".build/submit-review-venv/bin/python"
             python_path.parent.mkdir(parents=True)
@@ -2005,168 +2002,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 text=True, capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_app_store_review_workflow_fetches_pinned_evidence_bundle(self) -> None:
-        import yaml
-
-        workflow = yaml.safe_load(self.read(".github/workflows/submit-app-store-review.yml"))
-        dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-        steps = {step.get("name"): step for step in workflow["jobs"]["submit"]["steps"]}
-        fetch_step = next(step for step in steps.values() if "submission-evidence-bundle.py" in step.get("run", ""))
-        submit_step = next(step for step in steps.values() if "scripts/submit-app-store-review.py" in step.get("run", ""))
-        version, build_number = "1.0.74", "202610180601"
-        evidence = {
-            "validation-report": '{"report":  1}\n',
-            "release-evidence": '{"ledger": "approved"}',
-            "comparison": '{"comparison": true}',
-            "rc-lineage": json.dumps({"lineage": ["a" * 64] * 8000}),
-            "manifest": '{"layout": "macos"}',
-        }
-
-        def git(cwd: Path, *git_args: str) -> str:
-            return subprocess.run(
-                ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *git_args],
-                cwd=cwd, check=True, text=True, capture_output=True,
-            ).stdout.strip()
-
-        def bundle_commit(remote: Path, branch: str, payload: bytes) -> None:
-            # Publish the bundle the way the release agent does: an orphan branch.
-            source = remote.parent / f"publish-{branch.replace('/', '-')}"
-            git(remote.parent, "clone", "--quiet", str(remote), str(source))
-            git(source, "switch", "--quiet", "--orphan", branch)
-            (source / "submission-evidence.json").write_bytes(payload)
-            git(source, "add", "submission-evidence.json")
-            git(source, "commit", "--quiet", "-m", "evidence")
-            git(source, "push", "--quiet", "origin", branch)
-
-        def bindings(step: dict, dispatched: dict[str, str]) -> dict[str, str]:
-            environment = {"PATH": os.environ["PATH"], "PYTHONDONTWRITEBYTECODE": "1"}
-            for variable, value in step.get("env", {}).items():
-                match = re.fullmatch(r"\$\{\{\s*inputs\.(\w+)\s*}}", str(value).strip())
-                if match:
-                    environment[variable] = dispatched.get(match.group(1), "")
-                elif "secrets." not in str(value):
-                    environment[variable] = str(value)
-            return environment
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name, text in evidence.items():
-                (root / f"{name}.json").write_text(text)
-            created = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "scripts/submission-evidence-bundle.py"), "create",
-                 "--version", version, "--build-number", build_number,
-                 "--validation-report", str(root / "validation-report.json"),
-                 "--release-evidence-report", str(root / "release-evidence.json"),
-                 "--comparison", str(root / "comparison.json"),
-                 "--expected-build-manifest", str(root / "manifest.json"),
-                 "--selected-rc-ledger", str(root / "rc-lineage.json"),
-                 "--output", str(root / "bundle.json")],
-                check=True, text=True, capture_output=True,
-            )
-            digest = re.search(r"evidence_bundle_sha256: ([0-9a-f]{64})", created.stdout).group(1)
-            bundle = (root / "bundle.json").read_bytes()
-            self.assertGreater(len(base64.b64encode(bundle)), 65_535)
-
-            origin = root / "origin.git"
-            seed = root / "seed"
-            git(root, "init", "--quiet", "--bare", "--initial-branch=main", str(origin))
-            git(root, "clone", "--quiet", str(origin), str(seed))
-            (seed / "README").write_text("fixture\n")
-            git(seed, "add", "README")
-            git(seed, "commit", "--quiet", "-m", "main")
-            git(seed, "push", "--quiet", "origin", "main")
-            bundle_commit(origin, f"release-evidence/{version}-{build_number}", bundle)
-            bundle_commit(origin, "release-evidence/1.0.74-1", bundle.replace(b"approved", b"forged__"))
-
-            def run(case: str, **overrides: str) -> tuple[subprocess.CompletedProcess, list[str]]:
-                workspace = root / case
-                git(root, "clone", "--quiet", str(origin), str(workspace))
-                (workspace / "scripts").mkdir()
-                shutil.copy(REPO_ROOT / "scripts/submission-evidence-bundle.py", workspace / "scripts")
-                python_path = workspace / ".build/submit-review-venv/bin/python"
-                python_path.parent.mkdir(parents=True)
-                python_path.write_text("#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n")
-                python_path.chmod(0o755)
-                dispatched = {
-                    "version": version, "platform": "MAC_OS", "build_number": build_number,
-                    "whats_new": "Fixture release", "dry_run": "false",
-                    "cancel_review_only": "false", "prepare_only": "false",
-                    "validation_train": dispatch_inputs["validation_train"]["default"],
-                    "release_evidence_mode": dispatch_inputs["release_evidence_mode"]["default"],
-                    **overrides,
-                }
-                step_result = subprocess.CompletedProcess([], 1)
-                for step in (fetch_step, submit_step):
-                    if step is fetch_step and not dispatched.get("evidence_bundle_sha256"):
-                        continue
-                    environment = bindings(step, dispatched)
-                    environment.update(
-                        CAPTURE_ARGS=str(workspace / "args.txt"),
-                        GITHUB_SHA="d966d826257a0ee23a09c55bd6b073360edf36aa",
-                        GITHUB_STEP_SUMMARY=str(workspace / "summary.md"),
-                    )
-                    step_result = subprocess.run(
-                        ["/bin/bash", "-c", step["run"]], cwd=workspace, env=environment,
-                        text=True, capture_output=True, check=False,
-                    )
-                    if step_result.returncode != 0:
-                        return step_result, []
-                return step_result, [str(workspace), *(workspace / "args.txt").read_text().splitlines()]
-
-            for label, dry_run in (("live", "false"), ("dry-run", "true")):
-                with self.subTest(label):
-                    result, captured = run(label, evidence_bundle_sha256=digest, dry_run=dry_run)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    run_root, forwarded = Path(captured[0]), captured[1:]
-
-                    def file_for(flag: str) -> str:
-                        return (run_root / forwarded[forwarded.index(flag) + 1]).read_text()
-
-                    self.assertEqual(file_for("--validation-report"), evidence["validation-report"])
-                    self.assertEqual(file_for("--release-evidence-report"), evidence["release-evidence"])
-                    self.assertEqual(file_for("--release-evidence-comparison"), evidence["comparison"])
-                    self.assertEqual(file_for("--release-evidence-selected-rc-ledger"), evidence["rc-lineage"])
-                    self.assertEqual(file_for("--release-evidence-expected-build-manifest"), evidence["manifest"])
-                    self.assertEqual(forwarded[forwarded.index("--release-evidence-mode") + 1], "enforce")
-                    self.assertEqual(forwarded[forwarded.index("--validation-train") + 1], "release")
-
-            refusals = {
-                "wrong digest": {"evidence_bundle_sha256": "0" * 64},
-                "tampered branch": {"evidence_bundle_sha256": digest, "build_number": "1"},
-                "missing branch": {"evidence_bundle_sha256": digest, "build_number": "202610180699"},
-                "live without evidence": {},
-                "evidence without build": {"evidence_bundle_sha256": digest, "build_number": "",
-                                           "prepare_only": "true"},
-            }
-            for label, refusal in refusals.items():
-                with self.subTest(label):
-                    result, captured = run(label.replace(" ", "-"), **refusal)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(captured, [])
-
-            with self.subTest("dry run without evidence"):
-                result, captured = run("metadata-dry-run", dry_run="true")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertNotIn("--validation-report", captured[1:])
-
-    def test_release_evidence_entrypoints_execute_directly(self) -> None:
-        for relative_path in (
-            "scripts/context-panel-release-gate.py",
-            "scripts/validate-release-evidence-report.py",
-        ):
-            with self.subTest(script=relative_path):
-                path = REPO_ROOT / relative_path
-                self.assertTrue(path.stat().st_mode & 0o100)
-                result = subprocess.run(
-                    [str(path), "--help"],
-                    cwd=REPO_ROOT,
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("usage:", result.stdout)
 
     def test_runtime_gate_accepts_only_widget_timeline_newer_than_installed_build(self) -> None:
         for timeline_mtime, reference_mtime, accepted in ((200, 100, True), (100, 200, False), (200, None, False)):
@@ -3687,7 +3522,6 @@ wait
         lsof_empty: bool = False,
         launch_status: int = 0,
         launch_output: str | None = None,
-        candidate: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Exercise the acting baseline's process/login-item checks with inert records."""
         with tempfile.TemporaryDirectory() as directory:
@@ -3702,73 +3536,6 @@ wait
             resources = app / "Contents/Resources"
             resources.mkdir()
             (resources / "ContextPanelBuildFingerprint.txt").write_text("fixture")
-            candidate_args = ""
-            if candidate is not None:
-                from Tests.ScriptsTests.test_runtime_receipt_ingestion import expected_manifest
-                from context_panel_expected_build import canonical_json, hash_parts
-
-                manifest = expected_manifest(("macos.app", "macos.widget", "macos.refresh-agent"))
-                manifest["source"]["commit"] = "1" * 40
-                for artifact in manifest["artifacts"]:
-                    artifact["sourceCommit"] = manifest["source"]["commit"]
-                embedded = {
-                    "schemaVersion": 1, "kind": "context-panel-surface-build-intent",
-                    "manifestId": manifest["sourceManifestId"],
-                    "contractFingerprint": manifest["contractFingerprint"],
-                    "surfaces": manifest["surfaces"],
-                }
-                info = {
-                    "CFBundleIdentifier": manifest["surfaces"][0]["bundleIdentifier"],
-                    "CFBundleShortVersionString": manifest["source"]["marketingVersion"],
-                    "CFBundleVersion": manifest["source"]["buildNumber"],
-                }
-                stamp = manifest["surfaces"][0]["fingerprints"]["combined"]
-                if candidate == "different-build":
-                    info["CFBundleVersion"] += "1"
-                elif candidate == "different-source":
-                    embedded["manifestId"] = "2" * 64
-                elif candidate == "different-fingerprint":
-                    stamp = "3" * 64
-                elif candidate == "unrecorded":
-                    manifest["source"]["commit"] = ""
-                    for artifact in manifest["artifacts"]:
-                        artifact["sourceCommit"] = ""
-                elif candidate == "dirty-source":
-                    manifest["source"]["treeState"] = "dirty"
-                    for artifact in manifest["artifacts"]:
-                        artifact["treeState"] = "dirty"
-                elif candidate == "different-artifact-source":
-                    manifest["artifacts"][0]["sourceCommit"] = "2" * 40
-                elif candidate == "missing-agent":
-                    manifest["surfaces"] = [surface for surface in manifest["surfaces"] if surface["id"] != "macos.refresh-agent"]
-                manifest.pop("expectedBuildId")
-                manifest["expectedBuildId"] = hash_parts(
-                    f"{manifest['digestDomain']}/expected-build", [canonical_json(manifest)],
-                )
-                if candidate == "unsealed":
-                    manifest.pop("expectedBuildId")
-                (resources / "ContextPanelBuildFingerprint.txt").write_text(stamp)
-                (resources / "ContextPanelSurfaceManifest.json").write_text(json.dumps(embedded))
-                (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
-                receipt = app / "Contents/_MASReceipt/receipt"
-                receipt.parent.mkdir()
-                receipt.write_text("inert fixture receipt")
-                manifest_path = root / "ExpectedBuildManifest-macos.json"
-                if candidate != "missing-manifest":
-                    manifest_path.write_text(json.dumps(manifest))
-                candidate_args = f"--require-production-runtime --candidate-manifest {shlex.quote(str(manifest_path))}"
-                if candidate == "default-source":
-                    candidate_args = ""
-                elif candidate == "conflicting-manifests":
-                    conflicting = json.loads(json.dumps(manifest))
-                    conflicting["surfaces"][0]["fingerprints"]["combined"] = "4" * 64
-                    conflicting.pop("expectedBuildId")
-                    conflicting["expectedBuildId"] = hash_parts(
-                        f"{conflicting['digestDomain']}/expected-build", [canonical_json(conflicting)],
-                    )
-                    other_path = root / "conflicting-manifest.json"
-                    other_path.write_text(json.dumps(conflicting))
-                    candidate_args += f" --candidate-manifest {shlex.quote(str(other_path))}"
             loaded = str(executable)
             if loaded_root == "trash":
                 loaded = str(root / "Trash/Context Panel old.app" / executable.relative_to(app))
@@ -3796,9 +3563,9 @@ wait
             if duplicate_executable:
                 loaded_files += f"ftxt\nD{device}\ni{inode}\nn{loaded}\n"
             command = f"""
-            source scripts/context-panel-runtime-baseline.sh --source-only {candidate_args}
+            source scripts/context-panel-runtime-baseline.sh --source-only
             # Stub unrelated baseline reads; no host runtime or credential read runs.
-            keep=" check_runtime candidate_build_fingerprint check_runtime_identity runtime_distribution_identity bundle_store_receipt_status plist_value active_context_processes check_refresh_agent_process check_refresh_agent_login_item fail ok note section "
+            keep=" check_runtime check_runtime_identity runtime_distribution_identity bundle_store_receipt_status plist_value active_context_processes check_refresh_agent_process check_refresh_agent_login_item fail ok note section "
             for name in $(declare -F | awk '{{print $3}}'); do
               [[ "$keep" == *" $name "* ]] && continue
               eval "$name() {{ :; }}"
@@ -3807,8 +3574,8 @@ wait
             widget_path={shlex.quote(str(widget))}
             refresh_agent_path={shlex.quote(str(agent))}
             expected_fingerprint=fixture
-            codesign() {{ return {1 if candidate == 'invalid-signature' else 0}; }}
-            bundle_cloudkit_environment() {{ printf '%s\n' {'Development' if candidate == 'development' else 'Production'}; }}
+            codesign() {{ return 0; }}
+            bundle_cloudkit_environment() {{ printf '%s\n' Production; }}
             bundle_beta_reports_active() {{ printf '%s\n' true; }}
             plugin_paths() {{ printf '%s\\n' "$widget_path"; }}
             url_handler_paths() {{ printf '%s\\n' "$app_path"; }}
@@ -3936,49 +3703,6 @@ wait
                 if discovery == "conflict":
                     self.assertIn("MUTATION /fixture/Other Context Panel.app", result.stdout)
                 self.assertNotIn("CANONICAL_MUTATION", result.stdout)
-
-    def test_runtime_baseline_accepts_recorded_candidate_with_newer_validator(self) -> None:
-        result = self.run_loaded_refresh_agent_fixture(candidate="matching")
-        self.assertEqual(result.returncode, 0, result.stdout)
-        result = self.run_loaded_refresh_agent_fixture(candidate="default-source")
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_runtime_baseline_candidate_preserves_loaded_executable_gate(self) -> None:
-        for loaded_root in ("trash", "deleted"):
-            with self.subTest(loaded_root=loaded_root):
-                result = self.run_loaded_refresh_agent_fixture(
-                    candidate="matching", loaded_root=loaded_root,
-                )
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-        result = self.run_loaded_refresh_agent_fixture(candidate="matching", inode="8000")
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_runtime_baseline_candidate_preserves_production_and_testflight_identity(self) -> None:
-        result = self.run_loaded_refresh_agent_fixture(candidate="matching")
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("distribution=testflight", result.stdout)
-        self.assertIn("app-store-receipt=present", result.stdout)
-        result = self.run_loaded_refresh_agent_fixture(candidate="development")
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_runtime_baseline_candidate_option_cannot_replace_a_runtime(self) -> None:
-        for mode in ("install", "reset"):
-            result = subprocess.run(
-                ["/bin/bash", str(REPO_ROOT / "scripts/context-panel-runtime-baseline.sh"),
-                 mode, "--source-only", "--candidate-manifest", "/fixture/candidate.json"],
-                text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-
-    def test_runtime_baseline_rejects_mismatched_or_unrecorded_candidate(self) -> None:
-        for candidate in (
-            "different-build", "different-source", "different-fingerprint",
-            "unrecorded", "dirty-source", "different-artifact-source", "missing-agent",
-            "conflicting-manifests", "unsealed", "missing-manifest", "invalid-signature",
-        ):
-            with self.subTest(candidate=candidate):
-                result = self.run_loaded_refresh_agent_fixture(candidate=candidate)
-                self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_runtime_baseline_loaded_agent_rejects_moved_executable(self) -> None:
         for loaded_root in ("trash", "other", "deleted"):

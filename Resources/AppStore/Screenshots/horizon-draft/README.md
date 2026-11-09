@@ -43,7 +43,7 @@ The uploader still selects the approved historical paths listed in the parent
 [matrix](../screenshot-matrix.md). Approval and any later upload are separate
 work. The issue's original finish line remains open. If complete app or
 OS-composited captures are required, collect those through the supported
-[capture mechanisms](../../../../docs/signed-validation-galleries.md) and the
+[capture mechanisms](../../../../docs/validation-galleries.md) and the
 canonical Mac runtime rules, then replace the affected candidates after review.
 Do not treat these files as formal capture receipts.
 

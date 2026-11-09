@@ -46,9 +46,14 @@ jobs:
 
   scope:
     # Which jobs this change needs, from the base it lands on (pull request base,
-    # previous main tip, or main for a merge-train candidate).
+    # previous main tip, or main for a merge-train candidate). A pull request that
+    # changes a reference image fails here until its body carries the reference
+    # image statement (docs/validation-authority.md#reference-images).
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       product: ${{ steps.scope.outputs.product }}
       references: ${{ steps.scope.outputs.references }}
@@ -67,9 +72,12 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: >-
           python3 scripts/ci-change-scope.py --event "$EVENT_NAME" --ref "$REF"
           --pr-base "$PR_BASE_SHA" --before "$BEFORE_SHA" --default-branch "${DEFAULT_BRANCH:-main}"
+          --pr-number "$PR_NUMBER"
 
   macos-release:
     # Use Ship's hosted runner/toolchain and universal optimized configuration.
@@ -130,7 +138,7 @@ jobs:
           fetch-depth: 0
 
       - name: Select Xcode
-        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-capture-workflow.py pinned-xcode)"
+        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-references.py pinned-xcode)"
 
       - name: Render host cells
         run: |
@@ -159,9 +167,9 @@ jobs:
           retention-days: 14
 
   shared-view-simulator-references:
-    # Captures the simulator shared-view cells exactly as Shared-View Capture
-    # Evidence does, from fresh Release builds of this commit, and compares them
-    # with their committed reference images. Xcode, runtimes and devices come from
+    # Captures every simulator shared-view cell from fresh Release builds of this
+    # commit and compares them with their committed reference images. App Store
+    # submission requires this job to have passed on the release commit. Xcode, runtimes and devices come from
     # Config/ContextPanelSharedViewSimulators.json
     # (docs/validation-authority.md#reference-images). It takes about an hour, so
     # pull requests and merge-train candidates skip it (scripts/ci-change-scope.py)
@@ -183,7 +191,7 @@ jobs:
           fetch-depth: 0
 
       - name: Select Xcode
-        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-capture-workflow.py pinned-xcode)"
+        run: sudo xcode-select -s "$(python3 scripts/context-panel-shared-view-references.py pinned-xcode)"
 
       - name: Install XcodeGen
         run: |
@@ -223,7 +231,7 @@ jobs:
           test_run() {
             find "$(products "$1")" -maxdepth 1 -type f -name 'ContextPanelCompanionSharedViewCaptureUITests_*.xctestrun' -print -quit
           }
-          python3 scripts/context-panel-shared-view-capture-workflow.py capture-config \
+          python3 scripts/context-panel-shared-view-references.py capture-config \
             --catalog "${RUNNER_TEMP}/simctl-catalog.json" \
             --ios-app "$(products ios)/Release-iphonesimulator/Context Panel.app" \
             --ios-ui-test-run "$(test_run ios)" \

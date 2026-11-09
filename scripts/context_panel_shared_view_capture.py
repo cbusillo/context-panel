@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from datetime import datetime
-import ctypes
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -12,10 +11,11 @@ import plistlib
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlencode
 import uuid
 import zlib
@@ -26,38 +26,75 @@ from context_panel_shared_view_references import (
     encode_png,
     fill_regions,
 )
-from context_panel_surface_manifest import SurfacePolicyError, embedded_manifest
-from context_panel_surface_manifest.core import canonical_json as manifest_canonical_json
-from context_panel_surface_manifest.core import hash_parts as manifest_hash_parts
 
-from .models import CommandResult, EXIT_BLOCKED, EXIT_OK, EXIT_UNKNOWN, Runner, iso8601, utc_now
-from .shared_view_evidence import (
+from context_panel_shared_view_matrix import (
     DEFAULT_MATRIX_PATH,
     DEFAULT_SURFACE_POLICY_PATH,
-    PIXEL_DIFF_POLICY,
-    SharedViewCell,
     SharedViewEvidenceError,
-    SharedViewMatrix,
-    SurfacePolicySurface,
     canonical_json_hash,
-    fixture_contract_id,
     load_shared_view_matrix,
     load_surface_policy,
-    plan_shared_view_evidence,
-    project_shared_view_requirements,
     shared_view_requirement_id,
 )
-from .system import SubprocessRunner
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    timed_out: bool = False
+
+
+class Runner(Protocol):
+    def run(
+        self,
+        args: list[str],
+        *,
+        timeout: int,
+        environment: dict[str, str] | None = None,
+    ) -> CommandResult: ...
+
+
+class SubprocessRunner:
+    def run(
+        self,
+        args: list[str],
+        *,
+        timeout: int,
+        environment: dict[str, str] | None = None,
+    ) -> CommandResult:
+        try:
+            completed = subprocess.run(
+                args,
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=timeout,
+            )
+            return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout if isinstance(error.stdout, str) else ""
+            stderr = error.stderr if isinstance(error.stderr, str) else ""
+            return CommandResult(124, stdout, stderr, timed_out=True)
+        except OSError as error:
+            return CommandResult(127, "", str(error))
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso8601(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 CAPTURE_CONFIG_SCHEMA_VERSION = 2
 CAPTURE_CONFIG_KIND = "context-panel-shared-view-capture-config"
-CAPTURE_RECEIPT_SCHEMA_VERSION = 1
-CAPTURE_RECEIPT_KIND = "context-panel-shared-view-capture-receipt"
-REQUIREMENTS_SCHEMA_VERSION = 1
-REQUIREMENTS_KIND = "context-panel-visual-review-requirements"
-REQUIREMENTS_DIGEST_DOMAIN = "context-panel-shared-view-capture-requirements/v1"
 EMBEDDED_MANIFEST_DIGEST_DOMAIN = "context-panel-shared-view-capture-embedded-manifest/v1"
 APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel"
 WATCH_APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.watch"
@@ -75,9 +112,6 @@ SIMCTL_CONTAINER_TIMEOUT = 300
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
-SIMCTL_VISIONOS_LAUNCH_TIMEOUT = 300
-SIMCTL_VISIONOS_SHUTDOWN_TIMEOUT = 60
-SIMCTL_VISIONOS_ERASE_TIMEOUT = 300
 SIMCTL_VISIONOS_BOOTSTATUS_TIMEOUT = 300
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
@@ -143,23 +177,10 @@ MAX_PLIST_FILE_BYTES = 4 * 1024 * 1024
 MAX_BUNDLE_FILE_BYTES = 512 * 1024 * 1024
 MAX_BUNDLE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_BUNDLE_ENTRIES = 100_000
-SOURCE_MANIFEST_ROOT_KEYS = set(
-    "schemaVersion algorithm digestDomain contractFingerprint source toolchain archiveLayouts "
-    "evidencePolicy artifactEvidenceContract files ignoredInputs surfaces manifestId".split()
-)
-SOURCE_IDENTITY_KEYS = set(
-    "marketingVersion buildNumber commit configuration xcodeBuild treeState policySha256 "
-    "projectSourceSha256".split()
-)
-EXPECTED_ARTIFACT_KEYS = set(
-    "artifactId bundleIdentifier marketingVersion buildNumber sourceCommit configuration "
-    "xcodeBuild treeState".split()
-)
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SIMULATOR_UDID_PATTERN = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
 )
-CAPTURE_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
 BUNDLE_VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}$")
 RUNTIME_IDENTIFIER_PATTERN = re.compile(
     r"^com\.apple\.CoreSimulator\.SimRuntime\.[A-Za-z0-9][A-Za-z0-9.-]{0,127}$"
@@ -191,46 +212,12 @@ class CaptureProfile:
     ui_test_run: Path | None
     ui_test_products_sha256: str | None
 
-    def public_dict(
-        self,
-        metadata: SimulatorProfileMetadata | None,
-        cleanup_status: str,
-    ) -> dict[str, object]:
-        return {
-            "profile": self.name,
-            "runtimeIdentifier": self.runtime_identifier if metadata is not None else None,
-            "runtimeName": metadata.runtime_name if metadata is not None else None,
-            "runtimePlatform": metadata.runtime_platform if metadata is not None else None,
-            "deviceTypeIdentifier": self.device_type_identifier if metadata is not None else None,
-            "deviceTypeName": metadata.device_type_name if metadata is not None else None,
-            "productFamily": metadata.product_family if metadata is not None else None,
-            "appBundleIdentifier": self.bundle_identifier,
-            "appExecutableSHA256": self.executable_sha256,
-            "appBundleSHA256": self.bundle_sha256,
-            "appManifestID": self.manifest_id,
-            "appSurfaceManifestDigest": self.manifest_digest,
-            "appContractFingerprint": self.contract_fingerprint,
-            "appVersion": self.version,
-            "appBuild": self.build,
-            "uiTestProductsSHA256": self.ui_test_products_sha256,
-            "cleanupStatus": cleanup_status,
-        }
-
-
-@dataclass(frozen=True)
-class SimulatorProfileMetadata:
-    runtime_name: str
-    runtime_platform: str
-    device_type_name: str
-    product_family: str
-
 
 @dataclass(frozen=True)
 class CaptureRequirement:
     requirement_id: str
     surface: str
     cell_id: str
-    fixture_contract_id: str
     fixture_id: str
     family: str
     appearance: str
@@ -249,9 +236,6 @@ class SimulatorCaptureProfile:
     route_kind: str
     applies_simulator_appearance: bool
     relaunch_needs_settle: bool = False
-    # Bytes the app's code must contain before its launch route is trusted. Product
-    # source older than the route ignores the arguments and shows its normal UI.
-    required_launch_marker: bytes | None = None
 
 
 SIMULATOR_CAPTURE_PROFILES = {
@@ -305,22 +289,12 @@ SIMULATOR_CAPTURE_PROFILES = {
         route_kind="launch",
         applies_simulator_appearance=False,
         relaunch_needs_settle=True,
-        required_launch_marker=b"--context-panel-validation-presentation",
     ),
 }
 SUPPORTED_PROFILES = tuple(SIMULATOR_CAPTURE_PROFILES)
 # macOS has no simulator, and building the Mac app or widget on a host registers
 # competing LaunchServices and PlugInKit bundles. macOS widget cells are rendered by
 # a SwiftPM tool that the executor builds itself from the verified source root.
-HOST_RENDERER_PROFILE = "macos"
-HOST_RENDERER_SURFACES = frozenset({"macos.app", "macos.widget"})
-HOST_RENDERER_PRODUCT = "ContextPanelSharedViewRenderer"
-HOST_RENDERER_MECHANISM = "swiftpm-shared-view-renderer"
-HOST_RENDERER_APPEARANCE_MECHANISM = "renderer-argument"
-HOST_RENDERER_UNSUPPORTED_STATUS = 3
-HOST_RENDERER_BUILD_DIRECTORY = ".host-renderer-build"
-HOST_RENDERER_BUILD_TIMEOUT = 30 * 60
-HOST_RENDERER_RENDER_TIMEOUT = 120
 # Pixels per point, the same as the simulator cells' in-process renderer.
 HOST_RENDERER_SCALE = "2"
 COMPANION_UI_TEST_PROFILES = frozenset({"ios", "ipados", "visionos"})
@@ -402,24 +376,6 @@ def load_simulator_pins(path: Path = DEFAULT_SIMULATOR_PINS_PATH) -> SimulatorPi
             {surface: tuple(items) for surface, items in regions.items()},
         )
     return SimulatorPins(xcode, profiles)
-
-
-@dataclass(frozen=True)
-class HostRendererProfile:
-    source_root: Path
-
-
-@dataclass(frozen=True)
-class HostRendererOutcome:
-    results: dict[str, dict[str, object]]
-    public_profile: dict[str, object]
-
-
-@dataclass(frozen=True)
-class CapturePlan:
-    current_manifest_id: str
-    requirements_digest: str
-    requirements: tuple[CaptureRequirement, ...]
 
 
 @dataclass(frozen=True)
@@ -710,109 +666,6 @@ def _embedded_manifest_metadata(path: Path) -> tuple[str, str, str, frozenset[st
     )
 
 
-def _expected_embedded_manifest(
-    path: Path,
-    policy: dict[str, Any],
-    policy_sha256: str,
-) -> tuple[dict[str, Any], str, str]:
-    manifest = _load_json_object(path, "current surface manifest")
-    manifest_id = manifest.get("manifestId")
-    digest_domain = manifest.get("digestDomain")
-    source = manifest.get("source")
-    surfaces = manifest.get("surfaces")
-    files = manifest.get("files")
-    if (
-        set(manifest) != SOURCE_MANIFEST_ROOT_KEYS
-        or type(manifest.get("schemaVersion")) is not int
-        or manifest.get("schemaVersion") != 1
-        or any(
-            manifest.get(key) != policy.get(key)
-            for key in ("algorithm", "digestDomain", "toolchain", "archiveLayouts", "evidencePolicy")
-        )
-        or manifest.get("ignoredInputs") != (policy.get("inventory") or {}).get("ignoredInputs", [])
-        or not isinstance(source, dict)
-        or set(source) != SOURCE_IDENTITY_KEYS
-        or source.get("treeState") not in {"clean", "dirty", "unknown"}
-        or source.get("policySha256") != policy_sha256
-        or not SHA256_PATTERN.fullmatch(str(source.get("projectSourceSha256") or ""))
-        or any(
-            not isinstance(manifest.get(key), dict)
-            for key in ("toolchain", "archiveLayouts", "evidencePolicy", "artifactEvidenceContract")
-        )
-        or not isinstance(files, dict)
-        or not files
-        or any(
-            not isinstance(file_path, str)
-            or not file_path
-            or Path(file_path).is_absolute()
-            or ".." in Path(file_path).parts
-            or not SHA256_PATTERN.fullmatch(str(file_digest))
-            for file_path, file_digest in files.items()
-        )
-        or not isinstance(surfaces, list)
-        or not surfaces
-    ):
-        raise SharedViewCaptureError("current surface manifest is invalid")
-    source_values = {
-        key: _require_string(source.get(key), f"current surface manifest source {key}")
-        for key in (
-            "marketingVersion",
-            "buildNumber",
-            "commit",
-            "configuration",
-            "xcodeBuild",
-        )
-    }
-    _require_sha256(
-        manifest.get("contractFingerprint"),
-        "current surface manifest contract fingerprint",
-    )
-    for raw_surface in surfaces:
-        if not isinstance(raw_surface, dict):
-            raise SharedViewCaptureError("current surface manifest is invalid")
-        artifact_id = _require_string(
-            raw_surface.get("artifactId"), "current surface manifest artifact identifier"
-        )
-        bundle_identifier = _require_string(
-            raw_surface.get("bundleIdentifier"), "current surface manifest bundle identifier"
-        )
-        artifact = raw_surface.get("expectedArtifact")
-        if not isinstance(artifact, dict) or set(artifact) != EXPECTED_ARTIFACT_KEYS:
-            raise SharedViewCaptureError("current surface manifest expected artifact is invalid")
-        if artifact != {
-            "artifactId": artifact_id,
-            "bundleIdentifier": bundle_identifier,
-            "marketingVersion": source_values["marketingVersion"],
-            "buildNumber": source_values["buildNumber"],
-            "sourceCommit": source_values["commit"],
-            "configuration": source_values["configuration"],
-            "xcodeBuild": source_values["xcodeBuild"],
-            "treeState": source["treeState"],
-        }:
-            raise SharedViewCaptureError("current surface manifest expected artifact is invalid")
-    unhashed_manifest = dict(manifest)
-    unhashed_manifest.pop("manifestId", None)
-    if (
-        not isinstance(digest_domain, str)
-        or not digest_domain
-        or not isinstance(manifest_id, str)
-        or manifest_hash_parts(
-            f"{digest_domain}/manifest",
-            [manifest_canonical_json(unhashed_manifest)],
-        )
-        != manifest_id
-    ):
-        raise SharedViewCaptureError("current surface manifest identity is invalid")
-    try:
-        return (
-            embedded_manifest(manifest),
-            source_values["marketingVersion"],
-            source_values["buildNumber"],
-        )
-    except SurfacePolicyError as error:
-        raise SharedViewCaptureError("current surface manifest is invalid") from error
-
-
 def _app_metadata(
     path: Path,
     profile_name: str,
@@ -907,7 +760,7 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
         raise SharedViewCaptureError("shared-view capture config identity is invalid")
     raw_profiles = payload["profiles"]
     if not isinstance(raw_profiles, dict) or not set(raw_profiles).issubset(
-        {*SUPPORTED_PROFILES, HOST_RENDERER_PROFILE}
+        set(SUPPORTED_PROFILES)
     ):
         raise SharedViewCaptureError("shared-view capture config profiles are invalid")
     profiles: dict[str, CaptureProfile] = {}
@@ -990,272 +843,11 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
     return profiles
 
 
-def load_host_renderer_profile(path: Path) -> HostRendererProfile | None:
-    """The optional macOS entry of a capture config that load_capture_config accepted."""
-    raw_profile = _load_json_object(path, "shared-view capture config")["profiles"].get(
-        HOST_RENDERER_PROFILE
-    )
-    if raw_profile is None:
-        return None
-    if not isinstance(raw_profile, dict) or set(raw_profile) != {"sourceRoot"}:
-        raise SharedViewCaptureError("shared-view capture profile keys are invalid")
-    source_root = _absolute_existing_directory(
-        Path(_require_string(raw_profile["sourceRoot"], "capture renderer source root")),
-        "capture renderer source root",
-    )
-    return HostRendererProfile(source_root=source_root)
-
-
-def _matrix_cells(
-    matrix: SharedViewMatrix,
-    surface_policy: tuple[SurfacePolicySurface, ...],
-) -> dict[str, tuple[SurfacePolicySurface, SharedViewCell]]:
-    policy_by_id = {surface.id: surface for surface in surface_policy}
-    cells: dict[str, tuple[SurfacePolicySurface, SharedViewCell]] = {}
-    for matrix_surface in matrix.surfaces:
-        policy_surface = policy_by_id.get(matrix_surface.id)
-        if policy_surface is None:
-            raise SharedViewCaptureError("shared-view surface policy is invalid")
-        for cell in matrix_surface.cells:
-            cells[shared_view_requirement_id(matrix_surface.id, cell.id)] = (policy_surface, cell)
-    return cells
-
-
-def load_capture_requirements(
-    path: Path,
-    planned_payload: dict[str, object],
-    matrix: SharedViewMatrix,
-    surface_policy: tuple[SurfacePolicySurface, ...],
-) -> CapturePlan:
-    payload = _load_json_object(path, "shared-view capture requirements")
-    if set(payload) != {"schemaVersion", "kind", "currentManifestID", "requirements"}:
-        raise SharedViewCaptureError("shared-view capture requirements root keys are invalid")
-    if (
-        type(payload["schemaVersion"]) is not int
-        or payload["schemaVersion"] != REQUIREMENTS_SCHEMA_VERSION
-        or payload["kind"] != REQUIREMENTS_KIND
-    ):
-        raise SharedViewCaptureError("shared-view capture requirements identity is invalid")
-    try:
-        projected_payload = project_shared_view_requirements(payload, planned_payload)
-    except SharedViewEvidenceError as error:
-        raise SharedViewCaptureError(str(error)) from error
-    manifest_id = _require_sha256(payload["currentManifestID"], "shared-view capture manifest identifier")
-    raw_requirements = projected_payload["requirements"]
-    if not isinstance(raw_requirements, list) or not raw_requirements:
-        raise SharedViewCaptureError("shared-view capture has no planned work")
-    if len(raw_requirements) > matrix.max_cell_count:
-        raise SharedViewCaptureError("shared-view capture requirements are invalid")
-    expected = _matrix_cells(matrix, surface_policy)
-    requirements: list[CaptureRequirement] = []
-    for raw_requirement in raw_requirements:
-        if not isinstance(raw_requirement, dict):
-            raise SharedViewCaptureError("shared-view capture requirement is invalid")
-        requirement_id = _require_string(raw_requirement.get("id"), "shared-view capture requirement identifier")
-        policy_surface, cell = expected[requirement_id]
-        if cell.accessibility != "default":
-            raise SharedViewCaptureError(
-                "shared-view capture accessibility context is unsupported"
-            )
-        requirements.append(
-            CaptureRequirement(
-                requirement_id=requirement_id,
-                surface=policy_surface.id,
-                cell_id=cell.id,
-                fixture_contract_id=_require_sha256(
-                    raw_requirement.get("fixtureContractID"),
-                    "shared-view capture fixture contract identifier",
-                ),
-                fixture_id=cell.fixture_id,
-                family=cell.family,
-                appearance=cell.appearance,
-                presentation=cell.presentation,
-                accessibility=cell.accessibility,
-            )
-        )
-    return CapturePlan(
-        current_manifest_id=manifest_id,
-        requirements_digest=canonical_json_hash(
-            REQUIREMENTS_DIGEST_DOMAIN,
-            projected_payload,
-        ),
-        requirements=tuple(requirements),
-    )
-
-
 def _profile_for_surface(surface: str) -> str | None:
     for profile_name, profile in SIMULATOR_CAPTURE_PROFILES.items():
         if surface.startswith(profile.surface_prefix):
             return profile_name
     return None
-
-
-def _validate_artifact_root(path: Path) -> Path:
-    if not path.is_absolute() or path == Path(path.anchor):
-        raise SharedViewCaptureError("capture artifact root is invalid")
-    _reject_symlink_ancestors(path, "capture artifact root")
-    try:
-        resolved = path.resolve(strict=False)
-        repo_root = REPO_ROOT.resolve()
-        if resolved == repo_root or repo_root in resolved.parents:
-            raise SharedViewCaptureError("capture artifact root must be outside the repository")
-        existing_ancestor = resolved
-        while not existing_ancestor.exists():
-            existing_ancestor = existing_ancestor.parent
-        for ancestor in (existing_ancestor, *existing_ancestor.parents):
-            ancestor_mode = ancestor.stat().st_mode
-            if ancestor_mode & 0o022 and not ancestor_mode & stat.S_ISVTX:
-                raise SharedViewCaptureError("capture artifact root ancestry is unsafe")
-    except SharedViewCaptureError:
-        raise
-    except (OSError, RuntimeError, ValueError) as error:
-        raise SharedViewCaptureError("capture artifact root is unavailable") from error
-    return resolved
-
-
-def _validate_output_path(path: Path) -> Path:
-    if not path.is_absolute():
-        raise SharedViewCaptureError("capture receipt output is invalid")
-    _reject_symlink_ancestors(path, "capture receipt output")
-    return path.resolve(strict=False)
-
-
-def _paths_overlap(left: Path, right: Path) -> bool:
-    return left == right or left in right.parents or right in left.parents
-
-
-def _reject_capture_path_overlap(
-    artifact_root: Path,
-    output_path: Path,
-    profiles: dict[str, CaptureProfile],
-    input_paths: tuple[Path, ...],
-    host_renderer_profile: HostRendererProfile | None = None,
-) -> None:
-    if _paths_overlap(artifact_root, output_path):
-        raise SharedViewCaptureError("capture artifact and output paths overlap")
-    if host_renderer_profile is not None and (
-        _paths_overlap(artifact_root, host_renderer_profile.source_root)
-        or _paths_overlap(output_path, host_renderer_profile.source_root)
-    ):
-        raise SharedViewCaptureError("capture paths overlap the renderer source root")
-    for profile in profiles.values():
-        if _paths_overlap(artifact_root, profile.app_bundle) or _paths_overlap(
-            output_path, profile.app_bundle
-        ):
-            raise SharedViewCaptureError("capture paths overlap an app bundle")
-        if profile.ui_test_run is not None:
-            test_root = profile.ui_test_run.parent
-            if _paths_overlap(artifact_root, test_root) or _paths_overlap(
-                output_path, test_root
-            ):
-                raise SharedViewCaptureError("capture paths overlap UI test products")
-    for input_path in input_paths:
-        resolved_input = input_path.expanduser().resolve(strict=True)
-        if _paths_overlap(artifact_root, resolved_input) or output_path == resolved_input:
-            raise SharedViewCaptureError("capture output paths overlap a capture input")
-
-
-def _prepare_private_directory(path: Path) -> None:
-    missing: list[Path] = []
-    candidate = path
-    while not candidate.exists():
-        missing.append(candidate)
-        candidate = candidate.parent
-    if candidate.is_symlink() or not candidate.is_dir():
-        raise SharedViewCaptureError("capture artifact root is invalid")
-    for directory in reversed(missing):
-        try:
-            directory.mkdir(mode=0o700)
-            _fsync_directory(directory.parent)
-        except FileExistsError:
-            pass
-        except OSError as error:
-            raise SharedViewCaptureError("capture artifact root is unavailable") from error
-        if directory.is_symlink() or not directory.is_dir():
-            raise SharedViewCaptureError("capture artifact root is invalid")
-    try:
-        path_stat = path.stat()
-        mode = stat.S_IMODE(path_stat.st_mode)
-    except OSError as error:
-        raise SharedViewCaptureError("capture artifact root is unavailable") from error
-    if mode != 0o700 or path_stat.st_uid != os.geteuid():
-        raise SharedViewCaptureError("capture artifact root permissions are invalid")
-
-
-def _create_run_directories(
-    manifest_directory: Path,
-    run_id_factory: Callable[[], str],
-) -> tuple[str, Path, Path]:
-    for _ in range(8):
-        run_id = run_id_factory()
-        if not isinstance(run_id, str) or not CAPTURE_RUN_ID_PATTERN.fullmatch(run_id):
-            raise SharedViewCaptureError("capture run identifier is invalid")
-        run_directory = manifest_directory / run_id
-        staging_directory = manifest_directory / f".{run_id}.staging"
-        if run_directory.exists():
-            continue
-        try:
-            staging_directory.mkdir(mode=0o700)
-        except FileExistsError:
-            continue
-        except OSError as error:
-            raise SharedViewCaptureError("capture run directory is unavailable") from error
-        try:
-            os.chmod(staging_directory, 0o700)
-            _fsync_directory(manifest_directory)
-        except OSError as error:
-            try:
-                shutil.rmtree(staging_directory)
-                _fsync_directory(manifest_directory)
-                if os.path.lexists(staging_directory):
-                    raise OSError
-            except OSError as rollback_error:
-                raise SharedViewCaptureError("capture run rollback failed") from rollback_error
-            raise SharedViewCaptureError("capture run directory is unavailable") from error
-        return run_id, staging_directory, run_directory
-    raise SharedViewCaptureError("capture run identifier is not unique")
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any], mode: int) -> None:
-    if path.is_symlink() or path.parent.is_symlink():
-        raise SharedViewCaptureError("capture output path is invalid")
-    missing_directories: list[Path] = []
-    candidate = path.parent
-    while not candidate.exists():
-        missing_directories.append(candidate)
-        candidate = candidate.parent
-    if candidate.is_symlink() or not candidate.is_dir():
-        raise SharedViewCaptureError("capture output path is invalid")
-    for directory in reversed(missing_directories):
-        try:
-            directory.mkdir()
-            _fsync_directory(directory.parent)
-        except OSError as error:
-            raise SharedViewCaptureError("capture output is unavailable") from error
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary_path = Path(temporary_name)
-    replaced = False
-    try:
-        with os.fdopen(descriptor, "w") as stream:
-            json.dump(payload, stream, indent=2, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fchmod(stream.fileno(), mode)
-            os.fsync(stream.fileno())
-        _rename_exclusive(temporary_path, path)
-        replaced = True
-        _fsync_directory(path.parent)
-    except OSError as error:
-        if replaced:
-            try:
-                path.unlink(missing_ok=True)
-                _fsync_directory(path.parent)
-            except OSError as rollback_error:
-                raise SharedViewCaptureError("capture output rollback failed") from rollback_error
-        raise SharedViewCaptureError("capture output is unavailable") from error
-    finally:
-        if temporary_path.exists():
-            temporary_path.unlink()
 
 
 def _fsync_path(path: Path, flags: int) -> None:
@@ -1272,21 +864,6 @@ def _fsync_directory(path: Path) -> None:
 
 def _fsync_file(path: Path) -> None:
     _fsync_path(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-
-
-def _rename_exclusive(source: Path, destination: Path) -> None:
-    renamex_np = getattr(ctypes.CDLL(None, use_errno=True), "renamex_np", None)
-    if renamex_np is None:
-        if os.path.lexists(destination):
-            raise FileExistsError(destination)
-        os.rename(source, destination)
-        return
-    renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-    renamex_np.restype = ctypes.c_int
-    rename_exclusive: Callable[[bytes, bytes, int], int] = renamex_np
-    if rename_exclusive(os.fsencode(source), os.fsencode(destination), 0x00000004) != 0:
-        error_number = ctypes.get_errno()
-        raise OSError(error_number, os.strerror(error_number), destination)
 
 
 def _png_snapshot(path: Path) -> PNGSnapshot:
@@ -1581,7 +1158,6 @@ def _result(
         "requirementID": requirement.requirement_id,
         "surface": requirement.surface,
         "cellID": requirement.cell_id,
-        "fixtureContractID": requirement.fixture_contract_id,
         "status": status,
         "artifactDigest": snapshot.artifact_digest if snapshot is not None else None,
         "artifactBytes": snapshot.byte_count if snapshot is not None else None,
@@ -1610,28 +1186,6 @@ def _unknown_results(
         )
         for requirement in requirements
     }
-
-
-def _app_code_contains(app_bundle: Path, marker: bytes) -> bool:
-    """Whether the bundle's executable, or a top-level dylib holding its code, contains marker."""
-    try:
-        with (app_bundle / "Info.plist").open("rb") as stream:
-            executable_name = plistlib.load(stream).get("CFBundleExecutable")
-        if not isinstance(executable_name, str) or Path(executable_name).name != executable_name:
-            return False
-        candidates = [app_bundle / executable_name, *sorted(app_bundle.glob("*.dylib"))]
-        for candidate in candidates:
-            if candidate.is_symlink() or not candidate.is_file():
-                continue
-            overlap = b""
-            with candidate.open("rb") as stream:
-                while chunk := stream.read(1024 * 1024):
-                    if marker in overlap + chunk:
-                        return True
-                    overlap = chunk[-(len(marker) - 1) :]
-    except (OSError, plistlib.InvalidFileException, ValueError):
-        return False
-    return False
 
 
 def _blocked_results(
@@ -1749,83 +1303,6 @@ def _matching_simulators(
                     return None, f"{error_base}-mismatch"
                 matches.add(simulator_id)
     return matches, None
-
-
-def _simulator_catalog(
-    runner: Runner,
-) -> tuple[dict[str, dict[str, object]] | None, dict[str, dict[str, object]] | None, str | None]:
-    result = _run(runner, ["xcrun", "simctl", "list", "-j"], SIMCTL_CATALOG_TIMEOUT)
-    if result.returncode != 0 or result.timed_out:
-        return None, None, _command_error_code(result, "simctl-catalog")
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None, None, "simctl-catalog-invalid"
-    if not isinstance(payload, dict):
-        return None, None, "simctl-catalog-invalid"
-    raw_runtimes = payload.get("runtimes")
-    raw_device_types = payload.get("devicetypes")
-    if not isinstance(raw_runtimes, list) or not isinstance(raw_device_types, list):
-        return None, None, "simctl-catalog-invalid"
-    runtimes = _catalog_entries_by_identifier(raw_runtimes)
-    device_types = _catalog_entries_by_identifier(raw_device_types)
-    if runtimes is None or device_types is None:
-        return None, None, "simctl-catalog-invalid"
-    return runtimes, device_types, None
-
-
-def _catalog_entries_by_identifier(
-    raw_entries: list[object],
-) -> dict[str, dict[str, object]] | None:
-    entries: dict[str, dict[str, object]] = {}
-    for raw_entry in raw_entries:
-        if not isinstance(raw_entry, dict):
-            return None
-        identifier = raw_entry.get("identifier")
-        if not isinstance(identifier, str) or not identifier or identifier in entries:
-            return None
-        entries[identifier] = raw_entry
-    return entries
-
-
-def _profile_catalog_metadata(
-    profile: CaptureProfile,
-    runtimes: dict[str, dict[str, object]],
-    device_types: dict[str, dict[str, object]],
-) -> tuple[SimulatorProfileMetadata | None, str | None]:
-    runtime = runtimes.get(profile.runtime_identifier)
-    device_type = device_types.get(profile.device_type_identifier)
-    if runtime is None or device_type is None:
-        return None, "simctl-profile-not-found"
-    runtime_name = runtime.get("name")
-    runtime_platform = runtime.get("platform")
-    device_type_name = device_type.get("name")
-    product_family = device_type.get("productFamily")
-    if (
-        not isinstance(runtime_name, str)
-        or not runtime_name
-        or not isinstance(runtime_platform, str)
-        or not runtime_platform
-        or runtime.get("isAvailable") is not True
-        or not isinstance(device_type_name, str)
-        or not device_type_name
-        or not isinstance(product_family, str)
-        or not product_family
-    ):
-        return None, "simctl-profile-invalid"
-    metadata = SimulatorProfileMetadata(
-        runtime_name=runtime_name,
-        runtime_platform=runtime_platform,
-        device_type_name=device_type_name,
-        product_family=product_family,
-    )
-    capture_profile = _simulator_capture_profile(profile.name)
-    if (
-        runtime_platform not in capture_profile.runtime_platforms
-        or product_family != capture_profile.product_family
-    ):
-        return metadata, "simctl-profile-mismatch"
-    return metadata, None
 
 
 def _visionos_ui_test_environment(requirement: CaptureRequirement) -> dict[str, str]:
@@ -2393,89 +1870,6 @@ def _profile_source_identity(profile: CaptureProfile) -> tuple[object, ...]:
     )
 
 
-def _copy_snapshot_directory(source: Path, destination: Path) -> None:
-    total_bytes = entries = 0
-
-    def bounded_entries(_directory: str, names: list[str]) -> list[str]:
-        nonlocal entries
-        entries += len(names)
-        if entries > MAX_BUNDLE_ENTRIES:
-            raise SharedViewCaptureError("capture app snapshot failed")
-        return []
-
-    def bounded_copy(copy_source: str, copy_destination: str) -> str:
-        nonlocal total_bytes
-        with os.fdopen(
-            os.open(copy_source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb"
-        ) as input_stream, open(copy_destination, "xb") as output_stream:
-            source_stat = os.fstat(input_stream.fileno())
-            total_bytes += source_stat.st_size
-            if (
-                not stat.S_ISREG(source_stat.st_mode)
-                or source_stat.st_size > MAX_BUNDLE_FILE_BYTES
-                or total_bytes > MAX_BUNDLE_TOTAL_BYTES
-            ):
-                raise SharedViewCaptureError("capture app snapshot failed")
-            remaining = source_stat.st_size
-            while remaining:
-                chunk = input_stream.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    raise SharedViewCaptureError("capture app snapshot failed")
-                output_stream.write(chunk)
-                remaining -= len(chunk)
-            if input_stream.read(1):
-                raise SharedViewCaptureError("capture app snapshot failed")
-            os.fchmod(output_stream.fileno(), stat.S_IMODE(source_stat.st_mode))
-        return copy_destination
-
-    try:
-        shutil.copytree(
-            source,
-            destination,
-            symlinks=True,
-            ignore=bounded_entries,
-            copy_function=bounded_copy,
-        )
-    except (OSError, shutil.Error) as error:
-        raise SharedViewCaptureError("capture input snapshot failed") from error
-
-
-def _snapshot_profile(
-    profile: CaptureProfile,
-    directory: Path,
-) -> tuple[CaptureProfile, Path]:
-    if profile.ui_test_run is not None:
-        source_root = profile.ui_test_run.parent
-        snapshot_root = directory / f".{profile.name}-test-products"
-        try:
-            app_relative_path = profile.app_bundle.relative_to(source_root)
-            run_relative_path = profile.ui_test_run.relative_to(source_root)
-        except ValueError as error:
-            raise SharedViewCaptureError("capture visionOS UI test products are invalid") from error
-        _copy_snapshot_directory(source_root, snapshot_root)
-        snapshot = replace(
-            profile,
-            app_bundle=snapshot_root / app_relative_path,
-            ui_test_run=snapshot_root / run_relative_path,
-        )
-        if (
-            profile.ui_test_products_sha256 is None
-            or _bundle_sha256(snapshot_root) != profile.ui_test_products_sha256
-        ):
-            raise SharedViewCaptureError("capture UI test snapshot identity changed")
-        if _app_metadata(snapshot.app_bundle, profile.name) != _profile_source_identity(profile):
-            raise SharedViewCaptureError("capture app snapshot identity changed")
-        _validate_visionos_ui_test_run(snapshot.ui_test_run, snapshot.app_bundle)
-        return snapshot, snapshot_root
-
-    snapshot_path = directory / f".{profile.name}-install.app"
-    _copy_snapshot_directory(profile.app_bundle, snapshot_path)
-    snapshot = replace(profile, app_bundle=snapshot_path)
-    if _app_metadata(snapshot_path, profile.name) != _profile_source_identity(profile):
-        raise SharedViewCaptureError("capture app snapshot identity changed")
-    return snapshot, snapshot_path
-
-
 def _installed_app_error(runner: Runner, simulator_id: str, profile: CaptureProfile) -> str | None:
     result = _run(
         runner,
@@ -2501,61 +1895,6 @@ def _installed_app_error(runner: Runner, simulator_id: str, profile: CaptureProf
     return None if installed_identity == source_identity else "simctl-app-container-mismatch"
 
 
-def _reset_visionos_cell(
-    runner: Runner,
-    simulator_id: str,
-    simulator_name: str,
-    profile: CaptureProfile,
-) -> str | None:
-    shutdown = _run(
-        runner,
-        ["xcrun", "simctl", "shutdown", simulator_id],
-        SIMCTL_VISIONOS_SHUTDOWN_TIMEOUT,
-    )
-    if shutdown.timed_out:
-        return "simctl-visionos-cell-shutdown-timeout"
-    commands = (
-        (
-            ["xcrun", "simctl", "erase", simulator_id],
-            SIMCTL_VISIONOS_ERASE_TIMEOUT,
-            "simctl-visionos-cell-erase",
-        ),
-        (
-            ["xcrun", "simctl", "boot", simulator_id],
-            SIMCTL_BOOT_TIMEOUT,
-            "simctl-visionos-cell-boot",
-        ),
-        (
-            ["xcrun", "simctl", "bootstatus", simulator_id, "-b"],
-            SIMCTL_VISIONOS_BOOTSTATUS_TIMEOUT,
-            "simctl-visionos-cell-bootstatus",
-        ),
-        (
-            ["xcrun", "simctl", "install", simulator_id, str(profile.app_bundle)],
-            SIMCTL_VISIONOS_INSTALL_TIMEOUT,
-            "simctl-visionos-cell-install",
-        ),
-    )
-    for command, timeout, error_base in commands:
-        result = _run(runner, command, timeout)
-        if result.returncode != 0 or result.timed_out:
-            return _command_error_code(result, error_base)
-    if _app_metadata(profile.app_bundle, profile.name) != _profile_source_identity(profile):
-        return "capture-app-bundle-changed"
-    installed_app_error = _installed_app_error(runner, simulator_id, profile)
-    if installed_app_error is not None:
-        return installed_app_error
-    matches, identity_error = _matching_simulators(
-        runner,
-        profile,
-        simulator_name,
-        error_base="simctl-visionos-cell-device",
-    )
-    if identity_error is not None or matches is None:
-        return identity_error or "simctl-visionos-cell-device-invalid"
-    return None if matches == {simulator_id} else "simctl-visionos-cell-device-mismatch"
-
-
 def _capture_profile(
     profile: CaptureProfile,
     requirements: tuple[CaptureRequirement, ...],
@@ -2569,7 +1908,6 @@ def _capture_profile(
     published_artifact_paths: dict[str, Path],
     cleanup_target_observer: Callable[[str], None] = lambda _: None,
     masked_regions: dict[str, tuple[tuple[int, int, int, int], ...]] | None = None,
-    reset_visionos_cells: bool = True,
 ) -> ProfileCaptureOutcome:
     masked_regions = masked_regions or {}
     results: dict[str, dict[str, object]] = {}
@@ -2690,39 +2028,21 @@ def _capture_profile(
             stable_snapshot: PNGSnapshot | None = None
             stable_path: Path | None = None
             if index > 0:
-                if profile.name == "visionos" and reset_visionos_cells:
-                    reset_error = _reset_visionos_cell(
-                        runner,
+                _run(
+                    runner,
+                    [
+                        "xcrun",
+                        "simctl",
+                        "terminate",
                         simulator_id,
-                        simulator_name,
-                        profile,
-                    )
-                    if reset_error is not None:
-                        results[requirement.requirement_id] = _result(
-                            requirement,
-                            status="unknown",
-                            captured_at=now(),
-                            host_mechanism=host_mechanism,
-                            appearance_mechanism=None,
-                            error_code=reset_error,
-                        )
-                        continue
-                else:
-                    _run(
-                        runner,
-                        [
-                            "xcrun",
-                            "simctl",
-                            "terminate",
-                            simulator_id,
-                            profile.bundle_identifier,
-                        ],
-                        SIMCTL_TERMINATE_TIMEOUT,
-                    )
-                    if capture_profile.relaunch_needs_settle:
-                        # tvOS relaunches an app in the background when it is
-                        # started immediately after termination.
-                        sleeper(CAPTURE_SETTLE_SECONDS)
+                        profile.bundle_identifier,
+                    ],
+                    SIMCTL_TERMINATE_TIMEOUT,
+                )
+                if capture_profile.relaunch_needs_settle:
+                    # tvOS relaunches an app in the background when it is
+                    # started immediately after termination.
+                    sleeper(CAPTURE_SETTLE_SECONDS)
             if profile.ui_test_run is not None:
                 (
                     route_baseline,
@@ -3024,583 +2344,6 @@ def _capture_profile(
     return ProfileCaptureOutcome(results=results, cleanup_status=cleanup_status)
 
 
-HOST_RENDERER_SOURCE_PATHS = ("Package.swift", "Tools/ContextPanelSharedViewRenderer")
-HOST_RENDERER_MANIFEST_TIMEOUT = 300
-
-
-def _host_renderer_source_sha256(source_root: Path) -> str | None:
-    """Digest of the renderer's own sources, which the surface manifest does not govern."""
-    digest = hashlib.sha256()
-    try:
-        files: list[Path] = []
-        for relative in HOST_RENDERER_SOURCE_PATHS:
-            path = source_root / relative
-            if path.is_symlink():
-                return None
-            if path.is_dir():
-                files.extend(item for item in path.rglob("*") if item.is_file() or item.is_symlink())
-            elif path.is_file():
-                files.append(path)
-            else:
-                return None
-        # One "<posix relative path>\0<sha256 hex>\0" record per file, ordered by that path.
-        for path in sorted(files, key=lambda item: item.relative_to(source_root).as_posix()):
-            if path.is_symlink():
-                return None
-            digest.update(path.relative_to(source_root).as_posix().encode() + b"\0")
-            digest.update(_stream_sha256(path, "capture renderer source").encode() + b"\0")
-    except (OSError, SharedViewCaptureError):
-        return None
-    return digest.hexdigest()
-
-
-def _host_renderer_source_error(
-    profile: HostRendererProfile,
-    current_manifest_path: Path,
-    current_manifest_id: str,
-    runner: Runner,
-) -> str | None:
-    """Regenerate the manifest from the renderer's source root; it must be the plan's manifest.
-
-    The source root's own generator is used, because that is the code that produced the
-    plan's manifest.
-    """
-    try:
-        scratch = tempfile.TemporaryDirectory(prefix="context-panel-renderer-manifest-")
-    except OSError:
-        return "host-renderer-source-invalid"
-    output = Path(scratch.name) / "manifest.json"
-    try:
-        source = _load_json_object(current_manifest_path, "current surface manifest").get("source")
-        if not isinstance(source, dict):
-            return "host-renderer-source-invalid"
-        generator = profile.source_root / "scripts" / "context-panel-surface-manifest.py"
-        if generator.is_symlink() or not generator.is_file():
-            return "host-renderer-source-invalid"
-        generated = _run(
-            runner,
-            [
-                sys.executable, str(generator), "generate",
-                "--root", str(profile.source_root),
-                "--marketing-version", _require_string(source.get("marketingVersion"), "marketing version"),
-                "--build-number", _require_string(source.get("buildNumber"), "build number"),
-                "--commit", _require_string(source.get("commit"), "source commit"),
-                "--configuration", _require_string(source.get("configuration"), "configuration"),
-                "--xcode-build", _require_string(source.get("xcodeBuild"), "Xcode build"),
-                "--tree-state", _require_string(source.get("treeState"), "tree state"),
-                "--output", str(output),
-            ],
-            HOST_RENDERER_MANIFEST_TIMEOUT,
-        )
-        if generated.timed_out or generated.returncode != 0:
-            return "host-renderer-source-invalid"
-        regenerated_id = _load_json_object(output, "regenerated surface manifest").get("manifestId")
-    except (OSError, ValueError, SharedViewEvidenceError):
-        return "host-renderer-source-invalid"
-    finally:
-        scratch.cleanup()
-    if regenerated_id != current_manifest_id:
-        return "host-renderer-source-mismatch"
-    return None
-
-
-def _capture_host_renderer(
-    profile: HostRendererProfile,
-    requirements: tuple[CaptureRequirement, ...],
-    artifact_directory: Path,
-    current_manifest_path: Path,
-    current_manifest_id: str,
-    runner: Runner,
-    now: Callable[[], datetime],
-    seen_digests: dict[str, str | None],
-    prior_results: dict[str, dict[str, object]],
-    published_artifact_paths: dict[str, Path],
-) -> HostRendererOutcome:
-    """Build the renderer from the verified source root and draw each macOS widget cell."""
-    renderer_sha256: str | None = None
-    renderer_source_sha256 = _host_renderer_source_sha256(profile.source_root)
-
-    def outcome(results: dict[str, dict[str, object]], source_verified: bool) -> HostRendererOutcome:
-        return HostRendererOutcome(
-            results,
-            {
-                "profile": HOST_RENDERER_PROFILE,
-                "hostMechanism": HOST_RENDERER_MECHANISM,
-                "rendererExecutableSHA256": renderer_sha256,
-                "rendererSourceSHA256": renderer_source_sha256 if source_verified else None,
-                "rendererSourceManifestID": current_manifest_id if source_verified else None,
-            },
-        )
-
-    def all_results(status: str, error_code: str) -> dict[str, dict[str, object]]:
-        return {
-            requirement.requirement_id: _result(
-                requirement,
-                status=status,
-                captured_at=now(),
-                host_mechanism=HOST_RENDERER_MECHANISM,
-                appearance_mechanism=None,
-                error_code=error_code,
-            )
-            for requirement in requirements
-        }
-
-    source_error = (
-        "host-renderer-source-invalid"
-        if renderer_source_sha256 is None
-        else _host_renderer_source_error(
-            profile, current_manifest_path, current_manifest_id, runner
-        )
-    )
-    if source_error is not None:
-        return outcome(all_results("blocked", source_error), False)
-
-    build_directory = artifact_directory / HOST_RENDERER_BUILD_DIRECTORY
-    try:
-        build_command = [
-            "swift", "build", "--configuration", "release", "--product", HOST_RENDERER_PRODUCT,
-            "--package-path", str(profile.source_root), "--scratch-path", str(build_directory),
-        ]
-        build = _run(runner, build_command, HOST_RENDERER_BUILD_TIMEOUT)
-        if build.timed_out:
-            return outcome(all_results("unknown", "host-renderer-build-timeout"), True)
-        if build.returncode != 0:
-            # Product source older than the tool has nothing to build.
-            return outcome(all_results("blocked", "host-renderer-unavailable"), True)
-        located = _run(runner, [*build_command, "--show-bin-path"], HOST_RENDERER_RENDER_TIMEOUT)
-        try:
-            if located.timed_out or located.returncode != 0:
-                raise ValueError("renderer location is unavailable")
-            renderer = Path(located.stdout.strip()) / HOST_RENDERER_PRODUCT
-            # The binary must be a regular file that really lives in this run's build
-            # directory: no symlink out of it, and no path the build did not produce.
-            if (
-                not renderer.is_absolute()
-                or renderer.is_symlink()
-                or not renderer.is_file()
-                or build_directory.resolve(strict=True) not in renderer.resolve(strict=True).parents
-            ):
-                raise ValueError("renderer location is outside the build directory")
-            renderer_sha256 = _stream_sha256(renderer, "capture renderer executable")
-        except (OSError, RuntimeError, ValueError, SharedViewCaptureError):
-            renderer_sha256 = None
-            return outcome(all_results("unknown", "host-renderer-location-invalid"), True)
-
-        results: dict[str, dict[str, object]] = {}
-        for requirement in requirements:
-            def result(status: str, error_code: str | None, snapshot: PNGSnapshot | None = None):
-                return _result(
-                    requirement,
-                    status=status,
-                    captured_at=now(),
-                    host_mechanism=HOST_RENDERER_MECHANISM,
-                    appearance_mechanism=HOST_RENDERER_APPEARANCE_MECHANISM if snapshot else None,
-                    error_code=error_code,
-                    snapshot=snapshot,
-                )
-
-            rendered_path = _temporary_absent_path(artifact_directory, ".host-render-", ".png")
-            try:
-                render = _run(
-                    runner,
-                    [
-                        str(renderer),
-                        "--fixture", requirement.fixture_id,
-                        "--family", requirement.family,
-                        "--appearance", requirement.appearance,
-                        "--presentation", requirement.presentation,
-                        "--scale", HOST_RENDERER_SCALE,
-                        "--output", str(rendered_path),
-                    ],
-                    HOST_RENDERER_RENDER_TIMEOUT,
-                )
-                if render.timed_out:
-                    results[requirement.requirement_id] = result("unknown", "host-renderer-timeout")
-                    continue
-                if render.returncode == HOST_RENDERER_UNSUPPORTED_STATUS:
-                    results[requirement.requirement_id] = result(
-                        "blocked", "host-renderer-presentation-unsupported"
-                    )
-                    continue
-                if render.returncode != 0:
-                    results[requirement.requirement_id] = result("unknown", "host-renderer-failed")
-                    continue
-                try:
-                    snapshot = _png_snapshot(rendered_path)
-                except SharedViewCaptureError:
-                    results[requirement.requirement_id] = result("unknown", "host-renderer-image-invalid")
-                    continue
-                if snapshot.pixel_digest in seen_digests:
-                    # Two requirements must never share an image; neither can be trusted.
-                    duplicate_owner = seen_digests[snapshot.pixel_digest]
-                    if duplicate_owner is not None:
-                        prior_path = published_artifact_paths.pop(duplicate_owner, None)
-                        if prior_path is not None:
-                            prior_path.unlink(missing_ok=True)
-                        prior_result = results.get(duplicate_owner) or prior_results.get(duplicate_owner)
-                        if prior_result is not None:
-                            _mark_result_unknown(prior_result, "duplicate-artifact-digest", now())
-                    seen_digests[snapshot.pixel_digest] = None
-                    results[requirement.requirement_id] = result("unknown", "duplicate-artifact-digest")
-                    continue
-                final_path = artifact_directory / f"{requirement.requirement_id}.png"
-                try:
-                    os.chmod(rendered_path, 0o600)
-                    _fsync_file(rendered_path)
-                    os.replace(rendered_path, final_path)
-                except OSError:
-                    final_path.unlink(missing_ok=True)
-                    seen_digests[snapshot.pixel_digest] = None
-                    results[requirement.requirement_id] = result("unknown", "artifact-publish-failed")
-                    continue
-                seen_digests[snapshot.pixel_digest] = requirement.requirement_id
-                published_artifact_paths[requirement.requirement_id] = final_path
-                results[requirement.requirement_id] = result("captured", None, snapshot)
-            finally:
-                rendered_path.unlink(missing_ok=True)
-        return outcome(results, True)
-    finally:
-        shutil.rmtree(build_directory, ignore_errors=True)
-        if os.path.lexists(build_directory):
-            # The staging directory becomes the published run; a build tree must never ride along.
-            raise SharedViewCaptureError("host renderer build cleanup failed")
-
-
-def execute_shared_view_capture(
-    surface_comparison_path: Path,
-    current_manifest_path: Path,
-    requirements_path: Path,
-    config_path: Path,
-    artifact_root: Path,
-    output_path: Path,
-    *,
-    runner: Runner | None = None,
-    sleeper: Callable[[float], None] = time.sleep,
-    now: Callable[[], datetime] = utc_now,
-    run_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
-    matrix_path: Path = DEFAULT_MATRIX_PATH,
-    surface_policy_path: Path = DEFAULT_SURFACE_POLICY_PATH,
-    simulator_pins_path: Path = DEFAULT_SIMULATOR_PINS_PATH,
-) -> tuple[int, dict[str, object]]:
-    resolved_policy_path = surface_policy_path.expanduser().resolve(strict=True)
-    policy_bytes = _read_bounded_file(
-        resolved_policy_path,
-        "surface policy",
-        MAX_JSON_FILE_BYTES,
-    )
-    matrix_bytes = _read_bounded_file(
-        matrix_path.expanduser().resolve(strict=True),
-        "shared-view matrix",
-        MAX_JSON_FILE_BYTES,
-    )
-    try:
-        policy = json.loads(policy_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise SharedViewCaptureError("surface policy is unavailable or invalid") from error
-    if not isinstance(policy, dict):
-        raise SharedViewCaptureError("surface policy is unavailable or invalid")
-    with tempfile.NamedTemporaryFile(suffix=".json") as policy_snapshot, tempfile.NamedTemporaryFile(
-        suffix=".json"
-    ) as matrix_snapshot:
-        policy_snapshot.write(policy_bytes)
-        policy_snapshot.flush()
-        matrix_snapshot.write(matrix_bytes)
-        matrix_snapshot.flush()
-        surface_policy = load_surface_policy(Path(policy_snapshot.name))
-        matrix = load_shared_view_matrix(Path(matrix_snapshot.name), surface_policy)
-    comparison = _load_json_object(surface_comparison_path, "surface comparison")
-    planned_payload = plan_shared_view_evidence(comparison, matrix, surface_policy)
-    plan = load_capture_requirements(requirements_path, planned_payload, matrix, surface_policy)
-    expected_manifest, expected_version, expected_build = _expected_embedded_manifest(
-        current_manifest_path,
-        policy,
-        hashlib.sha256(policy_bytes).hexdigest(),
-    )
-    expected_manifest_id = _require_sha256(
-        expected_manifest.get("manifestId"), "current surface manifest identifier"
-    )
-    expected_manifest_digest = canonical_json_hash(
-        EMBEDDED_MANIFEST_DIGEST_DOMAIN, expected_manifest
-    )
-    if expected_manifest_id != plan.current_manifest_id:
-        raise SharedViewCaptureError("current surface manifest does not match comparison")
-    profiles = load_capture_config(config_path)
-    host_renderer_profile = load_host_renderer_profile(config_path)
-    simulator_pins = load_simulator_pins(simulator_pins_path)
-    private_root = _validate_artifact_root(artifact_root)
-    public_output = _validate_output_path(output_path)
-    _reject_capture_path_overlap(
-        private_root,
-        public_output,
-        profiles,
-        (
-            surface_comparison_path,
-            current_manifest_path,
-            requirements_path,
-            config_path,
-            matrix_path,
-            resolved_policy_path,
-        ),
-        host_renderer_profile,
-    )
-    active_runner = runner or SubprocessRunner()
-    configured_groups: dict[str, list[CaptureRequirement]] = {profile: [] for profile in SUPPORTED_PROFILES}
-    capture_results: dict[str, dict[str, object]] = {}
-    host_renderer_requirements: list[CaptureRequirement] = []
-    for requirement in plan.requirements:
-        if requirement.surface in HOST_RENDERER_SURFACES:
-            if host_renderer_profile is not None:
-                host_renderer_requirements.append(requirement)
-            else:
-                capture_results[requirement.requirement_id] = _result(
-                    requirement,
-                    status="blocked",
-                    captured_at=now(),
-                    host_mechanism="unconfigured-profile",
-                    appearance_mechanism=None,
-                    error_code="profile-not-configured",
-                )
-            continue
-        profile_name = _profile_for_surface(requirement.surface)
-        if profile_name is None:
-            capture_results[requirement.requirement_id] = _result(
-                requirement,
-                status="blocked",
-                captured_at=now(),
-                host_mechanism="unsupported-host-mechanism",
-                appearance_mechanism=None,
-                error_code="unsupported-host-mechanism",
-            )
-        elif profile_name not in profiles:
-            capture_results[requirement.requirement_id] = _result(
-                requirement,
-                status="blocked",
-                captured_at=now(),
-                host_mechanism="unconfigured-profile",
-                appearance_mechanism=None,
-                error_code="profile-not-configured",
-            )
-        else:
-            configured_groups[profile_name].append(requirement)
-
-    active_profile_names = [
-        profile_name for profile_name in SUPPORTED_PROFILES if configured_groups[profile_name]
-    ]
-    if any(
-        profiles[profile_name].manifest_id != plan.current_manifest_id
-        or profiles[profile_name].manifest_digest != expected_manifest_digest
-        or not {item.surface for item in configured_groups[profile_name]}.issubset(
-            profiles[profile_name].manifest_surfaces
-        )
-        for profile_name in active_profile_names
-    ):
-        raise SharedViewCaptureError("capture app surface manifest does not match comparison")
-    if any(
-        profiles[profile_name].version != expected_version
-        or profiles[profile_name].build != expected_build
-        for profile_name in active_profile_names
-    ):
-        raise SharedViewCaptureError(
-            "capture app version does not match current surface manifest"
-        )
-    _prepare_private_directory(private_root)
-    catalog_metadata: dict[str, SimulatorProfileMetadata | None] = {
-        profile_name: None for profile_name in active_profile_names
-    }
-    profile_errors: dict[str, str] = {}
-    if active_profile_names:
-        runtimes, device_types, catalog_error = _simulator_catalog(active_runner)
-        if catalog_error is not None or runtimes is None or device_types is None:
-            for profile_name in active_profile_names:
-                profile_errors[profile_name] = catalog_error or "simctl-catalog-invalid"
-        else:
-            for profile_name in active_profile_names:
-                metadata, profile_error = _profile_catalog_metadata(
-                    profiles[profile_name], runtimes, device_types
-                )
-                catalog_metadata[profile_name] = metadata
-                if profile_error is not None:
-                    profile_errors[profile_name] = profile_error
-
-    manifest_directory = private_root / plan.current_manifest_id
-    _prepare_private_directory(manifest_directory)
-    capture_run_id, staging_directory, run_directory = _create_run_directories(
-        manifest_directory,
-        run_id_factory,
-    )
-    ownership_token = uuid.uuid4().hex
-    ownership_path = staging_directory / ".capture-owner"
-    cleanup_statuses = {profile_name: "not-started" for profile_name in active_profile_names}
-    seen_digests: dict[str, str | None] = {}
-    published_artifact_paths: dict[str, Path] = {}
-    owns_run_directory = False
-    run_published = False
-    captures: list[dict[str, object]] = []
-    receipt: dict[str, object] = {}
-    try:
-        try:
-            ownership_descriptor = os.open(
-                ownership_path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-            with os.fdopen(ownership_descriptor, "w") as ownership_stream:
-                ownership_stream.write(ownership_token)
-                ownership_stream.flush()
-                os.fsync(ownership_stream.fileno())
-        except OSError as error:
-            raise SharedViewCaptureError("capture run ownership marker is unavailable") from error
-        for profile_name in active_profile_names:
-            requirements = tuple(configured_groups[profile_name])
-            profile_error = profile_errors.get(profile_name)
-            if profile_error is not None:
-                if profile_error.startswith("simctl-profile-"):
-                    capture_results.update(
-                        _blocked_results(
-                            requirements,
-                            profile_error,
-                            now,
-                            host_mechanism="simctl-profile-validation",
-                        )
-                    )
-                else:
-                    capture_results.update(_unknown_results(requirements, profile_error, now))
-                continue
-            snapshot_profile, snapshot_path = _snapshot_profile(
-                profiles[profile_name], staging_directory
-            )
-            # Check the snapshot, which is the bundle that gets installed.
-            launch_marker = _simulator_capture_profile(profile_name).required_launch_marker
-            if launch_marker is not None and not _app_code_contains(
-                snapshot_profile.app_bundle, launch_marker
-            ):
-                shutil.rmtree(snapshot_path, ignore_errors=True)
-                capture_results.update(
-                    _blocked_results(
-                        requirements,
-                        "validation-launch-unsupported-by-app",
-                        now,
-                        host_mechanism="simctl-gallery",
-                    )
-                )
-                continue
-            emergency_cleanup_targets: list[str] = []
-            profile_capture_completed = False
-            try:
-                outcome = _capture_profile(
-                    snapshot_profile,
-                    requirements,
-                    staging_directory,
-                    capture_run_id,
-                    active_runner,
-                    sleeper,
-                    now,
-                    seen_digests,
-                    capture_results,
-                    published_artifact_paths,
-                    emergency_cleanup_targets.append,
-                    simulator_pins.profiles[profile_name].masked_regions,
-                )
-                profile_capture_completed = True
-            except BaseException as capture_error:
-                if emergency_cleanup_targets:
-                    _, emergency_cleanup_error = _cleanup_simulator(
-                        active_runner,
-                        emergency_cleanup_targets[-1],
-                        snapshot_profile,
-                        _simulator_name(profile_name, capture_run_id),
-                    )
-                    if emergency_cleanup_error is not None:
-                        raise SharedViewCaptureError(
-                            "capture failed and emergency simulator cleanup did not complete: "
-                            f"{emergency_cleanup_error}"
-                        ) from capture_error
-                raise
-            finally:
-                shutil.rmtree(snapshot_path, ignore_errors=True)
-                if snapshot_path.exists() and profile_capture_completed:
-                    raise SharedViewCaptureError("capture input snapshot cleanup failed")
-            cleanup_statuses[profile_name] = outcome.cleanup_status
-            capture_results.update(outcome.results)
-        host_renderer_public_profiles: list[dict[str, object]] = []
-        if host_renderer_profile is not None and host_renderer_requirements:
-            host_outcome = _capture_host_renderer(
-                host_renderer_profile,
-                tuple(host_renderer_requirements),
-                staging_directory,
-                current_manifest_path,
-                plan.current_manifest_id,
-                active_runner,
-                now,
-                seen_digests,
-                capture_results,
-                published_artifact_paths,
-            )
-            capture_results.update(host_outcome.results)
-            host_renderer_public_profiles.append(host_outcome.public_profile)
-        captures = [capture_results[requirement.requirement_id] for requirement in plan.requirements]
-        receipt = {
-            "schemaVersion": CAPTURE_RECEIPT_SCHEMA_VERSION,
-            "kind": CAPTURE_RECEIPT_KIND,
-            "captureRunID": capture_run_id,
-            "currentManifestID": plan.current_manifest_id,
-            "requirementsDigest": plan.requirements_digest,
-            "matrixDigest": matrix.digest(),
-            "pixelDiffPolicy": PIXEL_DIFF_POLICY,
-            "profiles": [
-                profiles[profile_name].public_dict(
-                    catalog_metadata[profile_name], cleanup_statuses[profile_name]
-                )
-                for profile_name in active_profile_names
-            ]
-            + host_renderer_public_profiles,
-            "captures": captures,
-        }
-        _atomic_write_json(staging_directory / "index.json", receipt, 0o600)
-        try:
-            _rename_exclusive(staging_directory, run_directory)
-            owns_run_directory = True
-            _fsync_directory(manifest_directory)
-            run_published = True
-        except OSError as error:
-            raise SharedViewCaptureError("capture run publication failed") from error
-        _atomic_write_json(public_output, receipt, 0o644)
-    finally:
-        failure_in_flight = sys.exc_info()[1]
-        if not run_published:
-            rollback_error: OSError | None = None
-            if staging_directory.exists():
-                try:
-                    shutil.rmtree(staging_directory)
-                    _fsync_directory(manifest_directory)
-                except OSError as error:
-                    rollback_error = error
-            if owns_run_directory:
-                published_owner = run_directory / ownership_path.name
-                try:
-                    owns_published_path = _read_bounded_file(
-                        published_owner, "capture run ownership marker", 128
-                    ) == ownership_token.encode()
-                except SharedViewCaptureError:
-                    owns_published_path = False
-                if owns_published_path:
-                    try:
-                        shutil.rmtree(run_directory)
-                        _fsync_directory(manifest_directory)
-                    except OSError as error:
-                        rollback_error = rollback_error or error
-            if rollback_error is not None:
-                raise SharedViewCaptureError("capture run rollback failed") from (
-                    failure_in_flight or rollback_error
-                )
-    statuses = {capture["status"] for capture in captures}
-    if statuses == {"captured"}:
-        return EXIT_OK, receipt
-    if "unknown" in statuses:
-        return EXIT_UNKNOWN, receipt
-    return EXIT_BLOCKED, receipt
-
-
 class _TimedRunner:
     """Logs each command's verb, duration and outcome to stderr for CI diagnosis.
 
@@ -3652,7 +2395,6 @@ def capture_reference_cells(
     """
     surface_policy = load_surface_policy(surface_policy_path)
     matrix = load_shared_view_matrix(matrix_path, surface_policy)
-    policy_by_id = {surface.id: surface for surface in surface_policy}
     profiles = load_capture_config(config_path)
     pins = load_simulator_pins(simulator_pins_path)
     groups: dict[str, list[CaptureRequirement]] = {name: [] for name in SUPPORTED_PROFILES}
@@ -3666,7 +2408,6 @@ def capture_reference_cells(
                     requirement_id=shared_view_requirement_id(surface.id, cell.id),
                     surface=surface.id,
                     cell_id=cell.id,
-                    fixture_contract_id=fixture_contract_id(matrix, policy_by_id[surface.id], cell),
                     fixture_id=cell.fixture_id,
                     family=cell.family,
                     appearance=cell.appearance,
@@ -3716,7 +2457,6 @@ def capture_reference_cells(
                 results,
                 published,
                 masked_regions=pin.masked_regions,
-                reset_visionos_cells=False,
             )
             results.update(outcome.results)
             # A profile that captured some cells works, so a cell that failed is
@@ -3745,8 +2485,7 @@ def capture_reference_cells(
                     results,
                     published,
                     masked_regions=pin.masked_regions,
-                    reset_visionos_cells=False,
-                )
+                    )
                 results.update(retried.results)
         for requirement_id, artifact_path in published.items():
             result = results[requirement_id]

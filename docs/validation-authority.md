@@ -1,81 +1,36 @@
-# Validation Authority and Operator Route
+# Validation
 
-Start here before selecting a validation path. This page routes decisions to
-owning sources; it does not define policy values, fixture contents, thresholds,
-or active train status. Keep those in their existing sources.
+This page says what proves a change and a release, and how to check the app on
+this Mac. The release steps live in [the release procedure](release.md).
 
-## Sources of truth
+## What proves a release
 
-Explicit user instructions define the requested outcome. Validation is
-simulator-first: simulators and host rendering prove shared views, and signed
-builds prove runtime and placement only where they changed. Every platform
-ships together as one release ([definition of released](release.md#definition-of-released)).
+Two things prove an App Store release. Nothing else is collected at release.
 
-| Question | Owning source |
-| --- | --- |
-| What must this exact candidate prove? | [Surface policy](../Config/ContextPanelSurfacePolicy.json), [release-evidence policy](../Config/ContextPanelReleaseEvidencePolicy.json), [matrix](../Config/ContextPanelSharedViewMatrix.json), and the complete source/build-manifest comparison |
-| How does the implemented path operate? | [Release procedure](release.md), [coordinator](signed-validation-operator-flow.md), and [capture mechanisms](signed-validation-galleries.md) |
+- **CI reference images.** The `shared-view-simulator-references` job draws
+  every shared-view cell on every platform from fresh Release builds and
+  compares it with its committed reference image (see
+  [reference images](#reference-images)). App Store submission requires a
+  passing run of this job on the release commit.
+- **A day on TestFlight.** Ship uploads every build to TestFlight. The
+  TestFlight crash watcher (shiny-infra-ops) files each crash report a tester
+  sends from TestFlight as an issue in this repository. Submission waits until
+  the build has been on TestFlight for a day with no crash report for that exact
+  build. Apple sends these reports only when a tester submits one, so a quiet
+  day is not proof of no crashes. Chris can skip the wait.
 
-Code, tests, documentation, and historical artifacts show implemented behavior
-and evidence. They do not independently redefine the agreed outcome. If these
-sources disagree, reconcile the owning plan and implementation before proceeding
-with the dependent decision; continue independent work. Do not choose whichever
-interpretation makes the current run pass.
+Visual correctness is judged when a screen changes, in the pull request that
+changes its reference image, not at release.
 
-## Evaluation and submission
-
-The [submission workflow](../.github/workflows/submit-app-store-review.yml)
-and [submission CLI](../scripts/submit-app-store-review.py) default to
-`release_evidence_mode=enforce`: App Store submission fails closed when required
-evidence is missing. Shadow mode evaluates the same configured policy for
-diagnostics; it does not approve a submission.
-
-## Capture before review
-
-1. Read the owning plan and identify the exact previous/current source and
-   signed build identities. Generate the full comparison with every archive
-   layout's expected-build manifests; every platform ships in the release.
-   Follow [the release procedure](release.md);
-   do not filter or rewrite `requiredEvidence` or `requiredSurfaces`.
-2. Prepare visual requirements from the canonical matrix and the comparison's
-   fresh visual classes. The full release evaluator must resolve eligible
-   carry-forward from valid lineage; a smaller current review queue does not
-   waive the complete evidence requirements.
-3. Open an exact-build runtime session only when the comparison requires it,
-   using exactly `requiredSurfaces.actual-runtime`. Follow the canonical
-   Production runtime/cache checks in [Validation](#validation). Observe normal
-   install and receipt propagation through the coordinator before requesting
-   manual recovery.
-4. For shared views, supply all required capture inputs to the
-   [supported capture path](signed-validation-galleries.md). If inputs are
-   missing, correct the invocation as machine work. Every shared-view surface
-   has a capture mechanism; a cell that was not captured is a failed capture,
-   not a reason to navigate a signed gallery.
-5. Run `record-reference-approvals` (see [reference images](#reference-images)).
-   It approves each captured cell that matches an unchanged reference.
-6. Send Chris only the remaining cells, in one batch, and record his decision
-   for each. When he accepts a changed cell, commit that captured image as its
-   reference. OS-composited placement remains a separate physical review with
-   its own exact-runtime prerequisites.
-7. Evaluate the complete evidence with the full release gate and validate its
-   reconstruction using the same authoritative inputs. Release must bind the
-   selected approved RC. Neither a successful capture nor a completed
-   coordinator slice establishes full release approval.
-
-## Implemented capture limits
-
-The executor captures iOS, iPadOS, visionOS, watchOS, and tvOS cells on
-simulators. tvOS capture requires current product source that contains the
-tvOS validation launch route; older source fails qualification by design.
-`macos.app` and `macos.widget` are rendered on the host by a SwiftPM tool the
-executor builds from the verified source root, with no app or extension bundle;
-see [the capture contract](signed-validation-galleries.md#private-simulator-capture).
+Accepted loss: nothing proves placement that the OS composes, such as a widget
+on a home screen or a complication on a Watch face. Chris catches those by
+using the TestFlight build.
 
 ## Reference images
 
 Every shared-view cell has a committed reference PNG at
 `Tests/SharedViewReferences/<surface>/<cell>.png`. Two CI jobs draw the cells
-the way Shared-View Capture Evidence does and compare them with
+and compare them with
 [`scripts/context-panel-shared-view-references.py`](../scripts/context-panel-shared-view-references.py):
 `shared-view-references` renders the macOS cells on the host, and
 `shared-view-simulator-references` builds the Release simulator products and
@@ -98,8 +53,7 @@ titled "Simulator reference images fail on main", or comments on the open one,
 naming the changed cells; the next passing run on `main` closes it
 ([`scripts/ci-reference-failure-issue.py`](../scripts/ci-reference-failure-issue.py)).
 A change that alters only the simulator cells still surfaces through that
-issue after it lands. Runner image drift shows up in the next of these runs, and at release the
-capture compares every cell with its reference on the current runner. The capture
+issue after it lands. Runner image drift shows up in the next of these runs. The capture
 retries a failed cell once in a fresh simulator when the rest of its platform
 captured, so one flaky cell does not fail the job. App Store submission refuses
 a build whose source commit has no passing `shared-view-simulator-references`
@@ -115,8 +69,7 @@ the `en_US_POSIX` locale and UTC. The Watch status-bar clock, which nothing can
 pin, is painted out by a masked region.
 
 [`Config/ContextPanelSharedViewSimulators.json`](../Config/ContextPanelSharedViewSimulators.json)
-pins the Xcode, simulator runtimes, devices and masked regions both jobs and the
-release capture use; a runner without them fails instead of capturing on another
+pins the Xcode, simulator runtimes, devices and masked regions both jobs use; a runner without them fails instead of capturing on another
 simulator. References are valid only for those pins and the `macos-26` runner
 image. When a PR changes how a cell looks on purpose, or the toolchain changes,
 re-record:
@@ -141,36 +94,36 @@ re-record:
 Do not record references on a local Mac; its OS, fonts and simulators differ
 from the pinned runner.
 
-At release, after a qualified capture, approve the unchanged cells:
+### A pull request that changes a reference image
 
-```sh
-scripts/context-panel-validation.py record-reference-approvals \
-  --version <version> --build-number <build-number> \
-  --surface-comparison <comparison.json> \
-  --current-manifest <current-source-manifest.json> \
-  --previous-manifest <previous-source-manifest.json> \
-  --capture-receipt <shared-view-capture-receipt.json> \
-  --captures <directory-with-captured-pngs>
-```
+A pull request that changes a `Tests/SharedViewReferences/*.png` image changes
+how a screen looks, so its body must carry a `## Reference images` section with:
 
-The inputs are the capture run's public evidence and its private PNGs. The
-command refuses a receipt that fails the capture lane's qualification and a
-manifest whose ID does not match its contents, then reads both references from
-Git at the source commits those manifests name. It approves a cell only when
-the captured image matches the candidate's reference and that reference matches
-the previous release's. A missing, new or changed reference, a changed image, or
-a capture that does not match the receipt leaves the cell for Chris. It never
-replaces a recorded decision and never touches actual-runtime or placement
-requirements.
+- the old and the new image side by side, for each changed cell (link the PNG
+  at the base and head commits, for example
+  `https://github.com/cbusillo/context-panel/blob/<commit>/Tests/SharedViewReferences/<surface>/<cell>.png?raw=1`);
+- the author's own statement of what the screen should show, and that the new
+  image shows it.
 
-Existing Mac render tests can export host-rendered PNGs, but those test outputs
-are not formal build/requirement-bound capture receipts. The default-text matrix
-case and an enlarged-text stress test are distinct valid scenarios. Preserve the
-stress coverage; do not relabel it as evidence for a different matrix context.
+The author looks at every new image before writing that statement. The review
+by another model looks at the same images. The CI `scope` job fails the pull
+request until the section is there; after editing the body, re-run that job.
 
-Simulator or host-rendered shared views cannot satisfy `actual-runtime` or
-`os-composited-placement`. Preserve historical manifests, receipts, and fixture
-contracts, without silently upgrading diagnostic or reference-only evidence.
+### What the simulator job launches
+
+The simulator job launches the real Release app on each simulator, so an app
+that crashes at launch fails it:
+
+- iPhone, iPad and Vision Pro: the UI test launches Context Panel and waits for
+  it to reach the foreground. The cell image itself is drawn in the test runner.
+- Watch and Apple TV: the job launches the app with the gallery arguments and
+  takes the image from the app's own screen.
+
+It does not launch the Mac app, any widget extension, the Watch complication
+extension, the Top Shelf extension or the Mac refresh agent. The macOS cells are
+drawn by a SwiftPM renderer on the host, and widget, complication and Top Shelf
+cells are drawn by the host app or the test. A crash in one of those processes,
+or one that happens only on the normal launch path, shows up on TestFlight.
 
 ## Validation
 
@@ -210,27 +163,6 @@ scripts/context-panel-companion-cache.sh preflight
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
-When the approved signed candidate predates the validator checkout, select its
-recorded identity with the sealed expected-build manifest from that release's
-archive/upload artifacts:
-
-```sh
-scripts/context-panel-runtime-baseline.sh check --require-production-runtime \
-  --candidate-manifest <ExpectedBuildManifest-macos.json>
-```
-
-This runs the current validator's checks against the candidate's recorded
-fingerprint. It verifies the installed signature, version/build and embedded
-manifest/contract identity, and requires all three macOS surfaces to match the
-record. Missing or invalid manifests, different builds and unrecorded source
-identities fail; there is no fallback to the installed stamp. Repeat
-`--candidate-manifest` for multiple archive layouts from the same candidate.
-The coordinator forwards its existing repeated `--expected-build-manifest`
-inputs to this path for status, final reports and Mac launch verification.
-These inputs select candidate identity; the release gate still owns approved
-RC lineage and human approval. Without a candidate manifest, the baseline
-continues to compare against its checkout. The candidate option is check-only.
-
 Spotlight bundle discovery has a bounded deadline. A timeout or unavailable
 discovery fails the receipt as an incomplete conflict inventory and stops
 install/reset before runtime teardown; partial results never establish a clean inventory.
@@ -243,8 +175,8 @@ bundle entitlements and a running launchd job alone do not prove its identity.
 After a normal TestFlight install and background-update recovery, rerun the
 same read-only check once the loaded helper belongs to that installation.
 
-Require the companion cache preflight to report `preflight=OK` before opening a
-signed validation coordinator session or judging physical-device behavior. If it
+Require the companion cache preflight to report `preflight=OK` before judging
+physical-device behavior. If it
 fails, inspect the exact `companion-build-validation` root and use only the
 repo-owned explicit-root quarantine command; do not broadly delete DerivedData
 or the artifact cache.
@@ -259,36 +191,6 @@ in-place upgrade path; in that case preserve existing placements and capture the
 installed build, face state, app diagnostics, and extension-process evidence
 before any recovery action. Do not use uninstall/reinstall or complication
 reselection as the routine workaround.
-
-`record-watch-restart` records the operator's confirmation, not an automatic
-restart. Its exact-build observation uses either CoreDevice's current Watch
-installation or, when the Mac cannot see the Watch, all of these together:
-
-- A read-only App Store Connect `betaTesters.appDevices` record for the selected
-  tester and paired iPhone model shows the exact version and build. The Watch
-  app ships inside the iPhone app; Apple does not list it separately there.
-- The active exact-build coordinator holds validated runtime receipts for both
-  `watchos.app` and `watchos.complication`.
-- Both receipts were written strictly after the confirmed restart time or its
-  operator-supplied lower bound, and no later than the attestation.
-
-For the remote route, supply the restart bound and private tester selection:
-
-```sh
-scripts/context-panel-validation.py record-watch-restart \
-  --version <version> --build-number <build-number> \
-  --restarted-at <ISO-8601-time-with-timezone> \
-  --tester-email <tester-email> --paired-iphone-model <iPhone-model> \
-  --asc-env-file <private-asc-env-file> --json
-```
-
-Invoking the command confirms that the operator restarted the Watch after that
-build was installed. Without `--restarted-at`, the CoreDevice route uses the
-attestation time as the restart lower bound; the remote route refuses. The
-record saves the observation route, restart bound, ASC read time and Watch
-receipt references, without tester emails or device identifiers. This proves
-build observation for the restart attestation only. It does not replace runtime
-validation, physical complication placement review, or any other release gate.
 
 Never run `install` or `reset` while preserving a signed Production publisher.
 Those modes build a local Debug runtime with Development CloudKit and now refuse
@@ -316,8 +218,7 @@ Do not claim readiness unless the receipt shows `baseline=OK`, the running app
 process in `Active Processes`, PluginKit widget registration, the refresh agent,
 and the `contextpanel://` URL handler all point to
 `/Applications/Context Panel.app`, and the build fingerprint in that app matches
-the selected recorded candidate (or the current source tree without a candidate
-manifest). A receipt that says `OK: no Context Panel processes are
+the current source tree. A receipt that says `OK: no Context Panel processes are
 running` is acceptable only for passive cleanup checks; it is not enough before
 asking Chris to test app, widget, provider, sandbox, storage, or login-item
 behavior. If the app was closed, launch the canonical app with
@@ -396,31 +297,10 @@ acceptable.
   `scripts/cleanup-context-panel-device-profiles.sh --device <id>` for manual
   hygiene; the visionOS dogfood fixture calls it by default. Use
   `--no-profile-cleanup` only when investigating profile state itself.
-- Before opening a signed validation coordinator session, compare the previous
-  and current full source manifests with
-  `scripts/context-panel-surface-manifest.py compare --train <beta|rc|release>`.
-  Comparisons intended for release-gate, report-validation, or submission use
-  repeated `--previous-expected-build-manifest` and
-  `--current-expected-build-manifest` arguments covering every archive layout;
-  source-only comparisons are diagnostic and cannot enter the signed gate.
-  Do not open a runtime session when `requiresRuntimeSession=false`;
-  automated shared-view evidence is the gate for render-only changes. When runtime proof is required, pass only the surfaces in
-  `requiredSurfaces.actual-runtime` through repeated `--surface` arguments.
-  `requiredEvidence`/`requiredSurfaces` are authoritative; `freshEvidence` is
-  explanatory delta metadata and is not a complete gate. Simulator builds and
-  galleries can satisfy shared-view evidence only; they never satisfy
-  `actual-runtime`, which must come from the exact signed artifact.
-  `requiresPlacementReview=true` remains a separate physical/OS-composited
-  review requirement. Every train re-checks only what changed: a rebuild alone
-  needs no new runtime proof, and unchanged surfaces carry forward their
-  approved evidence.
-- After the coordinator final report is available, evaluate the full comparison
-  with the [release evidence gate](release.md#release-evidence-carry-forward-gate).
-  Do not filter or rewrite `requiredSurfaces`.
 - Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
   and Apple TV product UI must not expose gallery buttons, toolbar actions, list
   rows, or runway items. Use the allowlisted signed routes and the bounded Watch
-  launch argument documented in `docs/signed-validation-galleries.md`; do not
+  launch argument documented in `docs/validation-galleries.md`; do not
   add a runtime feature flag or persistent unlock.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
@@ -440,8 +320,7 @@ If any of those point to different build roots or unexpected entitlements, stop
 and report the mixed-runtime state before making more fixes.
 
 Source-only validation follows the [test rules](../AGENTS.md#test-rules).
-Installed-runtime, release and visual evidence above still applies when those
-behaviors change.
+The installed-runtime checks above still apply when those behaviors change.
 
 In CI, [`scripts/ci-change-scope.py`](../scripts/ci-change-scope.py) decides
 which jobs a change needs; its docstring owns the rules.

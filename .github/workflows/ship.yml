@@ -303,7 +303,7 @@ jobs:
             echo "Ship does not submit App Store Review."
             echo "These results do not prove the build is live on the public App Store."
             echo "Release completion: docs/release.md#definition-of-released"
-            echo "After TestFlight validation, run Submit App Store Review separately; use dry_run=true first."
+            echo "After about a day on TestFlight, run Submit App Store Review for each platform (docs/release.md#app-store-review-submission)."
           } >>"${GITHUB_STEP_SUMMARY}"
 
           failed="false"

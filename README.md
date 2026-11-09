@@ -61,10 +61,9 @@ Useful entry points:
 Change targets, settings, and schemes in `project.yml`, then follow the canonical
 [local native build instructions](docs/release.md#build-the-native-app-and-widget).
 
-Runtime checks, signed-build protections, and release gates are maintained in
-[Validation Authority](docs/validation-authority.md#validation) and the
-[release procedure](docs/release.md); those documents are the operator sources
-of truth.
+Runtime checks and signed-build protections are maintained in
+[Validation](docs/validation-authority.md#validation), and the release route in
+the [release procedure](docs/release.md).
 
 ## Local Provider Probes
 

@@ -60,11 +60,7 @@
   },
   "filesByLane": {
     "fast-local-python": [
-      "Tests/ScriptsTests/test_runtime_receipts.py",
-      "Tests/ScriptsTests/test_runtime_session.py",
       "Tests/ScriptsTests/test_shared_view_capture.py",
-      "Tests/ScriptsTests/test_shared_view_capture_workflow.py",
-      "Tests/ScriptsTests/test_shared_view_evidence.py",
       "Tests/ScriptsTests/test_surface_manifest.py",
       "Tests/ScriptsTests/test_test_lanes.py",
       "Tests/ScriptsTests/test_validation_gallery_target_graph.py",
@@ -73,24 +69,17 @@
       "Tests/ScriptsTests/test_release_approvals.py",
       "Tests/ScriptsTests/test_cloudkit_schema_gate.py",
       "Tests/ScriptsTests/test_shared_view_references.py",
-      "Tests/ScriptsTests/test_reference_approvals.py",
-      "Tests/ScriptsTests/test_submission_evidence_bundle.py",
-      "Tests/ScriptsTests/test_shared_view_reference_gate.py",
-      "Tests/ScriptsTests/test_app_store_capture.py"
+      "Tests/ScriptsTests/test_app_store_capture.py",
+      "Tests/ScriptsTests/test_shared_view_matrix.py",
+      "Tests/ScriptsTests/test_app_store_submission_gate.py"
     ],
     "routine-ci-python": [
       "Tests/ScriptsTests/test_companion_quarantine_retention.py",
       "Tests/ScriptsTests/test_app_store_version_guard.py",
       "Tests/ScriptsTests/test_distribute_testflight_beta.py",
-      "Tests/ScriptsTests/test_release_evidence_gate.py",
       "Tests/ScriptsTests/test_release_workflows.py",
-      "Tests/ScriptsTests/test_runtime_receipt_ingestion.py",
       "Tests/ScriptsTests/test_submit_app_store_review.py",
       "Tests/ScriptsTests/test_upload_app_store_screenshots.py",
-      "Tests/ScriptsTests/test_validation_coordinator.py",
-      "Tests/ScriptsTests/test_validation_automation.py",
-      "Tests/ScriptsTests/test_validation_operator_flow.py",
-      "Tests/ScriptsTests/test_visual_approvals.py",
       "Tests/ScriptsTests/test_companion_upload_script.py",
       "Tests/ScriptsTests/test_macos_upload_script.py",
       "Tests/ScriptsTests/test_app_store_release_status.py"
@@ -102,8 +91,7 @@
     ],
     "actual-runtime": [],
     "support-only": [
-      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift",
-      "Tests/ScriptsTests/fixtures/runtime_relay.py"
+      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift"
     ]
   }
 }
