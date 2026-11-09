@@ -314,7 +314,7 @@ rejects any result, fallback, merge, or write whose scope is missing or
 different. Legacy unscoped local data is deleted rather than attributed to the
 current user. Foreground companion loads and WidgetKit timelines share the same
 scoped CloudKit/cache selection path, with a five-second deadline per identity
-or usage operation. Foreground preference and validation-session reads are also
+or usage operation. Foreground preference reads are also
 bounded so they cannot indefinitely hold the usage UI or its next refresh.
 The app keeps freshness visible above the account overview, recomputes it as
 presentation time advances, and labels the usage observation time rather than

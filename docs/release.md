@@ -944,7 +944,7 @@ They exercise `--export-only` with `--archive-only` or `--skip-archive`, includi
 version/build and source mismatch refusals and missing fresh package output.
 They do not qualify signing, real archives, or live uploads.
 
-If the live gate reports a missing runtime record type or index, re-export both
+If the live gate reports a missing record type or index, re-export both
 environments and require Production and Development to contain no unrelated
 schema drift. Validate and import the checked-in candidate into Development:
 
@@ -969,12 +969,10 @@ Production and never use `cktool reset-schema`; reset deletes Development data.
 After deployment, re-export Production and require the live Production gate to
 pass before re-running Mac publish and companion TestFlight validation.
 
-A missing runtime record type is `unknown` evidence, not permission to fall back
-to the companion snapshot record. If Production already contains an incompatible
-field type, do not try to patch the existing field in place; add a
-forward-compatible record type such as `CompanionSyncDocumentV2`, or new field
-names for the affected runtime record, and update the app constants and schema
-contract together.
+If Production already contains an incompatible field type, do not try to patch
+the existing field in place; add a forward-compatible record type such as
+`CompanionSyncDocumentV2`, or new field names for the affected record, and
+update the app constants and schema contract together.
 
 ### Export-Only Canary
 
