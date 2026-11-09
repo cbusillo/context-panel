@@ -165,7 +165,7 @@ public struct ProviderUsageCreditSummary: Codable, Equatable, Sendable {
     public let hasCredits: Bool
     public let unlimited: Bool
     public let balance: Double?
-    /// When the balance expires. No adapter reports one yet, so unused credits are never counted as expired (#1080).
+    /// When the balance expires, as the provider reports it. OpenAI reports none, so a date entered in Settings stands in (#1099).
     public let expiresAt: Date?
 
     public init(hasCredits: Bool, unlimited: Bool, balance: Double?, expiresAt: Date? = nil) {

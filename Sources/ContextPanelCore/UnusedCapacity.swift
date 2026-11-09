@@ -71,19 +71,26 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
     /// False while no account's pace is measured; the points then assume nothing more runs.
     public let paceMeasured: Bool
     /// Usage credits left across the provider's accounts in the current reading; null when none reports a balance.
-    /// No expiry is claimed.
     public let usageCreditsLeft: Double?
     /// Accounts holding credits whose weekly quota is at 0%. Credits are spent only there.
     public let accountsSpendingUsageCredits: Int
+    /// When those credits expire: the provider's own date when it reports one, else the day entered in Settings (#1099).
+    public let usageCreditsExpireAt: Date?
+    /// Where `usageCreditsExpireAt` came from; null when no expiry is known.
+    public let usageCreditsExpirySource: UsageCreditExpiry.Source?
+    /// Credits expected to expire unspent: all of them while no account is at 0% to spend them. Null when no expiry
+    /// is known, or while some account is spending them and the amount left at the expiry can't be read from one reading.
+    public let usageCreditsAtRisk: Double?
     /// "OpenAI: about 140 points will refill unused at this pace. Add work."
     public let line: String
-    /// "OpenAI has 179,745 usage credits left. They are not being spent: …"
+    /// "OpenAI has 179,745 usage credits left. They expire Dec 31. At this pace none will be spent: …"
     public let usageCreditsLine: String?
 
     /// Fewer points than this round to nothing at risk.
     static let nothingPoints = 0.5
 
     public init(forecast: ProviderPaceForecast, stored: StoredUsageSnapshot,
+                enteredCreditExpiry: Date? = nil, calendar: Calendar = .current,
                 resolve: ProviderRefillDetector.AccountResolver = ProviderRefillDetector.localAccountID) {
         let provider = forecast.provider
         let name = provider.accountDisplayName
@@ -109,14 +116,60 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
                   let left = weekly[report.accountID]?.remainingCapacityRatio, left < 0.005 else { return nil }
             return UnusedCapacityHistory.reportID(report, in: stored, resolve: resolve)
         }).count
+        // Only a deadline still ahead of the reading puts credits at risk.
+        let expiry = credits == nil ? nil : UsageCreditExpiry.current(provider: provider, reading: stored, entered: enteredCreditExpiry)
+            .flatMap { $0.date > stored.savedAt ? $0 : nil }
         usageCreditsLeft = credits
         accountsSpendingUsageCredits = spending
+        usageCreditsExpireAt = expiry?.date
+        usageCreditsExpirySource = expiry?.source
+        usageCreditsAtRisk = expiry == nil || spending > 0 ? nil : credits
         usageCreditsLine = credits.map { credits in
-            let left = "\(name) has \(Int(credits.rounded()).formatted()) usage credits left"
+            let total = Int(credits.rounded()).formatted()
+            guard let expiry else {
+                let left = "\(name) has \(total) usage credits left"
+                return spending == 0
+                    ? left + ". They are not being spent: credits are used only once an account's weekly quota reaches 0%."
+                    : left + ", being spent on \(spending) " + (spending == 1 ? "account" : "accounts") + " at 0% of its weekly quota."
+            }
+            var day = Date.FormatStyle.dateTime.month(.abbreviated).day()
+            day.timeZone = calendar.timeZone
+            let expires = "\(name) has \(total) usage credits left. They expire \(expiry.date.formatted(day))"
+                + (expiry.source == .entered ? " (date entered in Settings)." : ".")
             return spending == 0
-                ? left + ". They are not being spent: credits are used only once an account's weekly quota reaches 0%."
-                : left + ", being spent on \(spending) " + (spending == 1 ? "account" : "accounts") + " at 0% of its weekly quota."
+                ? expires + " At this pace none will be spent: credits are used only once an account's weekly quota reaches 0%, "
+                    + "so all \(total) will expire unused."
+                : expires + " They are being spent on \(spending) " + (spending == 1 ? "account" : "accounts")
+                    + " at 0% of its weekly quota."
         }
+    }
+}
+
+/// When a provider's usage credits expire, and who said so (#1099).
+public struct UsageCreditExpiry: Equatable, Sendable {
+    public enum Source: String, Codable, Equatable, Sendable {
+        /// The provider reported it with the balance.
+        case provider
+        /// Chris entered it in Settings because the provider reports none.
+        case entered
+    }
+
+    public let date: Date
+    public let source: Source
+
+    /// The account's own reported expiry wins over the entered one.
+    static func of(_ credits: ProviderUsageCreditSummary, entered: Date?) -> Date? {
+        credits.expiresAt ?? entered
+    }
+
+    /// The soonest provider-reported expiry among the provider's balances in `reading`, else the entered day.
+    public static func current(provider: Provider, reading: StoredUsageSnapshot, entered: Date?) -> UsageCreditExpiry? {
+        let reported = reading.reports.compactMap { report -> Date? in
+            guard report.provider == provider, let credits = report.usageCredits, (credits.balance ?? 0) > 0 else { return nil }
+            return credits.expiresAt
+        }.min()
+        if let reported { return UsageCreditExpiry(date: reported, source: .provider) }
+        return entered.map { UsageCreditExpiry(date: $0, source: .entered) }
     }
 }
 
@@ -128,6 +181,7 @@ public enum UnusedCapacityHistory {
 
     /// Per provider seen in `readings`, last week's and this week's unused capacity. Readings may come in any order.
     public static func summaries(readings: [StoredUsageSnapshot], now: Date, calendar: Calendar = .current,
+                                 enteredCreditExpiries: [Provider: Date] = [:],
                                  resolve: ProviderRefillDetector.AccountResolver = ProviderRefillDetector.localAccountID)
         -> [ProviderUnusedCapacity] {
         let ordered = readings.filter { $0.savedAt <= now }.sorted { $0.savedAt < $1.savedAt }
@@ -139,7 +193,8 @@ public enum UnusedCapacityHistory {
             var weeks = [last, this]
             for (previous, current) in zip(ordered, ordered.dropFirst()) {
                 guard let index = weeks.firstIndex(where: { $0.start <= current.savedAt && current.savedAt < $0.end }) else { continue }
-                add(provider: provider, previous: previous, current: current, resolve: resolve, into: &weeks[index])
+                add(provider: provider, previous: previous, current: current, enteredCreditExpiry: enteredCreditExpiries[provider],
+                    resolve: resolve, into: &weeks[index])
             }
             return ProviderUnusedCapacity(provider: provider, lastWeek: weeks[0], thisWeek: weeks[1],
                 lastWeekLine: line("Last week", provider: provider, week: weeks[0]),
@@ -148,10 +203,11 @@ public enum UnusedCapacityHistory {
     }
 
     /// Resolves history rows the way the app's shared presentation does, so two logins on one account count once.
-    public static func summaries(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration],
-                                 publisherID: String?, now: Date) -> [ProviderUnusedCapacity] {
-        summaries(readings: readings, now: now, resolve: UseNextEvidence.accountResolver(readings: readings,
-            configuration: configuration, publisherID: publisherID, shared: true))
+    public static func summaries(readings: [StoredUsageSnapshot], configuration: AccountConfigurationDocument,
+                                 now: Date) -> [ProviderUnusedCapacity] {
+        summaries(readings: readings, now: now, enteredCreditExpiries: configuration.enteredUsageCreditExpiries,
+            resolve: UseNextEvidence.accountResolver(readings: readings, configuration: configuration.accounts,
+                publisherID: configuration.publisherID, shared: true))
     }
 
     static func weeks(now: Date, calendar: Calendar) -> (this: UnusedCapacityWeek, last: UnusedCapacityWeek) {
@@ -161,7 +217,7 @@ public enum UnusedCapacityHistory {
         return (UnusedCapacityWeek(start: this.start, end: this.end), UnusedCapacityWeek(start: last.start, end: last.end))
     }
 
-    static func add(provider: Provider, previous: StoredUsageSnapshot, current: StoredUsageSnapshot,
+    static func add(provider: Provider, previous: StoredUsageSnapshot, current: StoredUsageSnapshot, enteredCreditExpiry: Date?,
                     resolve: ProviderRefillDetector.AccountResolver, into week: inout UnusedCapacityWeek) {
         week.readings += 1
         // Two logins on one account resolve to one ID and count once.
@@ -195,12 +251,12 @@ public enum UnusedCapacityHistory {
                let new = ProviderRefillDetector.banked(provider: provider, accountID: report.accountID, reading: current) {
                 expiredResets[id] = max(expiredResets[id] ?? 0, old.change(to: new, at: current.savedAt).expired)
             }
-            // The seam for credit expiry: counted only when an adapter reports a date; spending is never waste.
-            if let credits = report.usageCredits, let expiry = credits.expiresAt {
+            // Counted only at a known expiry, reported or entered; spending before it is never waste. The balance
+            // still held at the expiry is what expired: a new grant afterward does not hide it.
+            if let credits = report.usageCredits, let expiry = UsageCreditExpiry.of(credits, entered: enteredCreditExpiry) {
                 week.usageCreditsExpiredUnused = week.usageCreditsExpiredUnused ?? 0
                 guard let balance = credits.balance, previous.savedAt < expiry, expiry <= current.savedAt else { continue }
-                let after = current.reports.first { $0.provider == provider && $0.accountID == report.accountID }?.usageCredits?.balance ?? 0
-                expiredCredits[id] = max(expiredCredits[id] ?? 0, max(0, balance - after))
+                expiredCredits[id] = max(expiredCredits[id] ?? 0, balance)
             }
         }
         week.bankedResetsExpiredUnused += expiredResets.values.reduce(0, +)

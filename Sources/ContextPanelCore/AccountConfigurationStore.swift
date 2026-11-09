@@ -141,8 +141,11 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public var membershipIdentityVersion: Int?
     public var removedDisplayDates: [String: Date]?
     public var restoredDisplayDates: [String: Date]?
+    /// The day each provider's usage credits expire, as Chris entered it in Settings, keyed by provider (#1099).
+    /// Used only where the provider reports no expiry of its own.
+    public var usageCreditExpiries: [String: Date]?
 
-    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, pendingRemovedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil, membershipIdentityVersion: Int? = nil, removedDisplayDates: [String: Date]? = nil, restoredDisplayDates: [String: Date]? = nil) {
+    public init(updatedAt: Date, accounts: [LocalProviderAccountConfiguration], removedAccountIDs: [String] = [], removedDisplayIDs: [String]? = nil, pendingRemovedDisplayIDs: [String]? = nil, removalUserScope: CompanionCloudKitUserScope? = nil, publisherID: String? = nil, membershipIdentityVersion: Int? = nil, removedDisplayDates: [String: Date]? = nil, restoredDisplayDates: [String: Date]? = nil, usageCreditExpiries: [String: Date]? = nil) {
         schemaVersion = 1
         self.updatedAt = updatedAt
         self.accounts = accounts
@@ -154,9 +157,21 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         self.membershipIdentityVersion = membershipIdentityVersion
         self.removedDisplayDates = removedDisplayDates
         self.restoredDisplayDates = restoredDisplayDates
+        self.usageCreditExpiries = usageCreditExpiries
     }
 
-    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, pendingRemovedDisplayIDs, removalUserScope, publisherID, membershipIdentityVersion, removedDisplayDates, restoredDisplayDates }
+    /// Entered usage-credit expiries by provider.
+    public var enteredUsageCreditExpiries: [Provider: Date] {
+        Dictionary(uniqueKeysWithValues: (usageCreditExpiries ?? [:]).compactMap { key, date in Provider(rawValue: key).map { ($0, date) } })
+    }
+
+    public mutating func setEnteredUsageCreditExpiry(_ provider: Provider, _ date: Date?) {
+        var expiries = usageCreditExpiries ?? [:]
+        expiries[provider.rawValue] = date
+        usageCreditExpiries = expiries.isEmpty ? nil : expiries
+    }
+
+    enum CodingKeys: String, CodingKey { case schemaVersion, updatedAt, accounts, removedAccountIDs, removedDisplayIDs, pendingRemovedDisplayIDs, removalUserScope, publisherID, membershipIdentityVersion, removedDisplayDates, restoredDisplayDates, usageCreditExpiries }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -171,6 +186,7 @@ public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
         membershipIdentityVersion = try container.decodeIfPresent(Int.self, forKey: .membershipIdentityVersion)
         removedDisplayDates = try container.decodeIfPresent([String: Date].self, forKey: .removedDisplayDates)
         restoredDisplayDates = try container.decodeIfPresent([String: Date].self, forKey: .restoredDisplayDates)
+        usageCreditExpiries = try container.decodeIfPresent([String: Date].self, forKey: .usageCreditExpiries)
     }
 }
 

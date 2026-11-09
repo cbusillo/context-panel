@@ -806,7 +806,9 @@ missed reset; a banked reset applied early counts in neither),
 `bankedResetsExpiredUnused` (banked resets whose count dropped at their expiry,
 not by being applied), `usageCreditsExpiredUnused` and `readings` (zero means no
 saved readings, so the week is unknown, not clean). Usage credits count as expired
-only at an expiry a provider reports; none reports one today, so that field is
+only at a known expiry: the provider's own date, or else the day Chris entered in
+Settings (OpenAI reports none; see below). The balance an account still held at
+that expiry counts as expired unused; without a known expiry the field is
 absent. `lastWeekLine` and `thisWeekLine` are the sentences the app's provider
 view shows, for example "Last week: OpenAI let 60 points refill unused at its
 normal reset; a surprise refill came with 385 points still left."
@@ -819,11 +821,19 @@ refills), `refillsUnusedPoints` (percent points of one account's weekly window,
 summed over the provider's accounts, that refill unused at the measured pace),
 `pacePerHour`, `paceMeasured` (false means no account's pace is measured and the
 points assume nothing more runs), `usageCreditsLeft` (the current balance across
-the provider's accounts, null when none reports one; no expiry is claimed),
+the provider's accounts, null when none reports one),
 `accountsSpendingUsageCredits` (accounts holding credits whose weekly quota is at
-0%, the only place credits are spent) and the sentences `line` and
-`usageCreditsLine`, for example "OpenAI: about 140 points will refill unused at
-this pace. Add work." When nothing is at risk, `line` says so. `unusedAtPace` is
+0%, the only place credits are spent), `usageCreditsExpireAt` and
+`usageCreditsExpirySource` (`provider` when a balance reports its own expiry,
+which wins, else `entered` for the day Chris entered under Settings > Usage
+credits; both null when no future expiry is known), `usageCreditsAtRisk`
+(credits expected to expire unspent: all of them while no account is at 0%,
+null when no expiry is known or while an account is spending them) and the
+sentences `line` and `usageCreditsLine`, for example "OpenAI: about 140 points
+will refill unused at this pace. Add work." and "OpenAI has 179,745 usage
+credits left. They expire Dec 31 (date entered in Settings). At this pace none
+will be spent: credits are used only once an account's weekly quota reaches 0%,
+so all 179,745 will expire unused." When nothing is at risk, `line` says so. `unusedAtPace` is
 absent when the provider has no current weekly reading to forecast from.
 `answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
@@ -1108,8 +1118,13 @@ during partial refreshes; unrelated accounts remain intact.
 
 The overview also shows numeric usage-credit balances (when reported) and all
 known reset-credit expiry dates. Missing dates are counted explicitly. The
-usage endpoint does not establish usage-credit expiry dates, so those say
-`expiry not reported`. No recurring weekly reset or future plan entitlement is
+usage endpoint does not establish usage-credit expiry dates: its `credits`
+object has only `has_credits`, `unlimited` and `balance` (plus message
+estimates in Codex's backend schema), and Codex session logs record the same
+three fields. Those say `expiry not reported` unless Chris entered the day the
+provider's credits expire under Settings > Usage credits, which shows as
+entered. The day is saved in the account setup file as its start, so credits
+left when that day begins count as expiring unused. No recurring weekly reset or future plan entitlement is
 invented. Older stored reset summaries containing only an earliest expiry remain
 readable. Failed refreshes retain a reset count without presenting old dates as
 current timing advice. All credit operations remain read-only.
