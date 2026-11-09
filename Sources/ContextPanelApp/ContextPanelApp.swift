@@ -523,6 +523,36 @@ private enum SettingsNameField: Hashable {
     case alias(String, String)
 }
 
+private extension SettingsPane {
+    /// The day each provider's usage credits expire, entered once because the provider doesn't report it (#1099).
+    @ViewBuilder var usageCreditExpirySection: some View {
+        let providers = Provider.allCases.filter { provider in
+            appModel.storedSnapshot?.reports.contains { $0.provider == provider && $0.usageCredits?.balance != nil } ?? false
+        }
+        if !providers.isEmpty { Section("Usage credits") {
+            ForEach(providers) { provider in
+                let entered = model.usageCreditExpiries[provider]
+                HStack {
+                    Toggle("\(provider.accountDisplayName) usage credits expire", isOn: Binding(
+                        get: { entered != nil },
+                        set: { model.setUsageCreditExpiry(provider, $0 ? Date() : nil); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    if let entered {
+                        DatePicker("Expiry day", selection: Binding(
+                            get: { entered },
+                            set: { model.setUsageCreditExpiry(provider, $0); appModel.loadSnapshot(reloadWidgetTimelines: false) }
+                        ), displayedComponents: .date)
+                        .labelsHidden()
+                    }
+                }
+            }
+            Text("OpenAI doesn't report when granted usage credits expire. Enter the day once; Context Panel shows it as entered, counts credits left at that day as expiring unused, and uses a provider's own date instead if one appears.")
+                .font(.caption).foregroundStyle(CPTheme.secondaryText)
+        } }
+    }
+}
+
 struct SettingsPane: View {
     @ObservedObject var appModel: ContextPanelAppModel
     @ObservedObject var navigation: SettingsNavigationModel
@@ -793,6 +823,7 @@ struct SettingsPane: View {
                     .font(.caption).foregroundStyle(CPTheme.secondaryText)
             }
             .disabled(model.isRemovingAccount)
+            usageCreditExpirySection
 
             }
             if tab == .updates {
@@ -1535,6 +1566,8 @@ private extension CompanionSyncDiagnosticsOutcome {
 @MainActor
 final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
+    /// Usage-credit expiry days entered here, by provider (#1099).
+    @Published private(set) var usageCreditExpiries: [Provider: Date] = [:]
     /// Shown under the account whose Use last mark was just moved to it.
     @Published private(set) var useLastNotice: (accountID: String, text: String)?
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
@@ -1885,6 +1918,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func load() {
         let result = store.load()
         accounts = result.document.accounts
+        usageCreditExpiries = result.document.enteredUsageCreditExpiries
         let retiredHome = ContextPanelLocations.realUserHomeDirectory().appending(path: ".codex-lab")
         let prefix = retiredHome.standardizedFileURL.path + "/"
         let stillUsed = accounts.contains { account in
@@ -2430,6 +2464,20 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     @discardableResult
+    /// Saves the day as its start, so credits left when that day begins count as expiring unused.
+    func setUsageCreditExpiry(_ provider: Provider, _ date: Date?) {
+        guard !isRemovingAccount else { return }
+        do {
+            let loaded = store.load()
+            guard loaded.status != .failure else { throw AccountConfigurationMutationError.unreadableConfiguration }
+            var document = loaded.document
+            document.setEnteredUsageCreditExpiry(provider, date.map { Calendar.current.startOfDay(for: $0) })
+            document.updatedAt = Date()
+            try store.save(document)
+            usageCreditExpiries = document.enteredUsageCreditExpiries
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     private func saveAccounts() -> Bool {
         guard !isRemovingAccount else { return false }
         do {
@@ -3369,7 +3417,8 @@ struct OverviewTechnicalDetails: View {
                 AccountCapacityCard(
                     rows: AccountCapacity.rows(configuration: model.configuredAccounts,
                         snapshot: snapshot, reports: model.storedSnapshot?.reports ?? [], now: presentationDate),
-                    burnRates: model.accountBurnRates, now: presentationDate, usesLiveClock: usesLiveClock
+                    burnRates: model.accountBurnRates, now: presentationDate, usesLiveClock: usesLiveClock,
+                    enteredCreditExpiries: model.enteredUsageCreditExpiries
                 )
                 SetupStatusStrip(model: model)
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
@@ -4177,7 +4226,8 @@ struct ProviderDashboard: View {
                 providerHistoryLinks
                 unusedCapacitySection(
                     atPace: overview.paceForecast(provider: provider).flatMap { forecast in
-                        model.storedSnapshot.map { ProviderUnusedAtPace(forecast: forecast, stored: $0) }
+                        model.storedSnapshot.map { ProviderUnusedAtPace(forecast: forecast, stored: $0,
+                            enteredCreditExpiry: model.enteredUsageCreditExpiries[provider]) }
                     },
                     weekly: model.storedSnapshot?.unusedCapacity.flatMap { stored in
                         stored.isSameWeek(as: now) ? stored.providers.first { $0.provider == provider } : nil
@@ -5449,6 +5499,8 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var historyCount: Int = 0
     @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
     private var configuredPublisherID: String?
+    /// Usage-credit expiry days entered in Settings (#1099); a provider-reported date wins over these.
+    @Published private(set) var enteredUsageCreditExpiries: [Provider: Date] = [:]
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
@@ -5763,6 +5815,7 @@ final class ContextPanelAppModel: ObservableObject {
         let configuration = refreshService.loadConfiguredAccounts().document
         configuredAccounts = configuration.accounts
         configuredPublisherID = configuration.publisherID
+        enteredUsageCreditExpiries = configuration.enteredUsageCreditExpiries
         let refreshAttentionPolicy = refreshAttentionPolicyCache.reload()
         let result = refreshService.loadCurrent(
             policy: refreshAttentionPolicy,
@@ -7394,6 +7447,7 @@ struct AccountCapacityCard: View {
     let burnRates: [String: [String: ObservedBurnRate]]
     let now: Date
     var usesLiveClock = true
+    var enteredCreditExpiries: [Provider: Date] = [:]
 
     var body: some View {
         if usesLiveClock {
@@ -7437,7 +7491,7 @@ struct AccountCapacityCard: View {
                             .foregroundStyle(CPTheme.secondaryText)
                         }
                         if let credits = row.report?.usageCredits {
-                            Text(creditText(credits) + " · expiry not reported")
+                            Text(creditText(credits) + " · " + creditExpiryText(credits, provider: row.provider))
                                 .font(.caption).foregroundStyle(CPTheme.secondaryText)
                         }
                         if let resets = row.report?.resetCredits?.presented(at: date) {
@@ -7495,6 +7549,12 @@ struct AccountCapacityCard: View {
               let rate = burnRates[row.id]?[limit.id] else { return "Burn unknown" }
         let unit = limit.unit == .percent ? "%/h" : "units/h"
         return String(format: "%.1f", rate.unitsPerHour) + unit + (rate.sampleCount == 0 ? " window average" : " observed")
+    }
+
+    private func creditExpiryText(_ credits: ProviderUsageCreditSummary, provider: Provider) -> String {
+        if let date = credits.expiresAt { return "expire \(dateText(date))" }
+        if let date = enteredCreditExpiries[provider] { return "expire \(date.formatted(.dateTime.month(.abbreviated).day())) (entered)" }
+        return "expiry not reported"
     }
 
     private func creditText(_ credits: ProviderUsageCreditSummary) -> String {

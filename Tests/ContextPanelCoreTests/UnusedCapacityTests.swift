@@ -185,7 +185,7 @@ private func banked(_ count: Int, expiries: [Date], at: Date) -> ProviderResetCr
 
 // Part 2: what will refill unused at the current pace, worded from the one pace forecast.
 
-private func paceOverview(burn: Double?, used: [String: Int], credits: [String: Double] = [:],
+private func paceOverview(burn: Double?, used: [String: Int], credits: [String: Double] = [:], reportedExpiry: Date? = nil,
                           observed: Date = wasteNow) -> (AccountOverview, StoredUsageSnapshot) {
     let names = used.keys.sorted()
     let limits = names.map { name in
@@ -195,7 +195,8 @@ private func paceOverview(burn: Double?, used: [String: Int], credits: [String: 
     }
     let reports = names.map { name in
         StoredProviderReport(provider: .openAI, accountID: name, configuredAccountID: name, accountName: name,
-            generatedAt: observed, usageCredits: credits[name].map { ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: $0) },
+            generatedAt: observed, usageCredits: credits[name].map {
+                ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: $0, expiresAt: reportedExpiry) },
             status: .healthy, errorMessage: nil)
     }
     let stored = StoredUsageSnapshot(savedAt: observed, snapshot: UsageSnapshot(generatedAt: observed, limits: limits), reports: reports)
@@ -209,9 +210,11 @@ private func paceOverview(burn: Double?, used: [String: Int], credits: [String: 
     return (overview, stored)
 }
 
-private func atPace(burn: Double?, used: [String: Int], credits: [String: Double] = [:]) throws -> ProviderUnusedAtPace {
-    let (overview, stored) = paceOverview(burn: burn, used: used, credits: credits)
-    return ProviderUnusedAtPace(forecast: try #require(overview.paceForecast(provider: .openAI)), stored: stored)
+private func atPace(burn: Double?, used: [String: Int], credits: [String: Double] = [:], reportedExpiry: Date? = nil,
+                    enteredExpiry: Date? = nil) throws -> ProviderUnusedAtPace {
+    let (overview, stored) = paceOverview(burn: burn, used: used, credits: credits, reportedExpiry: reportedExpiry)
+    return ProviderUnusedAtPace(forecast: try #require(overview.paceForecast(provider: .openAI)), stored: stored,
+                                enteredCreditExpiry: enteredExpiry, calendar: utc)
 }
 
 @Test func unusedAtPaceTellsTheSupervisorWhatWillRefillUnused() throws {
@@ -265,4 +268,99 @@ private func atPace(burn: Double?, used: [String: Int], credits: [String: Double
     let stale = AgentAccountSnapshot(configuration: configuration, stored: old, history: [], now: wasteNow)
     #expect(stale.providers.contains { $0.provider == .openAI })
     #expect(stale.providers.allSatisfy { $0.unusedAtPace == nil })
+}
+
+// #1099: when usage credits expire. OpenAI reports no expiry, so Chris enters the day in Settings.
+
+private let creditDeadline = ISO8601DateFormatter().date(from: "2026-12-31T00:00:00Z")!
+
+@Test func creditExpiryIsShownWhenKnownAndOmittedWhenNot() throws {
+    // Entered day, no account at 0%: every credit left is at risk, and the line says so and whose date it is.
+    let idle = try atPace(burn: 0.1, used: ["x": 50, "y": 60], credits: ["x": 60_000, "y": 50_000], enteredExpiry: creditDeadline)
+    #expect(idle.usageCreditsExpireAt == creditDeadline)
+    #expect(idle.usageCreditsExpirySource == .entered)
+    #expect(idle.usageCreditsAtRisk == 110_000)
+    #expect(idle.usageCreditsLine == "OpenAI has 110,000 usage credits left. They expire Dec 31 (date entered in Settings). "
+        + "At this pace none will be spent: credits are used only once an account's weekly quota reaches 0%, so all 110,000 will expire unused.")
+
+    // An account at 0% is spending them, so how many will be left at the expiry is not claimed.
+    let spending = try atPace(burn: 0.1, used: ["x": 100, "y": 60], credits: ["x": 57_000, "y": 50_000], enteredExpiry: creditDeadline)
+    #expect(spending.usageCreditsAtRisk == nil)
+    #expect(spending.usageCreditsLine == "OpenAI has 107,000 usage credits left. They expire Dec 31 (date entered in Settings). "
+        + "They are being spent on 1 account at 0% of its weekly quota.")
+
+    // No expiry known: nothing is claimed.
+    let unknown = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000])
+    #expect(unknown.usageCreditsExpireAt == nil && unknown.usageCreditsExpirySource == nil && unknown.usageCreditsAtRisk == nil)
+    #expect(unknown.usageCreditsLine?.contains("expire") == false)
+
+    // A passed expiry puts nothing at risk.
+    let passed = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000], enteredExpiry: wasteNow.addingTimeInterval(-day))
+    #expect(passed.usageCreditsExpireAt == nil && passed.usageCreditsAtRisk == nil)
+}
+
+@Test func providerReportedCreditExpiryWinsOverTheEnteredDay() throws {
+    let reported = creditDeadline.addingTimeInterval(-10 * day)
+    let both = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000], reportedExpiry: reported, enteredExpiry: creditDeadline)
+    #expect(both.usageCreditsExpireAt == reported)
+    #expect(both.usageCreditsExpirySource == .provider)
+    #expect(both.usageCreditsLine?.contains("They expire Dec 21. At this pace") == true)
+
+    // In the weekly waste number too: the account's reported expiry passes; the later entered day does not count it again.
+    let before = lastWeekDay.addingTimeInterval(-5 * minute)
+    let after = lastWeekDay.addingTimeInterval(5 * minute)
+    let reset = lastWeekDay.addingTimeInterval(3 * day)
+    let held = ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: 40_000, expiresAt: reset)
+    let readings = [wasteReading(before, ["x": WasteAccount(used: 50, reset: reset, credits: held)]),
+                    wasteReading(after, ["x": WasteAccount(used: 50, reset: reset, credits: held)])]
+    let summary = try #require(UnusedCapacityHistory.summaries(readings: readings, now: wasteNow, calendar: utc,
+        enteredCreditExpiries: [.openAI: lastWeekDay]).first)
+    #expect(summary.lastWeek.usageCreditsExpiredUnused == 0)
+}
+
+@Test func creditsLeftAtTheEnteredExpiryCountAsWastedThatWeek() throws {
+    let before = lastWeekDay.addingTimeInterval(-5 * minute)
+    let after = lastWeekDay.addingTimeInterval(5 * minute)
+    let reset = lastWeekDay.addingTimeInterval(3 * day)
+    func credits(_ balance: Double) -> ProviderUsageCreditSummary {
+        ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: balance)
+    }
+    // The provider still shows the balance after the entered day: it is counted at the day, once per account.
+    let readings = [
+        wasteReading(before.addingTimeInterval(-day), ["x": WasteAccount(used: 50, reset: reset, credits: credits(60_000)),
+                                                       "y": WasteAccount(used: 50, reset: reset, credits: credits(50_000))]),
+        wasteReading(before, ["x": WasteAccount(used: 50, reset: reset, credits: credits(59_000)),
+                              "y": WasteAccount(used: 50, reset: reset, credits: credits(50_000))]),
+        wasteReading(after, ["x": WasteAccount(used: 50, reset: reset, credits: credits(59_000)),
+                             "y": WasteAccount(used: 50, reset: reset, credits: credits(50_000))]),
+    ]
+    let summary = try #require(UnusedCapacityHistory.summaries(readings: readings, now: wasteNow, calendar: utc,
+        enteredCreditExpiries: [.openAI: lastWeekDay]).first)
+    #expect(summary.lastWeek.usageCreditsExpiredUnused == 109_000)
+    #expect(summary.lastWeekLine.hasSuffix("; 109,000 usage credits expired unused."))
+    #expect(summary.thisWeek.usageCreditsExpiredUnused == nil)
+
+    // Without the entered day nothing is counted.
+    let unknown = try #require(UnusedCapacityHistory.summaries(readings: readings, now: wasteNow, calendar: utc).first)
+    #expect(unknown.lastWeek.usageCreditsExpiredUnused == nil)
+}
+
+@Test func agentSnapshotCarriesTheEnteredCreditExpiryFromSettings() throws {
+    var configuration = AccountConfigurationDocument(updatedAt: wasteNow, accounts: [LocalProviderAccountConfiguration(
+        id: "x", provider: .openAI, connectorKind: .codexRateLimits, displayName: "x", authPath: "/not/read/x")])
+    configuration.setEnteredUsageCreditExpiry(.openAI, creditDeadline)
+    // The entered day survives a save and load of the settings file.
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try store.save(configuration)
+    let saved = store.load(now: wasteNow).document
+    #expect(saved.enteredUsageCreditExpiries == [.openAI: creditDeadline])
+    let (_, current) = paceOverview(burn: nil, used: ["x": 40], credits: ["x": 60_000])
+    let snapshot = AgentAccountSnapshot(configuration: saved, stored: current, history: [], now: wasteNow)
+    let atPace = try #require(snapshot.providers.first { $0.provider == .openAI }?.unusedAtPace)
+    #expect(atPace.usageCreditsExpireAt == creditDeadline)
+    #expect(atPace.usageCreditsAtRisk == 60_000)
+    let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(atPace)) as? [String: Any])
+    #expect(json["usageCreditsExpirySource"] as? String == "entered")
 }

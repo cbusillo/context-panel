@@ -352,7 +352,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         providers = overview.providerTotals(now: now).map { total in
             ProviderDisplay(total: total, now: now, unusedCapacity: unused.first { $0.provider == total.provider },
                 unusedAtPace: overview.paceForecast(provider: total.provider).map {
-                    ProviderUnusedAtPace(forecast: $0, stored: stored, resolve: resolve)
+                    ProviderUnusedAtPace(forecast: $0, stored: stored,
+                        enteredCreditExpiry: configuration.enteredUsageCreditExpiries[total.provider], resolve: resolve)
                 })
         }
         headline = Headline(overview: overview, now: now)

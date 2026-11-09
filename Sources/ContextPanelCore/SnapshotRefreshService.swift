@@ -906,7 +906,7 @@ public struct SnapshotRefreshService: Sendable {
         }
         let history = stores.primary.loadHistory(query: SnapshotStoreQuery(since: UnusedCapacityHistory.historyStart(now: now)))
         let unused = StoredUnusedCapacity(computedAt: now, providers: UnusedCapacityHistory.summaries(
-            readings: history + [stored], configuration: document?.accounts ?? [], publisherID: document?.publisherID, now: now))
+            readings: history + [stored], configuration: document ?? AccountConfigurationDocument(updatedAt: now, accounts: []), now: now))
         guard (try? stores.primary.saveCurrent(unusedCapacity: unused)) != nil else { return result }
         stored.unusedCapacity = unused
         return SnapshotStoreLoadResult(snapshot: stored, status: result.status, errorMessage: result.errorMessage)
