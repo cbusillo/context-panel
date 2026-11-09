@@ -5537,6 +5537,8 @@ final class ContextPanelAppModel: ObservableObject {
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let fixedPresentationDate: Date?
     private var fixtureDisplayMetadata: [AccountDisplayMetadata]?
+    private var sharedPresentationDocument: (document: CompanionSyncDocument?, builtAt: Date)?
+    private var sharedPresentationInvalidation: AnyCancellable?
 
     private var presentationDate: Date {
         fixedPresentationDate ?? Date()
@@ -5547,12 +5549,24 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var currentSnapshot: UsageSnapshot {
-        if fixedPresentationDate == nil, let storedSnapshot,
-           let shared = refreshService.sharedAccountPresentation(stored: storedSnapshot, now: presentationDate,
-               accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates, launchEvidence: launchEvidence) {
+        if let storedSnapshot, let shared = sharedPresentation(stored: storedSnapshot, now: presentationDate) {
             return shared.usageSnapshot
         }
         return observedSnapshot.presented(at: presentationDate)
+    }
+
+    /// Views ask for the presentation on every one-second tick. The shared document reads and decodes
+    /// saved files, so it is built once per model change, or once a minute, and only the cheap,
+    /// time-dependent projection runs per tick (#1098).
+    private func sharedPresentation(stored: StoredUsageSnapshot, now: Date) -> WidgetSnapshot? {
+        guard fixedPresentationDate == nil else { return nil }
+        if sharedPresentationDocument.map({ abs(now.timeIntervalSince($0.builtAt)) >= 60 }) ?? true {
+            sharedPresentationDocument = (refreshService.sharedPresentationDocument(stored: stored, now: now,
+                accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates, launchEvidence: launchEvidence), now)
+        }
+        return sharedPresentationDocument?.document.map {
+            WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: $0, status: .healthy), now: now)
+        }
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
@@ -5772,6 +5786,10 @@ final class ContextPanelAppModel: ObservableObject {
                 remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
             )
             : nil
+        // Every published change (snapshot, rates, settings, accounts) can change the shared document.
+        sharedPresentationInvalidation = objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.sharedPresentationDocument = nil }
+        }
     }
 
     static func validationFixture(context: ValidationGalleryContext) -> ContextPanelAppModel {
@@ -5929,8 +5947,7 @@ final class ContextPanelAppModel: ObservableObject {
     func accountPresentation(at now: Date) -> (overview: AccountOverview, snapshot: UsageSnapshot, reports: [StoredProviderReport]) {
         let stored = storedSnapshot ?? StoredUsageSnapshot(savedAt: now,
             snapshot: UsageSnapshot(generatedAt: now, limits: []))
-        if fixedPresentationDate == nil, let shared = refreshService.sharedAccountPresentation(stored: stored, now: now,
-            accountBurnRates: accountBurnRates, observedBurnRates: observedBurnRates, launchEvidence: launchEvidence) {
+        if let shared = sharedPresentation(stored: stored, now: now) {
             return (shared.accountOverview(now: now, maximumAge: SnapshotFreshness.appMaximumAge), shared.usageSnapshot, shared.reports)
         }
         let overview = AccountOverview(snapshot: stored.snapshot, reports: stored.reports,

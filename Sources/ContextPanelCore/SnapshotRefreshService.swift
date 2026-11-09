@@ -614,13 +614,12 @@ public struct SnapshotRefreshService: Sendable {
 
     public func invalidateSharedAccounts() { companionSyncPublisher?.sharedAccountCache?.invalidate() }
     public func receiveSharedAccounts(now: Date) async { _ = await companionSyncPublisher?.receiveSharedAccounts(now: now) }
-    public func sharedAccountPresentation(stored: StoredUsageSnapshot, now: Date,
+    /// Reads and decodes saved files, so callers keep the document until its inputs change (#1098).
+    public func sharedPresentationDocument(stored: StoredUsageSnapshot, now: Date,
         accountBurnRates: [String: [String: ObservedBurnRate]] = [:], observedBurnRates: [String: ObservedBurnRate] = [:],
-        launchEvidence: UseNextEvidence? = nil) -> WidgetSnapshot? {
-        guard let publisher = companionSyncPublisher else { return nil }
-        let document = publisher.presentationDocument(storedSnapshot: stored, now: now, accountBurnRates: accountBurnRates,
+        launchEvidence: UseNextEvidence? = nil) -> CompanionSyncDocument? {
+        companionSyncPublisher?.presentationDocument(storedSnapshot: stored, now: now, accountBurnRates: accountBurnRates,
             observedBurnRates: observedBurnRates, launchEvidence: launchEvidence)
-        return WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: document, status: .healthy), now: now)
     }
 
     public func loadLaunchReceipts(now: Date) -> [LaunchReceipt] {
