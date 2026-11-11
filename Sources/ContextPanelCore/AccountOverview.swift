@@ -330,9 +330,9 @@ public struct AccountOverview: Equatable, Sendable {
             account.spendsUsageCredits = entry.provider == .openAI && report?.accessState.kind == .paidFallbackActive
             return account
         }
-        let heavyBefore = Set(launchEvidence.heavyProviders ?? [])
         let forecasts = Dictionary(uniqueKeysWithValues: Provider.allCases.compactMap { provider in
-            ProviderPaceForecast.make(provider: provider, accounts: allAccounts, wasHeavy: heavyBefore.contains(provider), now: now)
+            UseNextRanking.make(provider: provider, rows: allAccounts.filter { $0.metadata.provider == provider },
+                evidence: launchEvidence, now: now).forecast
                 .map { (provider, $0) }
         })
         paceForecasts = forecasts

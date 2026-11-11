@@ -42,6 +42,13 @@ public struct BankedResetDeadlinesView: View {
                             let dates = summary.knownExpiries.isEmpty
                                 ? summary.earliestKnownExpiry.map { [$0] } ?? [] : summary.knownExpiries
                             Text("\(summary.availableCount) banked resets")
+                            if summary.excludedOfferCount > 0 {
+                                Text("\(summary.excludedOfferCount) offers with no resets left").foregroundStyle(.secondary)
+                            }
+                            if summary.unrecognizedKindCount > 0 {
+                                Text("\(summary.unrecognizedKindCount) model-only or unrecognized resets, excluded from the plan")
+                                    .foregroundStyle(.secondary)
+                            }
                             ForEach(Array(dates.enumerated()), id: \.offset) { _, expiry in
                                 Text("Expires \(ContextPanelDateFormatting.resetDeadline(expiry))")
                             }

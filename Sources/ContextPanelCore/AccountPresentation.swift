@@ -279,9 +279,19 @@ public enum AccountTerms {
             return "Saved readings. Refresh \(provider.accountDisplayName) on your Mac before choosing an account."
         }
         let reasons = ranking.excluded.map { "\($0.label): \($0.reason)" }
-            + ranking.entries.filter { $0.weight <= 0 }.map { "\($0.label): \($0.reason)" }
+            + ranking.entries.filter { !$0.canLaunch }.map { "\($0.label): \($0.reason)" }
         guard !reasons.isEmpty else { return noEligibleAccount }
         return reasons.joined(separator: "\n")
+    }
+
+    public static func useNextStrategy(_ overview: AccountOverview, provider: Provider) -> String {
+        let ranking = overview.useNextRanking(provider: provider)
+        guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else {
+            return useNextUnavailableReason(overview, provider: provider)
+        }
+        let target = entry.targetPointsPerHour.map { String(format: "Target %.1f%% per hour. ", $0) }
+            ?? "Credit pace is not measured. "
+        return target + entry.reason
     }
 
     /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.

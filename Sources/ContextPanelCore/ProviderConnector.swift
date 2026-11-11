@@ -62,9 +62,12 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
     public let knownExpiries: [Date]
     /// Claude resets are full weekly refills; this counts grants of any other kind, flagged rather than valued.
     public let unrecognizedKindCount: Int
+    public let excludedOfferCount: Int
+    /// Claude inventories before this marker mixed general resets with offers and model grants.
+    public let generalWeeklyOnly: Bool
 
     enum CodingKeys: String, CodingKey {
-        case availableCount, observedAt, coverage, earliestKnownExpiry, knownExpiries, unrecognizedKindCount
+        case availableCount, observedAt, coverage, earliestKnownExpiry, knownExpiries, unrecognizedKindCount, excludedOfferCount, generalWeeklyOnly
     }
 
     public init(
@@ -73,11 +76,13 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         coverage: ProviderResetCreditCoverage,
         earliestKnownExpiry: Date? = nil,
         knownExpiries: [Date] = [],
-        unrecognizedKindCount: Int = 0
+        unrecognizedKindCount: Int = 0, excludedOfferCount: Int = 0, generalWeeklyOnly: Bool = false
     ) {
         let normalizedCount = max(0, availableCount)
         self.availableCount = normalizedCount
-        self.unrecognizedKindCount = min(normalizedCount, max(0, unrecognizedKindCount))
+        self.unrecognizedKindCount = max(0, unrecognizedKindCount)
+        self.excludedOfferCount = max(0, excludedOfferCount)
+        self.generalWeeklyOnly = generalWeeklyOnly
         self.observedAt = observedAt
         let dates = Array(knownExpiries.sorted().prefix(normalizedCount))
         let earliest = dates.first ?? earliestKnownExpiry
@@ -99,7 +104,9 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
             coverage: try container.decode(ProviderResetCreditCoverage.self, forKey: .coverage),
             earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry),
             knownExpiries: try container.decodeIfPresent([Date].self, forKey: .knownExpiries) ?? [],
-            unrecognizedKindCount: try container.decodeIfPresent(Int.self, forKey: .unrecognizedKindCount) ?? 0
+            unrecognizedKindCount: try container.decodeIfPresent(Int.self, forKey: .unrecognizedKindCount) ?? 0,
+            excludedOfferCount: try container.decodeIfPresent(Int.self, forKey: .excludedOfferCount) ?? 0,
+            generalWeeklyOnly: try container.decodeIfPresent(Bool.self, forKey: .generalWeeklyOnly) ?? false
         )
     }
 
@@ -112,6 +119,8 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         try container.encode(knownExpiries, forKey: .knownExpiries)
         // Absent unless a grant of another kind appears, so ordinary payloads are unchanged.
         if unrecognizedKindCount > 0 { try container.encode(unrecognizedKindCount, forKey: .unrecognizedKindCount) }
+        if excludedOfferCount > 0 { try container.encode(excludedOfferCount, forKey: .excludedOfferCount) }
+        if generalWeeklyOnly { try container.encode(true, forKey: .generalWeeklyOnly) }
     }
 
     static func preferred(_ lhs: Self?, _ rhs: Self?) -> Self? {
@@ -138,7 +147,7 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         let remaining = max(0, availableCount - expired.count)
         let coverage: ProviderResetCreditCoverage = future.count == remaining ? .complete : (future.isEmpty ? .countOnly : .partial)
         return Self(availableCount: remaining, observedAt: observedAt, coverage: coverage, knownExpiries: future,
-                    unrecognizedKindCount: unrecognizedKindCount)
+                    unrecognizedKindCount: unrecognizedKindCount, excludedOfferCount: excludedOfferCount, generalWeeklyOnly: generalWeeklyOnly)
     }
 
     /// From this reading to `new` at `now`: how many resets left by expiring, and whether any left another way (applied).

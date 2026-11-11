@@ -58,24 +58,20 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
     public var receipts: [LaunchReceipt]
     /// When each reading was saved (history and current); a receipt counts as reflected after two later readings.
     public var readingTimes: [Date]
-    /// For an unstarted OpenAI account, the first reading in the current unstarted run.
-    public var unstartedSince: [String: Date]
     public var accountReadingTimes: [String: [Date]]?
-    /// Providers whose saved readings carry a heavy week (#1079), so the call stays sticky across refreshes.
-    public var heavyProviders: [Provider]?
+    public var credits: [String: UsageCreditCapacity]?
 
-    public init(receipts: [LaunchReceipt] = [], readingTimes: [Date] = [], unstartedSince: [String: Date] = [:],
-                accountReadingTimes: [String: [Date]]? = nil, heavyProviders: [Provider]? = nil) {
+    public init(receipts: [LaunchReceipt] = [], readingTimes: [Date] = [],
+                accountReadingTimes: [String: [Date]]? = nil, credits: [String: UsageCreditCapacity]? = nil) {
         self.receipts = receipts
         self.readingTimes = readingTimes
-        self.unstartedSince = unstartedSince
         self.accountReadingTimes = accountReadingTimes
-        self.heavyProviders = heavyProviders
+        self.credits = credits
     }
 
     public static func make(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot],
         configuration: [LocalProviderAccountConfiguration], publisherID: String?,
-        receipts: [LaunchReceipt], shared: Bool) -> Self {
+        receipts: [LaunchReceipt], shared: Bool, enteredCreditExpiries: [Provider: Date] = [:]) -> Self {
         let readings = history + [stored]
         let companionResolve = accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: true)
         let resolve = shared ? companionResolve : accountResolver(readings: readings, configuration: configuration, publisherID: publisherID, shared: false)
@@ -99,9 +95,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         }
         accountTimes = accountTimes.mapValues { Array(Set($0).sorted().suffix(2)) }
         return Self(receipts: receipts, readingTimes: Array(Set(readings.map(\.savedAt)).sorted().suffix(2)),
-            unstartedSince: ProviderRefillDetector.unstartedSince(readings: readings, resolve: resolve),
             accountReadingTimes: accountTimes,
-            heavyProviders: ProviderPaceForecast.heavyBefore(stored: stored, history: history))
+            credits: UsageCreditCapacity.make(stored: stored, history: history, resolve: resolve, entered: enteredCreditExpiries))
     }
 
     static func accountResolver(readings: [StoredUsageSnapshot], configuration: [LocalProviderAccountConfiguration],
@@ -117,15 +112,14 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
 
     func retainingAccounts(_ ids: Set<String>) -> Self {
         Self(receipts: receipts.filter { ids.contains($0.accountID) }, readingTimes: readingTimes,
-            unstartedSince: unstartedSince.filter { ids.contains($0.key) },
-            accountReadingTimes: accountReadingTimes?.filter { ids.contains($0.key) }, heavyProviders: heavyProviders)
+            accountReadingTimes: accountReadingTimes?.filter { ids.contains($0.key) }, credits: credits?.filter { ids.contains($0.key) })
     }
 
     func excludingAccounts(_ ids: Set<String>) -> Self {
         var result = self
         result.receipts.removeAll { ids.contains($0.accountID) }
-        result.unstartedSince = unstartedSince.filter { !ids.contains($0.key) }
         result.accountReadingTimes = accountReadingTimes?.filter { !ids.contains($0.key) }
+        result.credits = credits?.filter { !ids.contains($0.key) }
         return result
     }
 
@@ -140,23 +134,23 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         let times = (accountReadingTimes ?? [:]).merging(other.accountReadingTimes ?? [:]) { Array(Set($0 + $1)).sorted() }
             .mapValues { Array($0.sorted().suffix(2)) }
         return Self(receipts: receipts, readingTimes: Array(Set(readingTimes + other.readingTimes).sorted().suffix(2)),
-            unstartedSince: unstartedSince.merging(other.unstartedSince) { _, newer in newer },
-            // The newer call wins: an older heavy call must not outlive the refill that ended it.
-            accountReadingTimes: times.isEmpty ? nil : times, heavyProviders: other.heavyProviders ?? heavyProviders)
+            accountReadingTimes: times.isEmpty ? nil : times, credits: (credits ?? [:]).merging(other.credits ?? [:]) { $0.observedAt > $1.observedAt ? $0 : $1 })
     }
 
     func reidentifyingAccounts(using aliases: [String: String]) -> Self {
         Self(receipts: receipts.map { LaunchReceipt(provider: $0.provider, accountID: aliases[$0.accountID] ?? $0.accountID,
                 launchedAt: $0.launchedAt, receiptID: $0.receiptID) },
             readingTimes: readingTimes,
-            unstartedSince: Dictionary(unstartedSince.map { (aliases[$0.key] ?? $0.key, $0.value) }, uniquingKeysWith: min),
             accountReadingTimes: accountReadingTimes.map { times in
                 Dictionary(times.map { (aliases[$0.key] ?? $0.key, $0.value) },
                     uniquingKeysWith: { Array(Set($0 + $1).sorted().suffix(2)) })
-            }, heavyProviders: heavyProviders)
+            }, credits: credits.map { values in
+                Dictionary(values.map { (aliases[$0.key] ?? $0.key, $0.value) },
+                    uniquingKeysWith: { $0.observedAt > $1.observedAt ? $0 : $1 })
+            })
     }
 
-    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, unstartedSince, accountReadingTimes, heavyProviders }
+    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, accountReadingTimes, credits }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let groups = try container.decodeIfPresent([String: [String: [String: Date]]].self, forKey: .launches) {
@@ -171,9 +165,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             }
         } else { receipts = try container.decodeIfPresent([LaunchReceipt].self, forKey: .receipts) ?? [] }
         readingTimes = try container.decodeIfPresent([Date].self, forKey: .readingTimes) ?? []
-        unstartedSince = try container.decodeIfPresent([String: Date].self, forKey: .unstartedSince) ?? [:]
         accountReadingTimes = try container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes)
-        heavyProviders = try container.decodeIfPresent([Provider].self, forKey: .heavyProviders)
+        credits = try container.decodeIfPresent([String: UsageCreditCapacity].self, forKey: .credits)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -189,60 +182,45 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             try container.encode(groups, forKey: .launches)
         } else { try container.encode(receipts, forKey: .receipts) }
         try container.encode(readingTimes, forKey: .readingTimes)
-        try container.encode(unstartedSince, forKey: .unstartedSince)
         try container.encodeIfPresent(accountReadingTimes, forKey: .accountReadingTimes)
-        try container.encodeIfPresent(heavyProviders, forKey: .heavyProviders)
+        try container.encodeIfPresent(credits, forKey: .credits)
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
         let counts = { (receipts: [LaunchReceipt]) in Dictionary(grouping: receipts, by: { $0 }).mapValues { $0.count } }
         return counts(lhs.receipts) == counts(rhs.receipts) && lhs.readingTimes == rhs.readingTimes
-            && lhs.unstartedSince == rhs.unstartedSince && lhs.accountReadingTimes == rhs.accountReadingTimes
-            && lhs.heavyProviders == rhs.heavyProviders
+            && lhs.accountReadingTimes == rhs.accountReadingTimes
+            && lhs.credits == rhs.credits
     }
 }
 
 public struct UseNextRanking: Encodable, Equatable, Sendable {
-    public enum Tier: Int, Codable, Sendable {
-        /// Capacity that lapses unless more work is sent: unstarted OpenAI clocks and positive need.
-        case needsUse = 1
-        /// The provider's use-last account, above its personal cushion.
-        case useLast = 2
-        /// On pace or ahead; used only when no account has positive need.
-        case onPace = 3
-        /// Plan quota used up, but OpenAI says usage credits keep it working: used only after plan quota
-        /// that would lapse, and before the use-last account's cushion.
-        case usageCredits = 4
-    }
-
     public struct Entry: Encodable, Equatable, Sendable {
         public let accountID: String
         public let label: String
-        public let tier: Tier
-        /// Extra points per hour needed so nothing lapses at the deadline; negative when ahead of pace.
-        public let need: Double
-        /// The D'Hondt weight a batch splits by; zero takes no launches.
-        public let weight: Double
         public let reason: String
         public let deadline: Date
         public let unstarted: Bool
-        /// Gets one launch before the batch is split, to start its clock.
-        public let starter: Bool
         public let remaining: Double
         public let burn: Double
         public let burnEstimated: Bool
-        /// Points held for the Director's own use on the use-last account.
         public let reserve: Double?
-        /// Launches from receipts that the readings don't show yet.
         public let pendingLaunches: Int
         public let notes: [String]
+        /// Target for new work on this account, in weekly percentage points per hour.
+        public let targetPointsPerHour: Double?
+        public let canLaunch: Bool
+        public let targetCreditsPerHour: Double?
+        /// Zero is a plan, never an instruction to redeem a reset.
+        public let depleteBy: Date?
+        public let availablePoints: Double
+        public let pointsPerLaunch: Double?
     }
 
     public struct Exclusion: Encodable, Equatable, Sendable {
         public let accountID: String
         public let label: String
         public let reason: String
-        /// When the account can take work again, when known.
         public let until: Date?
     }
 
@@ -250,29 +228,23 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
     public let entries: [Entry]
     public let excluded: [Exclusion]
     public let useNextAccountID: String?
-    /// With nothing rankable, the earliest time capacity returns.
     public let nextCapacityAt: Date?
-    /// More than one use-last account on this provider: a configuration error; use-last is ignored.
     public let multipleUseLast: Bool
-    /// The ordinary stale-only fallback, published with its age. Codex sign-in exceptions retain launch eligibility separately.
     public let basedOnStaleReadings: Bool
     public let readingsObservedAt: Date?
-    /// Account IDs for the next launches in order, by D'Hondt over the weights.
     public let launchOrder: [String]
+    public let targetPointsPerHour: Double?
+    public let forecast: ProviderPaceForecast?
 
-    /// The personal cushion never goes below this many points.
     public static let useLastFloor: Double = 3
-    /// A stale list may still steer launches while its readings are this young.
     public static let staleListMaximumAge: TimeInterval = 30 * 60
     static let minimumHours = 0.25
     static let weekHours = 7.0 * 24
     static let launchOrderLength = 10
     static let fiveHourGatePoints: Double = 5
     static let unstartedTolerance: TimeInterval = 10 * 60
-    static let starterDelay: TimeInterval = 3_600
     static let receiptReflectedAfter: TimeInterval = 30 * 60
 
-    /// A window's full length in hours; a week when its period is unknown.
     static func windowHours(_ period: MainLimitWindow?) -> Double {
         switch period {
         case .fiveHour: 5
@@ -286,29 +258,15 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         return abs(resetsAt.timeIntervalSince(observedAt) - weekHours * 3_600) <= unstartedTolerance
     }
 
-    /// D'Hondt: starters first, then the highest weight ÷ (1 + launches already given).
+    /// Deadline order, allowing for launches whose spend has not appeared in a reading yet.
     public static func nextPick(_ entries: [Entry], counts: [String: Int]) -> String? {
-        if let starter = entries.first(where: { $0.starter && counts[$0.accountID, default: 0] == 0 }) {
-            return starter.accountID
-        }
-        var best: (entry: Entry, quotient: Double)?
-        for entry in entries where entry.weight > 0 {
-            let given = counts[entry.accountID, default: 0] - (entry.starter ? 1 : 0)
-            let quotient = entry.weight / Double(1 + max(0, given))
-            if let current = best {
-                if quotient > current.quotient + 1e-12
-                    || abs(quotient - current.quotient) <= 1e-12
-                        && (entry.tier.rawValue, -entry.weight) < (current.entry.tier.rawValue, -current.entry.weight) {
-                    best = (entry, quotient)
-                }
-            } else {
-                best = (entry, quotient)
-            }
-        }
-        return best?.entry.accountID
+        entries.first { entry in
+            entry.canLaunch && (entry.pointsPerLaunch.map {
+                entry.availablePoints > Double(counts[entry.accountID, default: 0]) * $0
+            } ?? true)
+        }?.accountID
     }
 
-    /// The general weekly window (daily when there is none), not a model-only window such as gpt-reserve.
     static func main<T>(of items: [T], provider: Provider, period: (T) -> MainLimitWindow?, model: (T) -> String?,
                         remaining: (T) -> Double?) -> T? {
         let weekly = items.filter { period($0) == .weekly }
@@ -320,7 +278,6 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             ?? pool.min { (remaining($0) ?? 1) < (remaining($1) ?? 1) }
     }
 
-    /// Splits a batch of launches, continuing from the launches already counted.
     public static func allocate(_ entries: [Entry], launches: Int, counts: [String: Int] = [:]) -> [String] {
         var counts = counts
         var picks: [String] = []
@@ -331,41 +288,26 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         }
         return picks
     }
-}
 
-public extension AccountOverview {
-    /// `multipleUseLast:<provider>` for each provider with more than one use-last account.
-    var configurationErrors: [String] {
-        Provider.allCases.compactMap { provider in
-            accounts.filter { $0.metadata.provider == provider && $0.metadata.useLast }.count > 1
-                ? "multipleUseLast:\(provider.rawValue)" : nil
-        }
-    }
-
-    func useNextRanking(provider: Provider, evidence suppliedEvidence: UseNextEvidence? = nil) -> UseNextRanking {
-        var evidence = suppliedEvidence ?? launchEvidence
-        let now = rankedAt
-        evidence.receipts = evidence.receipts.filter { LaunchReceiptStore.isUsable($0, now: now) }
-        let rows = accounts.filter { $0.metadata.provider == provider }
+    static func make(provider: Provider, rows: [AccountOverview.Account], evidence: UseNextEvidence, now: Date) -> Self {
         let multipleUseLast = rows.filter(\.metadata.useLast).count > 1
         let current = rows.filter { [.available, .closeToLimit, .limited].contains($0.state) }
         let savedCodex = rows.filter { $0.isCodexSignInExpired && $0.state == .unavailable && $0.hasKnownCapacity }
         let recentStale = current.isEmpty && !savedCodex.isEmpty ? rows.filter { row in
             row.state == .stale && row.observedAt.map {
-                (0..<UseNextRanking.staleListMaximumAge).contains(now.timeIntervalSince($0))
+                (0..<staleListMaximumAge).contains(now.timeIntervalSince($0))
             } == true
         } : []
         let launchable = current + savedCodex + recentStale
         let staleOnly = launchable.isEmpty && rows.contains { $0.state == .stale }
         let rankable = staleOnly ? rows.filter { $0.state == .stale } : launchable
-        let pending = Self.pendingLaunches(evidence: evidence, rows: rows, now: now)
-        let measured = rankable.compactMap { $0.mainWindow.flatMap { $0.isCurrent ? $0.burnPoints : nil } }
-        let averageBurn = measured.isEmpty ? 0 : measured.reduce(0, +) / Double(measured.count)
-        let pointsPerLaunch = Self.pointsPerLaunch(rows: rankable, evidence: evidence, now: now, multipleUseLast: multipleUseLast)
-
-        var excluded: [UseNextRanking.Exclusion] = []
-        var candidates: [Candidate] = []
-        var onCredits: [Candidate] = []
+        let pending = AccountOverview.pendingLaunches(evidence: evidence, rows: rows, now: now)
+        let measured = current.compactMap { $0.mainWindow.flatMap { $0.isCurrent ? $0.burnPoints : nil } }
+        let pace = measured.reduce(0, +)
+        let averageBurn = measured.isEmpty ? 0 : pace / Double(measured.count)
+        let pointsPerLaunch = AccountOverview.pointsPerLaunch(rows: rankable, evidence: evidence, now: now, multipleUseLast: multipleUseLast)
+        var excluded: [Exclusion] = []
+        var plans: [SpendPlan] = []
         for row in rows {
             let exclude = { (reason: String, until: Date?) in
                 excluded.append(.init(accountID: row.id, label: row.metadata.label, reason: reason, until: until))
@@ -376,192 +318,177 @@ public extension AccountOverview {
             }
             guard let main = row.mainWindow, let fraction = main.remainingFraction,
                   main.confidence != .unknown else { exclude("No weekly reading", nil); continue }
-            // An event-driven window past its reset with no use since is assumed full and its next reset is unknown,
-            // so its allowance is spread over one whole window from now; the next launch brings a real reading.
             let assumesCodexReset = row.isCodexSignInExpired && main.naturalResetAt.map { reset in
                 main.observedAt.map { $0 < reset && reset <= now } == true
             } == true
             let assumedFull = main.assumption != nil || assumesCodexReset
             let remaining = assumesCodexReset ? 100 : fraction * 100
-            let useLast = row.metadata.useLast && !multipleUseLast
-            let ownBurn = main.isCurrent ? main.burnPoints : nil
-            // OpenAI keeps an account past its used-up plan quota while usage credits cover it.
-            let spendCredits = { (resetAt: Date?) in
-                onCredits.append(Candidate(row: row, remaining: remaining, burn: ownBurn ?? averageBurn,
-                    burnEstimated: ownBurn == nil, hours: 0, deadline: resetAt ?? main.naturalResetAt ?? now,
-                    unstarted: false, starter: false, useLast: useLast, reserve: nil, need: 0, notes: []))
-            }
-            guard remaining > 0 else {
-                if row.spendsUsageCredits { spendCredits(main.naturalResetAt) } else {
-                    exclude("Out of quota until its reset", main.naturalResetAt)
-                }
-                continue
-            }
+            let unstarted = !assumesCodexReset && provider == .openAI && row.isUnstarted(main)
+            let fresh = assumedFull || unstarted ? now.addingTimeInterval(windowHours(main.period) * 3_600) : nil
+            guard let refill = fresh ?? main.naturalResetAt, refill > now else { exclude("Reset time unknown", nil); continue }
+            var gatedUntil: Date?
             if let gate = row.fiveHourGate, gate.isCurrent || (gate.naturalResetAt ?? .distantPast) > now,
                let gateFraction = gate.remainingFraction {
-                let gateLeft = gateFraction * 100
-                let hoursToGateReset = gate.naturalResetAt.map { max(0, $0.timeIntervalSince(now) / 3_600) }
-                let projected = gate.isCurrent ? (gate.burnPoints ?? 0) * (hoursToGateReset ?? 0) : 0
-                if gateLeft < UseNextRanking.fiveHourGatePoints || projected > 0 && projected >= gateLeft {
-                    if row.spendsUsageCredits { spendCredits(gate.naturalResetAt) } else {
+                let hours = gate.naturalResetAt.map { max(0, $0.timeIntervalSince(now) / 3_600) } ?? 0
+                if gateFraction * 100 < fiveHourGatePoints || (gate.isCurrent && (gate.burnPoints ?? 0) * hours >= gateFraction * 100) {
+                    if !row.spendsUsageCredits {
                         exclude("5-hour limit nearly used; free again at its 5-hour reset", gate.naturalResetAt)
+                        gatedUntil = gate.naturalResetAt ?? refill
                     }
-                    continue
                 }
             }
-            let unstarted = !assumesCodexReset && provider == .openAI && row.isUnstarted(main)
-            let fresh = assumedFull ? now.addingTimeInterval(UseNextRanking.windowHours(main.period) * 3_600) : nil
-            guard let deadline = unstarted ? now : fresh ?? main.naturalResetAt else { exclude("Reset time unknown", nil); continue }
-            let burn = ownBurn ?? averageBurn
-            // An unstarted clock starts with the first launch, so its share is judged over a full week.
-            let hours = unstarted ? UseNextRanking.weekHours : max(UseNextRanking.minimumHours, deadline.timeIntervalSince(now) / 3_600)
-            var reserve: Double?
-            var need = (remaining - burn * hours) / hours
-            if useLast {
-                // Cushion: the Director's own measured use until the window ends, at least the floor.
-                let personal = Self.personalBurn(row: row, burn: ownBurn, evidence: evidence,
-                                                 pointsPerLaunch: pointsPerLaunch, now: now)
-                let cushion = max(UseNextRanking.useLastFloor, (personal ?? 0) * hours)
-                reserve = cushion
-                need = (remaining - cushion - max(0, burn - (personal ?? 0)) * hours) / hours
+            if remaining <= 0 && !row.spendsUsageCredits {
+                exclude("Out of quota until its reset; only you can apply a banked reset", refill)
             }
-            let starter = unstarted && (!useLast || evidence.unstartedSince[row.id].map {
-                now.timeIntervalSince($0) >= UseNextRanking.starterDelay } ?? true)
-            // Within the hour after a refill the Director may start the use-last clock personally.
-            if unstarted && useLast && !starter { need = min(need, 0) }
-            let notes = row.windows.filter { window in
+            let burn = main.isCurrent ? main.burnPoints : nil
+            let personal = row.metadata.useLast && !multipleUseLast ? AccountOverview.personalBurn(row: row, burn: burn,
+                evidence: evidence, pointsPerLaunch: pointsPerLaunch, now: now) : nil
+            let hours = max(minimumHours, refill.timeIntervalSince(now) / 3_600)
+            let reserve = row.metadata.useLast && !multipleUseLast ? min(remaining, max(useLastFloor, (personal ?? 0) * hours)) : nil
+            var notes = row.windows.filter { window in
                 window.id != main.id && window.id != row.fiveHourGate?.id && (window.remainingFraction ?? 1) <= 0
                     && (window.naturalResetAt ?? .distantFuture) > now
-            }.map { window in
-                "\(window.modelLabel ?? window.label) is used up; only that model waits for its reset"
-            } + (assumedFull ? [AccountTerms.assumedResetLaunch] : [])
-                + (row.isCodexSignInExpired ? [AccountTerms.codexSignInExpired] : [])
-                + (row.state == .stale ? [AccountCapacityState.stale.displayText] : [])
-            candidates.append(Candidate(row: row, remaining: remaining, burn: burn, burnEstimated: ownBurn == nil,
-                                        hours: hours, deadline: deadline, unstarted: unstarted, starter: starter,
-                                        useLast: useLast, reserve: reserve, need: need, notes: notes))
+            }.map { "\($0.modelLabel ?? $0.label) is used up; only that model waits for its reset" }
+            if assumedFull { notes.append(AccountTerms.assumedResetLaunch) }
+            if row.isCodexSignInExpired { notes.append(AccountTerms.codexSignInExpired) }
+            if row.state == .stale { notes.append(AccountCapacityState.stale.displayText) }
+            plans.append(SpendPlan(row: row, remaining: remaining, refill: refill, burn: burn ?? averageBurn,
+                burnEstimated: burn == nil, unstarted: unstarted, reserve: reserve, notes: notes,
+                credits: evidence.credits?[row.id], gatedUntil: gatedUntil, now: now))
         }
-
-        let active = candidates.filter { $0.starter || $0.need > 0 }
-        // Heavy week (#1079): drain one account at a time, the soonest-expiring banked reset first, never the use-last
-        // account, so its reset can be applied at 0%. A held account spills to the next; without one, spread as usual.
-        let drain = staleOnly || paceForecast(provider: provider)?.runsOutBeforeRefill != true ? nil
-            : candidates.compactMap { candidate in
-                candidate.useLast ? nil : candidate.row.soonestBankedExpiry(after: now).map { (candidate, $0) }
-            }.min { ($0.1, $0.0.row.id) < ($1.1, $1.0.row.id) }?.0
-        var entries: [UseNextRanking.Entry] = []
-        if let drain {
-            for candidate in candidates {
-                let drains = candidate.row.id == drain.row.id
-                entries.append(candidate.entry(tier: drains ? .needsUse : candidate.useLast ? .useLast : .onPace,
-                    weight: drains ? 1 : 0, pending: pending[candidate.row.id, default: 0],
-                    reason: drains ? "Heavy week: drains this account first so its banked reset, the soonest to expire, can be applied at 0%"
-                        : "Heavy week: waits while \(drain.row.metadata.label) is drained"))
-            }
-        } else if active.isEmpty {
-            // Demand is at or above capacity: last longest first, use-last only after the rest.
-            let others = (candidates + onCredits).filter { !$0.useLast }
-            for candidate in candidates {
-                let hoursLeft = candidate.burn > 0 ? candidate.remaining / candidate.burn : candidate.hours
-                if candidate.useLast, let reserve = candidate.reserve, candidate.remaining <= reserve {
-                    excluded.append(.init(accountID: candidate.row.id, label: candidate.row.metadata.label,
-                                          reason: "Use last: holding its cushion for your own use", until: nil))
-                    continue
-                }
-                let inGrace = candidate.unstarted && !candidate.starter
-                let weight = candidate.useLast ? (others.isEmpty && !inGrace ? 1 : 0) : hoursLeft
-                entries.append(candidate.entry(tier: .onPace, weight: weight, pending: pending[candidate.row.id, default: 0],
-                    reason: candidate.useLast ? "Use last: only once the others run out"
-                        : "Every account is on pace to run out; this one lasts longest (about \(Int(hoursLeft.rounded())) hours)"))
-            }
-        } else {
-            for candidate in candidates {
-                let isActive = candidate.starter || candidate.need > 0
-                let tier: UseNextRanking.Tier = !isActive ? .onPace : candidate.useLast ? .useLast : .needsUse
-                let spare = max(0, candidate.remaining - (candidate.reserve ?? 0) - candidate.burn * candidate.hours)
-                let reason: String
-                if candidate.starter {
-                    reason = candidate.useLast
-                        ? "Use last, but its weekly clock still hasn't started; one launch starts it"
-                        : "Its weekly clock hasn't started, and every idle hour is lost; start it now"
-                } else if !isActive {
-                    reason = candidate.useLast ? "Use last: holding its cushion for your own use"
-                        : "On pace to use its allowance before its reset"
-                } else if candidate.useLast {
-                    // The cushion is planned use, not a leftover: it shrinks as the reset nears.
-                    reason = "Use last: sets aside about \(Int(candidate.reserve?.rounded() ?? 0))% for your own use before its reset and spends the rest"
-                } else {
-                    reason = "About \(Int(spare.rounded()))% would go unused at its reset at the current pace"
-                }
-                entries.append(candidate.entry(tier: tier, weight: isActive ? max(0, candidate.need) : 0,
-                                               pending: pending[candidate.row.id, default: 0], reason: reason))
+        let forecast = current.isEmpty ? nil : ProviderPaceForecast(provider: provider, plans: plans, pace: pace, measured: !measured.isEmpty,
+            complete: plans.count == current.count && current.count == rows.filter {
+                $0.metadata.isEnabled && $0.metadata.sourceConfigured && $0.state != .notConnected
+            }.count, now: now)
+        let hasOtherQuota = { (plan: SpendPlan) in rows.contains {
+            $0.id != plan.row.id && $0.metadata.isEnabled && $0.metadata.sourceConfigured
+                && $0.state != .notConnected && ($0.mainWindow?.remainingFraction ?? 1) > 0
+        } }
+        // Emptying a protected account requires using the other quota first.
+        let protectedExpiry = plans.filter {
+            ($0.reserve ?? 0) > 0 && $0.deadline < $0.refill && hasOtherQuota($0)
+        }.map(\.deadline).min()
+        if let protectedExpiry {
+            for index in plans.indices where plans[index].remaining > 0 {
+                plans[index].deadline = min(plans[index].deadline, protectedExpiry)
             }
         }
-        // Usage credits wait for plan quota that would lapse; the use-last account's credits wait for the others.
-        let planTakesLaunches = entries.contains { $0.weight > 0 || $0.starter }
-        let othersOnCredits = onCredits.contains { !$0.useLast }
-        for candidate in onCredits {
-            let weight: Double = planTakesLaunches || candidate.useLast && othersOnCredits ? 0 : 1
-            entries.append(candidate.entry(tier: .usageCredits, weight: weight, pending: pending[candidate.row.id, default: 0],
-                reason: "Plan quota used up; usage credits keep it working, after quota that would go unused"))
+        plans.sort {
+            $0.deadline != $1.deadline ? $0.deadline < $1.deadline
+                : max(0, $0.remaining - ($0.reserve ?? 0)) > max(0, $1.remaining - ($1.reserve ?? 0))
         }
-        entries = Self.ordered(entries, counts: pending)
-
+        var cumulative = 0.0
+        let requiredPace = plans.reduce(0.0) { required, plan in
+            let held = hasOtherQuota(plan) && protectedExpiry == nil ? plan.reserve ?? 0 : 0
+            cumulative += max(0, plan.remaining - held) + plan.additionalDuePoints
+            let hours = max(minimumHours, plan.deadline.timeIntervalSince(now) / 3_600)
+            return max(required, cumulative / hours)
+        }
+        var entries = plans.filter { $0.gatedUntil == nil && ($0.remaining > 0 || $0.row.spendsUsageCredits) }.map { plan in
+            let held = hasOtherQuota(plan) ? plan.reserve ?? 0 : 0
+            let available = max(0, plan.remaining - held)
+            let isHeld = plan.remaining > 0 && available <= 0
+            let creditOnly = plan.remaining <= 0
+            let planQuotaElsewhere = creditOnly && plans.contains { $0.remaining > 0 && $0.deadline <= plan.deadline }
+            let eligible = !isHeld && !planQuotaElsewhere
+            let target = eligible ? max(requiredPace, max(creditOnly ? plan.burn : 0,
+                min(pace, forecast?.sustainablePointsPerHour ?? requiredPace))) : 0
+            let zero = target > 0 && held == 0 ? now.addingTimeInterval(plan.remaining / target * 3_600) : nil
+            var reason = isHeld ? "Holding about \(Int(held.rounded()))% for your own use while another account has quota."
+                : planQuotaElsewhere ? "Plan quota that expires sooner goes first."
+                : creditOnly && plan.credits?.expiresAt == nil ? "Plan quota used up; credits keep it working after quota with known deadlines."
+                : "Spend what expires first, by \(ContextPanelDateFormatting.resetDeadline(plan.deadline))."
+            if held > 0 && !isHeld { reason += " Keep about \(Int(held.rounded()))% for your own use." }
+            if plan.bankedDue > 0 {
+                reason += held > 0 ? " Reaching 0% for its expiring reset waits for the other quota to be used."
+                    : " Reach 0% before the banked reset expires; only you can apply it (\(plan.bankedDue) left)."
+            }
+            if let credits = plan.credits, let expiry = credits.expiresAt, expiry > now {
+                reason += " Reach 0%, then spend credits before \(ContextPanelDateFormatting.resetDeadline(expiry))."
+                if credits.burnPerHour == nil { reason += " Credit spend is not measured yet; its runway is unknown." }
+            }
+            return Entry(accountID: plan.row.id, label: plan.row.metadata.label, reason: reason, deadline: plan.deadline,
+                unstarted: plan.unstarted, remaining: plan.remaining, burn: plan.burn, burnEstimated: plan.burnEstimated,
+                reserve: plan.reserve.map { _ in held }, pendingLaunches: pending[plan.row.id, default: 0], notes: plan.notes,
+                targetPointsPerHour: creditOnly && target <= 0 ? nil : target, canLaunch: eligible,
+                targetCreditsPerHour: plan.credits.flatMap { credits in
+                    guard target > 0, let rate = credits.burnPerHour, plan.burn > 0 else { return nil }
+                    return target * rate / plan.burn
+                }, depleteBy: zero, availablePoints: creditOnly ? .greatestFiniteMagnitude : available, pointsPerLaunch: pointsPerLaunch)
+        }
+        entries.sort { nextPick([$0], counts: pending) != nil && nextPick([$1], counts: pending) == nil }
         let observed = rankable.compactMap(\.observedAt).min()
-        // A stale list is published with its age; it steers launches only while young, and never Use next.
-        let usable = !staleOnly || observed.map { now.timeIntervalSince($0) <= UseNextRanking.staleListMaximumAge } == true
-        let first = staleOnly ? nil : entries.first.flatMap { entry in
-            entry.weight > 0 || entry.starter && pending[entry.accountID, default: 0] == 0 ? entry.accountID : nil
-        }
-        let nextCapacity = first == nil && !staleOnly ? excluded.compactMap(\.until).filter { $0 > now }.min() : nil
-        return UseNextRanking(provider: provider, entries: entries, excluded: excluded, useNextAccountID: first,
-                              nextCapacityAt: nextCapacity, multipleUseLast: multipleUseLast,
-                              basedOnStaleReadings: staleOnly, readingsObservedAt: staleOnly ? observed : nil,
-                              launchOrder: usable ? UseNextRanking.allocate(entries, launches: UseNextRanking.launchOrderLength, counts: pending) : [])
+        let usable = !staleOnly || observed.map { now.timeIntervalSince($0) <= staleListMaximumAge } == true
+        let order = usable ? allocate(entries, launches: launchOrderLength, counts: pending) : []
+        let first = staleOnly ? nil : order.first
+        return Self(provider: provider, entries: entries, excluded: excluded, useNextAccountID: first,
+            nextCapacityAt: first == nil && !staleOnly ? excluded.compactMap(\.until).filter { $0 > now }.min() : nil,
+            multipleUseLast: multipleUseLast, basedOnStaleReadings: staleOnly, readingsObservedAt: staleOnly ? observed : nil,
+            launchOrder: order, targetPointsPerHour: first.flatMap { id in entries.first { $0.accountID == id }?.targetPointsPerHour },
+            forecast: forecast)
     }
 }
 
-private struct Candidate {
+struct SpendPlan {
     let row: AccountOverview.Account
     let remaining: Double
+    let refill: Date
     let burn: Double
     let burnEstimated: Bool
-    let hours: Double
-    let deadline: Date
     let unstarted: Bool
-    let starter: Bool
-    let useLast: Bool
     let reserve: Double?
-    let need: Double
     let notes: [String]
+    let credits: UsageCreditCapacity?
+    let gatedUntil: Date?
+    var deadline: Date
+    let bankedDue: Int
+    let additionalDuePoints: Double
+    let bankedPoints: Double
+    let creditPoints: Double?
 
-    func entry(tier: UseNextRanking.Tier, weight: Double, pending: Int, reason: String) -> UseNextRanking.Entry {
-        UseNextRanking.Entry(accountID: row.id, label: row.metadata.label, tier: tier, need: need, weight: weight,
-                             reason: reason, deadline: deadline, unstarted: unstarted, starter: starter,
-                             remaining: remaining, burn: burn, burnEstimated: burnEstimated, reserve: reserve,
-                             pendingLaunches: pending, notes: notes)
+    init(row: AccountOverview.Account, remaining: Double, refill: Date, burn: Double, burnEstimated: Bool,
+         unstarted: Bool, reserve: Double?, notes: [String], credits: UsageCreditCapacity?, gatedUntil: Date?, now: Date) {
+        self.row = row; self.remaining = remaining; self.refill = refill; self.burn = burn
+        self.burnEstimated = burnEstimated; self.unstarted = unstarted; self.reserve = reserve; self.notes = notes
+        self.gatedUntil = gatedUntil
+        self.credits = credits.flatMap {
+            $0.balance <= 0 || $0.observedAt > now.addingTimeInterval(60)
+                || now.timeIntervalSince($0.observedAt) > SnapshotFreshness.appMaximumAge
+                || $0.expiresAt.map { $0 <= now } == true ? nil : $0
+        }
+        let banked = row.bankedState == .available ? row.bankedResets : nil
+        let recognized = banked.map { row.metadata.provider != .anthropic || $0.generalWeeklyOnly } == true
+        let expiries = recognized ? (banked?.knownExpiries.isEmpty == false ? banked?.knownExpiries ?? []
+            : banked?.earliestKnownExpiry.map { [$0] } ?? []) : []
+        let due = expiries.filter { $0 > now && $0 < refill }
+        bankedDue = due.filter { $0 == due.min() }.count
+        bankedPoints = recognized ? Double(banked?.availableCount ?? 0) * 100 : 0
+        creditPoints = self.credits.flatMap { credit in credit.burnPerHour.flatMap { $0 > 0 && burn > 0 ? credit.balance / $0 * burn : nil } }
+        let creditDeadline = self.credits?.expiresAt
+        let applyBy = due.min().map { max(now, $0.addingTimeInterval(-SnapshotFreshness.widgetTimelineInterval)) }
+        deadline = remaining <= 0 ? creditDeadline ?? .distantFuture : min(refill, applyBy ?? refill, creditDeadline ?? refill)
+        additionalDuePoints = Double(max(0, bankedDue - 1)) * 100
+            + (remaining <= 0 || creditDeadline.map { $0 <= refill && $0 <= (due.min() ?? refill) } == true ? creditPoints ?? 0 : 0)
+    }
+}
+
+public extension AccountOverview {
+    var configurationErrors: [String] {
+        Provider.allCases.compactMap { provider in
+            accounts.filter { $0.metadata.provider == provider && $0.metadata.useLast }.count > 1
+                ? "multipleUseLast:\(provider.rawValue)" : nil
+        }
+    }
+
+    func useNextRanking(provider: Provider, evidence suppliedEvidence: UseNextEvidence? = nil) -> UseNextRanking {
+        var evidence = suppliedEvidence ?? launchEvidence
+        evidence.receipts = evidence.receipts.filter { LaunchReceiptStore.isUsable($0, now: rankedAt) }
+        return UseNextRanking.make(provider: provider, rows: accounts.filter { $0.metadata.provider == provider },
+            evidence: evidence, now: rankedAt)
     }
 }
 
 extension AccountOverview {
-    /// Published order is the D'Hondt order of the next launch: starters, then need ÷ (1 + pending launches)
-    /// across tiers 1–2 with ties to the lower tier, then accounts taking none. Use next is the first entry,
-    /// so a single launch and `launchOrder` always agree.
-    static func ordered(_ entries: [UseNextRanking.Entry], counts: [String: Int]) -> [UseNextRanking.Entry] {
-        func priority(_ entry: UseNextRanking.Entry) -> (Int, Double, Int, Double) {
-            let given = counts[entry.accountID, default: 0]
-            if entry.starter && given == 0 { return (0, 0, entry.tier.rawValue, 0) }
-            guard entry.weight > 0 else {
-                return (entry.tier == .usageCredits ? 3 : 2, -entry.remaining, entry.tier.rawValue, 0)
-            }
-            return (1, -entry.weight / Double(1 + max(0, given - (entry.starter ? 1 : 0))), entry.tier.rawValue, -entry.weight)
-        }
-        return entries.enumerated().sorted { lhs, rhs in
-            let (a, b) = (priority(lhs.element), priority(rhs.element))
-            return a != b ? a < b : lhs.offset < rhs.offset
-        }.map(\.element)
-    }
-
     /// Receipts the readings don't reflect yet: fewer than two later readings and under 30 minutes old.
     static func pendingLaunches(evidence: UseNextEvidence, rows: [Account], now: Date) -> [String: Int] {
         let ids = Set(rows.map(\.id))

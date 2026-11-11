@@ -6,8 +6,6 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
     public let snapshot: UsageSnapshot
     public let reports: [StoredProviderReport]
     public let promptCacheObservations: [PromptCacheObservation]
-    /// Providers in a heavy week when this reading was saved (#1079): the sticky call carried to the next reading.
-    public var heavyProviders: [Provider]?
     /// The refresh pass's latest unused-capacity numbers (#1080). Only the current snapshot keeps them; history files omit them.
     public var unusedCapacity: StoredUnusedCapacity?
 
@@ -17,7 +15,6 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
         case snapshot
         case reports
         case promptCacheObservations
-        case heavyProviders
         case unusedCapacity
     }
 
@@ -54,7 +51,6 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
             [PromptCacheObservation].self,
             forKey: .promptCacheObservations
         ) ?? []
-        heavyProviders = try container.decodeIfPresent([Provider].self, forKey: .heavyProviders)
         unusedCapacity = try container.decodeIfPresent(StoredUnusedCapacity.self, forKey: .unusedCapacity)
     }
 

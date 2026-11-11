@@ -755,7 +755,6 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
-        try carryHeavyWeekCall(savedAt: savedAt)
         let storedResult = refreshingUnusedCapacity(stores.primary.loadCurrent(), now: savedAt)
         if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
@@ -827,7 +826,6 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
-        try carryHeavyWeekCall(savedAt: savedAt)
         let storedResult = refreshingUnusedCapacity(stores.primary.loadCurrent(), now: savedAt)
         if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
@@ -858,14 +856,6 @@ public struct SnapshotRefreshService: Sendable {
             refreshResult: refreshResult,
             storedSnapshot: storedResult.snapshot
         )
-    }
-
-    /// Carry the sticky heavy-week call on the saved reading, so every reader and the next save start from it (#1079).
-    private func carryHeavyWeekCall(savedAt: Date) throws {
-        guard var saved = stores.primary.loadCurrent().snapshot else { return }
-        let overview = savedWidgetPreviewSnapshot(now: savedAt).accountOverview(now: savedAt)
-        saved.heavyProviders = Provider.allCases.filter { overview.paceForecast(provider: $0)?.runsOutBeforeRefill == true }
-        try stores.primary.save(saved)
     }
 
     private func companionObservedBurnRates(

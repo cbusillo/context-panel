@@ -319,7 +319,8 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
                                                                      recentOnly: AccountBurnRateEstimator.recentWindow)
         let localEvidence = UseNextEvidence.make(stored: stored, history: history,
             configuration: configuration.accounts, publisherID: configuration.publisherID, receipts: receipts,
-            shared: sharedDocument != nil || stored.reports.contains { $0.sharedAccountIdentity != nil })
+            shared: sharedDocument != nil || stored.reports.contains { $0.sharedAccountIdentity != nil },
+            enteredCreditExpiries: configuration.enteredUsageCreditExpiries)
         let canonical: WidgetSnapshot? = if sharedDocument != nil || stored.reports.contains(where: { $0.sharedAccountIdentity != nil }) {
             MacSharedAccountPresentation.make(stored: stored, configuration: configuration.accounts,
                 publisherID: configuration.publisherID, remote: sharedDocument, accountIntentDocument: configuration,

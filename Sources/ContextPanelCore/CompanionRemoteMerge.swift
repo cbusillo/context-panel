@@ -89,7 +89,7 @@ public extension CompanionSyncDocument {
             } else if old[key]?.semanticSelectionData == selected.semanticSelectionData {
                 chosen = existing?.launchEvidence
             } else { chosen = nil }
-            evidence.unstartedSince[id] = chosen?.unstartedSince[id]
+            evidence.credits?[id] = chosen?.credits?[id]
             evidence.accountReadingTimes?[id] = chosen?.accountReadingTimes?[id] ?? chosen?.readingTimes ?? []
         }
         return evidence.retainingAccounts(Set(retained.keys.map { AccountDisplayMetadata.safeID($0.provider, $0.companionAccountID) }))
