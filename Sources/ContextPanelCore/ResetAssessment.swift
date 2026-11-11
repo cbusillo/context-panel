@@ -29,13 +29,13 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         sustainablePointsPerHour = capacityUntilRefillPoints / hours
         creditRunwayUnknown = plans.contains { $0.credits != nil && $0.creditPoints == nil }
         minimumExpiryPace = Self.expiryPace(plans, now: now)
-        expiryNeedsMoreWork = minimumExpiryPace > pace
+        expiryNeedsMoreWork = minimumExpiryPace > pace || plans.contains { ($0.creditWorkloadMultiplier(now: now) ?? 0) > 1 }
         requiresBankedReset = complete && (plans.allSatisfy { $0.remaining <= 0 } || pace * hours > quota + credits)
         runsOutBeforeRefill = complete && pace * hours > capacityUntilRefillPoints
         refillsUnused = Self.unused(plans.map { ($0.remaining, max(0, $0.refill.timeIntervalSince(now) / 3_600)) }, pace: pace)
     }
 
-    private static func expiryPace(_ plans: [SpendPlan], now: Date) -> Double {
+    static func expiryPace(_ plans: [SpendPlan], now: Date) -> Double {
         let expiries = Set(plans.flatMap { plan in
             plan.row.bankedExpiries(after: now) + [plan.credits?.expiresAt].compactMap { $0 }
         }).filter { $0 > now }
@@ -99,8 +99,9 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public var prompt: String? { recommended ? "Apply \(label)'s reset now" : nil }
     /// The expiring warning for a reset OpenAI won't apply yet: use the account first.
     public var useFirstPrompt: String? {
-        trigger == .expiring && !recommended && !unrecognizedKind ? "Use \(label) before its reset expires" : nil
+        trigger == .expiring && warningActive && !recommended && !unrecognizedKind ? "Use \(label) before its reset expires" : nil
     }
+    private var warningActive = false
     private var waitingForEarlierReset = false
     private var waitingForCredits = false
     public var title: String {
@@ -133,6 +134,11 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     static let outOfQuotaThreshold: Double = 15
     static let expiringThreshold: Double = 10
     static let expiringWithin: TimeInterval = 24 * 3_600
+    static func applicationWindow(for expiry: Date) -> Date { expiry.addingTimeInterval(-expiringWithin) }
+    static func depletionDeadline(for expiry: Date, now: Date) -> Date {
+        let lead = applicationWindow(for: expiry)
+        return lead > now ? lead : expiry
+    }
     /// Weekly points one Claude account can spend per hour when its 5-hour window is the only limit.
     static let claudeDefaultRate = 3.8
     /// Director decision on #1074 (Nov 8, 2026): OpenAI won't apply a reset at or above this much weekly quota left.
@@ -175,7 +181,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let unrecognized = provider == .anthropic && !banked.generalWeeklyOnly
         let gated = provider == .openAI && left >= Self.openAIApplicableBelow
         let toUseFirst = gated ? left - Self.openAIApplicableBelow + 1 : 0
-        let warnFrom = soonest.map { $0.addingTimeInterval(-Self.expiringWithin) }
+        let warnFrom = soonest.map(Self.applicationWindow)
         let expiring = plan?.bankedResetExpiresAt != nil || warnFrom.map { now >= $0 } == true
         let trigger: Trigger = left <= 0 && (needsReset || expiring) ? .outOfQuota : expiring ? .expiring : .notNeeded
         // Claude's refill is valued at the measured pace, capped by what one account can spend; an unmeasured pace uses the cap.
@@ -223,6 +229,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         self.trigger = trigger
         self.value = value
         waitingForCredits = plan?.spendsCreditsBeforeReset == true
+        warningActive = warnFrom.map { now >= $0 } == true
         let applyWindow = left <= 0 || warnFrom.map { now >= $0 } == true
         recommended = trigger != .notNeeded && applyWindow && !gated && !unrecognized && !waitingForCredits && (value ?? -.infinity) >= threshold
         notYetApplicable = gated

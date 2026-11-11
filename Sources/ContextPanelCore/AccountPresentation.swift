@@ -282,13 +282,17 @@ public enum AccountTerms {
         guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else {
             return useNextUnavailableReason(overview, provider: provider)
         }
-        let target = ranking.targetPointsPerHour.map {
+        let quotaTarget = ranking.targetPointsPerHour.map {
             $0 > 0 && $0 < 0.1 ? "Target <0.1%/h" : String(format: "Target %.1f%%/h", $0)
-        } ?? entry.creditWorkloadMultiplier.map { String(format: "Credit work %.1f× recent", $0) } ?? "Measuring target pace"
+        }
+        let target = entry.targetPointsPerHour == nil
+            ? entry.creditWorkloadMultiplier.map { String(format: "Credit work %.1f× recent", $0) } ?? "Measuring credit work"
+            : quotaTarget ?? "Measuring target pace"
         let by = entry.deadline == .distantFuture ? "Using credits"
             : "use by " + AccountPaceText.when(entry.deadline, now: overview.rankedAt)
         if compact { return target + " · " + by }
         var parts = [target + " · " + by]
+        if entry.targetPointsPerHour == nil, let quotaTarget { parts.append(quotaTarget + " on the other quota accounts.") }
         if let total = ranking.targetPointsPerHour, let own = entry.targetPointsPerHour, own < total {
             parts.append(String(format: "This account %.1f%%/h; also run work on the other accounts.", own))
         }
@@ -300,7 +304,7 @@ public enum AccountTerms {
                 : entry.depleteBy.map { "0% by " + AccountPaceText.when($0, now: overview.rankedAt) + "; you apply the reset." }
                     ?? "Use toward 0%; you apply the reset.")
         } else if let reset = overview.accounts.first(where: { $0.id == id })?.mainWindow?.naturalResetAt,
-                  let creditExpiry = overview.launchEvidence.credits?[id]?.expiresAt, creditExpiry < reset {
+                  let creditExpiry = entry.creditExpiresAt, creditExpiry < reset {
             parts.append((entry.reserve ?? 0) > 0 ? "After the other quota, reach 0% to spend credits."
                 : "Reach 0%, then spend the expiring credits.")
         }

@@ -892,6 +892,7 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   with a three-point floor. Spend above that cushion in the same deadline order.
   Release it only when no other enabled, connected account may still have quota,
   including one waiting on its short-window gate. The name remains "Use last".
+  Unreadable other-account quota holds the cushion and asks for refresh/sign-in.
   Two marks on one provider remain a configuration error; the cushion is ignored.
 - A banked reset is conditional capacity. Claude counts only positive resets
   that explicitly refill `seven_day`; zero-left offers and model-only or unknown
@@ -900,7 +901,9 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   the natural refill, the account gets a zero-percent target before that expiry.
   Multiple resets sharing an expiry include the work needed between applications.
   The requested depletion time leaves a day for the Director to apply the reset;
-  when that lead cannot be met, the panel does not promise a depletion time.
+  after that lead passes, the target uses the actual expiry. When a target cannot
+  be met, the panel does not promise a depletion time. Notifications retain the
+  final-day window even when the launch plan starts earlier.
   Only the Director applies a reset. No launcher or panel action applies one.
   In its final day, a valuable, applicable partial reset remains a fallback if
   the planned depletion has not happened; existing provider valuation and
@@ -939,6 +942,9 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   The 5-hour gate holds an account below five points left, or when its burn would
   exhaust that window before it resets. OpenAI's paid fallback can still work
   beyond a used-up gate. All exclusions say why and when capacity returns, if known.
+  Paused weekly quota stays in the forecast but does not become another
+  account's current target. A paid fallback route spends credits until its gate
+  opens; that account's weekly quota is reconsidered at the next reading.
 - Batches follow the same deadline order. Pending receipts reduce projected
   room using measured points per launch, until two later account readings or
   thirty minutes acknowledge them. Without a per-launch estimate the batch allows
@@ -947,6 +953,8 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   A pending-only wait publishes the receipt's expiration as `nextCapacityAt`;
   refreshed observations can clear it sooner. Request a smaller batch when the
   published order has fewer picks than requested.
+  The order projects successive picks after pending spend; refresh after a
+  batch for the new targets. A later projected pick can have a zero current target.
 - Saved-only readings publish their age and never claim Use next. Their launch
   order is available for thirty minutes. Codex's expired-sign-in fallback keeps
   its existing explicit saved-reading and assumed-reset notes.
@@ -955,7 +963,7 @@ Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
 `remaining`, `burn`, `burnEstimated`, `reserve`, `pendingLaunches`, `notes`,
 `targetPointsPerHour` (allocated work; unknown on saved-only readings or unconverted credit work),
 `depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch`, `bankedResetExpiresAt`
-`spendsCreditsBeforeReset` and `creditWorkloadMultiplier`.
+`spendsCreditsBeforeReset`, `creditWorkloadMultiplier` and the qualified `creditExpiresAt`.
 An unknown credit spend rate leaves its points target null rather than inventing one.
 The provider publishes the selected target, `forecast`, `excluded`,
 `useNextAccountID`, `nextCapacityAt`, `multipleUseLast`, `launchOrder` and saved-reading metadata.

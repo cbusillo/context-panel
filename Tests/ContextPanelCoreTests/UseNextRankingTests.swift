@@ -239,15 +239,27 @@ private extension UseNextRanking {
     #expect(entry.targetPointsPerHour == nil)
     #expect(entry.creditWorkloadMultiplier == runway / remainingHours)
     #expect(result.useNext(provider: .openAI)?.id == account.id)
-    #expect(!AccountTerms.useNextStrategy(result, provider: .openAI).contains("Measuring"))
+    #expect(result.paceForecast(provider: .openAI)?.expiryNeedsMoreWork == true)
+    let other = Fixture(name: "quota", weeklyUsed: 50, resetHours: 24, burn: 1)
+    let mixed = ranking([account, other], evidence: evidence)
+    #expect(try #require(mixed.targetPointsPerHour) > 0)
+    #expect(mixed.entry(account)?.targetPointsPerHour == nil)
 }
 
 @Test func paidShortWindowFallbackRetainsTheWeeklyQuotaDeadlineAndLoad() throws {
     let account = Fixture(name: "fallback", weeklyUsed: 40, resetHours: 10, burn: 0.1,
         fiveHourUsed: 100, onCredits: true)
     let result = ranking([account])
-    #expect(result.entry(account)?.deadline == rankNow.addingTimeInterval(account.resetHours! * hour))
-    #expect(try #require(result.targetPointsPerHour) * account.resetHours! >= 100 - Double(account.weeklyUsed!))
+    #expect(result.forecast?.capacityUntilRefillPoints == 100 - Double(account.weeklyUsed!))
+    #expect(result.entry(account)?.depleteBy == nil)
+    var opened = account
+    opened.fiveHourUsed = 0
+    opened.resetHours = account.resetHours! - account.fiveHourResetHours
+    let after = ranking([opened])
+    #expect(after.entry(opened)?.deadline == rankNow.addingTimeInterval(opened.resetHours! * hour))
+    #expect(try #require(after.targetPointsPerHour) * opened.resetHours! >= 100 - Double(opened.weeklyUsed!))
+    let free = Fixture(name: "free", weeklyUsed: 50, resetHours: 60, burn: 0.1)
+    #expect(ranking([account, free]).useNextAccountID == free.id)
 }
 
 @Test func pendingLaunchesPublishTheirKnownRetryTime() throws {
@@ -258,13 +270,27 @@ private extension UseNextRanking {
     #expect(result.nextCapacityAt == receipt.launchedAt.addingTimeInterval(UseNextRanking.receiptReflectedAfter))
 }
 
+@Test func blockedWeeklyQuotaDoesNotBecomeAnotherAccountsImmediateDepletionTarget() throws {
+    let gated = Fixture(name: "gated", weeklyUsed: 20, resetHours: 10, burn: 0,
+        fiveHourUsed: 100, fiveHourResetHours: 3)
+    let free = Fixture(name: "free", weeklyUsed: 70, resetHours: 150, burn: 0)
+    let waiting = ranking([gated, free])
+    let alone = ranking([free])
+    #expect(waiting.entry(free)?.targetPointsPerHour == alone.entry(free)?.targetPointsPerHour)
+    var opened = gated
+    opened.fiveHourUsed = 0
+    opened.resetHours = gated.resetHours! - gated.fiveHourResetHours
+    #expect(ranking([opened, free]).useNextAccountID == opened.id)
+    #expect(try #require(ranking([opened, free]).entry(opened)?.targetPointsPerHour) > alone.targetPointsPerHour!)
+}
+
 @Test func unknownOtherQuotaKeepsTheCushionAndExplainsHowToResolveIt() throws {
     let personal = Fixture(name: "personal", provider: .anthropic, weeklyUsed: 98, burn: 0, useLast: true)
     let unreadable = Fixture(name: "unreadable", provider: .anthropic, weeklyUsed: nil, readState: .unavailable)
     let result = ranking([personal, unreadable], provider: .anthropic)
     #expect(result.useNextAccountID == nil)
     #expect(abs(try #require(result.entry(personal)?.reserve) - (100 - Double(personal.weeklyUsed!))) < 0.001)
-    #expect(result.entry(personal)?.reason.contains("Refresh or sign in") == true)
+    #expect(result.exclusion(unreadable) != nil)
 }
 
 @Test func accountStrategyPlansZeroBeforeAResetExpiresWithoutSkippingEarlierQuota() throws {
@@ -309,6 +335,8 @@ private extension UseNextRanking {
     let credits = Fixture(name: "credits", weeklyUsed: 100, resetHours: 50, onCredits: true)
     let gated = Fixture(name: "gated", weeklyUsed: 60, resetHours: 20, fiveHourUsed: 100)
     #expect(ranking([gated, credits]).useNextAccountID == credits.id)
+    let personal = Fixture(name: "personal", weeklyUsed: 98, burn: 0, useLast: true)
+    #expect(ranking([gated, credits, personal]).useNextAccountID == credits.id)
     var paidGate = gated
     paidGate.onCredits = true
     #expect(ranking([paidGate]).useNextAccountID == paidGate.id)
@@ -810,7 +838,12 @@ func expiringResetStillPromptsWhileAnotherAccountHasQuota(_ provider: Provider) 
         let assessment = try #require(result.accounts.first { $0.id == expiring.id }?.resetAssessment)
         #expect(assessment.trigger == .expiring)
         #expect(assessment.recommended == (hoursLeft <= expiryBoundary))
-        #expect(assessment.recommended || assessment.useFirstPrompt != nil)
+        #expect(assessment.useFirstPrompt == nil)
+        let target = try #require(result.useNextRanking(provider: provider).targetPointsPerHour)
+        if hoursLeft <= expiryBoundary {
+            let quota = [expiring, usable].reduce(0.0) { $0 + 100 - Double($1.weeklyUsed!) }
+            #expect(target * hoursLeft <= quota)
+        }
     }
     // The expiry prompt also remains when the expiring account itself is empty.
     let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [20])
@@ -1137,11 +1170,14 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
 }
 
 @Test func openAIResetIsNotApplicableAtEightyPercentLeftAndWarnsEarlyEnough() throws {
-    // 85% left at one point an hour needs about 6 hours to get under 80%, so the warning starts 30 hours out.
+    // The launch plan starts early; the Director's notification uses the application window.
     let gated = Fixture(name: "gated", weeklyUsed: 15, burn: 1, bankedExpiryHours: [29])
     let warning = try #require(overview([gated]).accounts.first?.resetAssessment)
     #expect(warning.notYetApplicable && warning.trigger == .expiring)
-    #expect(!warning.recommended && warning.prompt == nil && warning.useFirstPrompt != nil)
+    #expect(!warning.recommended && warning.prompt == nil && warning.useFirstPrompt == nil)
+    var within = gated
+    within.bankedExpiryHours = [ResetAssessment.expiringWithin / hour]
+    #expect(overview([within]).accounts.first?.resetAssessment?.useFirstPrompt != nil)
     var early = gated
     early.bankedExpiryHours = [31]
     let before = try #require(overview([early]).accounts.first?.resetAssessment)
