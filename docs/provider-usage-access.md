@@ -902,6 +902,9 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   The requested depletion time leaves a day for the Director to apply the reset;
   when that lead cannot be met, the panel does not promise a depletion time.
   Only the Director applies a reset. No launcher or panel action applies one.
+  In its final day, a valuable, applicable partial reset remains a fallback if
+  the planned depletion has not happened; existing provider valuation and
+  applicability rules still govern that advice.
 - Credits require exhausting an account's plan quota first. A known credit
   expiry can bring that account forward, including the quota that must be used
   to reach credits. Otherwise credits follow plan quota, including the marked
@@ -914,6 +917,10 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   runway stays unknown and the outage warning uses known capacity. Companions
   receive only availability, expiry, observation time and measured hours of runway,
   never the raw credit balance or credit-denominated burn rate.
+  If weekly burn is zero during credit spending, `creditWorkloadMultiplier`
+  expresses measured runway divided by hours to its deadline: twelve hours of
+  runway expiring in six hours requires twice the recent credit workload.
+  The weekly percentage target stays unknown when that conversion is unavailable.
 - `forecast` reports measured provider pace, capacity until the next natural
   refill, sustainable points per hour, and whether that capacity requires the
   Director to apply a reset. Measured demand above capacity is capped so work
@@ -924,6 +931,9 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   say when measured demand is too low and real work needs to be added.
   Percentage points form an index across accounts,
   rather than a claim that different paid plans have the same size.
+  The provider target is allocated across accounts in expiry order, capped by
+  each account's short-window capacity. Later accounts can therefore have
+  positive targets for parallel work. Their sum is the published provider target.
 - The general weekly window drives the order, not a model-only window such as
   gpt-reserve. Accounts with no known quota or reset time cannot take launches.
   The 5-hour gate holds an account below five points left, or when its burn would
@@ -934,15 +944,18 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   thirty minutes acknowledge them. Without a per-launch estimate the batch allows
   one pending launch per account; refresh observations before adding more. No command or
   credential path travels with this count-only evidence.
+  A pending-only wait publishes the receipt's expiration as `nextCapacityAt`;
+  refreshed observations can clear it sooner. Request a smaller batch when the
+  published order has fewer picks than requested.
 - Saved-only readings publish their age and never claim Use next. Their launch
   order is available for thirty minutes. Codex's expired-sign-in fallback keeps
   its existing explicit saved-reading and assumed-reset notes.
 
 Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
 `remaining`, `burn`, `burnEstimated`, `reserve`, `pendingLaunches`, `notes`,
-`targetPointsPerHour` (zero for other accounts; unknown on saved-only readings),
+`targetPointsPerHour` (allocated work; unknown on saved-only readings or unconverted credit work),
 `depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch`, `bankedResetExpiresAt`
-and `spendsCreditsBeforeReset`.
+`spendsCreditsBeforeReset` and `creditWorkloadMultiplier`.
 An unknown credit spend rate leaves its points target null rather than inventing one.
 The provider publishes the selected target, `forecast`, `excluded`,
 `useNextAccountID`, `nextCapacityAt`, `multipleUseLast`, `launchOrder` and saved-reading metadata.

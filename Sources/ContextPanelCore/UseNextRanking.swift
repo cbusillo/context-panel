@@ -207,7 +207,7 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         public let burnEstimated: Bool
         public let reserve: Double?
         public let pendingLaunches: Int
-        public let notes: [String]
+        public var notes: [String]
         /// Target for new work on this account, in weekly percentage points per hour.
         public var targetPointsPerHour: Double?
         public let canLaunch: Bool
@@ -217,6 +217,8 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         public let pointsPerLaunch: Double?
         public let bankedResetExpiresAt: Date?
         public let spendsCreditsBeforeReset: Bool
+        /// Relative to this account's measured credit-spending workload, not weekly quota points.
+        public let creditWorkloadMultiplier: Double?
     }
 
     public struct Exclusion: Encodable, Equatable, Sendable {
@@ -386,10 +388,12 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         var cumulative = 0.0
         let requiredPace = plans.reduce(forecast?.minimumExpiryPace ?? 0) { required, plan in
             let held = hasOtherQuota(plan) && protectedExpiry == nil ? plan.reserve ?? 0 : 0
-            cumulative += (plan.creditOnly ? 0 : max(0, plan.remaining - held)) + plan.additionalDuePoints
+            cumulative += max(0, plan.remaining - held) + plan.additionalDuePoints
             let hours = max(minimumHours, plan.targetDeadline.timeIntervalSince(now) / 3_600)
             return max(required, cumulative / hours)
         }
+        let wanted = max(requiredPace, min(pace, forecast?.sustainablePointsPerHour ?? requiredPace))
+        var unallocated = wanted
         var entries = plans.filter { $0.gatedUntil == nil && ($0.remaining > 0 || $0.row.spendsUsageCredits) }.map { plan in
             let held = hasOtherQuota(plan) ? plan.reserve ?? 0 : 0
             let available = max(0, plan.remaining - held)
@@ -398,14 +402,14 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             let planQuotaElsewhere = creditOnly && plans.contains {
                 !$0.creditOnly && $0.gatedUntil == nil && $0.remaining > 0 && $0.deadline <= plan.deadline
             }
-            let room = creditOnly ? Double.greatestFiniteMagnitude : min(available, plan.shortRoomPoints ?? available)
+            let room = plan.spendingCredits ? Double.greatestFiniteMagnitude : min(available, plan.shortRoomPoints ?? available)
             let count = pending[plan.row.id, default: 0]
             let fitsPending = pointsPerLaunch.map { room > Double(count) * $0 } ?? (count == 0)
             let eligible = !isHeld && !planQuotaElsewhere && fitsPending
-            let wanted = max(requiredPace, max(creditOnly ? plan.burn : 0,
-                min(pace, forecast?.sustainablePointsPerHour ?? requiredPace)))
             let feasible = plan.feasiblePointsPerHour(now: now)
-            let target = eligible ? min(wanted, feasible ?? wanted) : 0
+            let targetUnknown = creditOnly && plan.creditPoints == nil
+            let target = eligible && !targetUnknown ? min(unallocated, feasible ?? unallocated) : 0
+            unallocated -= target
             let projectedZero = !creditOnly && target > 0 && held == 0 ? now.addingTimeInterval(plan.remaining / target * 3_600) : nil
             let zero = projectedZero.flatMap { $0 <= plan.targetDeadline ? $0 : nil }
             var reason = isHeld ? "Holding about \(Int(held.rounded()))% for your own use while another account has quota."
@@ -413,6 +417,9 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
                 : !fitsPending ? "Waiting for pending launches to appear in a reading; refresh before adding more work."
                 : creditOnly && plan.credits?.expiresAt == nil ? "Plan quota used up; credits keep it working after quota with known deadlines."
                 : "Spend what expires first, by \(ContextPanelDateFormatting.resetDeadline(plan.deadline))."
+            let unreadableQuota = rows.contains { other in other.id != plan.row.id && other.metadata.isEnabled && other.metadata.sourceConfigured
+                && other.state != .notConnected && !rankable.contains(where: { $0.id == other.id }) }
+            if isHeld && unreadableQuota { reason += " Refresh or sign in to the other account to confirm which quota remains." }
             if held > 0 && !isHeld { reason += " Keep about \(Int(held.rounded()))% for your own use." }
             if plan.bankedDue > 0 {
                 reason += plan.spendsCreditsBeforeReset ? " Spend the credits that expire sooner before applying its banked reset."
@@ -422,17 +429,26 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             if let credits = plan.credits, let expiry = credits.expiresAt, expiry > now {
                 reason += (creditOnly ? " Spend credits before " : " Reach 0%, then spend credits before ")
                     + ContextPanelDateFormatting.resetDeadline(expiry) + "."
-                if plan.creditPoints == nil { reason += " Credit runway is not measured yet." }
+                if plan.credits?.runwayHours == nil { reason += " Credit spend is not measured yet." }
+                if let multiplier = plan.creditWorkloadMultiplier(now: now) {
+                    reason += String(format: " Credit work needs %.1f times its recent workload before that deadline.", multiplier)
+                }
             }
-            if let feasible, wanted > feasible { reason += " The 5-hour allowance limits this target; some capacity may expire unused." }
-            if feasible == nil && wanted > plan.burn { reason += " More real work is needed; this pace has not been proved achievable." }
+            var notes = plan.notes
+            if feasible != nil && target < wanted { notes.insert("5-hour capacity needs work on other accounts too.", at: 0) }
+            if feasible == nil && target > plan.burn { notes.insert("More work needed; achievable pace is unproved.", at: 0) }
+            reason += notes.first.map { " " + $0 } ?? ""
             return Entry(accountID: plan.row.id, label: plan.row.metadata.label, reason: reason, deadline: plan.deadline,
                 unstarted: plan.unstarted, remaining: plan.remaining, burn: plan.burn, burnEstimated: plan.burnEstimated,
-                reserve: plan.reserve.map { _ in held }, pendingLaunches: pending[plan.row.id, default: 0], notes: plan.notes,
-                targetPointsPerHour: creditOnly && target <= 0 ? nil : target, canLaunch: eligible,
+                reserve: plan.reserve.map { _ in held }, pendingLaunches: pending[plan.row.id, default: 0], notes: notes,
+                targetPointsPerHour: targetUnknown ? nil : target, canLaunch: eligible,
                 depleteBy: zero, availablePoints: room,
                 pointsPerLaunch: pointsPerLaunch, bankedResetExpiresAt: plan.bankedDue > 0 ? plan.row.soonestBankedExpiry(after: now) : nil,
-                spendsCreditsBeforeReset: plan.spendsCreditsBeforeReset)
+                spendsCreditsBeforeReset: plan.spendsCreditsBeforeReset,
+                creditWorkloadMultiplier: eligible ? plan.creditWorkloadMultiplier(now: now) : nil)
+        }
+        if unallocated > 0, let index = entries.firstIndex(where: \.canLaunch) {
+            entries[index].notes.insert("Some capacity may expire unused; available pace is too low.", at: 0)
         }
         entries.sort { nextPick([$0], counts: pending) != nil && nextPick([$1], counts: pending) == nil }
         let observed = rankable.compactMap(\.observedAt).min()
@@ -441,12 +457,15 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         let first = staleOnly ? nil : order.first
         for index in entries.indices where entries[index].accountID != first {
             entries[index].depleteBy = nil
-            entries[index].targetPointsPerHour = staleOnly ? nil : 0
+            if staleOnly { entries[index].targetPointsPerHour = nil }
         }
+        let pendingRetry = evidence.receipts.filter { pending[$0.accountID, default: 0] > 0 }
+            .map { $0.launchedAt.addingTimeInterval(receiptReflectedAfter) }.filter { $0 > now }.min()
         return Self(provider: provider, entries: entries, excluded: excluded, useNextAccountID: first,
-            nextCapacityAt: first == nil && !staleOnly ? excluded.compactMap(\.until).filter { $0 > now }.min() : nil,
+            nextCapacityAt: first == nil && !staleOnly ? (excluded.compactMap(\.until) + [pendingRetry].compactMap { $0 }).filter { $0 > now }.min() : nil,
             multipleUseLast: multipleUseLast, basedOnStaleReadings: staleOnly, readingsObservedAt: staleOnly ? observed : nil,
-            launchOrder: order, targetPointsPerHour: first.flatMap { id in entries.first { $0.accountID == id }?.targetPointsPerHour },
+            launchOrder: order, targetPointsPerHour: first == nil || entries.first(where: { $0.accountID == first })?.targetPointsPerHour == nil
+                ? nil : entries.compactMap(\.targetPointsPerHour).reduce(0, +),
             forecast: forecast)
     }
 }
@@ -468,6 +487,7 @@ struct SpendPlan {
     let additionalDuePoints: Double
     let bankedPoints: Double
     let creditPoints: Double?
+    let bankedResetExpiry: Date?
 
     init(row: AccountOverview.Account, remaining: Double, refill: Date, burn: Double, burnEstimated: Bool,
          unstarted: Bool, reserve: Double?, notes: [String], credits: UsageCreditCapacity?, gatedUntil: Date?, now: Date) {
@@ -481,34 +501,42 @@ struct SpendPlan {
         let banked = row.bankedState == .available ? row.bankedResets : nil
         let recognized = banked.map { row.metadata.provider != .anthropic || $0.generalWeeklyOnly } == true
         let expiries = row.bankedExpiries(after: now)
+        bankedResetExpiry = expiries.min()
         let due = expiries.filter { $0 > now && $0 < refill }
         bankedDue = due.filter { $0 == due.min() }.count
         bankedPoints = recognized ? Double(banked?.availableCount ?? 0) * 100 : 0
         creditPoints = self.credits.flatMap { credit in credit.runwayHours.flatMap { burn > 0 ? $0 * burn : nil } }
         let creditDeadline = self.credits?.expiresAt
         let applyBy = due.min().map { max(now, $0.addingTimeInterval(-ResetAssessment.expiringWithin)) }
-        let usesCredits = Self.usesCredits(row: row, remaining: remaining)
-        deadline = usesCredits ? creditDeadline ?? .distantFuture : min(refill, due.min() ?? refill, creditDeadline ?? refill)
+        deadline = remaining <= 0 ? creditDeadline ?? .distantFuture : min(refill, due.min() ?? refill, creditDeadline ?? refill)
         targetDeadline = min(deadline, applyBy ?? deadline)
         additionalDuePoints = Double(max(0, bankedDue - 1)) * 100
-            + (usesCredits || creditDeadline.map { $0 <= refill && $0 <= (due.min() ?? refill) } == true ? creditPoints ?? 0 : 0)
+            + (remaining <= 0 || creditDeadline.map { $0 <= refill && $0 <= (due.min() ?? refill) } == true ? creditPoints ?? 0 : 0)
     }
 
     var shortRoomPoints: Double? {
-        guard !creditOnly else { return nil }
+        guard !spendingCredits else { return nil }
         guard let gate = row.fiveHourGate, let fraction = gate.remainingFraction, let ratio = weeklyToShortBurn else { return nil }
         return max(0, fraction * 100 * ratio)
     }
 
     var creditOnly: Bool {
-        Self.usesCredits(row: row, remaining: remaining)
+        remaining <= 0 && row.spendsUsageCredits
     }
+
+    var spendingCredits: Bool { Self.usesCredits(row: row, remaining: remaining) }
 
     var spendsCreditsBeforeReset: Bool {
         guard creditOnly, row.bankedState == .available, (row.bankedResets?.availableCount ?? 0) > 0,
               let expiry = credits?.expiresAt,
-              let reset = row.soonestBankedExpiry(after: credits?.observedAt ?? .distantPast) else { return false }
+              let reset = bankedResetExpiry else { return false }
         return expiry < reset
+    }
+
+    func creditWorkloadMultiplier(now: Date) -> Double? {
+        guard let runway = credits?.runwayHours, let expiry = credits?.expiresAt else { return nil }
+        let deadline = spendsCreditsBeforeReset ? min(expiry, (bankedResetExpiry ?? expiry).addingTimeInterval(-ResetAssessment.expiringWithin)) : expiry
+        return runway / max(UseNextRanking.minimumHours, deadline.timeIntervalSince(now) / 3_600)
     }
 
     private static func usesCredits(row: AccountOverview.Account, remaining: Double) -> Bool {

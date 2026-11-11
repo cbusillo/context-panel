@@ -344,7 +344,7 @@ public struct AccountOverview: Equatable, Sendable {
             ? Self.makeRankings(accounts: accounts, evidence: launchEvidence, now: now) : allRankings
         deadlines = accounts.flatMap { account -> [Deadline] in
             guard account.metadata.isEnabled, let summary = account.bankedResets else { return [] }
-            let dates = summary.expiries(after: now)
+            let dates = account.bankedExpiries(after: now, includeLastObserved: true)
             var duplicateOrdinals: [Date: Int] = [:]
             return dates.prefix(summary.availableCount).compactMap { date in
                 guard date > now else { return nil }

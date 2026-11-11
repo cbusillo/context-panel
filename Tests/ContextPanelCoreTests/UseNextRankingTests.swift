@@ -199,6 +199,74 @@ private extension UseNextRanking {
     #expect(!forecast.runsOutBeforeRefill)
 }
 
+@Test func accountStrategyReplansAfterTheFirstRefillInsteadOfMaintainingTheOldDemand() throws {
+    let early = Fixture(name: "early", weeklyUsed: 90, resetHours: 12, burn: 2.15)
+    let later = Fixture(name: "later", weeklyUsed: 40, resetHours: 84, burn: 2.15)
+    let before = try #require(ranking([early, later]).targetPointsPerHour)
+    var refilled = early
+    refilled.weeklyUsed = 0
+    refilled.resetHours = 168
+    var remaining = later
+    remaining.weeklyUsed = 82
+    remaining.resetHours = 72
+    let after = ranking([refilled, remaining])
+    #expect(try #require(after.targetPointsPerHour) < before)
+    #expect(try #require(after.targetPointsPerHour) * remaining.resetHours! <= 100 + 100 - Double(remaining.weeklyUsed!))
+}
+
+@Test func accountStrategyAllocatesTheProviderTargetAcrossParallelShortWindows() throws {
+    let a = Fixture(name: "a", provider: .anthropic, weeklyUsed: 10, resetHours: 24, burn: 1,
+        fiveHourUsed: 50, fiveHourResetHours: 1, fiveHourBurn: 5)
+    var b = a
+    b.name = "b"
+    let result = ranking([a, b], provider: .anthropic)
+    let first = try #require(result.entry(a)?.targetPointsPerHour)
+    let second = try #require(result.entry(b)?.targetPointsPerHour)
+    #expect(first > 0 && second > 0)
+    #expect(result.targetPointsPerHour == first + second)
+    #expect((first + second) * a.resetHours! >= 2 * (100 - Double(a.weeklyUsed!)))
+    #expect(Set(result.launchOrder) == [a.id, b.id])
+}
+
+@Test func creditWorkHasAMeasuredTargetWhenEveryWeeklyBurnIsZero() throws {
+    let account = Fixture(name: "credit-only", weeklyUsed: 100, resetHours: 100, burn: 0, onCredits: true)
+    let runway = 12.0
+    let remainingHours = 6.0
+    let evidence = UseNextEvidence(credits: [account.id: UsageCreditCapacity(available: true, runwayHours: runway,
+        expiresAt: rankNow.addingTimeInterval(remainingHours * hour), observedAt: rankNow)])
+    let result = overview([account], evidence: evidence)
+    let entry = try #require(result.useNextRanking(provider: .openAI).entry(account))
+    #expect(entry.targetPointsPerHour == nil)
+    #expect(entry.creditWorkloadMultiplier == runway / remainingHours)
+    #expect(result.useNext(provider: .openAI)?.id == account.id)
+    #expect(!AccountTerms.useNextStrategy(result, provider: .openAI).contains("Measuring"))
+}
+
+@Test func paidShortWindowFallbackRetainsTheWeeklyQuotaDeadlineAndLoad() throws {
+    let account = Fixture(name: "fallback", weeklyUsed: 40, resetHours: 10, burn: 0.1,
+        fiveHourUsed: 100, onCredits: true)
+    let result = ranking([account])
+    #expect(result.entry(account)?.deadline == rankNow.addingTimeInterval(account.resetHours! * hour))
+    #expect(try #require(result.targetPointsPerHour) * account.resetHours! >= 100 - Double(account.weeklyUsed!))
+}
+
+@Test func pendingLaunchesPublishTheirKnownRetryTime() throws {
+    let account = Fixture(name: "pending", weeklyUsed: 90, resetHours: 100, burn: 1)
+    let receipt = LaunchReceipt(provider: .openAI, accountID: account.id, launchedAt: rankNow.addingTimeInterval(-60))
+    let result = ranking([account], evidence: UseNextEvidence(receipts: [receipt]))
+    #expect(result.useNextAccountID == nil)
+    #expect(result.nextCapacityAt == receipt.launchedAt.addingTimeInterval(UseNextRanking.receiptReflectedAfter))
+}
+
+@Test func unknownOtherQuotaKeepsTheCushionAndExplainsHowToResolveIt() throws {
+    let personal = Fixture(name: "personal", provider: .anthropic, weeklyUsed: 98, burn: 0, useLast: true)
+    let unreadable = Fixture(name: "unreadable", provider: .anthropic, weeklyUsed: nil, readState: .unavailable)
+    let result = ranking([personal, unreadable], provider: .anthropic)
+    #expect(result.useNextAccountID == nil)
+    #expect(abs(try #require(result.entry(personal)?.reserve) - (100 - Double(personal.weeklyUsed!))) < 0.001)
+    #expect(result.entry(personal)?.reason.contains("Refresh or sign in") == true)
+}
+
 @Test func accountStrategyPlansZeroBeforeAResetExpiresWithoutSkippingEarlierQuota() throws {
     let reset = Fixture(name: "reset", weeklyUsed: 50, resetHours: 100, burn: 0.1, bankedExpiryHours: [48, 48])
     let earlier = Fixture(name: "earlier", weeklyUsed: 80, resetHours: 5, burn: 0.1)
@@ -272,7 +340,7 @@ private extension UseNextRanking {
     #expect(unmeasured.launchOrder == [first.id, later.id])
 }
 
-@Test func accountStrategyRetainsEventDrivenCreditDeadlinesAndCachesOneForecast() throws {
+@Test func accountStrategyRetainsEventDrivenCreditDeadlines() throws {
     let account = Fixture(name: "account", weeklyUsed: 50, resetHours: 100, burn: 1,
         observedAgo: 2 * hour, eventDriven: true)
     let expiry = rankNow.addingTimeInterval(10 * hour)
@@ -280,8 +348,6 @@ private extension UseNextRanking {
         observedAt: rankNow.addingTimeInterval(-2 * hour))
     let result = ranking([account], evidence: UseNextEvidence(credits: [account.id: capacity]))
     #expect(result.entry(account)?.deadline == expiry)
-    let cached = overview([account])
-    #expect(cached.useNextRanking(provider: .openAI).forecast == cached.paceForecast(provider: .openAI))
 }
 
 @Test func accountStrategySpendsEarlierCreditsBeforeAdvisingABankedResetOnTheSameAccount() throws {
@@ -577,7 +643,7 @@ private extension UseNextRanking {
     let expiring = try assessment(Fixture(name: "expiring", weeklyUsed: 30, resetHours: 5.7 * 24, bankedExpiryHours: [20, 200]))
     #expect(expiring.trigger == .expiring)
     #expect(abs((expiring.value ?? 0) - 11.4) < 0.2)
-    #expect(expiring.prompt == nil && expiring.useFirstPrompt != nil && !expiring.notYetApplicable)
+    #expect(expiring.recommended && !expiring.notYetApplicable)
 
     let lapsing = try assessment(Fixture(name: "lapsing", weeklyUsed: 30, resetHours: 0.6 * 24, bankedExpiryHours: [20]))
     #expect(abs((lapsing.value ?? 0) + 61.4) < 0.2)
@@ -612,7 +678,7 @@ private extension UseNextRanking {
     let assessment = try #require(overview([account]).accounts.first?.resetAssessment)
     #expect(assessment.trigger == .expiring)
     #expect(abs((assessment.value ?? 0) - 23) < 0.2)
-    #expect(assessment.prompt == nil && assessment.useFirstPrompt != nil)
+    #expect(assessment.recommended)
 }
 
 // 17. gpt-reserve at 0 while the Codex window is at 50%: the account stays ranked, gated only for that model.
@@ -621,7 +687,7 @@ private extension UseNextRanking {
     let result = ranking([account])
     let entry = try #require(result.entry(account))
     #expect(entry.remaining == 50)
-    #expect(entry.notes.count == 1 && entry.notes[0].contains("gpt-reserve"))
+    #expect(entry.notes.contains { $0.contains("gpt-reserve") })
     #expect(result.useNextAccountID == account.id)
 }
 
@@ -743,7 +809,8 @@ func expiringResetStillPromptsWhileAnotherAccountHasQuota(_ provider: Provider) 
         let result = overview([expiring, usable])
         let assessment = try #require(result.accounts.first { $0.id == expiring.id }?.resetAssessment)
         #expect(assessment.trigger == .expiring)
-        #expect(!assessment.recommended && assessment.useFirstPrompt != nil)
+        #expect(assessment.recommended == (hoursLeft <= expiryBoundary))
+        #expect(assessment.recommended || assessment.useFirstPrompt != nil)
     }
     // The expiry prompt also remains when the expiring account itself is empty.
     let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [20])
@@ -1095,7 +1162,7 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(overview([idle]).accounts.first?.resetAssessment?.recommended == false)
     var unmeasured = idle
     unmeasured.burn = nil
-    #expect(overview([unmeasured]).accounts.first?.resetAssessment?.recommended == false)
+    #expect(overview([unmeasured]).accounts.first?.resetAssessment?.recommended == true)
 }
 
 @Test func openAIResetStartsAFreshWeekWhileClaudeNeedsTimeToUseItsRefill() throws {

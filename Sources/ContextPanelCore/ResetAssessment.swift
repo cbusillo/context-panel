@@ -49,7 +49,7 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
                 let completed = max(0, floor(expiry.timeIntervalSince(plan.refill) / period))
                 let needsEmpty = protected || creditDue || resets > 0
                 let latest = needsEmpty && plan.refill < expiry ? 1.0 : 0
-                let current = plan.refill <= expiry || needsEmpty ? plan.creditOnly ? 0 : plan.remaining : 0
+                let current = plan.refill <= expiry || needsEmpty ? plan.remaining : 0
                 return sum + current + (completed + latest + Double(max(0, resets - 1))) * 100
                     + (creditDue ? plan.creditPoints ?? 0 : 0)
             }
@@ -145,7 +145,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         }, uniquingKeysWith: { first, _ in first })
         // One apply-now prompt per provider at a time, the soonest expiry first.
         var selectedByProvider: [Provider: Self] = [:]
-        for assessment in assessments.values.filter({ $0.trigger == .outOfQuota && $0.recommended })
+        for assessment in assessments.values.filter(\.recommended)
             .sorted(by: { ($0.expiresAt ?? .distantFuture, $0.accountID) < ($1.expiresAt ?? .distantFuture, $1.accountID) }) {
             if let selected = selectedByProvider[assessment.provider] {
                 var held = assessment
@@ -223,7 +223,8 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         self.trigger = trigger
         self.value = value
         waitingForCredits = plan?.spendsCreditsBeforeReset == true
-        recommended = trigger != .notNeeded && left <= 0 && !unrecognized && !waitingForCredits && (value ?? -.infinity) >= threshold
+        let applyWindow = left <= 0 || warnFrom.map { now >= $0 } == true
+        recommended = trigger != .notNeeded && applyWindow && !gated && !unrecognized && !waitingForCredits && (value ?? -.infinity) >= threshold
         notYetApplicable = gated
         self.warnFrom = warnFrom
         self.claudeSpendRate = claudeSpendRate
@@ -265,8 +266,8 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
 }
 
 public extension AccountOverview.Account {
-    func bankedExpiries(after now: Date) -> [Date] {
-        guard bankedState == .available, let banked = bankedResets, banked.availableCount > 0,
+    func bankedExpiries(after now: Date, includeLastObserved: Bool = false) -> [Date] {
+        guard bankedState == .available || includeLastObserved, let banked = bankedResets, banked.availableCount > 0,
               metadata.provider != .anthropic || banked.generalWeeklyOnly else { return [] }
         return banked.expiries(after: now)
     }

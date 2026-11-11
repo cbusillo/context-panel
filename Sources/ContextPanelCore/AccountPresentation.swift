@@ -282,11 +282,17 @@ public enum AccountTerms {
         guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else {
             return useNextUnavailableReason(overview, provider: provider)
         }
-        let target = entry.targetPointsPerHour.map { String(format: "Target %.1f%%/h", $0) } ?? "Measuring target pace"
+        let target = ranking.targetPointsPerHour.map {
+            $0 > 0 && $0 < 0.1 ? "Target <0.1%/h" : String(format: "Target %.1f%%/h", $0)
+        } ?? entry.creditWorkloadMultiplier.map { String(format: "Credit work %.1f× recent", $0) } ?? "Measuring target pace"
         let by = entry.deadline == .distantFuture ? "Using credits"
             : "use by " + AccountPaceText.when(entry.deadline, now: overview.rankedAt)
         if compact { return target + " · " + by }
         var parts = [target + " · " + by]
+        if let total = ranking.targetPointsPerHour, let own = entry.targetPointsPerHour, own < total {
+            parts.append(String(format: "This account %.1f%%/h; also run work on the other accounts.", own))
+        }
+        if let note = entry.notes.first { parts.append(note) }
         if entry.spendsCreditsBeforeReset {
             parts.append("Spend credits first; apply the reset afterward.")
         } else if entry.bankedResetExpiresAt != nil {

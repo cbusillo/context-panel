@@ -135,7 +135,7 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
                 + (expiry.source == .entered ? " (date entered in Settings)." : ".")
             return spending == 0
                 ? expires + " Use next plans when quota should reach 0% to start spending these credits. "
-                    + "The amount left at expiry is unknown until credit spend is measured."
+                    + "Follow its credit workload target there; it stays unknown until spend is measured."
                 : expires + " They are being spent on \(spending) " + (spending == 1 ? "account" : "accounts")
                     + " at 0% of its weekly quota."
         }

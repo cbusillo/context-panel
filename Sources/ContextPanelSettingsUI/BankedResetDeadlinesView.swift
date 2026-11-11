@@ -39,9 +39,11 @@ public struct BankedResetDeadlinesView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(report.provider.displayName) · \(report.accountName)").font(.headline)
                         if let summary = report.resetCredits?.presented(at: now) {
-                            let dates = summary.knownExpiries.isEmpty
-                                ? summary.earliestKnownExpiry.map { [$0] } ?? [] : summary.knownExpiries
+                            let dates = summary.expiries(after: now)
                             Text("\(summary.availableCount) banked resets")
+                            if report.provider == .anthropic && !summary.generalWeeklyOnly {
+                                Text("General-week refill unconfirmed; excluded from the plan").foregroundStyle(.secondary)
+                            }
                             if summary.excludedOfferCount > 0 {
                                 Text("\(summary.excludedOfferCount) offers with no resets left").foregroundStyle(.secondary)
                             }
