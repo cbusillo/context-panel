@@ -80,18 +80,20 @@ private struct Fixture {
     }
 }
 
-private func overview(_ fixtures: [Fixture], now: Date = rankNow, widgetsOnly: Bool = false) -> AccountOverview {
+private func overview(_ fixtures: [Fixture], now: Date = rankNow, widgetsOnly: Bool = false,
+                      evidence: UseNextEvidence = UseNextEvidence()) -> AccountOverview {
     AccountOverview(snapshot: UsageSnapshot(generatedAt: now, limits: fixtures.flatMap { $0.limits(now: now) }),
         reports: fixtures.map { $0.report(now: now) },
         metadata: fixtures.map { AccountDisplayMetadata(id: $0.id, configurationID: $0.id, provider: $0.provider,
                                                         label: $0.name, isEnabled: $0.isEnabled, showInWidgets: $0.showInWidgets,
                                                         useLast: $0.useLast, sourceConfigured: $0.sourceConfigured, readState: $0.readState) },
-        now: now, widgetsOnly: widgetsOnly, accountBurnRates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: now)) }))
+        now: now, widgetsOnly: widgetsOnly, accountBurnRates: Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.rates(now: now)) }),
+        launchEvidence: evidence)
 }
 
 private func ranking(_ fixtures: [Fixture], provider: Provider = .openAI, evidence: UseNextEvidence = UseNextEvidence(),
                      now: Date = rankNow) -> UseNextRanking {
-    overview(fixtures, now: now).useNextRanking(provider: provider, evidence: evidence)
+    overview(fixtures, now: now, evidence: evidence).useNextRanking(provider: provider)
 }
 
 @Test func codexExpiredSignInNeverInventsLaunchCapacity() {
@@ -178,6 +180,7 @@ private extension UseNextRanking {
     let result = ranking([first, later])
     #expect(result.useNextAccountID == first.id)
     #expect(result.targetPointsPerHour == 1)
+    #expect(result.entry(later)?.targetPointsPerHour == 0)
     let zero = try #require(result.entry(first)?.depleteBy)
     #expect(zero == rankNow.addingTimeInterval(50 * hour))
     let forecast = try #require(result.forecast)
@@ -279,6 +282,32 @@ private extension UseNextRanking {
     #expect(result.entry(account)?.deadline == expiry)
     let cached = overview([account])
     #expect(cached.useNextRanking(provider: .openAI).forecast == cached.paceForecast(provider: .openAI))
+}
+
+@Test func accountStrategySpendsEarlierCreditsBeforeAdvisingABankedResetOnTheSameAccount() throws {
+    let empty = Fixture(name: "empty", weeklyUsed: 100, resetHours: 100, burn: 1,
+        bankedExpiryHours: [48], onCredits: true)
+    let capacity = UsageCreditCapacity(available: true, runwayHours: 8,
+        expiresAt: rankNow.addingTimeInterval(24 * hour), observedAt: rankNow)
+    let evidence = UseNextEvidence(credits: [empty.id: capacity])
+    let result = overview([empty], evidence: evidence)
+    #expect(result.useNext(provider: .openAI)?.id == empty.id)
+    #expect(result.useNextRanking(provider: .openAI).entry(empty)?.spendsCreditsBeforeReset == true)
+    #expect(result.accounts.first?.resetAssessment?.recommended == false)
+    var exhausted = empty
+    exhausted.onCredits = false
+    #expect(overview([exhausted]).accounts.first?.resetAssessment?.recommended == true)
+}
+
+@Test func accountStrategyPlansForCreditsBeyondTheNextRefillRatherThanWaitingForTheLastWeek() throws {
+    let account = Fixture(name: "account", weeklyUsed: 30, resetHours: 100, burn: 0.7)
+    let capacity = UsageCreditCapacity(available: true, runwayHours: 200,
+        expiresAt: rankNow.addingTimeInterval(1_000 * hour), observedAt: rankNow)
+    let result = ranking([account], evidence: UseNextEvidence(credits: [account.id: capacity]))
+    let forecast = try #require(result.forecast)
+    #expect(forecast.expiryNeedsMoreWork)
+    #expect(try #require(result.targetPointsPerHour) > forecast.pacePerHour)
+    #expect(result.entry(account)?.deadline == rankNow.addingTimeInterval(100 * hour))
 }
 
 @Test func accountStrategyHoldsOnlyTheCushionAndSpendsItWhenItIsTheLastQuota() throws {

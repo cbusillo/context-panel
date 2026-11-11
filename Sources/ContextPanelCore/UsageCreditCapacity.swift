@@ -23,8 +23,8 @@ public struct UsageCreditCapacity: Codable, Equatable, Sendable {
                 guard let own = reading.reports.first(where: {
                     $0.provider == report.provider && UnusedCapacityHistory.reportID($0, in: reading, resolve: resolve) == id
                 }), own.status != .failure, let amount = own.usageCredits?.balance else { continue }
-                let spending = ProviderRefillDetector.mainLimits(provider: own.provider, reading: reading)[own.accountID]?
-                    .remainingCapacityRatio == 0
+                let spending = own.accessState.kind == .paidFallbackActive
+                    || ProviderRefillDetector.mainLimits(provider: own.provider, reading: reading)[own.accountID]?.remainingCapacityRatio == 0
                 if let before = previous, amount > before.balance {
                     spent = 0; hours = 0
                 } else if let before = previous, before.spending, spending, own.generatedAt > before.date {

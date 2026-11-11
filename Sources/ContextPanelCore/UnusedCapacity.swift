@@ -97,7 +97,7 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
         paceMeasured = forecast.paceMeasured
         let points = Int(forecast.refillsUnused.rounded())
         let amount = "about \(points) " + (points == 1 ? "point" : "points")
-        line = if forecast.runsOutBeforeRefill {
+        let outlook = if forecast.runsOutBeforeRefill {
             "\(name): every point gets used before it refills at this pace."
         } else if forecast.refillsUnused < Self.nothingPoints {
             "\(name): nothing will refill unused at this pace."
@@ -106,6 +106,7 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
         } else {
             "\(name): \(amount) will refill unused at this pace. Add work."
         }
+        line = outlook + (forecast.expiryNeedsMoreWork ? " Expiring resets or credits need more real work before their deadlines." : "")
         let credits = UnusedCapacityHistory.creditsLeft(provider: provider, reading: stored, resolve: resolve)
         let weekly = ProviderRefillDetector.mainLimits(provider: provider, reading: stored)
         let spending = Set(stored.reports.compactMap { report -> String? in

@@ -11,6 +11,8 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
     public let sustainablePointsPerHour: Double
     public let capacityUntilRefillPoints: Double
     public let creditRunwayUnknown: Bool
+    public let minimumExpiryPace: Double
+    public let expiryNeedsMoreWork: Bool
     /// The forecast includes banked capacity conditionally: only the Director can make it available.
     public let requiresBankedReset: Bool
 
@@ -26,9 +28,33 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         capacityUntilRefillPoints = quota + banked + credits
         sustainablePointsPerHour = capacityUntilRefillPoints / hours
         creditRunwayUnknown = plans.contains { $0.credits != nil && $0.creditPoints == nil }
+        minimumExpiryPace = Self.expiryPace(plans, now: now)
+        expiryNeedsMoreWork = minimumExpiryPace > pace
         requiresBankedReset = complete && (plans.allSatisfy { $0.remaining <= 0 } || pace * hours > quota + credits)
         runsOutBeforeRefill = complete && pace * hours > capacityUntilRefillPoints
         refillsUnused = Self.unused(plans.map { ($0.remaining, max(0, $0.refill.timeIntervalSince(now) / 3_600)) }, pace: pace)
+    }
+
+    private static func expiryPace(_ plans: [SpendPlan], now: Date) -> Double {
+        let expiries = Set(plans.flatMap { plan in
+            plan.row.bankedExpiries(after: now) + [plan.credits?.expiresAt].compactMap { $0 }
+        }).filter { $0 > now }
+        return expiries.map { expiry in
+            let protected = plans.contains { ($0.reserve ?? 0) > 0
+                && ($0.credits?.expiresAt.map { $0 <= expiry } == true || $0.row.bankedExpiries(after: now).contains { $0 <= expiry }) }
+            let needed = plans.reduce(0.0) { sum, plan in
+                let resets = plan.row.bankedExpiries(after: now).filter { $0 <= expiry }.count
+                let creditDue = plan.credits?.expiresAt.map { $0 <= expiry } == true
+                let period = UseNextRanking.windowHours(plan.row.mainWindow?.period) * 3_600
+                let completed = max(0, floor(expiry.timeIntervalSince(plan.refill) / period))
+                let needsEmpty = protected || creditDue || resets > 0
+                let latest = needsEmpty && plan.refill < expiry ? 1.0 : 0
+                let current = plan.refill <= expiry || needsEmpty ? plan.creditOnly ? 0 : plan.remaining : 0
+                return sum + current + (completed + latest + Double(max(0, resets - 1))) * 100
+                    + (creditDue ? plan.creditPoints ?? 0 : 0)
+            }
+            return needed / max(UseNextRanking.minimumHours, expiry.timeIntervalSince(now) / 3_600)
+        }.max() ?? 0
     }
 
     static func unused(_ lanes: [(remaining: Double, hours: Double)], pace: Double) -> Double {
@@ -76,8 +102,9 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         trigger == .expiring && !recommended && !unrecognizedKind ? "Use \(label) before its reset expires" : nil
     }
     private var waitingForEarlierReset = false
+    private var waitingForCredits = false
     public var title: String {
-        if waitingForEarlierReset { return "Hold" }
+        if waitingForEarlierReset || waitingForCredits { return "Hold" }
         if recommended { return "Apply reset now" }
         if notYetApplicable { return "Not applicable yet" }
         return trigger == .notNeeded ? "Hold" : "Not worth applying now"
@@ -195,7 +222,8 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         unrecognizedKind = unrecognized
         self.trigger = trigger
         self.value = value
-        recommended = trigger != .notNeeded && left <= 0 && !unrecognized && (value ?? -.infinity) >= threshold
+        waitingForCredits = plan?.spendsCreditsBeforeReset == true
+        recommended = trigger != .notNeeded && left <= 0 && !unrecognized && !waitingForCredits && (value ?? -.infinity) >= threshold
         notYetApplicable = gated
         self.warnFrom = warnFrom
         self.claudeSpendRate = claudeSpendRate

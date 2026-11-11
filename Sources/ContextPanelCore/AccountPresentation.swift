@@ -287,7 +287,9 @@ public enum AccountTerms {
             : "use by " + AccountPaceText.when(entry.deadline, now: overview.rankedAt)
         if compact { return target + " · " + by }
         var parts = [target + " · " + by]
-        if entry.bankedResetExpiresAt != nil {
+        if entry.spendsCreditsBeforeReset {
+            parts.append("Spend credits first; apply the reset afterward.")
+        } else if entry.bankedResetExpiresAt != nil {
             parts.append((entry.reserve ?? 0) > 0 ? "Reach 0% after the other quota; you apply the reset."
                 : entry.depleteBy.map { "0% by " + AccountPaceText.when($0, now: overview.rankedAt) + "; you apply the reset." }
                     ?? "Use toward 0%; you apply the reset.")

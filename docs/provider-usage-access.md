@@ -906,7 +906,9 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   expiry can bring that account forward, including the quota that must be used
   to reach credits. Otherwise credits follow plan quota, including the marked
   account's last quota. The provider's expiry wins over the date in Settings.
-  Credit burn comes from intervals at zero quota over the last day, restarting the
+  Credits that expire before a banked reset are spent before recommending that
+  reset. Credit burn comes from intervals at zero quota or on paid fallback over
+  the last day, restarting the
   estimate after a top-up. Credit runway in weekly points uses that account's
   measured weekly burn as an estimate. Without both measurements, the credit
   runway stays unknown and the outage warning uses known capacity. Companions
@@ -917,8 +919,10 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   Director to apply a reset. Measured demand above capacity is capped so work
   can last until that refill. An earlier expiry raises the current account's
   target to use the expiring capacity, after which the next reading replans the
-  remaining work. `refillsUnused` says when measured demand is too low and real
-  work needs to be added. Percentage points form an index across accounts,
+  remaining work. `minimumExpiryPace` includes intervening plan refills when an
+  expiry is beyond the next refill; `expiryNeedsMoreWork` and `refillsUnused`
+  say when measured demand is too low and real work needs to be added.
+  Percentage points form an index across accounts,
   rather than a claim that different paid plans have the same size.
 - The general weekly window drives the order, not a model-only window such as
   gpt-reserve. Accounts with no known quota or reset time cannot take launches.
@@ -927,8 +931,8 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   beyond a used-up gate. All exclusions say why and when capacity returns, if known.
 - Batches follow the same deadline order. Pending receipts reduce projected
   room using measured points per launch, until two later account readings or
-  thirty minutes acknowledge them. Without a per-launch estimate the batch keeps
-  selecting the first account; actual observations replan it. No command or
+  thirty minutes acknowledge them. Without a per-launch estimate the batch allows
+  one pending launch per account; refresh observations before adding more. No command or
   credential path travels with this count-only evidence.
 - Saved-only readings publish their age and never claim Use next. Their launch
   order is available for thirty minutes. Codex's expired-sign-in fallback keeps
@@ -936,8 +940,9 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
 
 Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
 `remaining`, `burn`, `burnEstimated`, `reserve`, `pendingLaunches`, `notes`,
-`targetPointsPerHour` (when selected),
-`depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch` and `bankedResetExpiresAt`.
+`targetPointsPerHour` (zero for other accounts; unknown on saved-only readings),
+`depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch`, `bankedResetExpiresAt`
+and `spendsCreditsBeforeReset`.
 An unknown credit spend rate leaves its points target null rather than inventing one.
 The provider publishes the selected target, `forecast`, `excluded`,
 `useNextAccountID`, `nextCapacityAt`, `multipleUseLast`, `launchOrder` and saved-reading metadata.
