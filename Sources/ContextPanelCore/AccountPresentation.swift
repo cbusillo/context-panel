@@ -266,13 +266,6 @@ public enum AccountTerms {
         window.flatMap(horizonWindowName).map { $0 + " " + left } ?? weekLeft
     }
 
-    /// Why the use-next account: "Resets Sat 9:07 PM · ~50% to spare".
-    public static func useNextReason(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> String {
-        [horizon.window.flatMap { window in reset(window, now: now).map { (horizonWindowName(window).map { $0 + " resets " } ?? resets + " ") + $0 } },
-         horizon.spare.map(spare)]
-            .compactMap { $0 }.joined(separator: " · ")
-    }
-
     public static func useNextUnavailableReason(_ overview: AccountOverview, provider: Provider) -> String {
         let ranking = overview.useNextRanking(provider: provider)
         if ranking.basedOnStaleReadings {
@@ -289,11 +282,22 @@ public enum AccountTerms {
         guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else {
             return useNextUnavailableReason(overview, provider: provider)
         }
-        let target = entry.targetPointsPerHour.map { String(format: "Target %.1f%% per hour. ", $0) }
-            ?? "Measuring the target pace. "
-        let reason = compact ? entry.deadline == .distantFuture ? "Using credits" : "Use by " + ContextPanelDateFormatting.resetDeadline(entry.deadline)
-            : entry.reason
-        return target + reason
+        let target = entry.targetPointsPerHour.map { String(format: "Target %.1f%%/h", $0) } ?? "Measuring target pace"
+        let by = entry.deadline == .distantFuture ? "Using credits"
+            : "use by " + AccountPaceText.when(entry.deadline, now: overview.rankedAt)
+        if compact { return target + " · " + by }
+        var parts = [target + " · " + by]
+        if entry.bankedResetExpiresAt != nil {
+            parts.append((entry.reserve ?? 0) > 0 ? "Reach 0% after the other quota; you apply the reset."
+                : entry.depleteBy.map { "0% by " + AccountPaceText.when($0, now: overview.rankedAt) + "; you apply the reset." }
+                    ?? "Use toward 0%; you apply the reset.")
+        } else if let reset = overview.accounts.first(where: { $0.id == id })?.mainWindow?.naturalResetAt,
+                  let creditExpiry = overview.launchEvidence.credits?[id]?.expiresAt, creditExpiry < reset {
+            parts.append((entry.reserve ?? 0) > 0 ? "After the other quota, reach 0% to spend credits."
+                : "Reach 0%, then spend the expiring credits.")
+        }
+        if let reserve = entry.reserve, reserve > 0 { parts.append("Keep about \(Int(reserve.rounded()))% for your own apps.") }
+        return parts.joined(separator: " ")
     }
 
     /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.

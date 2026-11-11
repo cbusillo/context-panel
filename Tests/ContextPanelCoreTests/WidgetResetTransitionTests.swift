@@ -19,7 +19,7 @@ func resetTransitionSnapshot(provider: Provider = .openAI, secondUsed: Int = 20,
         }, reports: zip(ids, [firstExpiry, secondExpiry]).map { id, expiry in
             StoredProviderReport(provider: provider, accountID: id, accountName: id, generatedAt: now,
                 resetCredits: ProviderResetCreditSummary(availableCount: 1, observedAt: now, coverage: .complete,
-                                                        earliestKnownExpiry: now.addingTimeInterval(expiry)),
+                                                        earliestKnownExpiry: now.addingTimeInterval(expiry), generalWeeklyOnly: true),
                 status: .healthy, errorMessage: nil)
         }, status: .limited, message: "Current", accountDisplayMetadata: ids.map { id in
             AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(provider, id), configurationID: id,
