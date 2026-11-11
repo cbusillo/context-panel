@@ -150,6 +150,11 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
                     unrecognizedKindCount: unrecognizedKindCount, excludedOfferCount: excludedOfferCount, generalWeeklyOnly: generalWeeklyOnly)
     }
 
+    public func expiries(after now: Date) -> [Date] {
+        let dates = knownExpiries.isEmpty ? earliestKnownExpiry.map { [$0] } ?? [] : knownExpiries
+        return dates.filter { $0 > now }.sorted()
+    }
+
     /// From this reading to `new` at `now`: how many resets left by expiring, and whether any left another way (applied).
     /// A count that rose, or fell only by resets whose expiry passed, spent nothing.
     public func change(to new: Self, at now: Date) -> (expired: Int, spent: Bool) {

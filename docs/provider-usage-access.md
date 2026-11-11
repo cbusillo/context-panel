@@ -827,14 +827,11 @@ the provider's accounts, null when none reports one),
 0%, the only place credits are spent), `usageCreditsExpireAt` and
 `usageCreditsExpirySource` (`provider` when a balance reports its own expiry,
 which wins, else `entered` for the day Chris entered under Settings > Usage
-credits; both null when no future expiry is known), `usageCreditsAtRisk`
-(credits expected to expire unspent: all of them while no account is at 0%,
-null when no expiry is known or while an account is spending them) and the
-sentences `line` and `usageCreditsLine`, for example "OpenAI: about 140 points
-will refill unused at this pace. Add work." and "OpenAI has 179,745 usage
-credits left. They expire Dec 31 (date entered in Settings). At this pace none
-will be spent: credits are used only once an account's weekly quota reaches 0%,
-so all 179,745 will expire unused." When nothing is at risk, `line` says so. `unusedAtPace` is
+credits; both null when no future expiry is known), and the sentences `line`
+and `usageCreditsLine`. Credit balances remain local. The display reports
+whether credits are currently being spent and directs the Supervisor to Use next's
+target; it does not invent an amount that will expire unused from one balance.
+When nothing is at risk, `line` says so. `unusedAtPace` is
 absent when the provider has no current weekly reading to forecast from.
 `answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
@@ -902,16 +899,19 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   without this qualification need a fresh reading. If a reset expires before
   the natural refill, the account gets a zero-percent target before that expiry.
   Multiple resets sharing an expiry include the work needed between applications.
-  Depletion leaves a widget refresh interval for the Director to apply the reset.
+  The requested depletion time leaves a day for the Director to apply the reset;
+  when that lead cannot be met, the panel does not promise a depletion time.
   Only the Director applies a reset. No launcher or panel action applies one.
 - Credits require exhausting an account's plan quota first. A known credit
   expiry can bring that account forward, including the quota that must be used
   to reach credits. Otherwise credits follow plan quota, including the marked
   account's last quota. The provider's expiry wins over the date in Settings.
-  Credit burn comes from decreasing balances over the last day, restarting the
+  Credit burn comes from intervals at zero quota over the last day, restarting the
   estimate after a top-up. Credit runway in weekly points uses that account's
   measured weekly burn as an estimate. Without both measurements, the credit
-  runway stays unknown; the panel does not claim the credits will prevent an outage.
+  runway stays unknown and the outage warning uses known capacity. Companions
+  receive only availability, expiry, observation time and measured hours of runway,
+  never the raw credit balance or credit-denominated burn rate.
 - `forecast` reports measured provider pace, capacity until the next natural
   refill, sustainable points per hour, and whether that capacity requires the
   Director to apply a reset. Measured demand above capacity is capped so work
@@ -936,12 +936,15 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
 
 Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
 `remaining`, `burn`, `burnEstimated`, `reserve`, `pendingLaunches`, `notes`,
-`targetPointsPerHour` (when selected), `targetCreditsPerHour` (on credits),
-`depleteBy` (null while holding a cushion), `availablePoints`, and `pointsPerLaunch`.
+`targetPointsPerHour` (when selected),
+`depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch` and `bankedResetExpiresAt`.
 An unknown credit spend rate leaves its points target null rather than inventing one.
 The provider publishes the selected target, `forecast`, `excluded`,
 `useNextAccountID`, `nextCapacityAt`, `multipleUseLast`, `launchOrder` and saved-reading metadata.
-The dashboard shows the target and the reason for the selected account.
+The dashboard and TV show the target and why the account goes next. Known
+short-window capacity caps the target; otherwise achievable pace remains
+explicitly unproved. Forecasts and reset advice read the cached ranking, with
+full-provider evidence retained separately only for a filtered widget view.
 
 Banked-reset advice still values OpenAI's fresh seven-day window and Claude's
 refill within its existing end date. OpenAI refuses application at 80% or more

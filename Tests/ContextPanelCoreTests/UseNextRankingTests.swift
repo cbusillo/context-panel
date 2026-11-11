@@ -197,41 +197,88 @@ private extension UseNextRanking {
 }
 
 @Test func accountStrategyPlansZeroBeforeAResetExpiresWithoutSkippingEarlierQuota() throws {
-    let reset = Fixture(name: "reset", weeklyUsed: 50, resetHours: 100, burn: 0.1, bankedExpiryHours: [10, 10])
+    let reset = Fixture(name: "reset", weeklyUsed: 50, resetHours: 100, burn: 0.1, bankedExpiryHours: [48, 48])
     let earlier = Fixture(name: "earlier", weeklyUsed: 80, resetHours: 5, burn: 0.1)
     let result = ranking([reset, earlier])
     #expect(result.useNextAccountID == earlier.id)
     let next = ranking([reset])
-    #expect(try #require(next.targetPointsPerHour) > 15)
-    #expect(try #require(next.entry(reset)?.depleteBy) < rankNow.addingTimeInterval(10 * hour))
-    #expect(try #require(next.entry(reset)?.deadline) < rankNow.addingTimeInterval(10 * hour))
+    #expect(try #require(next.targetPointsPerHour) > 0.1)
+    #expect(try #require(next.entry(reset)?.depleteBy) < rankNow.addingTimeInterval(48 * hour - ResetAssessment.expiringWithin))
+    #expect(next.entry(reset)?.deadline == rankNow.addingTimeInterval(48 * hour))
 }
 
 @Test func accountStrategyUsesCreditExpiryAndMeasuredSpendToPlanQuotaDepletion() throws {
     let credits = Fixture(name: "credits", weeklyUsed: 50, resetHours: 100, burn: 1)
     let other = Fixture(name: "other", weeklyUsed: 50, resetHours: 20, burn: 1)
-    let capacity = UsageCreditCapacity(balance: 100, expiresAt: rankNow.addingTimeInterval(10 * hour),
-        burnPerHour: 2, observedAt: rankNow)
+    let capacity = UsageCreditCapacity(available: true, runwayHours: 50, expiresAt: rankNow.addingTimeInterval(10 * hour),
+        observedAt: rankNow)
     let result = ranking([other, credits], evidence: UseNextEvidence(credits: [credits.id: capacity]))
     let entry = try #require(result.entry(credits))
     #expect(result.useNextAccountID == credits.id)
     #expect(entry.targetPointsPerHour == 10)
-    #expect(entry.targetCreditsPerHour == 20)
     #expect(entry.depleteBy == rankNow.addingTimeInterval(5 * hour))
     #expect(result.forecast?.creditRunwayUnknown == false)
 }
 
 @Test func accountStrategyDoesNotInventCreditRunwayWhenSpendIsUnknown() throws {
     let account = Fixture(name: "account", weeklyUsed: 50, burn: 1)
-    let capacity = UsageCreditCapacity(balance: 100, expiresAt: rankNow.addingTimeInterval(10 * hour),
-        burnPerHour: nil, observedAt: rankNow)
+    let capacity = UsageCreditCapacity(available: true, runwayHours: nil, expiresAt: rankNow.addingTimeInterval(10 * hour),
+        observedAt: rankNow)
     let result = ranking([account], evidence: UseNextEvidence(credits: [account.id: capacity]))
     #expect(result.forecast?.creditRunwayUnknown == true)
+    #expect(result.forecast?.runsOutBeforeRefill == true)
     #expect(result.forecast?.capacityUntilRefillPoints == 50)
     var expired = capacity
-    expired = UsageCreditCapacity(balance: expired.balance, expiresAt: rankNow.addingTimeInterval(-1),
-        burnPerHour: 2, observedAt: rankNow)
+    expired = UsageCreditCapacity(available: true, runwayHours: 50, expiresAt: rankNow.addingTimeInterval(-1),
+        observedAt: rankNow)
     #expect(ranking([account], evidence: UseNextEvidence(credits: [account.id: expired])).forecast?.creditRunwayUnknown == false)
+}
+
+@Test func accountStrategyKeepsCreditsWorkingWhenOtherQuotaHasAShortWindowHold() throws {
+    let credits = Fixture(name: "credits", weeklyUsed: 100, resetHours: 50, onCredits: true)
+    let gated = Fixture(name: "gated", weeklyUsed: 60, resetHours: 20, fiveHourUsed: 100)
+    #expect(ranking([gated, credits]).useNextAccountID == credits.id)
+    var paidGate = gated
+    paidGate.onCredits = true
+    #expect(ranking([paidGate]).useNextAccountID == paidGate.id)
+    var empty = credits
+    empty.onCredits = false
+    #expect(ranking([empty]).useNextAccountID == nil)
+}
+
+@Test func accountStrategyCapsTargetsAtTheKnownShortWindowAndDoesNotPromiseImpossibleDepletion() throws {
+    let limited = Fixture(name: "limited", weeklyUsed: 80, resetHours: 0.5, burn: 1,
+        fiveHourUsed: 95, fiveHourResetHours: 0.1, fiveHourBurn: 10)
+    let result = ranking([limited])
+    let entry = try #require(result.entry(limited))
+    let remaining = try #require(entry.targetPointsPerHour) * 0.5
+    #expect(remaining < entry.remaining)
+    #expect(entry.depleteBy == nil)
+}
+
+@Test func accountStrategyProjectsPendingLaunchesAgainstShortRoomAndUsesSmallerUnmeasuredBatches() throws {
+    let first = Fixture(name: "first", weeklyUsed: 50, resetHours: 10, burn: 1,
+        fiveHourUsed: 90, fiveHourResetHours: 1, fiveHourBurn: 2)
+    let later = Fixture(name: "later", weeklyUsed: 10, resetHours: 100, burn: 1)
+    let pending = LaunchReceipt(provider: .openAI, accountID: first.id, launchedAt: rankNow.addingTimeInterval(-60))
+    let observed = LaunchReceipt(provider: .openAI, accountID: later.id, launchedAt: rankNow.addingTimeInterval(-hour))
+    let result = ranking([first, later], evidence: UseNextEvidence(receipts: [pending, observed]))
+    #expect(result.useNextAccountID == later.id)
+    #expect(!result.launchOrder.contains(first.id))
+    let unmeasured = ranking([first, later])
+    #expect(unmeasured.launchOrder == [first.id, later.id])
+}
+
+@Test func accountStrategyRetainsEventDrivenCreditDeadlinesAndCachesOneForecast() throws {
+    let account = Fixture(name: "account", weeklyUsed: 50, resetHours: 100, burn: 1,
+        observedAgo: 2 * hour, eventDriven: true)
+    let expiry = rankNow.addingTimeInterval(10 * hour)
+    let capacity = UsageCreditCapacity(available: true, runwayHours: 20, expiresAt: expiry,
+        observedAt: rankNow.addingTimeInterval(-2 * hour))
+    let result = ranking([account], evidence: UseNextEvidence(credits: [account.id: capacity]))
+    #expect(result.entry(account)?.deadline == expiry)
+    let cached = overview([account])
+    #expect(cached.useNextRanking(provider: .openAI).forecast == cached.paceForecast(provider: .openAI))
 }
 
 @Test func accountStrategyHoldsOnlyTheCushionAndSpendsItWhenItIsTheLastQuota() throws {
@@ -251,7 +298,7 @@ private extension UseNextRanking {
     let personal = Fixture(name: "personal", weeklyUsed: 98, resetHours: 100, burn: 1, useLast: true)
     let other = Fixture(name: "other", weeklyUsed: 50, resetHours: 100, burn: 1)
     let expiry = rankNow.addingTimeInterval(10 * hour)
-    let capacity = UsageCreditCapacity(balance: 20, expiresAt: expiry, burnPerHour: 1, observedAt: rankNow)
+    let capacity = UsageCreditCapacity(available: true, runwayHours: 20, expiresAt: expiry, observedAt: rankNow)
     let result = ranking([personal, other], evidence: UseNextEvidence(credits: [personal.id: capacity]))
     #expect(result.useNextAccountID == other.id)
     #expect(result.targetPointsPerHour == 7.2)
@@ -501,7 +548,7 @@ private extension UseNextRanking {
     let expiring = try assessment(Fixture(name: "expiring", weeklyUsed: 30, resetHours: 5.7 * 24, bankedExpiryHours: [20, 200]))
     #expect(expiring.trigger == .expiring)
     #expect(abs((expiring.value ?? 0) - 11.4) < 0.2)
-    #expect(expiring.prompt != nil && !expiring.notYetApplicable)
+    #expect(expiring.prompt == nil && expiring.useFirstPrompt != nil && !expiring.notYetApplicable)
 
     let lapsing = try assessment(Fixture(name: "lapsing", weeklyUsed: 30, resetHours: 0.6 * 24, bankedExpiryHours: [20]))
     #expect(abs((lapsing.value ?? 0) + 61.4) < 0.2)
@@ -536,7 +583,7 @@ private extension UseNextRanking {
     let assessment = try #require(overview([account]).accounts.first?.resetAssessment)
     #expect(assessment.trigger == .expiring)
     #expect(abs((assessment.value ?? 0) - 23) < 0.2)
-    #expect(assessment.prompt != nil)
+    #expect(assessment.prompt == nil && assessment.useFirstPrompt != nil)
 }
 
 // 17. gpt-reserve at 0 while the Codex window is at 50%: the account stays ranked, gated only for that model.
@@ -666,14 +713,14 @@ func expiringResetStillPromptsWhileAnotherAccountHasQuota(_ provider: Provider) 
         let usable = Fixture(name: "usable", provider: provider, weeklyUsed: 0)
         let result = overview([expiring, usable])
         let assessment = try #require(result.accounts.first { $0.id == expiring.id }?.resetAssessment)
-        #expect(assessment.trigger == (hoursLeft <= expiryBoundary ? .expiring : .notNeeded))
-        #expect(assessment.recommended == (hoursLeft <= expiryBoundary))
+        #expect(assessment.trigger == .expiring)
+        #expect(!assessment.recommended && assessment.useFirstPrompt != nil)
     }
     // The expiry prompt also remains when the expiring account itself is empty.
     let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [20])
     let usable = Fixture(name: "usable", provider: provider, weeklyUsed: 0)
     let assessment = try #require(overview([empty, usable]).accounts.first?.resetAssessment)
-    #expect(assessment.trigger == .expiring && assessment.recommended)
+    #expect(assessment.trigger == .outOfQuota && assessment.recommended)
 }
 
 @Test(arguments: [Provider.openAI, .anthropic])
@@ -941,7 +988,8 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
         LaunchReceipt(provider: .openAI, accountID: id, launchedAt: rankNow.addingTimeInterval(-30), receiptID: $0)
     }
     let existing = CompanionSyncDocument(snapshot: snapshot,
-        launchEvidence: UseNextEvidence(receipts: [receipts[0]], accountReadingTimes: [id: [observed]]))
+        launchEvidence: UseNextEvidence(receipts: [receipts[0]], accountReadingTimes: [id: [observed]],
+            credits: [id: UsageCreditCapacity(available: true, runwayHours: 8, expiresAt: rankNow.addingTimeInterval(hour), observedAt: observed)]))
     let failure = StoredProviderReport(provider: .openAI, accountID: account.name, configuredAccountID: account.name,
         accountName: account.name, generatedAt: rankNow, status: .failure, errorMessage: nil)
     let material = try #require(ProviderAccountIdentityMaterial(provider: .openAI, kind: .chatGPTAccountID, identifier: "unrelated"))
@@ -953,11 +1001,17 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
         removedDisplayIDs: hasRemoval ? [AccountDisplayMetadata.safeID(.openAI, "unrelated-removed")] : nil,
         accountIdentityAliases: hasAlias ? [alias] : nil,
         launchEvidence: UseNextEvidence(receipts: [receipts[1]],
-            accountReadingTimes: [id: [rankNow.addingTimeInterval(-10), rankNow]]))
+            accountReadingTimes: [id: [rankNow.addingTimeInterval(-10), rankNow]],
+            credits: [id: UsageCreditCapacity(available: true, runwayHours: 50, expiresAt: rankNow.addingTimeInterval(2 * hour), observedAt: rankNow)]))
     let merged = failed.mergingForRemotePublish(existing: existing, now: rankNow)
     let evidence = try #require(merged.launchEvidence)
     #expect(Set(evidence.receipts.compactMap(\.receiptID)) == Set(receipts.compactMap(\.receiptID)))
     #expect(evidence.accountReadingTimes?[id] == [observed])
+    #expect(evidence.credits?[id] == existing.launchEvidence?.credits?[id])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let roundTrip = try JSONDecoder.contextPanelISO8601.decode(UseNextEvidence.self, from: encoder.encode(evidence))
+    #expect(roundTrip == evidence)
     let rows = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: existing, status: .healthy), now: rankNow)
         .accountOverview(now: rankNow).accounts
     #expect(AccountOverview.pendingLaunches(evidence: evidence, rows: rows, now: rankNow)[id] == receipts.count)
@@ -995,7 +1049,7 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     var early = gated
     early.bankedExpiryHours = [31]
     let before = try #require(overview([early]).accounts.first?.resetAssessment)
-    #expect(before.notYetApplicable && before.trigger == .notNeeded)
+    #expect(before.notYetApplicable && before.trigger == .expiring)
     var under = gated
     under.weeklyUsed = 21
     #expect(overview([under]).accounts.first?.resetAssessment?.notYetApplicable == false)
@@ -1012,7 +1066,7 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(overview([idle]).accounts.first?.resetAssessment?.recommended == false)
     var unmeasured = idle
     unmeasured.burn = nil
-    #expect(overview([unmeasured]).accounts.first?.resetAssessment?.recommended == true)
+    #expect(overview([unmeasured]).accounts.first?.resetAssessment?.recommended == false)
 }
 
 @Test func openAIResetStartsAFreshWeekWhileClaudeNeedsTimeToUseItsRefill() throws {
@@ -1043,4 +1097,62 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(plan.persistedState == first.state)
     let ended = LimitWarningEvaluator.evaluate(settings: settings, state: first.state, snapshot: snapshot, now: rankNow)
     #expect(ended.state.records.isEmpty)
+}
+
+@Test func expiredCodexResetUsesAPlanningAssumptionWithoutChangingItsSavedMeasurement() throws {
+    let saved = Fixture(name: "saved", weeklyUsed: 20, resetHours: 1, burn: 50,
+                        signInExpired: true, fiveHourUsed: 50, fiveHourResetHours: 1, fiveHourBurn: 50, observedAgo: 7_200)
+    let healthy = Fixture(name: "healthy", weeklyUsed: 50, resetHours: 20, burn: 0.2)
+    func result(at now: Date) -> UseNextRanking {
+        AccountOverview(snapshot: UsageSnapshot(generatedAt: now,
+            limits: saved.limits(now: rankNow) + healthy.limits(now: now)),
+            reports: [saved.report(now: rankNow), healthy.report(now: now)], now: now,
+            accountBurnRates: [saved.name: saved.rates(now: rankNow), healthy.name: healthy.rates(now: now)])
+            .useNextRanking(provider: .openAI)
+    }
+    let original = result(at: rankNow)
+    let later = result(at: rankNow.addingTimeInterval(86_400))
+    let before = try #require(original.entry(saved))
+    let after = try #require(later.entry(saved))
+    #expect(later.useNextAccountID == healthy.id)
+    #expect(after.burnEstimated)
+    #expect(after.burn == later.entry(healthy)?.burn)
+    #expect(after.notes.contains(AccountTerms.codexSignInExpired))
+    #expect(later.launchOrder.contains(saved.id))
+    let exhausted = Fixture(name: "exhausted", weeklyUsed: 100, resetHours: -1,
+                            signInExpired: true, observedAgo: 7_200)
+    let view = overview([exhausted])
+    let assumed = try #require(view.useNextRanking(provider: .openAI).entry(exhausted))
+    #expect(assumed.remaining == 100)
+    #expect(assumed.notes.contains(AccountTerms.assumedResetLaunch))
+    #expect(!assumed.unstarted)
+    #expect(view.accounts.first?.remainingFraction == 0)
+    #expect(view.accounts.first?.windows.first?.used == exhausted.weeklyUsed)
+    #expect(view.accounts.first?.windows.first?.isCurrent == false)
+    #expect(view.accounts.first?.windows.first?.confidence == .observed)
+    #expect(view.accounts.first?.observedAt == rankNow.addingTimeInterval(-exhausted.observedAgo))
+}
+
+@Test func twoUseLastAccountsAreAConfigurationErrorAndUseLastIsIgnored() {
+    let first = Fixture(name: "first", weeklyUsed: 10, resetHours: 100, burn: 0, useLast: true)
+    let second = Fixture(name: "second", weeklyUsed: 20, resetHours: 100, burn: 0, useLast: true)
+    let accounts = overview([first, second])
+    #expect(accounts.configurationErrors == ["multipleUseLast:openai"])
+    let result = accounts.useNextRanking(provider: .openAI)
+    #expect(result.multipleUseLast)
+    #expect(result.entries.allSatisfy { $0.reserve == nil })
+}
+
+
+@Test func useLastCushionTapersAsItsResetNears() throws {
+    let agentOnly = Fixture(name: "agents", weeklyUsed: 10, resetHours: 100, burn: 1)
+    let reserves = try [55.0, 24, 6, 1].map { hours in
+        let useLast = Fixture(name: "use-last", weeklyUsed: 29, resetHours: hours, burn: 0.67, useLast: true)
+        let entry = try #require(ranking([agentOnly, useLast]).entry(useLast))
+        return try #require(entry.reserve)
+    }
+    #expect(abs(reserves[0] - 36.85) < 0.01)
+    #expect(zip(reserves, reserves.dropFirst()).allSatisfy { $0 > $1 })
+    // In the final hours only the floor is held, so the account is planned to end near zero.
+    #expect(reserves.last == UseNextRanking.useLastFloor)
 }

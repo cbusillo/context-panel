@@ -4,10 +4,10 @@ import Testing
 
 private let creditNow = Date(timeIntervalSince1970: 1_800_000_000)
 
-private func creditReading(hoursAgo: Double, balance: Double, expiry: Date? = nil) -> StoredUsageSnapshot {
+private func creditReading(hoursAgo: Double, balance: Double, expiry: Date? = nil, used: Int = 100) -> StoredUsageSnapshot {
     let at = creditNow.addingTimeInterval(-hoursAgo * 3_600)
     let limit = UsageLimit(provider: .openAI, accountID: "sample", accountName: "Sample",
-        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: 100, limit: 100,
+        label: "Weekly", windowLabel: "Weekly", unit: .percent, used: used, limit: 100,
         resetsAt: creditNow.addingTimeInterval(86_400), lastUpdatedAt: at)
     return StoredUsageSnapshot(savedAt: at, snapshot: UsageSnapshot(generatedAt: at, limits: [limit]), reports: [
         StoredProviderReport(provider: .openAI, accountID: "sample", accountName: "Sample", generatedAt: at,
@@ -22,10 +22,10 @@ private func creditReading(hoursAgo: Double, balance: Double, expiry: Date? = ni
     let capacity = UsageCreditCapacity.make(stored: current, history: history,
         resolve: ProviderRefillDetector.localAccountID, entered: [:])
     let value = try #require(capacity.values.first)
-    #expect(value.balance == 80 && value.burnPerHour == 10)
+    #expect(value.runwayHours == 8)
     let toppedUp = UsageCreditCapacity.make(stored: creditReading(hoursAgo: 0, balance: 200), history: history,
         resolve: ProviderRefillDetector.localAccountID, entered: [:])
-    #expect(toppedUp.values.first?.burnPerHour == nil)
+    #expect(toppedUp.values.first?.runwayHours == nil)
 }
 
 @Test func creditCapacityUsesTheReportedExpiryBeforeSettingsAndKeepsAccountIdentityOpaque() throws {
@@ -34,7 +34,6 @@ private func creditReading(hoursAgo: Double, balance: Double, expiry: Date? = ni
     let resolve: ProviderRefillDetector.AccountResolver = { _ in "openai-0123456789abcdef" }
     let current = creditReading(hoursAgo: 0, balance: 100, expiry: reported)
     let capacity = UsageCreditCapacity.make(stored: current, history: [], resolve: resolve, entered: [.openAI: entered])
-    #expect(capacity.keys.first == "openai-0123456789abcdef")
     #expect(capacity.values.first?.expiresAt == reported)
     let fallback = UsageCreditCapacity.make(stored: creditReading(hoursAgo: 0, balance: 100), history: [],
         resolve: resolve, entered: [.openAI: entered])
@@ -42,5 +41,15 @@ private func creditReading(hoursAgo: Double, balance: Double, expiry: Date? = ni
     let evidence = UseNextEvidence(credits: capacity)
     #expect(evidence.excludingAccounts(Set(capacity.keys)).credits?.isEmpty == true)
     let moved = evidence.reidentifyingAccounts(using: ["openai-0123456789abcdef": "openai-fedcba9876543210"])
-    #expect(moved.credits?["openai-fedcba9876543210"]?.balance == 100)
+    #expect(moved.credits?["openai-fedcba9876543210"]?.available == true)
+}
+
+@Test func creditCapacityExcludesHoursBeforeQuotaReachedZero() throws {
+    let current = creditReading(hoursAgo: 0, balance: 70)
+    let history = [creditReading(hoursAgo: 24, balance: 100, used: 20), creditReading(hoursAgo: 3, balance: 100)]
+    let value = try #require(UsageCreditCapacity.make(stored: current, history: history,
+        resolve: ProviderRefillDetector.localAccountID, entered: [:]).values.first)
+    #expect(value.runwayHours == 7)
+    let restored = try JSONDecoder().decode(UsageCreditCapacity.self, from: JSONEncoder().encode(value))
+    #expect(restored == value)
 }

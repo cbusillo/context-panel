@@ -284,14 +284,16 @@ public enum AccountTerms {
         return reasons.joined(separator: "\n")
     }
 
-    public static func useNextStrategy(_ overview: AccountOverview, provider: Provider) -> String {
+    public static func useNextStrategy(_ overview: AccountOverview, provider: Provider, compact: Bool = false) -> String {
         let ranking = overview.useNextRanking(provider: provider)
         guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else {
             return useNextUnavailableReason(overview, provider: provider)
         }
         let target = entry.targetPointsPerHour.map { String(format: "Target %.1f%% per hour. ", $0) }
-            ?? "Credit pace is not measured. "
-        return target + entry.reason
+            ?? "Measuring the target pace. "
+        let reason = compact ? entry.deadline == .distantFuture ? "Using credits" : "Use by " + ContextPanelDateFormatting.resetDeadline(entry.deadline)
+            : entry.reason
+        return target + reason
     }
 
     /// The 5-hour ring's caption: "refills 4:17 PM", or "untouched" when nothing is used.

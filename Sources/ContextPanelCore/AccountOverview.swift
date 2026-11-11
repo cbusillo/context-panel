@@ -130,19 +130,21 @@ public struct AccountOverview: Equatable, Sendable {
     /// The moment the readings were judged; Use next measures time left from here.
     public let rankedAt: Date
     public let launchEvidence: UseNextEvidence
-    let paceForecasts: [Provider: ProviderPaceForecast]
+    let rankings: [Provider: UseNextRanking]
+    let allRankings: [Provider: UseNextRanking]
     private init(accounts: [Account], deadlines: [Deadline], rankedAt: Date, launchEvidence: UseNextEvidence,
-                 paceForecasts: [Provider: ProviderPaceForecast]) {
+                 rankings: [Provider: UseNextRanking], allRankings: [Provider: UseNextRanking]? = nil) {
         self.accounts = accounts
         self.deadlines = deadlines
         self.rankedAt = rankedAt
         self.launchEvidence = launchEvidence
-        self.paceForecasts = paceForecasts
+        self.rankings = rankings
+        self.allRankings = allRankings ?? rankings
     }
 
     /// Will this provider run out before it refills at the measured pace, and how much refills unused (#1079)?
     /// Judged over every account, including ones hidden from widgets; nil without a current weekly reading.
-    public func paceForecast(provider: Provider) -> ProviderPaceForecast? { paceForecasts[provider] }
+    public func paceForecast(provider: Provider) -> ProviderPaceForecast? { allRankings[provider]?.forecast }
 
     /// Accounts holding banked resets, for a provider's tag.
     public struct BankedResetHolders: Equatable, Sendable {
@@ -203,7 +205,8 @@ public struct AccountOverview: Equatable, Sendable {
     public func filtered(to provider: Provider) -> AccountOverview {
         AccountOverview(accounts: accounts.filter { $0.metadata.provider == provider },
                         deadlines: deadlines.filter { $0.provider == provider }, rankedAt: rankedAt, launchEvidence: launchEvidence,
-                        paceForecasts: paceForecasts.filter { $0.key == provider })
+                        rankings: rankings.filter { $0.key == provider },
+                        allRankings: allRankings.filter { $0.key == provider })
     }
 
     public var closest: Account? {
@@ -235,7 +238,7 @@ public struct AccountOverview: Equatable, Sendable {
                 providerPlan: account.providerPlan, resetAssessment: account.resetAssessment)
         }
         return AccountOverview(accounts: replay, deadlines: deadlines, rankedAt: observed, launchEvidence: launchEvidence,
-                               paceForecasts: paceForecasts)
+                               rankings: Self.makeRankings(accounts: replay, evidence: launchEvidence, now: observed))
     }
     public var nextDeadline: Deadline? { deadlines.first { $0.state == .available } }
 
@@ -330,21 +333,18 @@ public struct AccountOverview: Equatable, Sendable {
             account.spendsUsageCredits = entry.provider == .openAI && report?.accessState.kind == .paidFallbackActive
             return account
         }
-        let forecasts = Dictionary(uniqueKeysWithValues: Provider.allCases.compactMap { provider in
-            UseNextRanking.make(provider: provider, rows: allAccounts.filter { $0.metadata.provider == provider },
-                evidence: launchEvidence, now: now).forecast
-                .map { (provider, $0) }
-        })
-        paceForecasts = forecasts
-        let assessments = ResetAssessment.assessments(for: allAccounts, forecasts: forecasts, now: now)
+        allRankings = Self.makeRankings(accounts: allAccounts, evidence: launchEvidence, now: now)
+        let assessments = ResetAssessment.assessments(for: allAccounts, rankings: allRankings, now: now)
         accounts = allAccounts.filter { !widgetsOnly || $0.metadata.showInWidgets }.map { row in
             var account = row
             account.resetAssessment = assessments[account.id]
             return account
         }
+        rankings = widgetsOnly && allAccounts.contains { !$0.metadata.showInWidgets }
+            ? Self.makeRankings(accounts: accounts, evidence: launchEvidence, now: now) : allRankings
         deadlines = accounts.flatMap { account -> [Deadline] in
             guard account.metadata.isEnabled, let summary = account.bankedResets else { return [] }
-            let dates = summary.knownExpiries.isEmpty ? summary.earliestKnownExpiry.map { [$0] } ?? [] : summary.knownExpiries
+            let dates = summary.expiries(after: now)
             var duplicateOrdinals: [Date: Int] = [:]
             return dates.prefix(summary.availableCount).compactMap { date in
                 guard date > now else { return nil }
@@ -354,6 +354,13 @@ public struct AccountOverview: Equatable, Sendable {
                                 expiresAt: date, observedAt: summary.observedAt, state: account.bankedState, ordinal: index)
             }
         }.sorted { $0.expiresAt == $1.expiresAt ? $0.id < $1.id : $0.expiresAt < $1.expiresAt }
+    }
+
+    private static func makeRankings(accounts: [Account], evidence: UseNextEvidence, now: Date) -> [Provider: UseNextRanking] {
+        Dictionary(uniqueKeysWithValues: Provider.allCases.map { provider in
+            (provider, UseNextRanking.make(provider: provider, rows: accounts.filter { $0.metadata.provider == provider },
+                evidence: evidence, now: now))
+        })
     }
 
     private static func inferredMetadata(snapshot: UsageSnapshot, reports: [StoredProviderReport]) -> [AccountDisplayMetadata] {

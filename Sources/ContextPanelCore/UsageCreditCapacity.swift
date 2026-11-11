@@ -1,10 +1,10 @@
 import Foundation
 
-/// Normalized, account-scoped quantities shared with the strategy's other readers.
+/// Planning quantities only. Numeric credit balances and raw credit rates stay on the Mac.
 public struct UsageCreditCapacity: Codable, Equatable, Sendable {
-    public let balance: Double
+    public let available: Bool
+    public let runwayHours: Double?
     public let expiresAt: Date?
-    public let burnPerHour: Double?
     public let observedAt: Date
 
     static func make(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot],
@@ -16,26 +16,26 @@ public struct UsageCreditCapacity: Codable, Equatable, Sendable {
             guard report.status != .failure, let credits = report.usageCredits,
                   !credits.unlimited, let balance = credits.balance else { continue }
             let id = UnusedCapacityHistory.reportID(report, in: stored, resolve: resolve)
-            var burn: Double?
-            var previousBalance: Double?
-            var previousDate: Date?
+            var previous: (balance: Double, date: Date, spending: Bool)?
             var spent = 0.0
             var hours = 0.0
             for reading in readings + [stored] {
                 guard let own = reading.reports.first(where: {
                     $0.provider == report.provider && UnusedCapacityHistory.reportID($0, in: reading, resolve: resolve) == id
                 }), own.status != .failure, let amount = own.usageCredits?.balance else { continue }
-                if let before = previousBalance, amount > before {
+                let spending = ProviderRefillDetector.mainLimits(provider: own.provider, reading: reading)[own.accountID]?
+                    .remainingCapacityRatio == 0
+                if let before = previous, amount > before.balance {
                     spent = 0; hours = 0
-                } else if let before = previousBalance, let date = previousDate, own.generatedAt > date {
-                    spent += before - amount
-                    hours += own.generatedAt.timeIntervalSince(date) / 3_600
+                } else if let before = previous, before.spending, spending, own.generatedAt > before.date {
+                    spent += max(0, before.balance - amount)
+                    hours += own.generatedAt.timeIntervalSince(before.date) / 3_600
                 }
-                previousBalance = amount; previousDate = own.generatedAt
+                previous = (amount, own.generatedAt, spending)
             }
-            if hours > 0 && spent > 0 { burn = spent / hours }
-            result[id] = Self(balance: balance, expiresAt: UsageCreditExpiry.of(credits, entered: entered[report.provider]),
-                burnPerHour: burn, observedAt: report.generatedAt)
+            let runway = hours > 0 && spent > 0 ? balance * hours / spent : nil
+            result[id] = Self(available: credits.hasCredits && balance > 0, runwayHours: runway,
+                expiresAt: UsageCreditExpiry.of(credits, entered: entered[report.provider]), observedAt: report.generatedAt)
         }
         return result
     }
