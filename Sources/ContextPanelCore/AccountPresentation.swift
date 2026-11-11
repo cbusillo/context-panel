@@ -309,6 +309,7 @@ public enum AccountTerms {
                 : "Reach 0%, then spend the expiring credits.")
         }
         if let reserve = entry.reserve, reserve > 0 { parts.append("Keep about \(Int(reserve.rounded()))% for your own apps.") }
+        if parts.count > 1 { parts[0] += "." }
         return parts.joined(separator: " ")
     }
 

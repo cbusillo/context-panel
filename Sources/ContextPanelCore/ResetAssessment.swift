@@ -137,7 +137,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     static func applicationWindow(for expiry: Date) -> Date { expiry.addingTimeInterval(-expiringWithin) }
     static func depletionDeadline(for expiry: Date, now: Date) -> Date {
         let lead = applicationWindow(for: expiry)
-        return lead > now ? lead : expiry
+        return lead.timeIntervalSince(now) > UseNextRanking.minimumHours * 3_600 ? lead : expiry
     }
     /// Weekly points one Claude account can spend per hour when its 5-hour window is the only limit.
     static let claudeDefaultRate = 3.8

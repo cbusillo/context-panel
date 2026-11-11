@@ -419,7 +419,9 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             var reason = isHeld ? "Holding about \(Int(held.rounded()))% for your own use while another account has quota."
                 : planQuotaElsewhere ? "Plan quota that expires sooner goes first."
                 : !fitsPending ? "Waiting for pending launches to appear in a reading; refresh before adding more work."
-                : creditOnly && plan.credits?.expiresAt == nil ? "Plan quota used up; credits keep it working after quota with known deadlines."
+                : creditOnly && plan.credits?.expiresAt == nil ? plan.remaining <= 0
+                    ? "Plan quota used up; credits keep it working after quota with known deadlines."
+                    : "Weekly quota waits for its 5-hour reset; currently spending credits."
                 : "Spend what expires first, by \(ContextPanelDateFormatting.resetDeadline(plan.deadline))."
             let unreadableQuota = rows.contains { other in other.id != plan.row.id && other.metadata.isEnabled && other.metadata.sourceConfigured
                 && other.state != .notConnected && !rankable.contains(where: { $0.id == other.id }) }
@@ -440,7 +442,7 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             }
             var notes = plan.notes
             if feasible != nil && target < wanted { notes.insert("5-hour capacity needs work on other accounts too.", at: 0) }
-            if feasible == nil && target > plan.burn { notes.insert("More work needed; achievable pace is unproved.", at: 0) }
+            if feasible == nil && !plan.burnEstimated && target > plan.burn { notes.insert("More work needed; achievable pace is unproved.", at: 0) }
             reason += notes.first.map { " " + $0 } ?? ""
             return Entry(accountID: plan.row.id, label: plan.row.metadata.label, reason: reason, deadline: plan.deadline,
                 unstarted: plan.unstarted, remaining: plan.remaining, burn: plan.burn, burnEstimated: plan.burnEstimated,

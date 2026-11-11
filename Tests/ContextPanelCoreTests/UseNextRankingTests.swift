@@ -271,9 +271,9 @@ private extension UseNextRanking {
 }
 
 @Test func blockedWeeklyQuotaDoesNotBecomeAnotherAccountsImmediateDepletionTarget() throws {
-    let gated = Fixture(name: "gated", weeklyUsed: 20, resetHours: 10, burn: 0,
+    var gated = Fixture(name: "gated", weeklyUsed: 20, resetHours: 10, burn: 0,
         fiveHourUsed: 100, fiveHourResetHours: 3)
-    let free = Fixture(name: "free", weeklyUsed: 70, resetHours: 150, burn: 0)
+    var free = Fixture(name: "free", weeklyUsed: 70, resetHours: 150, burn: 0)
     let waiting = ranking([gated, free])
     let alone = ranking([free])
     #expect(waiting.entry(free)?.targetPointsPerHour == alone.entry(free)?.targetPointsPerHour)
@@ -282,6 +282,21 @@ private extension UseNextRanking {
     opened.resetHours = gated.resetHours! - gated.fiveHourResetHours
     #expect(ranking([opened, free]).useNextAccountID == opened.id)
     #expect(try #require(ranking([opened, free]).entry(opened)?.targetPointsPerHour) > alone.targetPointsPerHour!)
+    // Measured demand can keep B productive until A's gate opens, then replan again at A's refill.
+    gated.burn = 2
+    free.burn = 2
+    let working = ranking([gated, free])
+    #expect(working.targetPointsPerHour == (gated.burn! + free.burn!))
+    opened.burn = gated.burn
+    free.weeklyUsed = 82
+    free.resetHours = 147
+    #expect(ranking([opened, free]).useNextAccountID == opened.id)
+    opened.weeklyUsed = 0
+    opened.resetHours = UseNextRanking.weekHours
+    free.resetHours = 140
+    let afterRefill = ranking([opened, free])
+    let quota = 200 - Double(opened.weeklyUsed! + free.weeklyUsed!)
+    #expect(try #require(afterRefill.targetPointsPerHour) * free.resetHours! <= quota)
 }
 
 @Test func unknownOtherQuotaKeepsTheCushionAndExplainsHowToResolveIt() throws {
@@ -388,6 +403,10 @@ private extension UseNextRanking {
     #expect(result.useNext(provider: .openAI)?.id == empty.id)
     #expect(result.useNextRanking(provider: .openAI).entry(empty)?.spendsCreditsBeforeReset == true)
     #expect(result.accounts.first?.resetAssessment?.recommended == false)
+    var nearLead = empty
+    nearLead.bankedExpiryHours = [ResetAssessment.expiringWithin / hour + 0.01]
+    let near = ranking([nearLead], evidence: evidence)
+    #expect(try #require(near.entry(nearLead)?.creditWorkloadMultiplier) < 1)
     var exhausted = empty
     exhausted.onCredits = false
     #expect(overview([exhausted]).accounts.first?.resetAssessment?.recommended == true)
@@ -840,10 +859,8 @@ func expiringResetStillPromptsWhileAnotherAccountHasQuota(_ provider: Provider) 
         #expect(assessment.recommended == (hoursLeft <= expiryBoundary))
         #expect(assessment.useFirstPrompt == nil)
         let target = try #require(result.useNextRanking(provider: provider).targetPointsPerHour)
-        if hoursLeft <= expiryBoundary {
-            let quota = [expiring, usable].reduce(0.0) { $0 + 100 - Double($1.weeklyUsed!) }
-            #expect(target * hoursLeft <= quota)
-        }
+        let quota = [expiring, usable].reduce(0.0) { $0 + 100 - Double($1.weeklyUsed!) }
+        #expect(target * hoursLeft <= quota)
     }
     // The expiry prompt also remains when the expiring account itself is empty.
     let empty = Fixture(name: "empty", provider: provider, weeklyUsed: 100, bankedExpiryHours: [20])
