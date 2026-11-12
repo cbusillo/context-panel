@@ -279,24 +279,20 @@ private let creditDeadline = ISO8601DateFormatter().date(from: "2026-12-31T00:00
     let idle = try atPace(burn: 0.1, used: ["x": 50, "y": 60], credits: ["x": 60_000, "y": 50_000], enteredExpiry: creditDeadline)
     #expect(idle.usageCreditsExpireAt == creditDeadline)
     #expect(idle.usageCreditsExpirySource == .entered)
-    #expect(idle.usageCreditsAtRisk == 110_000)
-    #expect(idle.usageCreditsLine == "OpenAI has 110,000 usage credits left. They expire Dec 31 (date entered in Settings). "
-        + "At this pace none will be spent: credits are used only once an account's weekly quota reaches 0%, so all 110,000 will expire unused.")
 
     // An account at 0% is spending them, so how many will be left at the expiry is not claimed.
     let spending = try atPace(burn: 0.1, used: ["x": 100, "y": 60], credits: ["x": 57_000, "y": 50_000], enteredExpiry: creditDeadline)
-    #expect(spending.usageCreditsAtRisk == nil)
     #expect(spending.usageCreditsLine == "OpenAI has 107,000 usage credits left. They expire Dec 31 (date entered in Settings). "
         + "They are being spent on 1 account at 0% of its weekly quota.")
 
     // No expiry known: nothing is claimed.
     let unknown = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000])
-    #expect(unknown.usageCreditsExpireAt == nil && unknown.usageCreditsExpirySource == nil && unknown.usageCreditsAtRisk == nil)
+    #expect(unknown.usageCreditsExpireAt == nil && unknown.usageCreditsExpirySource == nil)
     #expect(unknown.usageCreditsLine?.contains("expire") == false)
 
     // A passed expiry puts nothing at risk.
     let passed = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000], enteredExpiry: wasteNow.addingTimeInterval(-day))
-    #expect(passed.usageCreditsExpireAt == nil && passed.usageCreditsAtRisk == nil)
+    #expect(passed.usageCreditsExpireAt == nil)
 }
 
 @Test func providerReportedCreditExpiryWinsOverTheEnteredDay() throws {
@@ -304,7 +300,6 @@ private let creditDeadline = ISO8601DateFormatter().date(from: "2026-12-31T00:00
     let both = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000], reportedExpiry: reported, enteredExpiry: creditDeadline)
     #expect(both.usageCreditsExpireAt == reported)
     #expect(both.usageCreditsExpirySource == .provider)
-    #expect(both.usageCreditsLine?.contains("They expire Dec 21. At this pace") == true)
 
     // In the weekly waste number too: the account's reported expiry passes; the later entered day does not count it again.
     let before = lastWeekDay.addingTimeInterval(-5 * minute)
@@ -360,7 +355,6 @@ private let creditDeadline = ISO8601DateFormatter().date(from: "2026-12-31T00:00
     let snapshot = AgentAccountSnapshot(configuration: saved, stored: current, history: [], now: wasteNow)
     let atPace = try #require(snapshot.providers.first { $0.provider == .openAI }?.unusedAtPace)
     #expect(atPace.usageCreditsExpireAt == creditDeadline)
-    #expect(atPace.usageCreditsAtRisk == 60_000)
     let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(atPace)) as? [String: Any])
     #expect(json["usageCreditsExpirySource"] as? String == "entered")
 }

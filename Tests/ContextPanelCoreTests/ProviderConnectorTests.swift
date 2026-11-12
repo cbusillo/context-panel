@@ -2131,7 +2131,7 @@ func codexNetworkFailureDoesNotMakeSavedCapacityLaunchable(networkFailure: Bool)
             expiresAt: Date(timeIntervalSince1970: 4_000_000_000)
         )
         let usage = Data(#"{"five_hour":{"utilization":20}}"#.utf8)
-        let inventory = Data(#"{"cedar_ember":{"eligible":true,"grants":[{"id":"offer","resets_total":2,"resets_left":2,"ends_at":"2099-01-01T00:00:00Z"}]}}"#.utf8)
+        let inventory = Data(#"{"cedar_ember":{"eligible":true,"grants":[{"id":"offer","resets_total":2,"resets_left":2,"clears":["seven_day"],"ends_at":"2099-01-01T00:00:00Z"}]}}"#.utf8)
         let http = StubHTTPClient(responses: [
             ConnectorHTTPResponse(statusCode: 200, data: usage),
             ConnectorHTTPResponse(statusCode: optionalStatus, data: inventory),

@@ -572,9 +572,10 @@ has not yet been verified by a signed canonical runtime; the web/Desktop source
 is static schema evidence, not authenticated proof for either account.
 
 A valid eligible inventory supplies remaining resets, deduplicated by transient
-grant ID, and each offer's `ends_at`. Paused/expired offers are excluded; zero-left
-offers count only when claimable under the vendor's limit/blocking/cooldown
-conditions. Malformed or absent inventory and rejected optional requests leave
+grant ID, and each grant's `ends_at`. Only positive `resets_left` that explicitly
+clear `seven_day` count. Paused/expired grants, zero-left offers and model-only or
+unrecognized grants do not add general weekly capacity. The excluded offer and
+unrecognized counts appear separately. Malformed or absent inventory and rejected optional requests leave
 the known usage windows intact. IDs and provider metadata are discarded; only
 count, observation, coverage and dates enter the shared sanitized snapshot.
 The consuming reset POST is never used. When no prior summary exists, absence of an inventory is **Banked resets unknown**,
@@ -826,14 +827,11 @@ the provider's accounts, null when none reports one),
 0%, the only place credits are spent), `usageCreditsExpireAt` and
 `usageCreditsExpirySource` (`provider` when a balance reports its own expiry,
 which wins, else `entered` for the day Chris entered under Settings > Usage
-credits; both null when no future expiry is known), `usageCreditsAtRisk`
-(credits expected to expire unspent: all of them while no account is at 0%,
-null when no expiry is known or while an account is spending them) and the
-sentences `line` and `usageCreditsLine`, for example "OpenAI: about 140 points
-will refill unused at this pace. Add work." and "OpenAI has 179,745 usage
-credits left. They expire Dec 31 (date entered in Settings). At this pace none
-will be spent: credits are used only once an account's weekly quota reaches 0%,
-so all 179,745 will expire unused." When nothing is at risk, `line` says so. `unusedAtPace` is
+credits; both null when no future expiry is known), and the sentences `line`
+and `usageCreditsLine`. Credit balances remain local. The display reports
+whether credits are currently being spent and directs the Supervisor to Use next's
+target; it does not invent an amount that will expire unused from one balance.
+When nothing is at risk, `line` says so. `unusedAtPace` is
 absent when the provider has no current weekly reading to forecast from.
 `answers.closestAccountID` is null
 without reliable current capacity. `answers.useNext` contains at most one opaque
@@ -881,129 +879,105 @@ issues or PRs.
 
 ### Use next ranking and launch receipts
 
-Use next spends the capacity that would otherwise go unused, soonest first
-([#791](https://github.com/cbusillo/context-panel/issues/791)). App, widgets,
-companions and the agent snapshot share `AccountOverview.useNextRanking`, including
-count-only launch receipts and saved-reading times. Numbers are points:
-percent of an account's main window, which is the general weekly window
-(Codex, Claude or Gemini), not a model-only window such as gpt-reserve.
+Use next is the one account strategy. Launching agents follow its account and
+report its target pace; they choose models themselves. App, widgets, companions
+and the agent snapshot use `AccountOverview.useNextRanking`.
 
-- **Deadline:** Claude's next fixed weekly refill; the end of a running OpenAI
-  clock; or now for an unstarted OpenAI clock (nothing used, and its reset reads
-  as a week after each reading). An event-driven window assumed full after its
-  reset passed with no reading since has an unknown next reset: it ranks as a
-  full window ending one window length from now, with a note that the reset is
-  assumed, and no starter launch
-  ([#848](https://github.com/cbusillo/context-panel/issues/848)).
-- **Need** = (left − burn × hours to deadline) ÷ hours, in points per hour: how
-  much faster the account must be used so nothing lapses.
-- **Exclusions,** each listed with its reason and, when known, `until`: not
-  current, main window at 0, and the 5-hour gate (fewer than 5 points left in
-  the 5-hour window, or its 5-hour burn would use the rest before it resets).
-  An OpenAI account whose used-up window Codex lets it work past on usage
-  credits is not excluded; it ranks in the usage-credits tier.
-- **Tier 1:** unstarted OpenAI clocks (one starter launch each), then accounts
-  with positive need. **Tier 2:** the use-last account above its cushion.
-  **Tier 3:** when no account has positive need, the account that lasts longest
-  first, and use-last only after the rest, while it is above its cushion.
-  **Tier 4 (`usageCredits`):** accounts working on usage credits take launches
-  only when no plan-quota account does, split evenly, and before the use-last
-  cushion; a use-last account on credits waits for the others' credits
-  ([#1078](https://github.com/cbusillo/context-panel/issues/1078)).
-- **Use last:** at most one per provider. Marking a second moves the mark and
-  the panel says so; two in saved setup report `multipleUseLast:<provider>` in
-  `configurationErrors`, and ranking then ignores use-last for that provider.
-  The cushion is the Director's own measured use until the window ends (the
-  account's burn minus agent burn attributed through receipts), at least 3
-  points. It is planned use, not a leftover: it shrinks as the reset nears, so
-  the account is planned to end near the floor at its reset, and the reason
-  says how much it sets aside before the reset; an unstarted use-last clock gets its starter launch an hour after it
-  is first seen unstarted.
-  The publisher shares count-only launch evidence with the observations so
-  companions and Mac displays use the same personal-use estimate and launch
-  allocation as the agent reader. No launch commands or credential paths travel.
-  The reader includes other publishers' launch events, and pending launches are
-  acknowledged only by the saved-reading times of the retained account observation.
-  Local-only account IDs keep their existing reader contract; receipt IDs are
-  resolved into the presentation's account namespace before ranking.
-  When no account qualifies, the dashboard shows the exclusion reasons or asks
-  for a refresh of saved readings.
-- **Order and batches:** each launch goes by D'Hondt over the weights (need) in
-  Tiers 1–2: starters first, then the highest weight ÷ (1 + launches already
-  given), ties to the lower tier. The published list is in that order, so Use
-  next is both its first entry and the first of `launchOrder`, which lists the
-  next launches. A receipt counts as given until two later saved readings or 30
-  minutes have passed, so back-to-back launches spread.
-- **Stale readings:** when every reading is stale, the list is published with
-  `basedOnStaleReadings` and `readingsObservedAt`, `useNextAccountID` is null,
-  and `launchOrder` is filled only while the readings are under 30 minutes old.
-- **Resets** ([#1079](https://github.com/cbusillo/context-panel/issues/1079)):
-  one question drives the advice for each provider: will it run out before it
-  refills, at the pace it is actually going? `AccountOverview.paceForecast(provider:)`
-  answers it from each account's measured weekly burn over about the last day.
-  It gives `runsOutBeforeRefill` and `refillsUnused`, the points that refill
-  unused when work goes to whatever refills first. A heavy call needs a margin:
-  every point must be used even at 80% of the measured pace. Once heavy, the
-  call holds until one of the provider's accounts refills, or until pace clearly
-  drops (points would lapse even at 125% of it), so it does not flip between
-  refreshes. Each saved reading records the call (`heavyProviders`), and a
-  reading saved without one inherits the previous reading's call unless an
-  account refilled in between, so it survives relaunches and reaches companions
-  with the launch evidence. Any
-  connected account without a current weekly reading keeps the week slow, and
-  calling a slow week heavy is the costlier mistake.
-  - **Heavy week:** Use next drains one account at a time: the account whose
-    banked reset expires soonest, never the use-last account. When its 5-hour
-    limit holds it, the next such account takes the work. With no such account,
-    Use next spreads as usual. Usage credits still wait for plan quota, and the
-    use-last cushion comes last. When an account reaches 0%, Context Panel
-    advises applying its reset now, one account per provider at a time,
-    soonest expiry first.
-  - **Slow week:** Use next spreads as usual, and resets are held until close
-    to expiry. The expiring warning starts a day before the reset expires.
-  - **OpenAI 80% gate** ([#1074](https://github.com/cbusillo/context-panel/issues/1074)):
-    OpenAI applies a banked reset only while the account has less than 80% of
-    its weekly quota left. Source: the Director's observation on November 4,
-    2026, adopted as his decision on November 8, 2026; it changes only if
-    OpenAI's own page or an observed apply shows a different limit. At or above
-    80% the reset shows as not applicable yet, with the reason. For such an
-    account the expiring warning starts earlier by the time needed, at the
-    provider's pace, to get under 80% (at most a week earlier, and a week when
-    the pace is zero or unknown), and it says how much to use first.
-  - **Value:** an OpenAI reset starts a fresh 7-day week now. It is worth
-    100 × days to the natural refill ÷ 7 − percent left, so at 0% it is worth
-    applying while more than about a day of the week remains. A Claude reset
-    refills quota and keeps its end date. It is worth what the provider's measured pace
-    can still spend on that account before the end date (what one account can
-    spend when the pace is unknown), so it is advised
-    only when enough of the week remains to use the refill. Claude resets are
-    full weekly refills; a grant that doesn't clear the general weekly window
-    (`seven_day`) is counted in `unrecognizedKindCount` and never valued or
-    advised. Anthropic has issued one banked reset so far, so nothing more is
-    built for it.
-  - **Where it shows:** each account with banked resets has one
-    `resetAssessment` (trigger `outOfQuota`, `expiring` or `notNeeded`,
-    `notYetApplicable`, value and reasoning). The app, widgets, companions and
-    the agent snapshot's `resetPrompts` all read it. "Apply this reset now",
-    and the warning to use an account under the 80% gate before its reset
-    expires, also arrive once each as notifications through the limit
-    warnings, when those are on. Context Panel never applies a reset.
-- **Provider-wide refills:** `providerRefills` lists times in the loaded
-  history when a provider's accounts refilled between the same two readings,
-  however far apart, before their resets and with no banked reset spent. A
-  refill can show only on accounts that had used quota: two or more refilled,
-  or the only used account refilled while the others were unused and its banked
-  count is known. A banked count that rose, or fell only by resets that expired
-  between the readings, is not a spent reset. Burn
-  already treats a moved reset time as a new window, so a refill never counts
-  as use.
+- Spend whatever expires first: each account's general weekly quota before its
+  own reset, banked resets before their expiry, and usage credits before theirs.
+  Equal deadlines prefer the larger spendable allowance, then the saved account order.
+  An unstarted OpenAI clock and an assumed refill have a full window from now.
+  There is no starter rule, weighted split, use-last tier or heavy-week mode.
+- Keep the marked account's cushion: measured personal use until its reset,
+  with a three-point floor. Spend above that cushion in the same deadline order.
+  Release it only when no other enabled, connected account may still have quota,
+  including one waiting on its short-window gate. The name remains "Use last".
+  Unreadable other-account quota holds the cushion and asks for refresh/sign-in.
+  Two marks on one provider remain a configuration error; the cushion is ignored.
+- A banked reset is conditional capacity. Claude counts only positive resets
+  that explicitly refill `seven_day`; zero-left offers and model-only or unknown
+  grants appear separately and cannot steer launches. Old Claude inventories
+  without this qualification need a fresh reading. If a reset expires before
+  the natural refill, the account gets a zero-percent target before that expiry.
+  Multiple resets sharing an expiry include the work needed between applications.
+  The requested depletion time leaves a day for the Director to apply the reset;
+  after that lead passes, the target uses the actual expiry. When a target cannot
+  be met, the panel does not promise a depletion time. Notifications retain the
+  final-day window even when the launch plan starts earlier.
+  Only the Director applies a reset. No launcher or panel action applies one.
+  In its final day, a valuable, applicable partial reset remains a fallback if
+  the planned depletion has not happened; existing provider valuation and
+  applicability rules still govern that advice.
+- Credits require exhausting an account's plan quota first. A known credit
+  expiry can bring that account forward, including the quota that must be used
+  to reach credits. Otherwise credits follow plan quota, including the marked
+  account's last quota. The provider's expiry wins over the date in Settings.
+  Credits that expire before a banked reset are spent before recommending that
+  reset. Credit burn comes from intervals at zero quota or on paid fallback over
+  the last day, restarting the
+  estimate after a top-up. Credit runway in weekly points uses that account's
+  measured weekly burn as an estimate. Without both measurements, the credit
+  runway stays unknown and the outage warning uses known capacity. Companions
+  receive only availability, expiry, observation time and measured hours of runway,
+  never the raw credit balance or credit-denominated burn rate.
+  If weekly burn is zero during credit spending, `creditWorkloadMultiplier`
+  expresses measured runway divided by hours to its deadline: twelve hours of
+  runway expiring in six hours requires twice the recent credit workload.
+  The weekly percentage target stays unknown when that conversion is unavailable.
+- `forecast` reports measured provider pace, capacity until the next natural
+  refill, sustainable points per hour, and whether that capacity requires the
+  Director to apply a reset. Measured demand above capacity is capped so work
+  can last until that refill. An earlier expiry raises the current account's
+  target to use the expiring capacity, after which the next reading replans the
+  remaining work. `minimumExpiryPace` includes intervening plan refills when an
+  expiry is beyond the next refill; `expiryNeedsMoreWork` and `refillsUnused`
+  say when measured demand is too low and real work needs to be added.
+  Percentage points form an index across accounts,
+  rather than a claim that different paid plans have the same size.
+  The provider target is allocated across accounts in expiry order, capped by
+  each account's short-window capacity. Later accounts can therefore have
+  positive targets for parallel work. Their sum is the published provider target.
+- The general weekly window drives the order, not a model-only window such as
+  gpt-reserve. Accounts with no known quota or reset time cannot take launches.
+  The 5-hour gate holds an account below five points left, or when its burn would
+  exhaust that window before it resets. OpenAI's paid fallback can still work
+  beyond a used-up gate. All exclusions say why and when capacity returns, if known.
+  Paused weekly quota stays in the forecast but does not become another
+  account's current target. A paid fallback route spends credits until its gate
+  opens; that account's weekly quota is reconsidered at the next reading.
+- Batches follow the same deadline order. Pending receipts reduce projected
+  room using measured points per launch, until two later account readings or
+  thirty minutes acknowledge them. Without a per-launch estimate the batch allows
+  one pending launch per account; refresh observations before adding more. No command or
+  credential path travels with this count-only evidence.
+  A pending-only wait publishes the receipt's expiration as `nextCapacityAt`;
+  refreshed observations can clear it sooner. Request a smaller batch when the
+  published order has fewer picks than requested.
+  The order projects successive picks after pending spend; refresh after a
+  batch for the new targets. A later projected pick can have a zero current target.
+- Saved-only readings publish their age and never claim Use next. Their launch
+  order is available for thirty minutes. Codex's expired-sign-in fallback keeps
+  its existing explicit saved-reading and assumed-reset notes.
 
-Each `ranking` entry has `accountID`, `tier`, `need`, `weight`, `reason`,
-`deadline`, `unstarted`, `starter`, `remaining`, `burn`, `burnEstimated`
-(provider average when the account's own burn is unmeasured), `reserve`,
-`pendingLaunches` and `notes`. Each provider also has `excluded`,
-`useNextAccountID`, `nextCapacityAt` (with nothing rankable),
-`multipleUseLast` and `launchOrder`.
+Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
+`remaining`, `burn`, `burnEstimated`, `reserve`, `pendingLaunches`, `notes`,
+`targetPointsPerHour` (allocated work; unknown on saved-only readings or unconverted credit work),
+`depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch`, `bankedResetExpiresAt`
+`spendsCreditsBeforeReset`, `creditWorkloadMultiplier` and the qualified `creditExpiresAt`.
+An unknown credit spend rate leaves its points target null rather than inventing one.
+The provider publishes the selected target, `forecast`, `excluded`,
+`useNextAccountID`, `nextCapacityAt`, `multipleUseLast`, `launchOrder` and saved-reading metadata.
+The dashboard and TV show the target and why the account goes next. Known
+short-window capacity caps the target; otherwise achievable pace remains
+explicitly unproved. Forecasts and reset advice read the cached ranking, with
+full-provider evidence retained separately only for a filtered widget view.
+
+Banked-reset advice still values OpenAI's fresh seven-day window and Claude's
+refill within its existing end date. OpenAI refuses application at 80% or more
+of weekly quota left. The panel advises one worthwhile application per provider
+at a time, and can notify through enabled limit warnings. These are read-only
+recommendations. Provider-wide refills remain detected from history and do not
+count as burn.
 
 **Launch receipts.** A launcher writes one file per agent launch to
 `<storage root>/Launch Receipts/`, where the storage root is the directory the

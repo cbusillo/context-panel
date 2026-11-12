@@ -1328,7 +1328,8 @@ public struct CompanionSyncPublisher: Sendable {
                 query: SnapshotStoreQuery(since: min(publishedAt, storedSnapshot.snapshot.generatedAt).addingTimeInterval(-LaunchReceiptStore.lookback), limit: 2_000))
             return UseNextEvidence.make(stored: storedSnapshot, history: history,
                 configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID,
-                receipts: LaunchReceiptStore.load(rootDirectory: root, now: publishedAt), shared: true)
+                receipts: LaunchReceiptStore.load(rootDirectory: root, now: publishedAt), shared: true,
+                enteredCreditExpiries: configuration?.enteredUsageCreditExpiries ?? [:])
         }
         let snapshot = CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt,
             configuration: configuration?.accounts ?? [], publisherID: configuration?.publisherID)

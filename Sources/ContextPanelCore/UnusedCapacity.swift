@@ -78,9 +78,6 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
     public let usageCreditsExpireAt: Date?
     /// Where `usageCreditsExpireAt` came from; null when no expiry is known.
     public let usageCreditsExpirySource: UsageCreditExpiry.Source?
-    /// Credits expected to expire unspent: all of them while no account is at 0% to spend them. Null when no expiry
-    /// is known, or while some account is spending them and the amount left at the expiry can't be read from one reading.
-    public let usageCreditsAtRisk: Double?
     /// "OpenAI: about 140 points will refill unused at this pace. Add work."
     public let line: String
     /// "OpenAI has 179,745 usage credits left. They expire Dec 31. At this pace none will be spent: …"
@@ -100,7 +97,7 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
         paceMeasured = forecast.paceMeasured
         let points = Int(forecast.refillsUnused.rounded())
         let amount = "about \(points) " + (points == 1 ? "point" : "points")
-        line = if forecast.runsOutBeforeRefill {
+        let outlook = if forecast.runsOutBeforeRefill {
             "\(name): every point gets used before it refills at this pace."
         } else if forecast.refillsUnused < Self.nothingPoints {
             "\(name): nothing will refill unused at this pace."
@@ -109,6 +106,7 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
         } else {
             "\(name): \(amount) will refill unused at this pace. Add work."
         }
+        line = outlook + (forecast.expiryNeedsMoreWork ? " Expiring resets or credits need more real work before their deadlines." : "")
         let credits = UnusedCapacityHistory.creditsLeft(provider: provider, reading: stored, resolve: resolve)
         let weekly = ProviderRefillDetector.mainLimits(provider: provider, reading: stored)
         let spending = Set(stored.reports.compactMap { report -> String? in
@@ -123,7 +121,6 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
         accountsSpendingUsageCredits = spending
         usageCreditsExpireAt = expiry?.date
         usageCreditsExpirySource = expiry?.source
-        usageCreditsAtRisk = expiry == nil || spending > 0 ? nil : credits
         usageCreditsLine = credits.map { credits in
             let total = Int(credits.rounded()).formatted()
             guard let expiry else {
@@ -137,8 +134,8 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
             let expires = "\(name) has \(total) usage credits left. They expire \(expiry.date.formatted(day))"
                 + (expiry.source == .entered ? " (date entered in Settings)." : ".")
             return spending == 0
-                ? expires + " At this pace none will be spent: credits are used only once an account's weekly quota reaches 0%, "
-                    + "so all \(total) will expire unused."
+                ? expires + " Use next plans when quota should reach 0% to start spending these credits. "
+                    + "Follow its credit workload target there; it stays unknown until spend is measured."
                 : expires + " They are being spent on \(spending) " + (spending == 1 ? "account" : "accounts")
                     + " at 0% of its weekly quota."
         }

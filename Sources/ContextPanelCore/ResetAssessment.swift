@@ -1,55 +1,62 @@
 import Foundation
 
-/// Will this provider run out before it refills, at the pace it is actually going (#1079)?
-/// Pace is each account's measured weekly burn over about the last day. Calling a slow week heavy is the costlier
-/// mistake, so a heavy call needs a margin, and once heavy it holds until an account refills or pace clearly drops.
+/// The measured workload and the capacity available until the provider's next natural refill.
+/// Percentage points are an index across accounts, not a claim that their paid plans have equal size.
 public struct ProviderPaceForecast: Codable, Equatable, Sendable {
     public let provider: Provider
-    /// A heavy week: at the measured pace every point is used before it refills.
     public let runsOutBeforeRefill: Bool
-    /// Points (percent of one account's weekly window, summed over the provider's accounts) that refill unused at
-    /// the measured pace, when work goes to whatever refills first.
     public let refillsUnused: Double
-    /// The provider's measured pace, in points per hour.
     public let pacePerHour: Double
-    /// At least one account's pace was measured; otherwise the pace is unknown and counts as zero.
     public let paceMeasured: Bool
+    public let sustainablePointsPerHour: Double
+    public let capacityUntilRefillPoints: Double
+    public let creditRunwayUnknown: Bool
+    public let minimumExpiryPace: Double
+    public let expiryNeedsMoreWork: Bool
+    /// The forecast includes banked capacity conditionally: only the Director can make it available.
+    public let requiresBankedReset: Bool
 
-    /// A heavy call needs every point used even at this share of the measured pace.
-    static let heavyPaceShare = 0.8
-    /// A heavy call ends only when points would lapse even at this multiple of the measured pace.
-    static let slowPaceMultiple = 1.25
-    static let usedUpPoints = 0.5
-
-    /// Nil when the provider has no account with a current weekly reading.
-    /// Any connected account without one leaves the week slow: it may hold quota nobody can see.
-    static func make(provider: Provider, accounts: [AccountOverview.Account], wasHeavy: Bool, now: Date) -> Self? {
-        let members = accounts.filter {
-            $0.metadata.provider == provider && $0.metadata.isEnabled && $0.metadata.sourceConfigured && $0.state != .notConnected
-        }
-        var complete = true
-        var lanes: [(remaining: Double, hours: Double)] = []
-        var pace = 0.0
-        var measured = false
-        for account in members {
-            guard [.available, .closeToLimit, .limited].contains(account.state), let main = account.mainWindow, main.isCurrent,
-                  let fraction = main.remainingFraction else { complete = false; continue }
-            // An unstarted OpenAI clock starts with its first use, so it has a whole week.
-            let hours = provider == .openAI && account.isUnstarted(main) ? UseNextRanking.weekHours
-                : main.naturalResetAt.flatMap { $0 > now ? max(UseNextRanking.minimumHours, $0.timeIntervalSince(now) / 3_600) : nil }
-            guard let hours else { complete = false; continue }
-            lanes.append((fraction * 100, hours))
-            pace += main.burnPoints ?? 0
-            measured = measured || main.burnPoints != nil
-        }
-        guard !lanes.isEmpty else { return nil }
-        let runsOut = { (share: Double) in unused(lanes, pace: pace * share) < usedUpPoints }
-        return Self(provider: provider,
-                    runsOutBeforeRefill: complete && (runsOut(heavyPaceShare) || wasHeavy && runsOut(slowPaceMultiple)),
-                    refillsUnused: unused(lanes, pace: pace), pacePerHour: pace, paceMeasured: measured)
+    init?(provider: Provider, plans: [SpendPlan], pace: Double, measured: Bool, complete: Bool, now: Date) {
+        guard let refill = plans.map(\.refill).min() else { return nil }
+        let hours = max(UseNextRanking.minimumHours, refill.timeIntervalSince(now) / 3_600)
+        let quota = plans.reduce(0) { $0 + max(0, $1.remaining - ($1.reserve ?? 0)) }
+        let banked = plans.reduce(0) { $0 + $1.bankedPoints }
+        let credits = plans.reduce(0) { $0 + ($1.creditPoints ?? 0) }
+        self.provider = provider
+        pacePerHour = pace
+        paceMeasured = measured
+        capacityUntilRefillPoints = quota + banked + credits
+        sustainablePointsPerHour = capacityUntilRefillPoints / hours
+        creditRunwayUnknown = plans.contains { $0.credits != nil && $0.creditPoints == nil }
+        minimumExpiryPace = Self.expiryPace(plans, now: now)
+        expiryNeedsMoreWork = minimumExpiryPace > pace || plans.contains { ($0.creditWorkloadMultiplier(now: now) ?? 0) > 1 }
+        requiresBankedReset = complete && (plans.allSatisfy { $0.remaining <= 0 } || pace * hours > quota + credits)
+        runsOutBeforeRefill = complete && pace * hours > capacityUntilRefillPoints
+        refillsUnused = Self.unused(plans.map { ($0.remaining, max(0, $0.refill.timeIntervalSince(now) / 3_600)) }, pace: pace)
     }
 
-    /// The least that can lapse: the whole pace goes to the account that refills first, then the next.
+    static func expiryPace(_ plans: [SpendPlan], now: Date) -> Double {
+        let expiries = Set(plans.flatMap { plan in
+            plan.row.bankedExpiries(after: now) + [plan.credits?.expiresAt].compactMap { $0 }
+        }).filter { $0 > now }
+        return expiries.map { expiry in
+            let protected = plans.contains { ($0.reserve ?? 0) > 0
+                && ($0.credits?.expiresAt.map { $0 <= expiry } == true || $0.row.bankedExpiries(after: now).contains { $0 <= expiry }) }
+            let needed = plans.reduce(0.0) { sum, plan in
+                let resets = plan.row.bankedExpiries(after: now).filter { $0 <= expiry }.count
+                let creditDue = plan.credits?.expiresAt.map { $0 <= expiry } == true
+                let period = UseNextRanking.windowHours(plan.row.mainWindow?.period) * 3_600
+                let completed = max(0, floor(expiry.timeIntervalSince(plan.refill) / period))
+                let needsEmpty = protected || creditDue || resets > 0
+                let latest = needsEmpty && plan.refill < expiry ? 1.0 : 0
+                let current = plan.refill <= expiry || needsEmpty ? plan.remaining : 0
+                return sum + current + (completed + latest + Double(max(0, resets - 1))) * 100
+                    + (creditDue ? plan.creditPoints ?? 0 : 0)
+            }
+            return needed / max(UseNextRanking.minimumHours, expiry.timeIntervalSince(now) / 3_600)
+        }.max() ?? 0
+    }
+
     static func unused(_ lanes: [(remaining: Double, hours: Double)], pace: Double) -> Double {
         var clock = 0.0
         var unused = 0.0
@@ -60,44 +67,9 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
         }
         return unused
     }
-
-    /// The heavy call carried into the newest reading (#1079): the call saved with it, or else the previous
-    /// reading's call, ended for any provider whose accounts refilled in between.
-    static func heavyBefore(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot]) -> [Provider] {
-        if let saved = stored.heavyProviders { return saved }
-        guard let previous = history.filter({ $0.savedAt < stored.savedAt }).max(by: { $0.savedAt < $1.savedAt }),
-              let carried = previous.heavyProviders else { return [] }
-        let refilled = refilledProviders(from: previous, to: stored)
-        return carried.filter { !refilled.contains($0) }
-    }
-
-    /// A general weekly window (the one the forecast reads) that moved its reset later or gave back used quota:
-    /// a natural reset or an applied banked reset. A 5-hour or model-only refill is not one.
-    static func refilledProviders(from previous: StoredUsageSnapshot, to current: StoredUsageSnapshot) -> Set<Provider> {
-        func mains(_ reading: StoredUsageSnapshot) -> [String: UsageLimit] {
-            let byAccount = Dictionary(grouping: reading.snapshot.limits.filter(\.isAccountCapacityLimit)) { "\($0.provider.rawValue):\($0.accountID)" }
-            return byAccount.compactMapValues { limits in
-                limits.first.flatMap { first in
-                    UseNextRanking.main(of: limits, provider: first.provider, period: { MainLimitWindow.infer(from: $0) },
-                                        model: \.modelLabel, remaining: { $0.usageRatio.map { 1 - $0 } })
-                }
-            }
-        }
-        let before = mains(previous)
-        return Set(mains(current).compactMap { key, limit in
-            guard let old = before[key] else { return nil }
-            var refilled = false
-            if let oldReset = old.resetsAt, let newReset = limit.resetsAt {
-                refilled = newReset.timeIntervalSince(oldReset) >= ProviderRefillDetector.minimumResetJump
-            }
-            if let oldUsed = old.used, let newUsed = limit.used, newUsed < oldUsed { refilled = true }
-            return refilled ? limit.provider : nil
-        })
-    }
 }
 
 /// The one banked-reset advisor (#1079). Context Panel only advises and notifies; the Director applies.
-/// Heavy week: apply a reset once its account reaches 0%. Slow week: hold resets until close to expiry.
 /// An OpenAI reset starts a fresh 7-day week now; a Claude reset refills quota and keeps its end date.
 public struct ResetAssessment: Encodable, Equatable, Sendable {
     public enum Trigger: String, Codable, Sendable {
@@ -118,7 +90,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public let unrecognizedKind: Bool
     /// OpenAI applies a banked reset only while the account has less than 80% of its weekly quota left (#1074).
     public let notYetApplicable: Bool
-    /// When the expiring warning starts: a day out, plus the time to use the account below OpenAI's gate.
+    /// A scheduled warning boundary; the shared depletion plan can ask for work earlier.
     public let warnFrom: Date?
     public private(set) var detail: String
     private let claudeSpendRate: Double?
@@ -127,11 +99,13 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public var prompt: String? { recommended ? "Apply \(label)'s reset now" : nil }
     /// The expiring warning for a reset OpenAI won't apply yet: use the account first.
     public var useFirstPrompt: String? {
-        trigger == .expiring && notYetApplicable ? "Use \(label) before its reset expires" : nil
+        trigger == .expiring && warningActive && !recommended && !unrecognizedKind ? "Use \(label) before its reset expires" : nil
     }
+    private var warningActive = false
     private var waitingForEarlierReset = false
+    private var waitingForCredits = false
     public var title: String {
-        if waitingForEarlierReset { return "Hold" }
+        if waitingForEarlierReset || waitingForCredits { return "Hold" }
         if recommended { return "Apply reset now" }
         if notYetApplicable { return "Not applicable yet" }
         return trigger == .notNeeded ? "Hold" : "Not worth applying now"
@@ -160,21 +134,24 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     static let outOfQuotaThreshold: Double = 15
     static let expiringThreshold: Double = 10
     static let expiringWithin: TimeInterval = 24 * 3_600
+    static func applicationWindow(for expiry: Date) -> Date { expiry.addingTimeInterval(-expiringWithin) }
+    static func depletionDeadline(for expiry: Date, now: Date) -> Date {
+        let lead = applicationWindow(for: expiry)
+        return lead.timeIntervalSince(now) > UseNextRanking.minimumHours * 3_600 ? lead : expiry
+    }
     /// Weekly points one Claude account can spend per hour when its 5-hour window is the only limit.
     static let claudeDefaultRate = 3.8
     /// Director decision on #1074 (Nov 8, 2026): OpenAI won't apply a reset at or above this much weekly quota left.
     static let openAIApplicableBelow: Double = 80
-    /// The expiring warning never starts more than this long before the time it needs, even at no pace.
-    static let longestUseFirstLead: TimeInterval = 7 * 24 * 3_600
 
-    public static func assessments(for accounts: [AccountOverview.Account], forecasts: [Provider: ProviderPaceForecast],
+    public static func assessments(for accounts: [AccountOverview.Account], rankings: [Provider: UseNextRanking],
                                    now: Date) -> [String: Self] {
         var assessments = Dictionary(accounts.compactMap { account in
-            Self(account: account, forecast: forecasts[account.metadata.provider], now: now).map { (account.id, $0) }
+            Self(account: account, ranking: rankings[account.metadata.provider], now: now).map { (account.id, $0) }
         }, uniquingKeysWith: { first, _ in first })
         // One apply-now prompt per provider at a time, the soonest expiry first.
         var selectedByProvider: [Provider: Self] = [:]
-        for assessment in assessments.values.filter({ $0.trigger == .outOfQuota && $0.recommended })
+        for assessment in assessments.values.filter(\.recommended)
             .sorted(by: { ($0.expiresAt ?? .distantFuture, $0.accountID) < ($1.expiresAt ?? .distantFuture, $1.accountID) }) {
             if let selected = selectedByProvider[assessment.provider] {
                 var held = assessment
@@ -189,22 +166,24 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         return assessments
     }
 
-    private init?(account: AccountOverview.Account, forecast: ProviderPaceForecast?, now: Date) {
+    private init?(account: AccountOverview.Account, ranking: UseNextRanking?, now: Date) {
         guard [.openAI, .anthropic].contains(account.metadata.provider),
               let banked = account.bankedResets, banked.availableCount > 0, account.bankedState == .available,
               [.available, .closeToLimit, .limited].contains(account.state),
               let main = account.mainWindow, let fraction = main.remainingFraction else { return nil }
+        let forecast = ranking?.forecast
+        let plan = ranking?.entries.first { $0.accountID == account.id }
         let left = fraction * 100
         let provider = account.metadata.provider
-        let heavy = forecast?.runsOutBeforeRefill == true
+        let needsReset = forecast?.requiresBankedReset == true
         let pace = forecast?.pacePerHour ?? 0
         let soonest = account.soonestBankedExpiry(after: now)
-        let unrecognized = provider == .anthropic && banked.unrecognizedKindCount > 0
+        let unrecognized = provider == .anthropic && !banked.generalWeeklyOnly
         let gated = provider == .openAI && left >= Self.openAIApplicableBelow
         let toUseFirst = gated ? left - Self.openAIApplicableBelow + 1 : 0
-        let lead = Self.expiringWithin + (pace > 0 ? min(Self.longestUseFirstLead, toUseFirst / pace * 3_600) : toUseFirst > 0 ? Self.longestUseFirstLead : 0)
-        let warnFrom = soonest.map { $0.addingTimeInterval(-lead) }
-        let trigger: Trigger = heavy && left <= 0 ? .outOfQuota : warnFrom.map { now >= $0 } == true ? .expiring : .notNeeded
+        let warnFrom = soonest.map(Self.applicationWindow)
+        let expiring = plan?.bankedResetExpiresAt != nil || warnFrom.map { now >= $0 } == true
+        let trigger: Trigger = left <= 0 && (needsReset || expiring) ? .outOfQuota : expiring ? .expiring : .notNeeded
         // Claude's refill is valued at the measured pace, capped by what one account can spend; an unmeasured pace uses the cap.
         let claudeCap = Self.claudeRate(main: main, gate: account.fiveHourGate)
         let claudeSpendRate = provider == .anthropic ? forecast?.paceMeasured == true ? min(pace, claudeCap) : claudeCap : nil
@@ -213,7 +192,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let reasoning: String
         if trigger == .notNeeded {
             value = nil
-            reasoning = heavy
+            reasoning = needsReset
                 ? "At the current pace \(provider.displayName) runs out before it refills. Apply this reset once the account reaches 0%."
                 : "At the current pace quota refills unused, so hold this reset until close to its expiry."
         } else if unrecognized {
@@ -249,11 +228,14 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         unrecognizedKind = unrecognized
         self.trigger = trigger
         self.value = value
-        recommended = trigger != .notNeeded && !gated && (value ?? -.infinity) >= threshold
+        waitingForCredits = plan?.spendsCreditsBeforeReset == true
+        warningActive = warnFrom.map { now >= $0 } == true
+        let applyWindow = left <= 0 || warnFrom.map { now >= $0 } == true
+        recommended = trigger != .notNeeded && applyWindow && !gated && !unrecognized && !waitingForCredits && (value ?? -.infinity) >= threshold
         notYetApplicable = gated
         self.warnFrom = warnFrom
         self.claudeSpendRate = claudeSpendRate
-        detail = ([reasoning] + gateNote).joined(separator: " ")
+        detail = ([plan?.reason, reasoning] + gateNote).compactMap { $0 }.joined(separator: " ")
     }
 
     /// When time alone makes the current reset value stop meeting its recommendation threshold.
@@ -291,10 +273,12 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
 }
 
 public extension AccountOverview.Account {
-    /// The soonest known expiry of a current banked reset.
-    func soonestBankedExpiry(after now: Date) -> Date? {
-        guard bankedState == .available, let banked = bankedResets, banked.availableCount > 0 else { return nil }
-        let expiries = banked.knownExpiries.isEmpty ? banked.earliestKnownExpiry.map { [$0] } ?? [] : banked.knownExpiries
-        return expiries.filter { $0 > now }.min()
+    func bankedExpiries(after now: Date, includeLastObserved: Bool = false) -> [Date] {
+        guard bankedState == .available || includeLastObserved, let banked = bankedResets, banked.availableCount > 0,
+              metadata.provider != .anthropic || banked.generalWeeklyOnly else { return [] }
+        return banked.expiries(after: now)
     }
+
+    /// The soonest known expiry of a current general-week banked reset.
+    func soonestBankedExpiry(after now: Date) -> Date? { bankedExpiries(after: now).first }
 }

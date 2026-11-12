@@ -181,7 +181,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
                 stalenessPolicy: stalenessPolicy, forecast: fastModeForecastSettings,
                 launchEvidence: UseNextEvidence.make(stored: stored, history: history, configuration: configuration ?? [],
-                    publisherID: publisherID, receipts: receipts, shared: true))
+                    publisherID: publisherID, receipts: receipts, shared: true,
+                    enteredCreditExpiries: accountIntentDocument?.enteredUsageCreditExpiries ?? [:]))
         }
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -244,7 +245,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             accountDisplayMetadata: configuration.map { AccountDisplayMetadata.local(configuration: $0, stored: stored, now: now) },
             accountBurnRates: AccountBurnRateEstimator.observedBurnRates(current: stored.snapshot, history: history, now: now),
             launchEvidence: UseNextEvidence.make(stored: stored, history: history, configuration: configuration ?? [],
-                publisherID: publisherID, receipts: receipts, shared: false)
+                publisherID: publisherID, receipts: receipts, shared: false,
+                enteredCreditExpiries: accountIntentDocument?.enteredUsageCreditExpiries ?? [:])
         )
     }
 

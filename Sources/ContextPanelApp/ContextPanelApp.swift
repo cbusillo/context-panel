@@ -816,7 +816,7 @@ struct SettingsPane: View {
                     }
                 }
                 Button(AccountTerms.addAccount) { showsAddAccount = true }.buttonStyle(.borderedProminent)
-                Text("Hidden accounts still update and warn. Use last excludes an account from Use next. Remove account removes this lane on all Macs and companions after sync, keeping credentials and home folders.")
+                Text("Hidden accounts still update and warn. Use last keeps a cushion for your own apps while spending the rest before reset. Remove account removes this lane on all Macs and companions after sync, keeping credentials and home folders.")
                     .font(.caption)
                     .foregroundStyle(CPTheme.secondaryText)
                 Text("A replacement OpenAI or Claude entry needs its own source selection or sign-in.")

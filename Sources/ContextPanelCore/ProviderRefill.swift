@@ -78,21 +78,4 @@ public enum ProviderRefillDetector {
         reading.reports.first { $0.provider == provider && $0.accountID == accountID }?.resetCredits
     }
 
-    /// For each unstarted OpenAI account, the first reading of its current unstarted run, newest readings first.
-    public static func unstartedSince(readings: [StoredUsageSnapshot], resolve: AccountResolver = localAccountID) -> [String: Date] {
-        var since: [String: Date] = [:]
-        var ended = Set<String>()
-        for reading in readings.sorted(by: { $0.savedAt > $1.savedAt }) {
-            for limit in mainLimits(provider: .openAI, reading: reading).values {
-                let id = resolve(limit)
-                guard !ended.contains(id) else { continue }
-                if UseNextRanking.isUnstarted(used: limit.used, resetsAt: limit.resetsAt, observedAt: limit.lastUpdatedAt) {
-                    since[id] = reading.savedAt
-                } else {
-                    ended.insert(id)
-                }
-            }
-        }
-        return since
-    }
 }

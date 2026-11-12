@@ -10,6 +10,7 @@ public enum ClaudeResetCreditParser {
         var seen = Set<String>()
         var expiries: [Date] = []
         var unrecognized = 0
+        var offers = 0
         for grant in grants {
             guard grant.id.range(of: "^[a-z0-9_-]{1,40}$", options: .regularExpression) != nil,
                   grant.resetsTotal.isFinite, grant.resetsLeft.isFinite,
@@ -18,26 +19,16 @@ public enum ClaudeResetCreditParser {
                   grant.resetsLeft.rounded(.down) == grant.resetsLeft else { return nil }
             guard seen.insert(grant.id).inserted else { continue }
             guard grant.paused != true, grant.endsAt > observedAt else { continue }
-            // The vendor settings UI includes an available claimable offer even when left is zero.
-            let windows: Set<String> = ["five_hour", "seven_day", "seven_day_overage_included", "seven_day_opus",
-                                        "seven_day_sonnet", "seven_day_cowork", "seven_day_omelette", "seven_day_oauth_apps"]
-            let clears = (grant.clears ?? []).filter { windows.contains($0) }
-            let blocking = (grant.blocking ?? []).filter { !clears.contains($0) }
-            let exhausted = status.atLimit == true ? (status.exhausted ?? []).filter { windows.contains($0) } : []
-            let claimable = grant.usableNow == true && blocking.isEmpty && status.cooldownUntil == nil
-                && (grant.useRequiresLimit == false || clears.contains { exhausted.contains($0) })
-            let remaining = min(grant.resetsLeft, grant.resetsTotal)
-            let count = remaining > 0 ? remaining : (claimable ? 1 : 0)
-            guard count <= 10_000, Double(expiries.count) + count <= 10_000 else { return nil }
-            expiries.append(contentsOf: repeatElement(grant.endsAt, count: Int(count)))
-            // Every Claude reset so far refills the general weekly window; flag any grant that doesn't,
-            // including one that clears only a model's weekly window such as seven_day_opus.
-            let named = grant.clears ?? []
-            if !named.isEmpty && !named.contains("seven_day") { unrecognized += Int(count) }
+            let count = Int(min(grant.resetsLeft, grant.resetsTotal))
+            guard count <= 10_000, expiries.count + unrecognized + count <= 10_000 else { return nil }
+            if count == 0 { offers += 1; continue }
+            guard grant.clears?.contains("seven_day") == true else { unrecognized += count; continue }
+            expiries.append(contentsOf: repeatElement(grant.endsAt, count: count))
         }
         return ProviderResetCreditSummary(
             availableCount: expiries.count, observedAt: observedAt,
-            coverage: .complete, knownExpiries: expiries, unrecognizedKindCount: unrecognized
+            coverage: .complete, knownExpiries: expiries, unrecognizedKindCount: unrecognized,
+            excludedOfferCount: offers, generalWeeklyOnly: true
         )
     }
 
@@ -49,13 +40,8 @@ public enum ClaudeResetCreditParser {
     private struct Status: Decodable {
         let eligible: Bool
         let grants: [Grant]?
-        let atLimit: Bool?
-        let exhausted: [String]?
-        let cooldownUntil: Date?
         enum CodingKeys: String, CodingKey {
-            case eligible, grants, exhausted
-            case atLimit = "at_limit"
-            case cooldownUntil = "cooldown_until"
+            case eligible, grants
         }
     }
 
@@ -65,17 +51,12 @@ public enum ClaudeResetCreditParser {
         let resetsLeft: Double
         let endsAt: Date
         let paused: Bool?
-        let usableNow: Bool?
-        let useRequiresLimit: Bool?
         let clears: [String]?
-        let blocking: [String]?
         enum CodingKeys: String, CodingKey {
-            case id, paused, clears, blocking
+            case id, paused, clears
             case resetsTotal = "resets_total"
             case resetsLeft = "resets_left"
             case endsAt = "ends_at"
-            case usableNow = "usable_now"
-            case useRequiresLimit = "use_requires_limit"
         }
     }
 }

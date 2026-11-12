@@ -54,7 +54,7 @@ public struct TVAccountAnswers: View {
                         TVAccountAction(action: account.flatMap { account in
                             openAccount.map { open in { open(account.id) } }
                         }) {
-                            TVUseNextCard(provider: provider, account: account,
+                            TVUseNextCard(provider: provider, account: account, strategy: AccountTerms.useNextStrategy(overview, provider: provider, compact: true),
                                           deadlines: overview.deadlines, now: now)
                         }
                     }
@@ -73,6 +73,7 @@ public struct TVAccountAnswers: View {
 struct TVUseNextCard: View {
     let provider: Provider
     let account: AccountOverview.Account?
+    let strategy: String
     let deadlines: [AccountOverview.Deadline]
     let now: Date
 
@@ -107,7 +108,7 @@ struct TVUseNextCard: View {
                 TVHorizon(geometry: horizon.geometry(now: now, deadlines: tvDeadlines(deadlines, account)),
                           token: horizon.isCurrent ? provider.colorToken : .saved)
                     .frame(height: 26)
-                Text(AccountTerms.useNextReason(account, horizon, now: now))
+                Text(strategy)
                     .font(.system(size: 20)).monospacedDigit().foregroundStyle(TVTokens.color(.secondary))
                     .lineLimit(1).minimumScaleFactor(0.8).frame(height: 26)
             } else {
