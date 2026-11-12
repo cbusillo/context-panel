@@ -282,9 +282,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-    concurrency:
-      group: app-store-release-status
-      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7
