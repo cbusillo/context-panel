@@ -34,6 +34,7 @@ private struct Fixture {
     var eventDriven = false
     /// OpenAI says usage credits keep the account working past its used-up plan quota.
     var onCredits = false
+    var codexPlan: String? = "pro"
 
     var family: String { provider == .openAI ? "Codex" : provider == .anthropic ? "Claude" : "Gemini" }
     var id: String { AccountDisplayMetadata.safeID(provider, name) }
@@ -43,7 +44,7 @@ private struct Fixture {
         var limits = [UsageLimit(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
             label: "\(family) Weekly", windowLabel: "Weekly", modelLabel: family, unit: .percent, used: weeklyUsed, limit: 100,
             resetsAt: resetHours.map { now.addingTimeInterval($0 * hour) } ?? observed.addingTimeInterval(168 * hour),
-            lastUpdatedAt: observed, confidence: .observed, freshnessMode: eventDriven ? .eventDriven : nil)]
+            lastUpdatedAt: observed, confidence: .observed, freshnessMode: eventDriven ? .eventDriven : nil, note: provider == .openAI ? codexPlan.map { "plan: " + $0 } : nil)]
         if let fiveHourUsed {
             limits.append(UsageLimit(provider: provider, accountID: name, configuredAccountID: name, accountName: name,
                 label: "\(family) 5-hour", windowLabel: "5-hour", modelLabel: family, unit: .percent, used: fiveHourUsed,
@@ -489,7 +490,8 @@ private extension UseNextRanking {
     let a = Fixture(name: "a", weeklyUsed: 40, resetHours: 100, burn: 0)
     let receipt = LaunchReceipt(provider: .openAI, accountID: a.id, launchedAt: rankNow.addingTimeInterval(-10 * 60))
     let readings = [rankNow.addingTimeInterval(-6 * 60), rankNow.addingTimeInterval(-1 * 60)]
-    #expect(ranking([a], evidence: UseNextEvidence(receipts: [receipt], readingTimes: readings)).entry(a)?.pendingLaunches == 0)
+    #expect(ranking([a], evidence: UseNextEvidence(receipts: [receipt], accountReadingTimes: [a.id: readings])).entry(a)?.pendingLaunches == 0)
+    #expect(ranking([a], evidence: UseNextEvidence(receipts: [receipt], readingTimes: readings)).entry(a)?.pendingLaunches == 1)
     #expect(ranking([a], evidence: UseNextEvidence(receipts: [receipt], readingTimes: readings,
         accountReadingTimes: [a.id: []])).entry(a)?.pendingLaunches == 1)
     let old = LaunchReceipt(provider: .openAI, accountID: a.id, launchedAt: rankNow.addingTimeInterval(-31 * 60))
@@ -1160,7 +1162,7 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(roundTrip == evidence)
     let rows = WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: existing, status: .healthy), now: rankNow)
         .accountOverview(now: rankNow).accounts
-    #expect(AccountOverview.pendingLaunches(evidence: evidence, rows: rows, now: rankNow)[id] == receipts.count)
+    #expect(AccountOverview.pendingReceipts(evidence: evidence, rows: rows, now: rankNow)[id]?.count == receipts.count)
     #expect(merged.mergingForRemotePublish(existing: merged, now: rankNow).launchEvidence?.receipts.count == receipts.count)
     let expired = evidence.merging(UseNextEvidence(), now: rankNow.addingTimeInterval(LaunchReceiptStore.lookback))
     #expect(expired.receipts.isEmpty)
@@ -1304,4 +1306,106 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(zip(reserves, reserves.dropFirst()).allSatisfy { $0 > $1 })
     // In the final hours only the floor is held, so the account is planned to end near zero.
     #expect(reserves.last == UseNextRanking.useLastFloor)
+}
+
+@Test func expiringCreditsHoldTheResetBeforeQuotaIsEmpty() throws {
+    let account = Fixture(name: "credits", weeklyUsed: 80, resetHours: 120, burn: 1, bankedExpiryHours: [12])
+    let credits = UsageCreditCapacity(available: true, runwayHours: 2, expiresAt: rankNow.addingTimeInterval(6 * hour), observedAt: rankNow)
+    let evidence = UseNextEvidence(credits: [account.id: credits])
+    let result = overview([account], evidence: evidence)
+    #expect(result.useNextRanking(provider: .openAI).entry(account)?.spendsCreditsBeforeReset == true)
+    #expect(try !#require(result.accounts.first?.resetAssessment).recommended)
+
+    var gated = account
+    gated.fiveHourUsed = 100
+    let blocked = overview([gated], evidence: evidence)
+    #expect(blocked.useNextRanking(provider: .openAI).entries.isEmpty)
+    #expect(try !#require(blocked.accounts.first?.resetAssessment).recommended)
+}
+
+@Test func releasedPersonalQuotaCountsTowardRunway() throws {
+    let only = Fixture(name: "last", weeklyUsed: 98, resetHours: 5, burn: 0.1, useLast: true)
+    let result = ranking([only])
+    let forecast = try #require(result.forecast)
+    #expect(result.entry(only)?.reserve == 0)
+    #expect(!forecast.runsOutBeforeRefill)
+    #expect(abs(forecast.refillsUnused - 1.5) < 0.001)
+}
+
+@Test func generalLaunchCannotUseModelOnlyWeeklyOrStaleWeeklyQuota() {
+    let fixture = Fixture(name: "mixed", weeklyUsed: 50, fiveHourUsed: 10, modelWindow: ("reserve", 1))
+    let limits = fixture.limits(now: rankNow)
+    let stale = fixture.limits(now: rankNow.addingTimeInterval(-4 * hour))[0]
+    for weekly in [[], [stale]] {
+        let source = UsageSnapshot(generatedAt: rankNow, limits: weekly + limits.dropFirst())
+        let accounts = AccountOverview(snapshot: source, reports: [fixture.report(now: rankNow)], now: rankNow)
+        #expect(accounts.useNextRanking(provider: .openAI).launchOrder.isEmpty)
+    }
+}
+
+@Test func receiptRetryUsesOnlyUnacknowledgedLaunches() {
+    let account = Fixture(name: "pending", weeklyUsed: 90)
+    let older = LaunchReceipt(provider: .openAI, accountID: account.id, launchedAt: rankNow.addingTimeInterval(-600))
+    let pending = LaunchReceipt(provider: .openAI, accountID: account.id, launchedAt: rankNow.addingTimeInterval(-60))
+    let evidence = UseNextEvidence(receipts: [older, pending], accountReadingTimes: [account.id: [-500.0, -400].map(rankNow.addingTimeInterval)])
+    #expect(ranking([account], evidence: evidence).nextCapacityAt == pending.launchedAt.addingTimeInterval(UseNextRanking.receiptReflectedAfter))
+}
+
+@Test func savedLaunchOrderExpiresAtThirtyMinutes() {
+    let account = Fixture(name: "old", weeklyUsed: 10, readState: .stale, observedAgo: UseNextRanking.staleListMaximumAge)
+    let snapshot = UsageSnapshot(generatedAt: rankNow, limits: account.limits(now: rankNow))
+    let result = AccountOverview(snapshot: snapshot, reports: [account.report(now: rankNow)], now: rankNow, isSavedSnapshot: true)
+    #expect(result.useNextRanking(provider: .openAI).launchOrder.isEmpty)
+}
+
+@Test func savingCarriedForwardLimitsDoesNotAcknowledgeALaunch() throws {
+    let account = Fixture(name: "unchanged", weeklyUsed: 30)
+    let receipt = LaunchReceipt(provider: .openAI, accountID: account.id, launchedAt: rankNow.addingTimeInterval(-600))
+    let limits = account.limits(now: receipt.launchedAt.addingTimeInterval(-10))
+    let readings = [-300.0, 0].map { seconds in
+        let date = rankNow.addingTimeInterval(seconds)
+        return StoredUsageSnapshot(savedAt: date, snapshot: UsageSnapshot(generatedAt: date, limits: limits), reports: [])
+    }
+    let evidence = UseNextEvidence.make(stored: readings[1], history: [readings[0]], configuration: [],
+                                        publisherID: nil, receipts: [receipt], shared: false)
+    #expect(ranking([account], evidence: evidence).entry(account)?.pendingLaunches == 1)
+
+    struct SavedEvidence: Encodable {
+        var receipts: [LaunchReceipt]
+        var accountReadingTimes: [String: [Date]]
+    }
+    let legacy = SavedEvidence(receipts: [receipt], accountReadingTimes: [account.id: readings.map(\.savedAt)])
+    let decoded = try JSONDecoder().decode(UseNextEvidence.self, from: JSONEncoder().encode(legacy))
+    #expect(ranking([account], evidence: decoded).entry(account)?.pendingLaunches == 1)
+}
+
+@Test func fullOpenAIWeekKeepsItsClockWhenOnlyTheCoveredShortWindowRefills() throws {
+    let plus = Fixture(name: "covered", weeklyUsed: 0, resetHours: 120, fiveHourUsed: 90, bankedExpiryHours: [12])
+    func assess(_ plan: String?) throws -> ResetAssessment {
+        var account = plus
+        account.codexPlan = plan
+        return try #require(overview([account]).accounts.first?.resetAssessment)
+    }
+    let shortOnly = try assess("Plus")
+    #expect(!shortOnly.notYetApplicable)
+    #expect(shortOnly.value == nil)
+    #expect(try !assess("team").notYetApplicable)
+    #expect(try assess("prolite").notYetApplicable)
+    #expect(try assess("Pro").notYetApplicable)
+    let unknown = try assess(nil)
+    #expect(!unknown.recommended && !unknown.notYetApplicable && unknown.value == nil)
+}
+
+@Test func monthlyCodexResetUsesTheMonthlyAllowanceAndNeverInventsAWeeklyValue() throws {
+    let go = Fixture(name: "monthly", bankedExpiryHours: [12])
+    for (used, window) in [(10, "4-week"), (40, "30-day")] {
+        let reading = UsageLimit(provider: .openAI, accountID: go.name, accountName: go.name, label: "Codex " + window,
+            windowLabel: window, modelLabel: "Codex", unit: .percent, used: used, limit: 100,
+            resetsAt: rankNow.addingTimeInterval(100 * hour), lastUpdatedAt: rankNow, confidence: .observed, note: "plan: go")
+        let source = UsageSnapshot(generatedAt: rankNow, limits: [reading])
+        let assessment = try #require(AccountOverview(snapshot: source, reports: [go.report(now: rankNow)],
+                                                      now: rankNow).accounts.first?.resetAssessment)
+        #expect(assessment.notYetApplicable == (used == 10))
+        #expect(assessment.value == nil && !assessment.recommended)
+    }
 }

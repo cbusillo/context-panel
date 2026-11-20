@@ -823,8 +823,7 @@ summed over the provider's accounts, that refill unused at the measured pace),
 `pacePerHour`, `paceMeasured` (false means no account's pace is measured and the
 points assume nothing more runs), `usageCreditsLeft` (the current balance across
 the provider's accounts, null when none reports one),
-`accountsSpendingUsageCredits` (accounts holding credits whose weekly quota is at
-0%, the only place credits are spent), `usageCreditsExpireAt` and
+`accountsSpendingUsageCredits` (accounts with a positive balance and reported paid fallback or exhausted weekly quota), `usageCreditsExpireAt` and
 `usageCreditsExpirySource` (`provider` when a balance reports its own expiry,
 which wins, else `entered` for the day Chris entered under Settings > Usage
 credits; both null when no future expiry is known), and the sentences `line`
@@ -946,8 +945,8 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   account's current target. A paid fallback route spends credits until its gate
   opens; that account's weekly quota is reconsidered at the next reading.
 - Batches follow the same deadline order. Pending receipts reduce projected
-  room using measured points per launch, until two later account readings or
-  thirty minutes acknowledge them. Without a per-launch estimate the batch allows
+  room using measured points per launch, until two distinct later observations of that account’s general quota or
+  thirty minutes acknowledge them. Older companion save timestamps cannot acknowledge a receipt. Without a per-launch estimate the batch allows
   one pending launch per account; refresh observations before adding more. No command or
   credential path travels with this count-only evidence.
   A pending-only wait publishes the receipt's expiration as `nextCapacityAt`;
@@ -956,7 +955,7 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   The order projects successive picks after pending spend; refresh after a
   batch for the new targets. A later projected pick can have a zero current target.
 - Saved-only readings publish their age and never claim Use next. Their launch
-  order is available for thirty minutes. Codex's expired-sign-in fallback keeps
+  order is available while the oldest ranked reading is less than thirty minutes old. Codex's expired-sign-in fallback keeps
   its existing explicit saved-reading and assumed-reset notes.
 
 Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
@@ -972,9 +971,15 @@ short-window capacity caps the target; otherwise achievable pace remains
 explicitly unproved. Forecasts and reset advice read the cached ranking, with
 full-provider evidence retained separately only for a filtered widget view.
 
-Banked-reset advice still values OpenAI's fresh seven-day window and Claude's
-refill within its existing end date. OpenAI refuses application at 80% or more
-of weekly quota left. The panel advises one worthwhile application per provider
+A manual OpenAI banked reset is eligible when any covered allowance falls below 80%.
+Plus and Business Standard cover the general five-hour and weekly allowances; Pro covers weekly.
+An allowance already at 100% keeps its existing clock. If the week is partly used, the advisor still values its refill even when the five-hour
+allowance establishes eligibility. If only short-window relief is known, it explains the effect without
+assigning it an unmeasured weekly-point value.
+Go's eligibility uses its reported monthly allowance and has no weekly-point valuation.
+Companion limits retain only a recognized Codex plan category from the provider note for the same eligibility check. Check the offer in Usage when coverage is unclear.
+[OpenAI reset rules](https://help.openai.com/en/articles/20001498-how-resets-work-in-codex).
+Claude's general-week grant restores usable quota before its existing weekly refill. The panel advises one worthwhile application per provider
 at a time, and can notify through enabled limit warnings. These are read-only
 recommendations. Provider-wide refills remain detected from history and do not
 count as burn.

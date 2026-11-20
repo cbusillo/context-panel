@@ -234,7 +234,7 @@ public enum AccountTerms {
 
     /// The outcome beside a horizon: what happens before the reset, then the fact it rests on.
     /// "Runs out Fri ~11 PM" / "Empty 3½ days until it resets Tue 2:07 PM";
-    /// "~50% to spare" / "Resets Sat 9:07 PM"; "measuring" / "Resets …"; or the state word for a reading
+    /// "~50% to spare" / "At this account’s pace · Resets Sat 9:07 PM"; "measuring" / "Resets …"; or the state word for a reading
     /// that is not current.
     public static func outcome(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> (title: String, detail: String) {
         guard horizon.isCurrent else { return (account.stateText, accountTiming(account, now: now)) }
@@ -245,7 +245,7 @@ public enum AccountTerms {
                     "Empty " + AccountPaceText.span(empty) + (resetText.map { " until it resets " + $0 } ?? ""))
         }
         let detail = resetText.map { (name.map { $0 + " resets " } ?? resets + " ") + $0 } ?? ""
-        if let spare = horizon.spare { return (self.spare(spare), detail) }
+        if let spare = horizon.spare { return (self.spare(spare), ["At this account’s pace", detail].filter { !$0.isEmpty }.joined(separator: " · ")) }
         return (horizon.burnPerHour != nil && horizon.resetAt == nil ? resetUnknown : measuring, detail)
     }
 
@@ -298,7 +298,7 @@ public enum AccountTerms {
         }
         if let note = entry.notes.first { parts.append(note) }
         if entry.spendsCreditsBeforeReset {
-            parts.append("Spend credits first; apply the reset afterward.")
+            parts.append("Spend the earlier-expiring credits, then reassess the reset.")
         } else if entry.bankedResetExpiresAt != nil {
             parts.append((entry.reserve ?? 0) > 0 ? "Reach 0% after the other quota; you apply the reset."
                 : entry.depleteBy.map { "0% by " + AccountPaceText.when($0, now: overview.rankedAt) + "; you apply the reset." }

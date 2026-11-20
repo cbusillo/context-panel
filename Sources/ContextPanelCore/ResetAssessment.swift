@@ -88,7 +88,7 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public let value: Double?
     public private(set) var recommended: Bool
     public let unrecognizedKind: Bool
-    /// OpenAI applies a banked reset only while the account has less than 80% of its weekly quota left (#1074).
+    /// All known covered allowances still have at least 80% remaining.
     public let notYetApplicable: Bool
     /// A scheduled warning boundary; the shared depletion plan can ask for work earlier.
     public let warnFrom: Date?
@@ -99,14 +99,16 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     public var prompt: String? { recommended ? "Apply \(label)'s reset now" : nil }
     /// The expiring warning for a reset OpenAI won't apply yet: use the account first.
     public var useFirstPrompt: String? {
-        trigger == .expiring && warningActive && !recommended && !unrecognizedKind ? "Use \(label) before its reset expires" : nil
+        trigger == .expiring && warningActive && !recommended && !unrecognizedKind && !checkInCodex && !waitingForCredits ? "Use \(label) before its reset expires" : nil
     }
     private var warningActive = false
     private var waitingForEarlierReset = false
     private var waitingForCredits = false
+    private var checkInCodex = false
     public var title: String {
         if waitingForEarlierReset || waitingForCredits { return "Hold" }
         if recommended { return "Apply reset now" }
+        if checkInCodex { return "Check in Codex" }
         if notYetApplicable { return "Not applicable yet" }
         return trigger == .notNeeded ? "Hold" : "Not worth applying now"
     }
@@ -141,13 +143,13 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
     }
     /// Weekly points one Claude account can spend per hour when its 5-hour window is the only limit.
     static let claudeDefaultRate = 3.8
-    /// Director decision on #1074 (Nov 8, 2026): OpenAI won't apply a reset at or above this much weekly quota left.
+    /// Manual redemption requires one covered allowance below this percentage.
     static let openAIApplicableBelow: Double = 80
 
     public static func assessments(for accounts: [AccountOverview.Account], rankings: [Provider: UseNextRanking],
-                                   now: Date) -> [String: Self] {
+                                   now: Date, credits: [String: UsageCreditCapacity] = [:]) -> [String: Self] {
         var assessments = Dictionary(accounts.compactMap { account in
-            Self(account: account, ranking: rankings[account.metadata.provider], now: now).map { (account.id, $0) }
+            Self(account: account, ranking: rankings[account.metadata.provider], credits: credits[account.id], now: now).map { (account.id, $0) }
         }, uniquingKeysWith: { first, _ in first })
         // One apply-now prompt per provider at a time, the soonest expiry first.
         var selectedByProvider: [Provider: Self] = [:]
@@ -166,21 +168,42 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         return assessments
     }
 
-    private init?(account: AccountOverview.Account, ranking: UseNextRanking?, now: Date) {
-        guard [.openAI, .anthropic].contains(account.metadata.provider),
+    private init?(account: AccountOverview.Account, ranking: UseNextRanking?, credits: UsageCreditCapacity?, now: Date) {
+        let provider = account.metadata.provider
+        let codexPlan = provider == .openAI ? CodexResetPlan(label: account.providerPlan) : nil
+        let coversShort = codexPlan == .plus || codexPlan == .business
+        let monthly = codexPlan == .go
+        let weekly = account.mainWindow.flatMap { $0.period == .weekly ? $0 : nil }
+        let short = coversShort ? account.fiveHourGate : nil
+        let primary = monthly ? account.windows.first { window in
+            (window.modelLabel == nil || window.modelLabel?.lowercased() == provider.generalModelFamily)
+                && window.periodLabel.map { CodexResetPlan.monthlyWindowLabels.contains($0.lowercased()) } == true
+        } : weekly
+        guard [.openAI, .anthropic].contains(provider),
               let banked = account.bankedResets, banked.availableCount > 0, account.bankedState == .available,
-              [.available, .closeToLimit, .limited].contains(account.state),
-              let main = account.mainWindow, let fraction = main.remainingFraction else { return nil }
+              [.available, .closeToLimit, .limited].contains(account.state) || (monthly && account.state == .unknown),
+              let main = [primary, short].compactMap({ $0 }).first(where: { $0.isCurrent && $0.remainingFraction != nil }),
+              let fraction = main.remainingFraction else { return nil }
         let forecast = ranking?.forecast
         let plan = ranking?.entries.first { $0.accountID == account.id }
         let left = fraction * 100
-        let provider = account.metadata.provider
         let needsReset = forecast?.requiresBankedReset == true
         let pace = forecast?.pacePerHour ?? 0
         let soonest = account.soonestBankedExpiry(after: now)
         let unrecognized = provider == .anthropic && !banked.generalWeeklyOnly
-        let gated = provider == .openAI && left >= Self.openAIApplicableBelow
-        let toUseFirst = gated ? left - Self.openAIApplicableBelow + 1 : 0
+        let covered = (coversShort ? [primary, short] : [primary]).compactMap { window in
+            window.flatMap { $0.isCurrent ? $0.remainingFraction : nil }.map { $0 * 100 }
+        }
+        let coveredLeft = covered.min() ?? left
+        let allKnown = coversShort ? covered.count == 2 : codexPlan == .pro || monthly
+        let gated = provider == .openAI && allKnown && coveredLeft >= Self.openAIApplicableBelow
+        let checkCoverage = provider == .openAI && (codexPlan == nil
+            || !allKnown && coveredLeft >= Self.openAIApplicableBelow)
+        let shortBenefit = coversShort && coveredLeft < Self.openAIApplicableBelow && (main.period == .fiveHour || left == 100)
+        let allowance: String = if monthly { "monthly allowance" }
+            else if coversShort, let shortLeft = short?.remainingFraction, shortLeft * 100 == coveredLeft { "five-hour allowance" }
+            else { "weekly allowance" }
+        let toUseFirst = coveredLeft - Self.openAIApplicableBelow + 1
         let warnFrom = soonest.map(Self.applicationWindow)
         let expiring = plan?.bankedResetExpiresAt != nil || warnFrom.map { now >= $0 } == true
         let trigger: Trigger = left <= 0 && (needsReset || expiring) ? .outOfQuota : expiring ? .expiring : .notNeeded
@@ -190,7 +213,18 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
 
         let value: Double?
         let reasoning: String
-        if trigger == .notNeeded {
+        if checkCoverage {
+            value = nil
+            reasoning = "Check the covered allowances in Codex Usage. A covered allowance must have less than 80% left."
+        } else if monthly {
+            value = nil
+            reasoning = gated ? "The monthly allowance is not yet eligible." : "The monthly allowance qualifies. Check its refill in Codex Usage."
+        } else if shortBenefit {
+            value = nil
+            reasoning = main.period == .weekly
+                ? "The five-hour allowance qualifies. Applying refills it and keeps the full weekly allowance on its existing schedule."
+                : "The five-hour allowance qualifies. Check the weekly allowance in Codex Usage before applying."
+        } else if trigger == .notNeeded {
             value = nil
             reasoning = needsReset
                 ? "At the current pace \(provider.displayName) runs out before it refills. Apply this reset once the account reaches 0%."
@@ -198,6 +232,9 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         } else if unrecognized {
             value = nil
             reasoning = "One of its resets isn't a full weekly refill, so Context Panel doesn't value it. Check it in Claude before applying."
+        } else if provider == .openAI && left == 100 {
+            value = 0
+            reasoning = "The weekly allowance is full and keeps its existing refill time."
         } else if provider == .openAI {
             let days = account.isUnstarted(main) ? 7 : main.naturalResetAt.map { max(0, $0.timeIntervalSince(now) / 86_400) }
             value = days.map { 100 * $0 / 7 - left }
@@ -215,9 +252,9 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
             } ?? "The weekly refill time is unknown, so the value can't be judged."
         }
         let gateNote = gated ? [
-            "OpenAI applies a banked reset only below \(Int(Self.openAIApplicableBelow))% of the weekly quota left, and this account has \(Int(left.rounded()))%.",
+            coversShort ? "Both covered allowances still have at least 80% left." : "The covered \(allowance) still has at least 80% left.",
             trigger == .expiring ? soonest.map {
-                "Use about \(Int(toUseFirst.rounded(.up)))% more before \(ContextPanelDateFormatting.resetDeadline($0)) so it can be applied."
+                "Use about \(Int(toUseFirst.rounded(.up))) more percentage points of the \(allowance) before \(ContextPanelDateFormatting.resetDeadline($0)) so it can be applied."
             } : nil,
         ].compactMap { $0 } : []
         let threshold = trigger == .outOfQuota ? Self.outOfQuotaThreshold : Self.expiringThreshold
@@ -228,14 +265,17 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         unrecognizedKind = unrecognized
         self.trigger = trigger
         self.value = value
-        waitingForCredits = plan?.spendsCreditsBeforeReset == true
+        checkInCodex = checkCoverage || shortBenefit || (monthly && !gated)
+        waitingForCredits = credits?.current(at: now)?.expires(before: soonest) == true || plan?.spendsCreditsBeforeReset == true
         warningActive = warnFrom.map { now >= $0 } == true
         let applyWindow = left <= 0 || warnFrom.map { now >= $0 } == true
         recommended = trigger != .notNeeded && applyWindow && !gated && !unrecognized && !waitingForCredits && (value ?? -.infinity) >= threshold
         notYetApplicable = gated
         self.warnFrom = warnFrom
         self.claudeSpendRate = claudeSpendRate
-        detail = ([plan?.reason, reasoning] + gateNote).compactMap { $0 }.joined(separator: " ")
+        detail = waitingForCredits
+            ? "Hold this reset until the earlier-expiring usage credits are spent or expire. Follow Use next for the account order."
+            : ([plan?.reason, reasoning] + gateNote).compactMap { $0 }.joined(separator: " ")
     }
 
     /// When time alone makes the current reset value stop meeting its recommendation threshold.

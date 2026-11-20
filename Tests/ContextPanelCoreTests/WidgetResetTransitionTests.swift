@@ -15,7 +15,8 @@ func resetTransitionSnapshot(provider: Provider = .openAI, secondUsed: Int = 20,
         limits: zip(ids, [100, secondUsed]).map { id, used in
             UsageLimit(provider: provider, accountID: id, accountName: id, label: "Weekly",
                        windowLabel: "weekly", unit: .percent, used: used, limit: 100,
-                       resetsAt: now.addingTimeInterval(refillInterval), lastUpdatedAt: now, confidence: .observed)
+                       resetsAt: now.addingTimeInterval(refillInterval), lastUpdatedAt: now, confidence: .observed,
+                       note: provider == .openAI ? "plan: pro" : nil)
         }, reports: zip(ids, [firstExpiry, secondExpiry]).map { id, expiry in
             StoredProviderReport(provider: provider, accountID: id, accountName: id, generatedAt: now,
                 resetCredits: ProviderResetCreditSummary(availableCount: 1, observedAt: now, coverage: .complete,

@@ -217,6 +217,12 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         case note
     }
 
+    var reportedPlan: String? {
+        guard let note, note.lowercased().hasPrefix("plan:") else { return nil }
+        let value = note.dropFirst("plan:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
     public init(
         id: String? = nil,
         provider: Provider,

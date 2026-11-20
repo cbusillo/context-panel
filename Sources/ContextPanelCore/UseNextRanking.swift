@@ -56,7 +56,7 @@ public enum LaunchReceiptStore {
 /// What the ranking knows beyond the readings themselves. Every field is optional evidence.
 public struct UseNextEvidence: Codable, Equatable, Sendable {
     public var receipts: [LaunchReceipt]
-    /// When each reading was saved (history and current); a receipt counts as reflected after two later readings.
+    /// Save times retained for older companion payload readers. Only account observations acknowledge receipts.
     public var readingTimes: [Date]
     public var accountReadingTimes: [String: [Date]]?
     public var credits: [String: UsageCreditCapacity]?
@@ -91,7 +91,14 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             launchedAt: $0.launchedAt, receiptID: $0.receiptID) }
         var accountTimes: [String: [Date]] = [:]
         for reading in readings {
-            for id in Set(reading.snapshot.limits.map(resolve)) { accountTimes[id, default: []].append(reading.savedAt) }
+            for provider in Provider.allCases {
+                for limit in ProviderRefillDetector.mainLimits(provider: provider, reading: reading).values {
+                    if limit.confidence != .unknown, limit.remainingCapacityRatio != nil,
+                       let observed = limit.lastUpdatedAt, observed <= reading.savedAt.addingTimeInterval(60) {
+                        accountTimes[resolve(limit), default: []].append(observed)
+                    }
+                }
+            }
         }
         accountTimes = accountTimes.mapValues { Array(Set($0).sorted().suffix(2)) }
         return Self(receipts: receipts, readingTimes: Array(Set(readings.map(\.savedAt)).sorted().suffix(2)),
@@ -150,7 +157,7 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             })
     }
 
-    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, accountReadingTimes, credits }
+    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, accountReadingTimes, usesObservationTimes, credits }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let groups = try container.decodeIfPresent([String: [String: [String: Date]]].self, forKey: .launches) {
@@ -165,7 +172,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             }
         } else { receipts = try container.decodeIfPresent([LaunchReceipt].self, forKey: .receipts) ?? [] }
         readingTimes = try container.decodeIfPresent([Date].self, forKey: .readingTimes) ?? []
-        accountReadingTimes = try container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes)
+        accountReadingTimes = try container.decodeIfPresent(Bool.self, forKey: .usesObservationTimes) == true
+            ? container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes) : nil
         let credits = try container.decodeIfPresent([String: UsageCreditCapacity].self, forKey: .credits)
         self.credits = credits?.isEmpty == true ? nil : credits
     }
@@ -183,7 +191,10 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             try container.encode(groups, forKey: .launches)
         } else { try container.encode(receipts, forKey: .receipts) }
         try container.encode(readingTimes, forKey: .readingTimes)
-        try container.encodeIfPresent(accountReadingTimes, forKey: .accountReadingTimes)
+        if let accountReadingTimes {
+            try container.encode(accountReadingTimes, forKey: .accountReadingTimes)
+            try container.encode(true, forKey: .usesObservationTimes)
+        }
         try container.encodeIfPresent(credits?.isEmpty == true ? nil : credits, forKey: .credits)
     }
 
@@ -276,11 +287,13 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
                         remaining: (T) -> Double?) -> T? {
         let weekly = items.filter { period($0) == .weekly }
         let pool = weekly.isEmpty ? items.filter { period($0) == .daily } : weekly
-        guard !pool.isEmpty else { return items.count == 1 ? items.first : nil }
-        let family = provider.generalModelFamily
-        return pool.first { model($0)?.lowercased() == family }
-            ?? pool.first { model($0) == nil }
-            ?? pool.min { (remaining($0) ?? 1) < (remaining($1) ?? 1) }
+        if let general = pool.first(where: { model($0)?.lowercased() == provider.generalModelFamily })
+            ?? pool.first(where: { model($0) == nil }) { return general }
+        if pool.isEmpty, items.count == 1, let only = items.first {
+            return provider == .google || model(only) == nil || model(only)?.lowercased() == provider.generalModelFamily ? only : nil
+        }
+        guard provider == .google else { return nil }
+        return pool.min { (remaining($0) ?? 1) < (remaining($1) ?? 1) }
     }
 
     public static func allocate(_ entries: [Entry], launches: Int, counts: [String: Int] = [:]) -> [String] {
@@ -308,7 +321,8 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         let launchable = current + savedCodex + recentStale
         let staleOnly = launchable.isEmpty && rows.contains { $0.state == .stale }
         let rankable = staleOnly ? rows.filter { $0.state == .stale } : launchable
-        let pending = AccountOverview.pendingLaunches(evidence: evidence, rows: rows, now: now)
+        let unacknowledged = AccountOverview.pendingReceipts(evidence: evidence, rows: rows, now: now)
+        let pending = unacknowledged.mapValues(\.count)
         let measured = current.compactMap { $0.mainWindow.flatMap { $0.isCurrent ? $0.burnPoints : nil } }
         let pace = measured.reduce(0, +)
         let averageBurn = measured.isEmpty ? 0 : pace / Double(measured.count)
@@ -325,6 +339,9 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             }
             guard let main = row.mainWindow, let fraction = main.remainingFraction,
                   main.confidence != .unknown else { exclude("No weekly reading", nil); continue }
+            if current.contains(where: { $0.id == row.id }) && !main.isCurrent && main.assumption == nil {
+                exclude("Quota reading is not current", nil); continue
+            }
             let assumesCodexReset = row.isCodexSignInExpired && main.naturalResetAt.map { reset in
                 main.observedAt.map { $0 < reset && reset <= now } == true
             } == true
@@ -351,7 +368,11 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             let personal = row.metadata.useLast && !multipleUseLast ? AccountOverview.personalBurn(row: row, burn: burn,
                 evidence: evidence, pointsPerLaunch: pointsPerLaunch, now: now) : nil
             let hours = max(minimumHours, refill.timeIntervalSince(now) / 3_600)
-            let reserve = row.metadata.useLast && !multipleUseLast ? min(remaining, max(useLastFloor, (personal ?? 0) * hours)) : nil
+            let reserve: Double? = if row.metadata.useLast && !multipleUseLast {
+                rows.contains { $0.id != row.id && $0.metadata.isEnabled && $0.metadata.sourceConfigured
+                    && $0.state != .notConnected && ($0.mainWindow?.remainingFraction ?? 1) > 0 }
+                    ? min(remaining, max(useLastFloor, (personal ?? 0) * hours)) : 0
+            } else { nil }
             var notes = row.windows.filter { window in
                 window.id != main.id && window.id != row.fiveHourGate?.id && (window.remainingFraction ?? 1) <= 0
                     && (window.naturalResetAt ?? .distantFuture) > now
@@ -367,13 +388,9 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             complete: plans.count == current.count && current.count == rows.filter {
                 $0.metadata.isEnabled && $0.metadata.sourceConfigured && $0.state != .notConnected
             }.count, now: now)
-        let hasOtherQuota = { (plan: SpendPlan) in rows.contains {
-            $0.id != plan.row.id && $0.metadata.isEnabled && $0.metadata.sourceConfigured
-                && $0.state != .notConnected && ($0.mainWindow?.remainingFraction ?? 1) > 0
-        } }
         // Emptying a protected account requires using the other quota first.
         let protectedExpiry = plans.filter {
-            ($0.reserve ?? 0) > 0 && $0.deadline < $0.refill && hasOtherQuota($0)
+            ($0.reserve ?? 0) > 0 && $0.deadline < $0.refill
         }.map(\.deadline).min()
         if let protectedExpiry {
             let target = plans.filter { ($0.reserve ?? 0) > 0 && $0.deadline == protectedExpiry }.map(\.targetDeadline).min() ?? protectedExpiry
@@ -390,25 +407,36 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         let currentPlans = plans.filter { $0.gatedUntil == nil }
         let expiryPace = ProviderPaceForecast.expiryPace(currentPlans.filter { !$0.spendingCredits }, now: now)
         let requiredPace = currentPlans.reduce(expiryPace) { required, plan in
-            let held = hasOtherQuota(plan) && protectedExpiry == nil ? plan.reserve ?? 0 : 0
+            let held = protectedExpiry == nil ? plan.reserve ?? 0 : 0
             cumulative += (plan.spendingCredits ? 0 : max(0, plan.remaining - held)) + plan.additionalDuePoints
             let hours = max(minimumHours, plan.targetDeadline.timeIntervalSince(now) / 3_600)
             return max(required, cumulative / hours)
         }
         let wanted = max(requiredPace, min(pace, forecast?.sustainablePointsPerHour ?? requiredPace))
         var unallocated = wanted
+        var retryDates = excluded.compactMap(\.until).filter { $0 > now }
         var entries = plans.filter { $0.gatedUntil == nil && ($0.remaining > 0 || $0.row.spendsUsageCredits) }.map { plan in
-            let held = hasOtherQuota(plan) ? plan.reserve ?? 0 : 0
+            let held = plan.reserve ?? 0
             let available = max(0, plan.remaining - held)
             let isHeld = plan.remaining > 0 && available <= 0
             let creditOnly = plan.spendingCredits
             let planQuotaElsewhere = creditOnly && plans.contains {
                 !$0.spendingCredits && $0.gatedUntil == nil
-                    && $0.remaining > (hasOtherQuota($0) ? $0.reserve ?? 0 : 0) && $0.deadline <= plan.deadline
+                    && $0.remaining > ($0.reserve ?? 0) && $0.deadline <= plan.deadline
             }
             let room = plan.spendingCredits ? Double.greatestFiniteMagnitude : min(available, plan.shortRoomPoints ?? available)
             let count = pending[plan.row.id, default: 0]
             let fitsPending = pointsPerLaunch.map { room > Double(count) * $0 } ?? (count == 0)
+            if !fitsPending && !isHeld && !planQuotaElsewhere && room > 0 {
+                let expiryOrder = (unacknowledged[plan.row.id] ?? []).sorted { $0.launchedAt < $1.launchedAt }
+                for (index, receipt) in expiryOrder.enumerated() {
+                    let stillPending = count - index - 1
+                    if pointsPerLaunch.map({ room > Double(stillPending) * $0 }) ?? (stillPending == 0) {
+                        retryDates.append(receipt.launchedAt.addingTimeInterval(receiptReflectedAfter))
+                        break
+                    }
+                }
+            }
             let eligible = !isHeld && !planQuotaElsewhere && fitsPending
             let feasible = plan.feasiblePointsPerHour(now: now)
             let targetUnknown = creditOnly && plan.creditPoints == nil
@@ -459,17 +487,15 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         }
         entries.sort { nextPick([$0], counts: pending) != nil && nextPick([$1], counts: pending) == nil }
         let observed = rankable.compactMap(\.observedAt).min()
-        let usable = !staleOnly || observed.map { now.timeIntervalSince($0) <= staleListMaximumAge } == true
+        let usable = !staleOnly || observed.map { (0..<staleListMaximumAge).contains(now.timeIntervalSince($0)) } == true
         let order = usable ? allocate(entries, launches: launchOrderLength, counts: pending) : []
         let first = staleOnly ? nil : order.first
         for index in entries.indices where entries[index].accountID != first {
             entries[index].depleteBy = nil
             if staleOnly { entries[index].targetPointsPerHour = nil }
         }
-        let pendingRetry = evidence.receipts.filter { pending[$0.accountID, default: 0] > 0 }
-            .map { $0.launchedAt.addingTimeInterval(receiptReflectedAfter) }.filter { $0 > now }.min()
         return Self(provider: provider, entries: entries, excluded: excluded, useNextAccountID: first,
-            nextCapacityAt: first == nil && !staleOnly ? (excluded.compactMap(\.until) + [pendingRetry].compactMap { $0 }).filter { $0 > now }.min() : nil,
+            nextCapacityAt: first == nil && !staleOnly ? retryDates.min() : nil,
             multipleUseLast: multipleUseLast, basedOnStaleReadings: staleOnly, readingsObservedAt: staleOnly ? observed : nil,
             launchOrder: order, targetPointsPerHour: first == nil || entries.compactMap(\.targetPointsPerHour).allSatisfy { $0 <= 0 }
                 ? nil : entries.compactMap(\.targetPointsPerHour).reduce(0, +),
@@ -501,10 +527,7 @@ struct SpendPlan {
         self.row = row; self.remaining = remaining; self.refill = refill; self.burn = burn
         self.burnEstimated = burnEstimated; self.unstarted = unstarted; self.reserve = reserve; self.notes = notes
         self.gatedUntil = gatedUntil
-        self.credits = credits.flatMap {
-            !$0.available || $0.observedAt > now.addingTimeInterval(60)
-                || $0.expiresAt.map { $0 <= now } == true ? nil : $0
-        }
+        self.credits = credits?.current(at: now)
         let banked = row.bankedState == .available ? row.bankedResets : nil
         let recognized = banked.map { row.metadata.provider != .anthropic || $0.generalWeeklyOnly } == true
         let expiries = row.bankedExpiries(after: now)
@@ -532,10 +555,7 @@ struct SpendPlan {
     var spendingCredits: Bool { Self.usesCredits(row: row, remaining: remaining) }
 
     var spendsCreditsBeforeReset: Bool {
-        guard spendingCredits, row.bankedState == .available, (row.bankedResets?.availableCount ?? 0) > 0,
-              let expiry = credits?.expiresAt,
-              let reset = bankedResetExpiry else { return false }
-        return expiry < reset
+        credits?.expires(before: bankedResetExpiry) == true
     }
 
     func creditWorkloadMultiplier(now: Date) -> Double? {
@@ -577,16 +597,13 @@ public extension AccountOverview {
 
 extension AccountOverview {
     /// Receipts the readings don't reflect yet: fewer than two later readings and under 30 minutes old.
-    static func pendingLaunches(evidence: UseNextEvidence, rows: [Account], now: Date) -> [String: Int] {
+    static func pendingReceipts(evidence: UseNextEvidence, rows: [Account], now: Date) -> [String: [LaunchReceipt]] {
         let ids = Set(rows.map(\.id))
-        // Saved reading times when known; without history, each account's own observation stands in.
-        let readings = evidence.readingTimes.isEmpty ? rows.compactMap(\.observedAt) : evidence.readingTimes
-        return evidence.receipts.reduce(into: [:]) { counts, receipt in
+        return Dictionary(grouping: evidence.receipts.filter { receipt in
             guard ids.contains(receipt.accountID), receipt.launchedAt <= now.addingTimeInterval(60),
-                  now.timeIntervalSince(receipt.launchedAt) < UseNextRanking.receiptReflectedAfter,
-                  Set((evidence.accountReadingTimes?[receipt.accountID] ?? readings).filter { $0 > receipt.launchedAt }).count < 2 else { return }
-            counts[receipt.accountID, default: 0] += 1
-        }
+                  now.timeIntervalSince(receipt.launchedAt) < UseNextRanking.receiptReflectedAfter else { return false }
+            return Set((evidence.accountReadingTimes?[receipt.accountID] ?? []).filter { $0 > receipt.launchedAt }).count < 2
+        }, by: \.accountID)
     }
 
     /// Agent use per launch, measured on the provider's other accounts over the receipt lookback.
@@ -632,8 +649,9 @@ public extension AccountOverview.Account {
 
     /// The 5-hour window that gates new sessions for the main window's models.
     var fiveHourGate: AccountOverview.Window? {
-        guard let main = mainWindow else { return nil }
-        return windows.first { $0.period == .fiveHour && $0.modelLabel?.lowercased() == main.modelLabel?.lowercased() }
+        let model = mainWindow?.modelLabel?.lowercased() ?? metadata.provider.generalModelFamily
+        return windows.first { $0.period == .fiveHour && $0.modelLabel?.lowercased() == model }
+            ?? windows.first { $0.period == .fiveHour && ($0.modelLabel == nil || $0.modelLabel?.lowercased() == metadata.provider.generalModelFamily) }
     }
 
     /// An OpenAI clock that hasn't started: nothing used, and the reset slides to a week after each reading.
