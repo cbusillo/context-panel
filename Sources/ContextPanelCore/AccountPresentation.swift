@@ -234,7 +234,7 @@ public enum AccountTerms {
 
     /// The outcome beside a horizon: what happens before the reset, then the fact it rests on.
     /// "Runs out Fri ~11 PM" / "Empty 3½ days until it resets Tue 2:07 PM";
-    /// "~50% to spare" / "Resets Sat 9:07 PM"; "measuring" / "Resets …"; or the state word for a reading
+    /// "~50% to spare" / "At this account’s pace · Resets Sat 9:07 PM"; "measuring" / "Resets …"; or the state word for a reading
     /// that is not current.
     public static func outcome(_ account: AccountOverview.Account, _ horizon: AccountHorizon, now: Date) -> (title: String, detail: String) {
         guard horizon.isCurrent else { return (account.stateText, accountTiming(account, now: now)) }

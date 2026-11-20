@@ -316,12 +316,7 @@ public struct AccountOverview: Equatable, Sendable {
                         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
                     return parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : nil
                 }.first
-            let notedPlan = limits.lazy.compactMap { limit -> String? in
-                guard let note = limit.note, note.lowercased().hasPrefix("plan:") else { return nil }
-                let value = note.dropFirst("plan:".count).trimmingCharacters(in: .whitespacesAndNewlines)
-                // Claude plan labels come from a closed vocabulary and may carry a company name.
-                return value.isEmpty ? nil : entry.provider == .anthropic ? value : value.capitalized
-            }.first
+            let notedPlan = limits.lazy.compactMap(\.reportedPlan).first.map { entry.provider == .anthropic ? $0 : $0.capitalized }
             let plan = switch entry.provider {
             case .openAI: (CodexResetPlan(label: notedPlan) != nil ? notedPlan : namedPlan ?? notedPlan).map { ConnectorRedactor.safeErrorDescription($0) }
             case .anthropic: notedPlan.map { ConnectorRedactor.safeErrorDescription($0) }

@@ -973,8 +973,9 @@ full-provider evidence retained separately only for a filtered widget view.
 
 A manual OpenAI banked reset is eligible when any covered allowance falls below 80%.
 Plus and Business Standard cover the general five-hour and weekly allowances; Pro covers weekly.
-An allowance already at 100% keeps its existing clock. When short-window relief makes a
-reset eligible, the panel explains the effect without assigning it an unmeasured weekly-point value.
+An allowance already at 100% keeps its existing clock. If the week is partly used, the advisor still values its refill even when the five-hour
+allowance establishes eligibility. If only short-window relief is known, it explains the effect without
+assigning it an unmeasured weekly-point value.
 Go's eligibility uses its reported monthly allowance and has no weekly-point valuation.
 Companion limits retain only a recognized Codex plan category from the provider note for the same eligibility check. Check the offer in Usage when coverage is unclear.
 [OpenAI reset rules](https://help.openai.com/en/articles/20001498-how-resets-work-in-codex).

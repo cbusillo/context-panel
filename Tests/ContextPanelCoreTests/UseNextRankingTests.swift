@@ -1313,7 +1313,13 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     let credits = UsageCreditCapacity(available: true, runwayHours: 2, expiresAt: rankNow.addingTimeInterval(6 * hour), observedAt: rankNow)
     let result = overview([account], evidence: UseNextEvidence(credits: [account.id: credits]))
     #expect(result.useNextRanking(provider: .openAI).entry(account)?.spendsCreditsBeforeReset == true)
-    #expect(try #require(result.accounts.first?.resetAssessment).title == "Hold")
+    #expect(try !#require(result.accounts.first?.resetAssessment).recommended)
+
+    var gated = account
+    gated.fiveHourUsed = 100
+    let blocked = overview([gated], evidence: evidence)
+    #expect(blocked.useNextRanking(provider: .openAI).entries.isEmpty)
+    #expect(try !#require(blocked.accounts.first?.resetAssessment).recommended)
 }
 
 @Test func releasedPersonalQuotaCountsTowardRunway() throws {
@@ -1382,6 +1388,8 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     let shortOnly = try assess("Plus")
     #expect(!shortOnly.notYetApplicable)
     #expect(shortOnly.value == nil)
+    #expect(try !assess("team").notYetApplicable)
+    #expect(try assess("prolite").notYetApplicable)
     #expect(try assess("Pro").notYetApplicable)
     let unknown = try assess(nil)
     #expect(!unknown.recommended && !unknown.notYetApplicable && unknown.value == nil)
@@ -1389,9 +1397,9 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
 
 @Test func monthlyCodexResetUsesTheMonthlyAllowanceAndNeverInventsAWeeklyValue() throws {
     let go = Fixture(name: "monthly", bankedExpiryHours: [12])
-    for used in [10, 40] {
-        let reading = UsageLimit(provider: .openAI, accountID: go.name, accountName: go.name, label: "Codex 30-day",
-            windowLabel: "30-day", modelLabel: "Codex", unit: .percent, used: used, limit: 100,
+    for (used, window) in [(10, "4-week"), (40, "30-day")] {
+        let reading = UsageLimit(provider: .openAI, accountID: go.name, accountName: go.name, label: "Codex " + window,
+            windowLabel: window, modelLabel: "Codex", unit: .percent, used: used, limit: 100,
             resetsAt: rankNow.addingTimeInterval(100 * hour), lastUpdatedAt: rankNow, confidence: .observed, note: "plan: go")
         let source = UsageSnapshot(generatedAt: rankNow, limits: [reading])
         let assessment = try #require(AccountOverview(snapshot: source, reports: [go.report(now: rankNow)],

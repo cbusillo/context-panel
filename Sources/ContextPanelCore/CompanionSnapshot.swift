@@ -1428,11 +1428,7 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
     public init(limit: UsageLimit) { self.init(limit: limit, identityConfiguredAccountID: nil) }
 
     public init(limit: UsageLimit, identityConfiguredAccountID: String?, sharedIdentity: SharedProviderAccountIdentity? = nil) {
-        if limit.provider == .openAI, let note = limit.note, note.lowercased().hasPrefix("plan:") {
-            codexResetPlan = CodexResetPlan(label: String(note.dropFirst(5)))?.rawValue
-        } else {
-            codexResetPlan = nil
-        }
+        codexResetPlan = limit.provider == .openAI ? CodexResetPlan(label: limit.reportedPlan)?.rawValue : nil
         provider = limit.provider
         companionAccountID = sharedIdentity?.matches(provider: limit.provider, accountID: limit.accountID) == true
             ? sharedIdentity!.accountID : CompanionAccountIdentity.id(

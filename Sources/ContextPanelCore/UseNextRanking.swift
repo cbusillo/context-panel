@@ -286,11 +286,13 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
     static func main<T>(of items: [T], provider: Provider, period: (T) -> MainLimitWindow?, model: (T) -> String?,
                         remaining: (T) -> Double?) -> T? {
         let weekly = items.filter { period($0) == .weekly }
-        let pool = weekly.isEmpty && provider == .google ? items.filter { period($0) == .daily } : weekly
+        let pool = weekly.isEmpty ? items.filter { period($0) == .daily } : weekly
         if let general = pool.first(where: { model($0)?.lowercased() == provider.generalModelFamily })
             ?? pool.first(where: { model($0) == nil }) { return general }
+        if pool.isEmpty, items.count == 1, let only = items.first {
+            return provider == .google || model(only) == nil || model(only)?.lowercased() == provider.generalModelFamily ? only : nil
+        }
         guard provider == .google else { return nil }
-        if pool.isEmpty { return items.count == 1 ? items.first : nil }
         return pool.min { (remaining($0) ?? 1) < (remaining($1) ?? 1) }
     }
 
@@ -338,7 +340,7 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
             guard let main = row.mainWindow, let fraction = main.remainingFraction,
                   main.confidence != .unknown else { exclude("No weekly reading", nil); continue }
             if current.contains(where: { $0.id == row.id }) && !main.isCurrent && main.assumption == nil {
-                exclude("Weekly reading is not current", nil); continue
+                exclude("Quota reading is not current", nil); continue
             }
             let assumesCodexReset = row.isCodexSignInExpired && main.naturalResetAt.map { reset in
                 main.observedAt.map { $0 < reset && reset <= now } == true

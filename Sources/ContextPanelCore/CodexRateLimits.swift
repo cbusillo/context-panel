@@ -1083,6 +1083,23 @@ private func codexUsageLimit(
     )
 }
 
+enum CodexResetPlan: String {
+    case go, plus, business, pro
+
+    static let monthlyWindowLabels = Set((28...31).map { codexWindowLabel(minutes: $0 * 1_440) } + ["monthly"])
+
+    init?(label: String?) {
+        let normalized = label?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: " ")
+        switch normalized {
+        case "go": self = .go
+        case "plus": self = .plus
+        case "team", "business", "business standard": self = .business
+        case "pro", "prolite", "promax", "pro 100", "pro 200", "pro 500": self = .pro
+        default: return nil
+        }
+    }
+}
+
 private func codexWindowLabel(minutes: Int) -> String {
     switch minutes {
     case 0..<60:

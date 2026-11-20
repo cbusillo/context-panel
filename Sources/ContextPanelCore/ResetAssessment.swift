@@ -69,21 +69,6 @@ public struct ProviderPaceForecast: Codable, Equatable, Sendable {
     }
 }
 
-enum CodexResetPlan: String {
-    case go, plus, business, pro
-
-    init?(label: String?) {
-        let normalized = label?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: " ")
-        switch normalized {
-        case "go": self = .go
-        case "plus": self = .plus
-        case "business", "business standard": self = .business
-        case "pro", "pro 100", "pro 200", "pro 500": self = .pro
-        default: return nil
-        }
-    }
-}
-
 /// The one banked-reset advisor (#1079). Context Panel only advises and notifies; the Director applies.
 /// An OpenAI reset starts a fresh 7-day week now; a Claude reset refills quota and keeps its end date.
 public struct ResetAssessment: Encodable, Equatable, Sendable {
@@ -188,11 +173,11 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let codexPlan = provider == .openAI ? CodexResetPlan(label: account.providerPlan) : nil
         let coversShort = codexPlan == .plus || codexPlan == .business
         let monthly = codexPlan == .go
-        let weekly = account.mainWindow
+        let weekly = account.mainWindow.flatMap { $0.period == .weekly ? $0 : nil }
         let short = coversShort ? account.fiveHourGate : nil
         let primary = monthly ? account.windows.first { window in
             (window.modelLabel == nil || window.modelLabel?.lowercased() == provider.generalModelFamily)
-                && ["monthly", "28-day", "29-day", "30-day", "31-day"].contains(window.periodLabel?.lowercased())
+                && window.periodLabel.map { CodexResetPlan.monthlyWindowLabels.contains($0.lowercased()) } == true
         } : weekly
         guard [.openAI, .anthropic].contains(provider),
               let banked = account.bankedResets, banked.availableCount > 0, account.bankedState == .available,
@@ -215,7 +200,9 @@ public struct ResetAssessment: Encodable, Equatable, Sendable {
         let checkCoverage = provider == .openAI && (codexPlan == nil
             || !allKnown && coveredLeft >= Self.openAIApplicableBelow)
         let shortBenefit = coversShort && coveredLeft < Self.openAIApplicableBelow && (main.period == .fiveHour || left == 100)
-        let allowance = monthly ? "monthly allowance" : coversShort ? "lower covered allowance" : "weekly allowance"
+        let allowance: String = if monthly { "monthly allowance" }
+            else if coversShort, let shortLeft = short?.remainingFraction, shortLeft * 100 == coveredLeft { "five-hour allowance" }
+            else { "weekly allowance" }
         let toUseFirst = coveredLeft - Self.openAIApplicableBelow + 1
         let warnFrom = soonest.map(Self.applicationWindow)
         let expiring = plan?.bankedResetExpiresAt != nil || warnFrom.map { now >= $0 } == true
