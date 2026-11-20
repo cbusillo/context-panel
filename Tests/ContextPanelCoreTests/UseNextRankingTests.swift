@@ -1311,7 +1311,8 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
 @Test func expiringCreditsHoldTheResetBeforeQuotaIsEmpty() throws {
     let account = Fixture(name: "credits", weeklyUsed: 80, resetHours: 120, burn: 1, bankedExpiryHours: [12])
     let credits = UsageCreditCapacity(available: true, runwayHours: 2, expiresAt: rankNow.addingTimeInterval(6 * hour), observedAt: rankNow)
-    let result = overview([account], evidence: UseNextEvidence(credits: [account.id: credits]))
+    let evidence = UseNextEvidence(credits: [account.id: credits])
+    let result = overview([account], evidence: evidence)
     #expect(result.useNextRanking(provider: .openAI).entry(account)?.spendsCreditsBeforeReset == true)
     #expect(try !#require(result.accounts.first?.resetAssessment).recommended)
 
