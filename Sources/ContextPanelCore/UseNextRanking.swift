@@ -93,7 +93,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
         for reading in readings {
             for provider in Provider.allCases {
                 for limit in ProviderRefillDetector.mainLimits(provider: provider, reading: reading).values {
-                    if let observed = limit.lastUpdatedAt, observed <= reading.savedAt.addingTimeInterval(60) {
+                    if limit.confidence != .unknown, limit.remainingCapacityRatio != nil,
+                       let observed = limit.lastUpdatedAt, observed <= reading.savedAt.addingTimeInterval(60) {
                         accountTimes[resolve(limit), default: []].append(observed)
                     }
                 }
@@ -156,7 +157,7 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             })
     }
 
-    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, accountReadingTimes, credits }
+    private enum CodingKeys: String, CodingKey { case launches, receipts, readingTimes, accountReadingTimes, usesObservationTimes, credits }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let groups = try container.decodeIfPresent([String: [String: [String: Date]]].self, forKey: .launches) {
@@ -171,7 +172,8 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             }
         } else { receipts = try container.decodeIfPresent([LaunchReceipt].self, forKey: .receipts) ?? [] }
         readingTimes = try container.decodeIfPresent([Date].self, forKey: .readingTimes) ?? []
-        accountReadingTimes = try container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes)
+        accountReadingTimes = try container.decodeIfPresent(Bool.self, forKey: .usesObservationTimes) == true
+            ? container.decodeIfPresent([String: [Date]].self, forKey: .accountReadingTimes) : nil
         let credits = try container.decodeIfPresent([String: UsageCreditCapacity].self, forKey: .credits)
         self.credits = credits?.isEmpty == true ? nil : credits
     }
@@ -189,7 +191,10 @@ public struct UseNextEvidence: Codable, Equatable, Sendable {
             try container.encode(groups, forKey: .launches)
         } else { try container.encode(receipts, forKey: .receipts) }
         try container.encode(readingTimes, forKey: .readingTimes)
-        try container.encodeIfPresent(accountReadingTimes, forKey: .accountReadingTimes)
+        if let accountReadingTimes {
+            try container.encode(accountReadingTimes, forKey: .accountReadingTimes)
+            try container.encode(true, forKey: .usesObservationTimes)
+        }
         try container.encodeIfPresent(credits?.isEmpty == true ? nil : credits, forKey: .credits)
     }
 

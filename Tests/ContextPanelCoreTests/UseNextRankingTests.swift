@@ -1351,7 +1351,7 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(result.useNextRanking(provider: .openAI).launchOrder.isEmpty)
 }
 
-@Test func savingCarriedForwardLimitsDoesNotAcknowledgeALaunch() {
+@Test func savingCarriedForwardLimitsDoesNotAcknowledgeALaunch() throws {
     let account = Fixture(name: "unchanged", weeklyUsed: 30)
     let receipt = LaunchReceipt(provider: .openAI, accountID: account.id, launchedAt: rankNow.addingTimeInterval(-600))
     let limits = account.limits(now: receipt.launchedAt.addingTimeInterval(-10))
@@ -1362,6 +1362,14 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     let evidence = UseNextEvidence.make(stored: readings[1], history: [readings[0]], configuration: [],
                                         publisherID: nil, receipts: [receipt], shared: false)
     #expect(ranking([account], evidence: evidence).entry(account)?.pendingLaunches == 1)
+
+    struct SavedEvidence: Encodable {
+        var receipts: [LaunchReceipt]
+        var accountReadingTimes: [String: [Date]]
+    }
+    let legacy = SavedEvidence(receipts: [receipt], accountReadingTimes: [account.id: readings.map(\.savedAt)])
+    let decoded = try JSONDecoder().decode(UseNextEvidence.self, from: JSONEncoder().encode(legacy))
+    #expect(ranking([account], evidence: decoded).entry(account)?.pendingLaunches == 1)
 }
 
 @Test func fullOpenAIWeekKeepsItsClockWhenOnlyTheCoveredShortWindowRefills() throws {

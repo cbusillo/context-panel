@@ -946,7 +946,7 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   opens; that account's weekly quota is reconsidered at the next reading.
 - Batches follow the same deadline order. Pending receipts reduce projected
   room using measured points per launch, until two distinct later observations of that account’s general quota or
-  thirty minutes acknowledge them. Without a per-launch estimate the batch allows
+  thirty minutes acknowledge them. Older companion save timestamps cannot acknowledge a receipt. Without a per-launch estimate the batch allows
   one pending launch per account; refresh observations before adding more. No command or
   credential path travels with this count-only evidence.
   A pending-only wait publishes the receipt's expiration as `nextCapacityAt`;

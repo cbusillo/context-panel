@@ -298,7 +298,7 @@ public enum AccountTerms {
         }
         if let note = entry.notes.first { parts.append(note) }
         if entry.spendsCreditsBeforeReset {
-            parts.append("Spend credits first; apply the reset afterward.")
+            parts.append("Spend the earlier-expiring credits, then reassess the reset.")
         } else if entry.bankedResetExpiresAt != nil {
             parts.append((entry.reserve ?? 0) > 0 ? "Reach 0% after the other quota; you apply the reset."
                 : entry.depleteBy.map { "0% by " + AccountPaceText.when($0, now: overview.rankedAt) + "; you apply the reset." }
