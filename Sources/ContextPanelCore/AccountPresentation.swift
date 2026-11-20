@@ -245,7 +245,7 @@ public enum AccountTerms {
                     "Empty " + AccountPaceText.span(empty) + (resetText.map { " until it resets " + $0 } ?? ""))
         }
         let detail = resetText.map { (name.map { $0 + " resets " } ?? resets + " ") + $0 } ?? ""
-        if let spare = horizon.spare { return (self.spare(spare), detail) }
+        if let spare = horizon.spare { return (self.spare(spare), ["At this account’s pace", detail].filter { !$0.isEmpty }.joined(separator: " · ")) }
         return (horizon.burnPerHour != nil && horizon.resetAt == nil ? resetUnknown : measuring, detail)
     }
 

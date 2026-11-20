@@ -1422,11 +1422,17 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
     public let lastUpdatedAt: Date?
     public let confidence: UsageConfidence
     public let freshnessMode: UsageFreshnessMode?
+    private let codexResetPlan: String?
     public let status: UsageStatus
 
     public init(limit: UsageLimit) { self.init(limit: limit, identityConfiguredAccountID: nil) }
 
     public init(limit: UsageLimit, identityConfiguredAccountID: String?, sharedIdentity: SharedProviderAccountIdentity? = nil) {
+        if limit.provider == .openAI, let note = limit.note, note.lowercased().hasPrefix("plan:") {
+            codexResetPlan = CodexResetPlan(label: String(note.dropFirst(5)))?.rawValue
+        } else {
+            codexResetPlan = nil
+        }
         provider = limit.provider
         companionAccountID = sharedIdentity?.matches(provider: limit.provider, accountID: limit.accountID) == true
             ? sharedIdentity!.accountID : CompanionAccountIdentity.id(
@@ -1462,7 +1468,8 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
             lastUpdatedAt: lastUpdatedAt,
             confidence: confidence,
             freshnessMode: freshnessMode ?? legacyFreshnessMode,
-            statusOverride: status
+            statusOverride: status,
+            note: CodexResetPlan(label: codexResetPlan).map { "plan: " + $0.rawValue }
         )
     }
 

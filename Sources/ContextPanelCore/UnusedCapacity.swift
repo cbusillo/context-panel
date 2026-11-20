@@ -72,13 +72,12 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
     public let paceMeasured: Bool
     /// Usage credits left across the provider's accounts in the current reading; null when none reports a balance.
     public let usageCreditsLeft: Double?
-    /// Accounts holding credits whose weekly quota is at 0%. Credits are spent only there.
+    /// Accounts with a credit balance and evidence of exhausted quota or active paid fallback.
     public let accountsSpendingUsageCredits: Int
     /// When those credits expire: the provider's own date when it reports one, else the day entered in Settings (#1099).
     public let usageCreditsExpireAt: Date?
     /// Where `usageCreditsExpireAt` came from; null when no expiry is known.
     public let usageCreditsExpirySource: UsageCreditExpiry.Source?
-    /// "OpenAI: about 140 points will refill unused at this pace. Add work."
     public let line: String
     /// "OpenAI has 179,745 usage credits left. They expire Dec 31. At this pace none will be spent: …"
     public let usageCreditsLine: String?
@@ -97,21 +96,22 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
         paceMeasured = forecast.paceMeasured
         let points = Int(forecast.refillsUnused.rounded())
         let amount = "about \(points) " + (points == 1 ? "point" : "points")
+        let allocation = "at the current total pace, using the soonest-refilling account first"
         let outlook = if forecast.runsOutBeforeRefill {
-            "\(name): every point gets used before it refills at this pace."
+            "\(name): available quota runs out before the next refill \(allocation)."
         } else if forecast.refillsUnused < Self.nothingPoints {
-            "\(name): nothing will refill unused at this pace."
+            "\(name): nothing will refill unused \(allocation)."
         } else if !forecast.paceMeasured {
             "\(name): pace isn't measured yet; \(amount) will refill unused if nothing more runs. Add work."
         } else {
-            "\(name): \(amount) will refill unused at this pace. Add work."
+            "\(name): \(amount) will refill unused \(allocation). Add work."
         }
         line = outlook + (forecast.expiryNeedsMoreWork ? " Expiring resets or credits need more real work before their deadlines." : "")
         let credits = UnusedCapacityHistory.creditsLeft(provider: provider, reading: stored, resolve: resolve)
         let weekly = ProviderRefillDetector.mainLimits(provider: provider, reading: stored)
         let spending = Set(stored.reports.compactMap { report -> String? in
             guard report.provider == provider, (report.usageCredits?.balance ?? 0) > 0,
-                  let left = weekly[report.accountID]?.remainingCapacityRatio, left < 0.005 else { return nil }
+                  UsageCreditCapacity.isSpending(report, weekly: weekly[report.accountID]) else { return nil }
             return UnusedCapacityHistory.reportID(report, in: stored, resolve: resolve)
         }).count
         // Only a deadline still ahead of the reading puts credits at risk.
@@ -126,18 +126,18 @@ public struct ProviderUnusedAtPace: Codable, Equatable, Sendable {
             guard let expiry else {
                 let left = "\(name) has \(total) usage credits left"
                 return spending == 0
-                    ? left + ". They are not being spent: credits are used only once an account's weekly quota reaches 0%."
-                    : left + ", being spent on \(spending) " + (spending == 1 ? "account" : "accounts") + " at 0% of its weekly quota."
+                    ? left + ". No account is currently reported as spending them."
+                    : left + ", being spent on \(spending) " + (spending == 1 ? "account" : "accounts") + "."
             }
             var day = Date.FormatStyle.dateTime.month(.abbreviated).day()
             day.timeZone = calendar.timeZone
             let expires = "\(name) has \(total) usage credits left. They expire \(expiry.date.formatted(day))"
                 + (expiry.source == .entered ? " (date entered in Settings)." : ".")
             return spending == 0
-                ? expires + " Use next plans when quota should reach 0% to start spending these credits. "
+                ? expires + " Use next plans when to exhaust included quota and start spending these credits. "
                     + "Follow its credit workload target there; it stays unknown until spend is measured."
                 : expires + " They are being spent on \(spending) " + (spending == 1 ? "account" : "accounts")
-                    + " at 0% of its weekly quota."
+                    + "."
         }
     }
 }

@@ -186,7 +186,7 @@ private func banked(_ count: Int, expiries: [Date], at: Date) -> ProviderResetCr
 // Part 2: what will refill unused at the current pace, worded from the one pace forecast.
 
 private func paceOverview(burn: Double?, used: [String: Int], credits: [String: Double] = [:], reportedExpiry: Date? = nil,
-                          observed: Date = wasteNow) -> (AccountOverview, StoredUsageSnapshot) {
+                          observed: Date = wasteNow, paidFallback: Set<String> = []) -> (AccountOverview, StoredUsageSnapshot) {
     let names = used.keys.sorted()
     let limits = names.map { name in
         UsageLimit(provider: .openAI, accountID: name, configuredAccountID: name, accountName: name, label: "Codex Weekly",
@@ -197,7 +197,8 @@ private func paceOverview(burn: Double?, used: [String: Int], credits: [String: 
         StoredProviderReport(provider: .openAI, accountID: name, configuredAccountID: name, accountName: name,
             generatedAt: observed, usageCredits: credits[name].map {
                 ProviderUsageCreditSummary(hasCredits: true, unlimited: false, balance: $0, expiresAt: reportedExpiry) },
-            status: .healthy, errorMessage: nil)
+            status: .healthy, accessState: paidFallback.contains(name) ? ProviderAccessState(kind: .paidFallbackActive) : .unknown,
+            errorMessage: nil)
     }
     let stored = StoredUsageSnapshot(savedAt: observed, snapshot: UsageSnapshot(generatedAt: observed, limits: limits), reports: reports)
     let rates = Dictionary(uniqueKeysWithValues: zip(names, limits).map { name, limit in
@@ -222,7 +223,7 @@ private func atPace(burn: Double?, used: [String: Int], credits: [String: Double
     let heavy = try atPace(burn: 2, used: ["x": 50, "y": 50])
     #expect(heavy.runsOutBeforeRefill)
     #expect(heavy.refillsUnusedPoints < 0.5)
-    #expect(heavy.line == "OpenAI: every point gets used before it refills at this pace.")
+    #expect(heavy.line.contains("runs out before the next refill"))
 
     // Slow pace: 0.2 points an hour uses 20 of 100, so the forecast's 80 points refill unused.
     let (overview, stored) = paceOverview(burn: 0.1, used: ["x": 50, "y": 50])
@@ -231,7 +232,7 @@ private func atPace(burn: Double?, used: [String: Int], credits: [String: Double
     #expect(!slow.runsOutBeforeRefill)
     #expect(slow.refillsUnusedPoints == forecast.refillsUnused)
     #expect(abs(slow.refillsUnusedPoints - 80) < 0.001)
-    #expect(slow.line == "OpenAI: about 80 points will refill unused at this pace. Add work.")
+    #expect(slow.line.contains("80 points") && slow.line.contains("soonest-refilling account first"))
 
     // No measured pace: the points assume nothing more runs, and the line says the pace is unknown.
     let unmeasured = try atPace(burn: nil, used: ["x": 50, "y": 50])
@@ -239,16 +240,21 @@ private func atPace(burn: Double?, used: [String: Int], credits: [String: Double
     #expect(unmeasured.line == "OpenAI: pace isn't measured yet; about 100 points will refill unused if nothing more runs. Add work.")
 }
 
-@Test func unusedAtPaceSaysCreditsAreSpentOnlyAtZeroPercent() throws {
+@Test func paidFallbackSpendsCreditsWithWeeklyQuotaRemaining() throws {
+    let (overview, stored) = paceOverview(burn: 1, used: ["short": 40], credits: ["short": 50], paidFallback: ["short"])
+    let forecast = try #require(overview.paceForecast(provider: .openAI))
+    #expect(ProviderUnusedAtPace(forecast: forecast, stored: stored).accountsSpendingUsageCredits == 1)
+}
+
+@Test func unusedAtPaceReportsAccountsSpendingUsageCredits() throws {
     let idle = try atPace(burn: 0.1, used: ["x": 50, "y": 60], credits: ["x": 60_000, "y": 50_000])
     #expect(idle.usageCreditsLeft == 110_000)
     #expect(idle.accountsSpendingUsageCredits == 0)
-    #expect(idle.usageCreditsLine == "OpenAI has 110,000 usage credits left. They are not being spent: "
-        + "credits are used only once an account's weekly quota reaches 0%.")
+    #expect(idle.usageCreditsLine == "OpenAI has 110,000 usage credits left. No account is currently reported as spending them.")
 
     let spending = try atPace(burn: 0.1, used: ["x": 100, "y": 60], credits: ["x": 57_000, "y": 50_000])
     #expect(spending.accountsSpendingUsageCredits == 1)
-    #expect(spending.usageCreditsLine == "OpenAI has 107,000 usage credits left, being spent on 1 account at 0% of its weekly quota.")
+    #expect(spending.usageCreditsLine == "OpenAI has 107,000 usage credits left, being spent on 1 account.")
 
     #expect(try atPace(burn: 0.1, used: ["x": 50]).usageCreditsLine == nil)
 }
@@ -283,7 +289,7 @@ private let creditDeadline = ISO8601DateFormatter().date(from: "2026-12-31T00:00
     // An account at 0% is spending them, so how many will be left at the expiry is not claimed.
     let spending = try atPace(burn: 0.1, used: ["x": 100, "y": 60], credits: ["x": 57_000, "y": 50_000], enteredExpiry: creditDeadline)
     #expect(spending.usageCreditsLine == "OpenAI has 107,000 usage credits left. They expire Dec 31 (date entered in Settings). "
-        + "They are being spent on 1 account at 0% of its weekly quota.")
+        + "They are being spent on 1 account.")
 
     // No expiry known: nothing is claimed.
     let unknown = try atPace(burn: 0.1, used: ["x": 50], credits: ["x": 60_000])

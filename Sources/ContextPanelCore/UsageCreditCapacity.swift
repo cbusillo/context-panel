@@ -7,6 +7,20 @@ public struct UsageCreditCapacity: Codable, Equatable, Sendable {
     public let expiresAt: Date?
     public let observedAt: Date
 
+    func current(at now: Date) -> Self? {
+        guard available, observedAt <= now.addingTimeInterval(60), expiresAt.map({ $0 > now }) != false else { return nil }
+        return self
+    }
+
+    func expires(before reset: Date?) -> Bool {
+        guard let expiresAt, let reset else { return false }
+        return expiresAt < reset
+    }
+
+    static func isSpending(_ report: StoredProviderReport, weekly: UsageLimit?) -> Bool {
+        report.status != .failure && (report.accessState.kind == .paidFallbackActive || weekly?.remainingCapacityRatio == 0)
+    }
+
     static func make(stored: StoredUsageSnapshot, history: [StoredUsageSnapshot],
                      resolve: ProviderRefillDetector.AccountResolver, entered: [Provider: Date]) -> [String: Self] {
         let readings = history.filter { $0.savedAt < stored.savedAt && stored.savedAt.timeIntervalSince($0.savedAt) <= LaunchReceiptStore.lookback }
@@ -23,8 +37,8 @@ public struct UsageCreditCapacity: Codable, Equatable, Sendable {
                 guard let own = reading.reports.first(where: {
                     $0.provider == report.provider && UnusedCapacityHistory.reportID($0, in: reading, resolve: resolve) == id
                 }), own.status != .failure, let amount = own.usageCredits?.balance else { continue }
-                let spending = own.accessState.kind == .paidFallbackActive
-                    || ProviderRefillDetector.mainLimits(provider: own.provider, reading: reading)[own.accountID]?.remainingCapacityRatio == 0
+                let weekly = ProviderRefillDetector.mainLimits(provider: own.provider, reading: reading)[own.accountID]
+                let spending = isSpending(own, weekly: weekly)
                 if let before = previous, amount > before.balance {
                     spent = 0; hours = 0
                 } else if let before = previous, before.spending, spending, own.generatedAt > before.date {

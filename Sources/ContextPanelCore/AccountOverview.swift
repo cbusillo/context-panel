@@ -323,7 +323,7 @@ public struct AccountOverview: Equatable, Sendable {
                 return value.isEmpty ? nil : entry.provider == .anthropic ? value : value.capitalized
             }.first
             let plan = switch entry.provider {
-            case .openAI: (namedPlan ?? notedPlan).map { ConnectorRedactor.safeErrorDescription($0) }
+            case .openAI: (CodexResetPlan(label: notedPlan) != nil ? notedPlan : namedPlan ?? notedPlan).map { ConnectorRedactor.safeErrorDescription($0) }
             case .anthropic: notedPlan.map { ConnectorRedactor.safeErrorDescription($0) }
             default: nil as String?
             }
@@ -334,7 +334,7 @@ public struct AccountOverview: Equatable, Sendable {
             return account
         }
         allRankings = Self.makeRankings(accounts: allAccounts, evidence: launchEvidence, now: now)
-        let assessments = ResetAssessment.assessments(for: allAccounts, rankings: allRankings, now: now)
+        let assessments = ResetAssessment.assessments(for: allAccounts, rankings: allRankings, now: now, credits: launchEvidence.credits ?? [:])
         accounts = allAccounts.filter { !widgetsOnly || $0.metadata.showInWidgets }.map { row in
             var account = row
             account.resetAssessment = assessments[account.id]
