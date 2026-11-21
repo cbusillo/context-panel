@@ -314,10 +314,15 @@ private extension UseNextRanking {
     let earlier = Fixture(name: "earlier", weeklyUsed: 80, resetHours: 5, burn: 0.1)
     let result = ranking([reset, earlier])
     #expect(result.useNextAccountID == earlier.id)
-    let next = ranking([reset])
+    let view = overview([reset])
+    let next = view.useNextRanking(provider: .openAI)
     #expect(try #require(next.targetPointsPerHour) > 0.1)
     #expect(try #require(next.entry(reset)?.depleteBy) < rankNow.addingTimeInterval(48 * hour - ResetAssessment.expiringWithin))
     #expect(next.entry(reset)?.deadline == rankNow.addingTimeInterval(48 * hour))
+    let reason = try #require(AccountTerms.useNextReason(next, overview: view))
+    #expect(reason.contains(AccountTerms.bankedResetExpiresLegend))
+    let expiry = try #require(next.entry(reset)?.bankedResetExpiresAt)
+    #expect(reason.contains(AccountPaceText.when(expiry, now: rankNow)))
 }
 
 @Test func accountStrategyUsesCreditExpiryAndMeasuredSpendToPlanQuotaDepletion() throws {
@@ -350,7 +355,13 @@ private extension UseNextRanking {
 @Test func accountStrategyKeepsCreditsWorkingWhenOtherQuotaHasAShortWindowHold() throws {
     let credits = Fixture(name: "credits", weeklyUsed: 100, resetHours: 50, onCredits: true)
     let gated = Fixture(name: "gated", weeklyUsed: 60, resetHours: 20, fiveHourUsed: 100)
-    #expect(ranking([gated, credits]).useNextAccountID == credits.id)
+    let view = overview([gated, credits])
+    let choice = view.useNextRanking(provider: .openAI)
+    #expect(choice.useNextAccountID == credits.id)
+    let reason = try #require(AccountTerms.useNextReason(choice, overview: view))
+    let exclusion = try #require(choice.exclusion(gated))
+    #expect(reason.contains(exclusion.label))
+    #expect(reason.contains(exclusion.reason))
     let personal = Fixture(name: "personal", weeklyUsed: 98, burn: 0, useLast: true)
     #expect(ranking([gated, credits, personal]).useNextAccountID == credits.id)
     var paidGate = gated
@@ -759,10 +770,15 @@ private extension UseNextRanking {
 // Demand at or above capacity: last longest first, use-last only after the rest.
 // Amendment Q61: the use-last cushion is the Director's own measured use, with a 3-point floor.
 @Test func useLastCushionIsMeasuredPersonalUseWithAFloor() throws {
-    let agentOnly = Fixture(name: "agents", weeklyUsed: 10, resetHours: 100, burn: 1)
+    let agentOnly = Fixture(name: "agents", weeklyUsed: 10, resetHours: 80, burn: 1)
     let personal = Fixture(name: "personal", weeklyUsed: 10, resetHours: 100, burn: 0.6, useLast: true)
     // No receipts: all of its burn is personal.
-    #expect(abs((ranking([agentOnly, personal]).entry(personal)?.reserve ?? 0) - 60) < 0.01)
+    let view = overview([agentOnly, personal])
+    let choice = view.useNextRanking(provider: .openAI)
+    #expect(abs((choice.entry(personal)?.reserve ?? 0) - 60) < 0.01)
+    #expect(choice.useNextAccountID == agentOnly.id)
+    let reason = try #require(AccountTerms.useNextReason(choice, overview: view))
+    #expect(!reason.contains(personal.name))
 
     // Receipts: the other account measures 24 points per launch, which explains all of this account's burn.
     let receipts = [agentOnly, personal].map { LaunchReceipt(provider: .openAI, accountID: $0.id, launchedAt: rankNow.addingTimeInterval(-hour)) }
@@ -800,25 +816,41 @@ private extension UseNextRanking {
 }
 
 @Test func agentSnapshotPublishesTheRankingAndAnswersWithItsFirstEntry() throws {
-    let a = Fixture(name: "a", weeklyUsed: 40, resetHours: 100, burn: 0)
-    let b = Fixture(name: "b", weeklyUsed: 100, resetHours: 100, bankedExpiryHours: [200])
+    let a = Fixture(name: "agent-account", weeklyUsed: 40, resetHours: 100, burn: 0)
+    let b = Fixture(name: "personal-account", weeklyUsed: 99, resetHours: 80, useLast: true, bankedExpiryHours: [200])
     let configuration = AccountConfigurationDocument(updatedAt: rankNow, accounts: [a, b].map {
         LocalProviderAccountConfiguration(id: $0.name, provider: .openAI, connectorKind: .codexRateLimits, displayName: $0.name,
-                                          authPath: "/not/read/\($0.name)")
+                                          authPath: "/not/read/\($0.name)", useLast: $0.useLast)
     })
     let stored = StoredUsageSnapshot(savedAt: rankNow,
         snapshot: UsageSnapshot(generatedAt: rankNow, limits: [a, b].flatMap { $0.limits(now: rankNow) }),
         reports: [a, b].map { $0.report(now: rankNow) })
     let receipt = LaunchReceipt(provider: .openAI, accountID: a.id, launchedAt: rankNow.addingTimeInterval(-60))
-    let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow, receipts: [receipt])
+    let pending = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow, receipts: [receipt])
+    #expect(pending.ranking.first?.entry(a)?.pendingLaunches == 1)
+    #expect(pending.answers.useNext.isEmpty)
+    let snapshot = AgentAccountSnapshot(configuration: configuration, stored: stored, history: [], now: rankNow)
     let openAI = try #require(snapshot.ranking.first { $0.provider == .openAI })
     #expect(snapshot.answers.useNext.first?.accountID == openAI.useNextAccountID)
-    #expect(openAI.entries.first?.pendingLaunches == 1)
     #expect(snapshot.resetPrompts.isEmpty)
     #expect(snapshot.configurationErrors.isEmpty)
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     let json = try #require(try JSONSerialization.jsonObject(with: encoder.encode(snapshot)) as? [String: Any])
+    let answers = try #require(json["answers"] as? [String: Any])
+    let recommendations = try #require(answers["useNext"] as? [[String: Any]])
+    let recommendation = try #require(recommendations.first)
+    #expect(recommendation["accountID"] as? String == a.id)
+    let reason = try #require(recommendation["reason"] as? String)
+    let reset = try #require(a.limits(now: rankNow).first?.resetsAt)
+    #expect(reason.hasPrefix(a.name + " "))
+    let remaining = try #require(openAI.entry(a)?.remaining)
+    #expect(reason.contains(AccountNumbers.percentWithSign(remaining / 100)))
+    #expect(reason.contains(AccountPaceText.when(reset, now: rankNow)))
+    #expect(reason.contains(b.name))
+    #expect(reason.contains(AccountTerms.useLast.lowercased()))
+    let multiline = reason.contains(where: \.isNewline)
+    #expect(!multiline)
     #expect(json["ranking"] is [Any] && json["resetPrompts"] is [Any] && json["providerRefills"] is [Any])
 }
 
@@ -1273,7 +1305,8 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     let exhausted = Fixture(name: "exhausted", weeklyUsed: 100, resetHours: -1,
                             signInExpired: true, observedAgo: 7_200)
     let view = overview([exhausted])
-    let assumed = try #require(view.useNextRanking(provider: .openAI).entry(exhausted))
+    let ranking = view.useNextRanking(provider: .openAI)
+    let assumed = try #require(ranking.entry(exhausted))
     #expect(assumed.remaining == 100)
     #expect(assumed.notes.contains(AccountTerms.assumedResetLaunch))
     #expect(!assumed.unstarted)
@@ -1282,6 +1315,9 @@ func sharedLaunchMergeKeepsDistinctEventsAndAcknowledgesOnlyTheRetainedObservati
     #expect(view.accounts.first?.windows.first?.isCurrent == false)
     #expect(view.accounts.first?.windows.first?.confidence == .observed)
     #expect(view.accounts.first?.observedAt == rankNow.addingTimeInterval(-exhausted.observedAgo))
+    let reason = try #require(AccountTerms.useNextReason(ranking, overview: view))
+    #expect(reason.contains(AccountTerms.codexSignInExpired))
+    #expect(reason.contains(AccountNumbers.percentWithSign(assumed.remaining / 100)))
 }
 
 @Test func twoUseLastAccountsAreAConfigurationErrorAndUseLastIsIgnored() {
