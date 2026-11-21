@@ -103,6 +103,7 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
     public struct Recommendation: Encodable, Sendable {
         public let provider: Provider
         public let accountID: String
+        public let reason: String?
     }
     public struct Deadline: Encodable, Sendable {
         public let id: String
@@ -337,8 +338,10 @@ public struct AgentAccountSnapshot: Encodable, Sendable {
         ranking = Provider.allCases.filter { provider in overview.accounts.contains { $0.metadata.provider == provider } }
             .map { overview.useNextRanking(provider: $0) }
         let nextIDs = Set(ranking.compactMap(\.useNextAccountID))
-        answers = Answers(closestAccountID: overview.closest?.id, useNext: ranking.compactMap { provider in
-            provider.useNextAccountID.map { Recommendation(provider: provider.provider, accountID: $0) }
+        answers = Answers(closestAccountID: overview.closest?.id, useNext: ranking.compactMap { ranking in
+            guard let id = ranking.useNextAccountID else { return nil }
+            return Recommendation(provider: ranking.provider, accountID: id,
+                                  reason: AccountTerms.useNextReason(ranking, overview: overview))
         })
         let assessments = Dictionary(overview.accounts.compactMap { account in account.resetAssessment.map { (account.id, $0) } },
                                      uniquingKeysWith: { first, _ in first })

@@ -833,9 +833,10 @@ target; it does not invent an amount that will expire unused from one balance.
 When nothing is at risk, `line` says so. `unusedAtPace` is
 absent when the provider has no current weekly reading to forecast from.
 `answers.closestAccountID` is null
-without reliable current capacity. `answers.useNext` contains at most one opaque
-account ID per provider: the first entry of that provider's `ranking` (see
-[Use next ranking](#use-next-ranking-and-launch-receipts)). `deadlines` is a
+without reliable current capacity. `answers.useNext` contains at most one
+recommendation per provider, with the selected opaque `accountID` from that
+provider's [ranking](#use-next-ranking-and-launch-receipts) and a one-line
+`reason` for display. Older snapshots can omit `reason`. `deadlines` is a
 sorted list of known future expiry dates, safe local IDs, typed account labels,
 observation times and states. Unknown expiry dates are never invented. App,
 widgets and companions consume the same account math; widgets alone filter Show
@@ -958,7 +959,7 @@ and the agent snapshot use `AccountOverview.useNextRanking`.
   order is available while the oldest ranked reading is less than thirty minutes old. Codex's expired-sign-in fallback keeps
   its existing explicit saved-reading and assumed-reset notes.
 
-Each ranking entry has `accountID`, `label`, `reason`, `deadline`, `unstarted`,
+Each ranking entry has `accountID`, `label`, a detailed `reason`, `deadline`, `unstarted`,
 `remaining`, `burn`, `burnEstimated`, `reserve`, `pendingLaunches`, `notes`,
 `targetPointsPerHour` (allocated work; unknown on saved-only readings or unconverted credit work),
 `depleteBy` (only the selected account, null while holding a cushion or when the target cannot be met), `availablePoints`, `pointsPerLaunch`, `bankedResetExpiresAt`

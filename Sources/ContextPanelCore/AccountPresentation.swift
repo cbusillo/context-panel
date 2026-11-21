@@ -277,6 +277,56 @@ public enum AccountTerms {
         return reasons.joined(separator: "\n")
     }
 
+    static func useNextReason(_ ranking: UseNextRanking, overview: AccountOverview) -> String? {
+        guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else { return nil }
+        let main = overview.accounts.first { $0.id == id }?.mainWindow
+        let now = overview.rankedAt
+        let capacity = useNextCapacity(entry, main: main, now: now)
+        var notes: [String] = []
+        if entry.notes.contains(codexSignInExpired) { notes.append(codexSignInExpired) }
+        if entry.notes.contains(AccountCapacityState.stale.displayText) { notes.append(lastSeen) }
+        if let reserve = entry.reserve, reserve > 0 {
+            notes.append("keeping " + AccountNumbers.percentWithSign(reserve / 100) + " for your own use")
+        }
+        if let other = ranking.entries.first(where: { $0.accountID != id && $0.remaining > 0 && ($0.reserve ?? 0) >= $0.remaining }) {
+            notes.append("\(oneLineAccountLabel(other.label)) is set to \(useLast.lowercased())")
+        } else if ranking.entries.count == 1, ranking.excluded.count == 1, let other = ranking.excluded.first {
+            notes.append("\(oneLineAccountLabel(other.label)): \(other.reason)")
+        }
+        let suffix = notes.isEmpty ? "" : " (" + notes.joined(separator: ", ") + ")"
+        return oneLineAccountLabel(entry.label) + " " + capacity + suffix + "."
+    }
+
+    private static func useNextCapacity(_ entry: UseNextRanking.Entry, main: AccountOverview.Window?, now: Date) -> String {
+        if entry.launchesOnCredits {
+            return entry.creditExpiresAt.map { "can use credits that expire " + AccountPaceText.when($0, now: now) }
+                ?? "can use credits"
+        }
+        let quota = main?.period.flatMap { period in
+            period == .availability ? nil : period.displayName.lowercased() + " quota"
+        } ?? "quota"
+        let left = AccountNumbers.percentWithSign(entry.remaining / 100) + " of its " + quota + " left"
+        var capacity = "has " + left
+        if entry.notes.contains(assumedResetLaunch) {
+            capacity = "is estimated to have " + left + " after its reset"
+        } else if entry.unstarted {
+            capacity += " and starts its week on the next use"
+        } else if let reset = main?.naturalResetAt, reset > now {
+            capacity += " and resets " + AccountPaceText.when(reset, now: now)
+        }
+        if let expiry = entry.bankedResetExpiresAt, !entry.spendsCreditsBeforeReset {
+            capacity += ", and its " + bankedResetExpiresLegend + " " + AccountPaceText.when(expiry, now: now)
+        } else if let expiry = entry.creditExpiresAt, expiry <= entry.deadline {
+            capacity += ", with credits expiring " + AccountPaceText.when(expiry, now: now)
+        }
+        return capacity
+    }
+
+    private static func oneLineAccountLabel(_ label: String) -> String {
+        ConnectorRedactor.safeErrorDescription(label, preservingTypedEmail: true)
+            .split(whereSeparator: \.isNewline).joined(separator: " ")
+    }
+
     public static func useNextStrategy(_ overview: AccountOverview, provider: Provider, compact: Bool = false) -> String {
         let ranking = overview.useNextRanking(provider: provider)
         guard let id = ranking.useNextAccountID, let entry = ranking.entries.first(where: { $0.accountID == id }) else {

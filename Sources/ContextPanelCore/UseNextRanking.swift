@@ -231,6 +231,9 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
         /// Relative to this account's measured credit-spending workload, not weekly quota points.
         public let creditWorkloadMultiplier: Double?
         public let creditExpiresAt: Date?
+
+        fileprivate static let creditLaunchRoom = Double.greatestFiniteMagnitude
+        var launchesOnCredits: Bool { availablePoints == Self.creditLaunchRoom }
     }
 
     public struct Exclusion: Encodable, Equatable, Sendable {
@@ -424,7 +427,7 @@ public struct UseNextRanking: Encodable, Equatable, Sendable {
                 !$0.spendingCredits && $0.gatedUntil == nil
                     && $0.remaining > ($0.reserve ?? 0) && $0.deadline <= plan.deadline
             }
-            let room = plan.spendingCredits ? Double.greatestFiniteMagnitude : min(available, plan.shortRoomPoints ?? available)
+            let room = plan.spendingCredits ? Entry.creditLaunchRoom : min(available, plan.shortRoomPoints ?? available)
             let count = pending[plan.row.id, default: 0]
             let fitsPending = pointsPerLaunch.map { room > Double(count) * $0 } ?? (count == 0)
             if !fitsPending && !isHeld && !planQuotaElsewhere && room > 0 {
