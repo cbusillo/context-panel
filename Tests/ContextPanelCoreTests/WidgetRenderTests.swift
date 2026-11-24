@@ -191,3 +191,20 @@ private extension Range where Bound == Int {
     #expect(nonBackgroundPixelCount(in: image, rows: 125..<160) > 30)
 }
 
+
+@MainActor
+@Test func savedUseLastAccountFitsLargeWidgetWidth() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let saved = resetCreditRenderSnapshot(now: now.addingTimeInterval(-86_400))
+    let limit = try #require(saved.limits.first)
+    let account = AccountDisplayMetadata(id: AccountDisplayMetadata.safeID(limit.provider, limit.accountID),
+        configurationID: AccountDisplayMetadata.safeID(limit.provider, limit.configuredAccountID ?? limit.accountID),
+        provider: limit.provider, label: "Work", useLast: true)
+    let snapshot = WidgetSnapshot(state: .ready, generatedAt: now, limits: saved.limits, reports: saved.reports,
+        status: saved.status, message: "", accountDisplayMetadata: [account])
+    let widget = ContextPanelWidgetContentView(family: .systemLarge, snapshot: snapshot,
+        links: renderTestWidgetLinks, presentationDate: now)
+    let width = 344
+    let image = try #require(renderedImage(from: widget, width: CGFloat(width), height: 344))
+    #expect(image.width == width)
+}
