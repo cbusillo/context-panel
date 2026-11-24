@@ -339,8 +339,8 @@ struct AccountGlanceWidget: View {
                 Text(account.metadata.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 // "next" (or a quiet "use last") leads the second line so the name keeps the first line.
                 ViewThatFits(in: .horizontal) {
-                    secondaryLine(account, horizon: horizon, next: next, withRefill: true)
-                    secondaryLine(account, horizon: horizon, next: next, withRefill: false)
+                    secondaryLine(account, horizon: horizon, next: next, showsTiming: true)
+                    secondaryLine(account, horizon: horizon, next: next, showsTiming: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -372,20 +372,20 @@ struct AccountGlanceWidget: View {
 
     /// Under the name: "next" or "use last", then the 5-hour window's room and refill for current
     /// readings, or the saved time for readings that are not current.
-    private func secondaryLine(_ account: AccountOverview.Account, horizon: AccountHorizon, next: Bool, withRefill: Bool) -> some View {
+    private func secondaryLine(_ account: AccountOverview.Account, horizon: AccountHorizon, next: Bool, showsTiming: Bool) -> some View {
         var facts: [String] = []
         if !horizon.isCurrent {
-            facts.append(AccountTerms.accountTiming(account, now: now))
+            facts.append(showsTiming ? AccountTerms.accountTiming(account, now: now) : account.stateText)
         } else if let short = account.shortWindow, short.remainingFraction != nil {
-            facts.append(AccountTerms.fiveHour + " " + (withRefill ? AccountNumbers.window(short) : AccountTerms.windowReading(short)))
-            if withRefill { facts.append(AccountTerms.refill(short, now: now)) }
+            facts.append(AccountTerms.fiveHour + " " + (showsTiming ? AccountNumbers.window(short) : AccountTerms.windowReading(short)))
+            if showsTiming { facts.append(AccountTerms.refill(short, now: now)) }
         }
         let tag: Text? = next
             ? Text(AccountTerms.next.lowercased()).fontWeight(.semibold).foregroundStyle(palette.provider(account.metadata.provider))
             : account.metadata.useLast ? Text(AccountTerms.useLast.lowercased()).foregroundStyle(palette.secondary) : nil
         let rest = Text((tag == nil || facts.isEmpty ? "" : " · ") + facts.joined(separator: " · ")).foregroundStyle(palette.secondary)
         return (tag.map { $0 + rest } ?? rest)
-            .font(.system(size: AccountTextSize.glanceMinimum)).monospacedDigit().lineLimit(1).fixedSize()
+            .font(.system(size: AccountTextSize.glanceMinimum)).monospacedDigit().lineLimit(1)
     }
 
     /// The single callout: a banked reset that lapses before its account runs out; else the next banked expiry.

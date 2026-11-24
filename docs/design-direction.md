@@ -40,7 +40,8 @@ so every surface draws the same picture at a different size.
   grouped by provider. Account rows fold out to every window and banked reset.
 - **Widgets** show account rows; there is no other widget layout. Keep account
   percentages fully visible at every size; account names truncate when space
-  is tight. In the desktop's
+  is tight. A saved reading shows its timestamp when it fits and keeps the
+  saved status in the compact row. In the desktop's
   vibrant or accented appearance, leave the container to WidgetKit so numbers
   and labels remain distinct from the background.
 - **Settings → Display** shows a read-only preview of the widget, using the
